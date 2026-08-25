@@ -1,0 +1,259 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 210 20% 98%;
+    --foreground: 222 47% 11%;
+
+    --card: 0 0% 100%;
+    --card-foreground: 222 47% 11%;
+
+    --popover: 0 0% 100%;
+    --popover-foreground: 222 47% 11%;
+
+    --primary: 222 74% 48%;
+    --primary-foreground: 0 0% 100%;
+
+    --secondary: 210 40% 96%;
+    --secondary-foreground: 222 47% 11%;
+
+    --muted: 210 40% 96%;
+    --muted-foreground: 215 16% 47%;
+
+    --accent: 210 40% 94%;
+    --accent-foreground: 222 47% 11%;
+
+    --destructive: 0 72% 51%;
+    --destructive-foreground: 0 0% 100%;
+
+    --success: 142 71% 36%;
+    --success-foreground: 0 0% 100%;
+
+    --warning: 32 95% 44%;
+    --warning-foreground: 0 0% 100%;
+
+    --border: 214 32% 91%;
+    --input: 214 32% 91%;
+    --ring: 222 74% 48%;
+
+    --sidebar: 222 47% 11%;
+    --sidebar-foreground: 210 40% 96%;
+
+    --radius: 0.6rem;
+  }
+
+  .dark {
+    --background: 222 47% 8%;
+    --foreground: 210 40% 96%;
+    --card: 222 47% 11%;
+    --card-foreground: 210 40% 96%;
+    --popover: 222 47% 11%;
+    --popover-foreground: 210 40% 96%;
+    --primary: 217 91% 60%;
+    --primary-foreground: 222 47% 11%;
+    --secondary: 217 33% 17%;
+    --secondary-foreground: 210 40% 96%;
+    --muted: 217 33% 17%;
+    --muted-foreground: 215 20% 65%;
+    --accent: 217 33% 20%;
+    --accent-foreground: 210 40% 96%;
+    --destructive: 0 63% 50%;
+    --destructive-foreground: 210 40% 96%;
+    --success: 142 60% 45%;
+    --success-foreground: 222 47% 11%;
+    --warning: 32 90% 55%;
+    --warning-foreground: 222 47% 11%;
+    --border: 217 33% 20%;
+    --input: 217 33% 20%;
+    --ring: 217 91% 60%;
+    --sidebar: 222 47% 6%;
+    --sidebar-foreground: 210 40% 96%;
+  }
+
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground antialiased;
+    font-feature-settings: 'cv02', 'cv03', 'cv04', 'cv11';
+  }
+
+  /* Numeric inputs must not show spinners: the POS uses explicit controls and
+     a stray scroll-wheel tick over a quantity field is a real-world data bug. */
+  input[type='number']::-webkit-outer-spin-button,
+  input[type='number']::-webkit-inner-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+  }
+  input[type='number'] {
+    -moz-appearance: textfield;
+  }
+
+  /* Tabular figures keep money columns aligned. */
+  .tabular {
+    font-variant-numeric: tabular-nums;
+  }
+}
+
+@layer utilities {
+  .scrollbar-thin::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+  .scrollbar-thin::-webkit-scrollbar-thumb {
+    @apply rounded-full bg-border;
+  }
+  .scrollbar-thin::-webkit-scrollbar-track {
+    background: transparent;
+  }
+}
+
+/* --------------------------------------------------------------------------
+   Thermal receipt (58mm / 78mm / 80mm)
+
+   One layout, parameterised by --receipt-width. The paper size comes from the
+   store's receipt settings, so there is exactly one receipt implementation
+   rather than three. The on-screen preview and the printed output share these
+   rules, so what the cashier sees is what the printer produces.
+   -------------------------------------------------------------------------- */
+.receipt-paper {
+  /* Overridden inline per store setting; 58mm is only the fallback. */
+  --receipt-width: 58mm;
+  --receipt-font: 9.5pt;
+  --receipt-font-sm: 8pt;
+
+  width: var(--receipt-width);
+  padding: 2mm;
+  font-family: ui-monospace, 'SFMono-Regular', Menlo, monospace;
+  font-size: var(--receipt-font);
+  line-height: 1.35;
+  color: #000;
+  background: #fff;
+}
+
+/* Wider paper gets slightly larger type and a little more breathing room. */
+.receipt-paper[data-width='78'],
+.receipt-paper[data-width='80'] {
+  --receipt-font: 10.5pt;
+  --receipt-font-sm: 8.5pt;
+  padding: 3mm;
+}
+
+.receipt-paper .r-center { text-align: center; }
+.receipt-paper .r-right { text-align: right; }
+.receipt-paper .r-bold { font-weight: 700; }
+.receipt-paper .r-sm { font-size: var(--receipt-font-sm); }
+.receipt-paper .r-rule { border-top: 1px dashed #000; margin: 1.5mm 0; }
+.receipt-paper table { width: 100%; border-collapse: collapse; }
+.receipt-paper td { vertical-align: top; padding: 0.3mm 0; }
+.receipt-paper .r-logo { max-width: 60%; margin: 0 auto 1.5mm; display: block; }
+
+@media print {
+  /* The physical page size is injected by the receipt component as an inline
+     <style> block, because @page cannot read a CSS custom property. */
+  body * {
+    visibility: hidden;
+  }
+
+  #receipt-print-area,
+  #receipt-print-area *,
+  #barcode-print-area,
+  #barcode-print-area * {
+    visibility: visible;
+  }
+
+  #receipt-print-area,
+  #barcode-print-area {
+    position: absolute;
+    left: 0;
+    top: 0;
+  }
+
+  .no-print {
+    display: none !important;
+  }
+}
+
+/* --------------------------------------------------------------------------
+   Barcode labels
+   Printed through the same isolated-print-area mechanism as the receipt, so
+   the app has one printing approach rather than two.
+   -------------------------------------------------------------------------- */
+.barcode-sheet {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2mm;
+  justify-content: center;
+  max-height: 40vh;
+  overflow-y: auto;
+}
+
+.barcode-label {
+  width: 38mm;
+  padding: 1.5mm;
+  border: 1px dashed #d4d4d8;
+  border-radius: 2px;
+  text-align: center;
+  color: #000;
+  background: #fff;
+  font-family: ui-sans-serif, system-ui, sans-serif;
+  break-inside: avoid;
+  page-break-inside: avoid;
+}
+
+.barcode-label .bl-store {
+  font-size: 6pt;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #52525b;
+}
+
+.barcode-label .bl-name {
+  font-size: 7.5pt;
+  font-weight: 600;
+  line-height: 1.15;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+
+.barcode-label .bl-variant {
+  font-size: 6.5pt;
+  color: #52525b;
+}
+
+.barcode-label .bl-svg {
+  display: block;
+  width: 100%;
+  height: auto;
+  margin: 0.5mm 0;
+}
+
+.barcode-label .bl-price {
+  font-size: 9pt;
+  font-weight: 700;
+}
+
+.barcode-label .bl-error {
+  font-size: 6.5pt;
+  color: #b91c1c;
+  padding: 2mm 0;
+}
+
+@media print {
+  .barcode-sheet {
+    max-height: none;
+    overflow: visible;
+    gap: 0;
+    justify-content: flex-start;
+    padding: 0 !important;
+  }
+
+  .barcode-label {
+    border: none;
+  }
+}

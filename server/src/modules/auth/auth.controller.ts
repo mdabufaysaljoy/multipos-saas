@@ -1,0 +1,71 @@
+import type { Request, Response } from 'express';
+import { env, isProd } from '../../config/env';
+import { ApiError } from '../../utils/ApiError';
+import { asyncHandler } from '../../utils/asyncHandler';
+import { created, ok } from '../../utils/apiResponse';
+import { ttlToMs } from '../../utils/tokens';
+import { body } from '../../middleware/validate';
+import { authService, type SessionMeta } from './auth.service';
+import type { ChangePasswordInput, LoginInput, RegisterInput } from './auth.validators';
+
+const REFRESH_COOKIE = 'refreshToken';
+
+const metaFrom = (req: Request): SessionMeta => ({
+  userAgent: req.header('user-agent') ?? '',
+  ip: req.ip ?? '',
+});
+
+/** httpOnly cookie so the refresh token is never reachable from JavaScript. */
+const setRefreshCookie = (res: Response, token: string) => {
+  res.cookie(REFRESH_COOKIE, token, {
+    httpOnly: true,
+    secure: isProd,
+    sameSite: isProd ? 'strict' : 'lax',
+    maxAge: ttlToMs(env.REFRESH_TOKEN_TTL),
+    path: '/api/auth',
+  });
+};
+
+const clearRefreshCookie = (res: Response) =>
+  res.clearCookie(REFRESH_COOKIE, { path: '/api/auth' });
+
+export const register = asyncHandler(async (req: Request, res: Response) => {
+  const result = await authService.register(body<RegisterInput>(req), metaFrom(req));
+  setRefreshCookie(res, result.tokens.refreshToken);
+  created(res, result);
+});
+
+export const login = asyncHandler(async (req: Request, res: Response) => {
+  const result = await authService.login(body<LoginInput>(req), metaFrom(req));
+  setRefreshCookie(res, result.tokens.refreshToken);
+  ok(res, result);
+});
+
+export const refresh = asyncHandler(async (req: Request, res: Response) => {
+  const cookies = req.cookies as Record<string, string> | undefined;
+  const token = cookies?.[REFRESH_COOKIE] ?? (req.body as { refreshToken?: string })?.refreshToken;
+  if (!token) throw ApiError.unauthorized('No refresh token supplied');
+
+  const tokens = await authService.refresh(token, metaFrom(req));
+  setRefreshCookie(res, tokens.refreshToken);
+  ok(res, tokens);
+});
+
+export const logout = asyncHandler(async (req: Request, res: Response) => {
+  const cookies = req.cookies as Record<string, string> | undefined;
+  await authService.logout(cookies?.[REFRESH_COOKIE], req.auth?.id);
+  clearRefreshCookie(res);
+  ok(res, { message: 'Signed out' });
+});
+
+export const me = asyncHandler(async (req: Request, res: Response) => {
+  if (!req.auth) throw ApiError.unauthorized();
+  ok(res, await authService.buildSession(req.auth.id));
+});
+
+export const changePassword = asyncHandler(async (req: Request, res: Response) => {
+  if (!req.auth) throw ApiError.unauthorized();
+  await authService.changePassword(req.auth.id, body<ChangePasswordInput>(req));
+  clearRefreshCookie(res);
+  ok(res, { message: 'Password updated. Please sign in again.' });
+});

@@ -1,0 +1,62 @@
+import { Types, type ClientSession } from 'mongoose';
+import { DEFAULT_CASHIER_PERMISSIONS, PERMISSIONS, type Permission } from '../../config/permissions';
+import { RoleModel } from '../../models/Role';
+import { sessionOpt } from '../../utils/tx';
+
+interface SystemRoleSeed {
+  name: string;
+  description: string;
+  permissions: Permission[];
+}
+
+/**
+ * Roles every new tenant starts with. They are marked `isSystem` so they cannot
+ * be deleted out from under existing staff, but their permissions remain
+ * editable by the tenant admin.
+ */
+export const SYSTEM_ROLES: SystemRoleSeed[] = [
+  {
+    name: 'Cashier',
+    description: 'Runs the POS. Cannot change prices or manage the catalogue.',
+    permissions: DEFAULT_CASHIER_PERMISSIONS,
+  },
+  {
+    name: 'Senior Cashier',
+    description: 'A cashier who may override prices and process returns.',
+    permissions: [
+      ...DEFAULT_CASHIER_PERMISSIONS,
+      PERMISSIONS.SALES_CHANGE_PRICE,
+      PERMISSIONS.SALES_DISCOUNT,
+      PERMISSIONS.RETURNS_CREATE,
+    ],
+  },
+  {
+    name: 'Store Manager',
+    description: 'Full operational access: catalogue, stock, staff and reports.',
+    permissions: [
+      ...DEFAULT_CASHIER_PERMISSIONS,
+      PERMISSIONS.PRODUCTS_CREATE,
+      PERMISSIONS.PRODUCTS_EDIT,
+      PERMISSIONS.PRODUCTS_DELETE,
+      PERMISSIONS.CATEGORIES_CREATE,
+      PERMISSIONS.CATEGORIES_EDIT,
+      PERMISSIONS.CATEGORIES_DELETE,
+      PERMISSIONS.INVENTORY_ADJUST,
+      PERMISSIONS.SALES_CHANGE_PRICE,
+      PERMISSIONS.SALES_DISCOUNT,
+      PERMISSIONS.SALES_CANCEL,
+      PERMISSIONS.RETURNS_CREATE,
+      PERMISSIONS.CUSTOMERS_EDIT,
+      PERMISSIONS.REPORTS_VIEW,
+      PERMISSIONS.STAFF_VIEW,
+      PERMISSIONS.SETTINGS_VIEW,
+    ],
+  },
+];
+
+export async function createSystemRoles(tenantId: Types.ObjectId, session?: ClientSession) {
+  return RoleModel.create(
+    SYSTEM_ROLES.map((role) => ({ ...role, tenantId, isSystem: true, isActive: true })),
+    { session },
+  );
+}
