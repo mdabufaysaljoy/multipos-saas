@@ -1,3 +1,6 @@
+import { onboardingApi } from '@/api/endpoints';
+import * as React from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
@@ -10,6 +13,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { ApiError } from '@/api/client';
 import { useAuth } from '@/hooks/useAuth';
+import { useTrialOffer } from '@/hooks/useTrialDays';
 
 const schema = z
   .object({
@@ -30,6 +34,14 @@ type FormValues = z.infer<typeof schema>;
 export function RegisterPage() {
   const { register: signUp } = useAuth();
   const navigate = useNavigate();
+  const { days: trialDays, planName: trialPlanName } = useTrialOffer();
+  // The POS types come from the platform catalog: active products only.
+  const { data: posTypes, isLoading: posTypesLoading } = useQuery({ queryKey: ['public-pos-types'], queryFn: onboardingApi.publicPosTypes, staleTime: 5 * 60 * 1000 });
+  const available = (posTypes ?? []).filter((option) => option.available);
+  const [vertical, setVertical] = React.useState('');
+  React.useEffect(() => {
+    if (!vertical && available[0]) setVertical(available[0].vertical);
+  }, [available, vertical]);
 
   const form = useForm<FormValues>({
     resolver: zodResolver(schema),
@@ -44,6 +56,7 @@ export function RegisterPage() {
         email: values.email,
         phone: values.phone,
         password: values.password,
+        vertical: vertical || undefined,
       });
       toast.success('Workspace created. Let’s set up your store.');
       navigate('/onboarding', { replace: true });
@@ -72,7 +85,10 @@ export function RegisterPage() {
             <Store className="h-5 w-5" />
           </div>
           <h1 className="text-xl font-semibold tracking-tight">Create your workspace</h1>
-          <p className="text-sm text-muted-foreground">Start with a 14-day trial. No card required.</p>
+          <p className="text-sm text-muted-foreground">
+            {trialDays ? `Start with a ${trialDays}-day free trial of ${trialPlanName}.` : 'Start with a free trial.'}{' '}
+            No card required.
+          </p>
         </div>
 
         <Card>
@@ -82,6 +98,25 @@ export function RegisterPage() {
           </CardHeader>
           <CardContent>
             <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4" noValidate>
+              <fieldset className="space-y-2">
+                <legend className="text-sm font-medium">What type of POS do you want to create?</legend>
+                {posTypesLoading ? (
+                  <p className="text-xs text-muted-foreground">Loading POS types…</p>
+                ) : (
+                  <div className="grid gap-2 sm:grid-cols-2" role="radiogroup">
+                    {available.map((option) => (
+                      <label
+                        key={option.vertical}
+                        className={`cursor-pointer rounded-md border p-3 text-sm ${vertical === option.vertical ? 'border-primary ring-1 ring-primary' : ''}`}
+                      >
+                        <input type="radio" name="vertical" className="sr-only" value={option.vertical} checked={vertical === option.vertical} onChange={() => setVertical(option.vertical)} />
+                        <span className="font-medium">{option.label}</span>
+                        {option.description && <span className="mt-0.5 block text-xs text-muted-foreground">{option.description}</span>}
+                      </label>
+                    ))}
+                  </div>
+                )}
+              </fieldset>
               {field('businessName', 'Business name', { placeholder: 'Denim Republic', autoFocus: true })}
               {field('name', 'Your name', { placeholder: 'Ayesha Rahman' })}
               {field('email', 'Email', { type: 'email', autoComplete: 'username' })}

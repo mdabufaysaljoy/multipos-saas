@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { PAYMENT_METHODS } from '../../config/constants';
-import { objectId, positiveIntegerQuantity, searchSchema } from '../common/common.validators';
+import { objectId, positiveIntegerQuantity, searchSchema, calendarDate } from '../common/common.validators';
 
 export const createReturnSchema = z
   .object({
@@ -36,8 +36,8 @@ export const createReturnSchema = z
   });
 
 export const listReturnsSchema = searchSchema.extend({
-  from: z.coerce.date().optional(),
-  to: z.coerce.date().optional(),
+  from: calendarDate.optional(),
+  to: calendarDate.optional(),
   saleId: objectId.optional(),
 });
 

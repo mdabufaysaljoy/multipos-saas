@@ -4,12 +4,15 @@ import { LoadingState } from '@/components/states';
 import { EmptyState } from '@/components/states';
 import { useAuth } from '@/hooks/useAuth';
 import { ShieldAlert } from 'lucide-react';
+import { LOCK_REDIRECT, isPathUnlocked, isSubscriptionLocked } from '@/lib/subscriptionLock';
 
 interface ProtectedRouteProps {
   children: ReactNode;
   /** Any one of these is enough to enter the route. */
   anyOf?: string[];
   platformAdmin?: boolean;
+  /** Only the account owner may enter (billing across workspaces). */
+  accountOwner?: boolean;
 }
 
 /**
@@ -19,8 +22,8 @@ interface ProtectedRouteProps {
  * sees a "no access" panel, while the API behind the page independently rejects
  * anything they are not permitted to do.
  */
-export function ProtectedRoute({ children, anyOf, platformAdmin }: ProtectedRouteProps) {
-  const { session, loading, can, isPlatformAdmin } = useAuth();
+export function ProtectedRoute({ children, anyOf, platformAdmin, accountOwner }: ProtectedRouteProps) {
+  const { session, loading, can, isPlatformAdmin, isAccountOwner } = useAuth();
   const location = useLocation();
 
   if (loading) return <LoadingState label="Checking your session…" />;
@@ -36,6 +39,29 @@ export function ProtectedRoute({ children, anyOf, platformAdmin }: ProtectedRout
   // A tenant user who has not created a store yet must finish onboarding.
   if (!platformAdmin && !isPlatformAdmin && session.needsStoreSetup && location.pathname !== '/onboarding') {
     return <Navigate to="/onboarding" replace />;
+  }
+
+  // Without a usable subscription the workspace is locked down to the wallet
+  // and the subscription page. Platform admins are never subject to this.
+  if (
+    !platformAdmin &&
+    !isPlatformAdmin &&
+    isSubscriptionLocked(session.entitlement) &&
+    !isPathUnlocked(location.pathname)
+  ) {
+    return <Navigate to={LOCK_REDIRECT} replace />;
+  }
+
+  if (accountOwner && !isAccountOwner) {
+    return (
+      <div className="p-6">
+        <EmptyState
+          icon={<ShieldAlert className="h-6 w-6" />}
+          title="Only the account owner can see this page"
+          description="Billing across workspaces belongs to the owner of the account."
+        />
+      </div>
+    );
   }
 
   if (anyOf && !anyOf.some(can)) {
@@ -59,7 +85,9 @@ export function PublicOnlyRoute({ children }: { children: ReactNode }) {
   if (loading) return <LoadingState />;
   if (session) {
     if (isPlatformAdmin) return <Navigate to="/platform" replace />;
-    return <Navigate to={session.needsStoreSetup ? '/onboarding' : '/pos'} replace />;
+    if (session.needsStoreSetup) return <Navigate to="/onboarding" replace />;
+    if (isSubscriptionLocked(session.entitlement)) return <Navigate to={LOCK_REDIRECT} replace />;
+    return <Navigate to="/pos" replace />;
   }
   return <>{children}</>;
 }

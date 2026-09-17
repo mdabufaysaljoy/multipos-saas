@@ -3,14 +3,16 @@ import { PERMISSIONS } from '../../config/permissions';
 import { authenticate } from '../../middleware/auth';
 import { requirePermission } from '../../middleware/rbac';
 import { resolveTenant } from '../../middleware/tenant';
-import { requireActiveSubscription } from '../../middleware/subscription';
+import { requireActiveSubscription, requireSubscribedAccess } from '../../middleware/subscription';
 import { validate } from '../../middleware/validate';
 import { idParam } from '../common/common.validators';
 import * as controller from './customers.controller';
 import { createCustomerSchema, listCustomersSchema, updateCustomerSchema } from './customers.validators';
 
 const router = Router();
-router.use(authenticate, resolveTenant);
+// An unsubscribed workspace can reach only its wallet and subscription;
+// this module is locked entirely until a plan is active.
+router.use(authenticate, resolveTenant, requireSubscribedAccess);
 
 router.get('/', requirePermission(PERMISSIONS.CUSTOMERS_VIEW), validate({ query: listCustomersSchema }), controller.list);
 router.get('/:id', requirePermission(PERMISSIONS.CUSTOMERS_VIEW), validate({ params: idParam }), controller.getOne);

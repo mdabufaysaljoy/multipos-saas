@@ -8,8 +8,16 @@ export type ErrorCode =
   | 'INSUFFICIENT_STOCK'
   | 'LIMIT_EXCEEDED'
   | 'SUBSCRIPTION_INACTIVE'
+  /** The workspace's plan does not include Advanced Analytics. */
+  | 'ADVANCED_ANALYTICS_REQUIRED'
+  /** The workspace's subscription does not include the entitlement. */
+  | 'ENTITLEMENT_REQUIRED'
+  /** The module belongs to a different POS vertical than this workspace. */
+  | 'VERTICAL_NOT_SUPPORTED'
   | 'UNPROCESSABLE'
   | 'TOO_MANY_REQUESTS'
+  /** An external payment provider could not be reached or did not answer. */
+  | 'PROVIDER_UNAVAILABLE'
   | 'INTERNAL';
 
 const STATUS_BY_CODE: Record<ErrorCode, number> = {
@@ -22,8 +30,12 @@ const STATUS_BY_CODE: Record<ErrorCode, number> = {
   INSUFFICIENT_STOCK: 409,
   LIMIT_EXCEEDED: 402,
   SUBSCRIPTION_INACTIVE: 402,
+  ADVANCED_ANALYTICS_REQUIRED: 403,
+  ENTITLEMENT_REQUIRED: 403,
+  VERTICAL_NOT_SUPPORTED: 403,
   UNPROCESSABLE: 422,
   TOO_MANY_REQUESTS: 429,
+  PROVIDER_UNAVAILABLE: 503,
   INTERNAL: 500,
 };
 

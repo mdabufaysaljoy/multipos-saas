@@ -33,6 +33,13 @@ export const PERMISSIONS = {
 
   REPORTS_VIEW: 'reports.view',
 
+  MARKETING_VIEW: 'marketing.view',
+  MARKETING_CREATE_CAMPAIGN: 'marketing.createCampaign',
+  MARKETING_SEND_SMS: 'marketing.sendSMS',
+  MARKETING_SEND_EMAIL: 'marketing.sendEmail',
+  MARKETING_VIEW_HISTORY: 'marketing.viewHistory',
+  MARKETING_MANAGE_RECIPIENTS: 'marketing.manageRecipients',
+
   STAFF_VIEW: 'staff.view',
   STAFF_CREATE: 'staff.create',
   STAFF_EDIT: 'staff.edit',
@@ -46,6 +53,10 @@ export const PERMISSIONS = {
 
   SUBSCRIPTION_VIEW: 'subscription.view',
   SUBSCRIPTION_MANAGE: 'subscription.manage',
+
+  /** Account-level money. Never implied by subscription permissions. */
+  WALLET_VIEW: 'wallet.view',
+  WALLET_MANAGE: 'wallet.manage',
 } as const;
 
 export type Permission = (typeof PERMISSIONS)[keyof typeof PERMISSIONS];
@@ -117,6 +128,18 @@ export const PERMISSION_CATALOG: PermissionGroup[] = [
     ],
   },
   {
+    group: 'marketing',
+    label: 'Marketing',
+    permissions: [
+      { key: PERMISSIONS.MARKETING_VIEW, label: 'View marketing', description: 'Open the marketing area and see rates' },
+      { key: PERMISSIONS.MARKETING_CREATE_CAMPAIGN, label: 'Create campaigns', description: 'Compose SMS and email campaigns' },
+      { key: PERMISSIONS.MARKETING_SEND_SMS, label: 'Send SMS', description: 'Spend wallet balance on SMS' },
+      { key: PERMISSIONS.MARKETING_SEND_EMAIL, label: 'Send email', description: 'Spend wallet balance on email' },
+      { key: PERMISSIONS.MARKETING_VIEW_HISTORY, label: 'View history', description: 'See past campaigns and messages' },
+      { key: PERMISSIONS.MARKETING_MANAGE_RECIPIENTS, label: 'Manage recipients', description: 'Choose and filter campaign audiences' },
+    ],
+  },
+  {
     group: 'reports',
     label: 'Reports',
     permissions: [
@@ -155,6 +178,14 @@ export const PERMISSION_CATALOG: PermissionGroup[] = [
     permissions: [
       { key: PERMISSIONS.SUBSCRIPTION_VIEW, label: 'View subscription', description: 'See the current plan and invoices' },
       { key: PERMISSIONS.SUBSCRIPTION_MANAGE, label: 'Manage subscription', description: 'Change or cancel the plan' },
+    ],
+  },
+  {
+    group: 'wallet',
+    label: 'Account wallet',
+    permissions: [
+      { key: PERMISSIONS.WALLET_VIEW, label: 'View account wallet', description: 'See the shared account balance, its transactions and receipts' },
+      { key: PERMISSIONS.WALLET_MANAGE, label: 'Use account wallet', description: 'Request top-ups and pay from the shared account balance' },
     ],
   },
 ];

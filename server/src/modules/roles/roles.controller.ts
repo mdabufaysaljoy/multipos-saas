@@ -3,6 +3,8 @@ import type { Types } from 'mongoose';
 import { PERMISSION_CATALOG } from '../../config/permissions';
 import { RoleModel } from '../../models/Role';
 import { UserModel } from '../../models/User';
+import { WorkspaceMemberModel } from '../../models/WorkspaceMember';
+import { assertWithinAuthority } from '../../services/staff/grantAuthority';
 import { ApiError } from '../../utils/ApiError';
 import { asyncHandler } from '../../utils/asyncHandler';
 import { created, ok } from '../../utils/apiResponse';
@@ -31,6 +33,7 @@ export const list = asyncHandler(async (req: Request, res: Response) => {
 export const create = asyncHandler(async (req: Request, res: Response) => {
   const ctx = getContext(req);
   const input = body<CreateRoleInput>(req);
+  assertWithinAuthority(ctx, input.permissions, 'create a role');
 
   const duplicate = await RoleModel.findOne({ tenantId: ctx.tenantId, name: input.name }).select('_id').lean();
   if (duplicate) throw ApiError.conflict('A role with this name already exists');
@@ -46,6 +49,11 @@ export const update = asyncHandler(async (req: Request, res: Response) => {
 
   const role = await RoleModel.findOne({ _id: id, tenantId: ctx.tenantId });
   if (!role) throw ApiError.notFound('Role not found');
+
+  // A role that grants more than you hold is not yours to change - not even its
+  // name or active flag - and no edit may push a role beyond what you hold.
+  assertWithinAuthority(ctx, role.permissions, 'edit a role');
+  if (input.permissions !== undefined) assertWithinAuthority(ctx, input.permissions, 'edit a role');
 
   if (input.name && input.name !== role.name) {
     const duplicate = await RoleModel.findOne({ tenantId: ctx.tenantId, name: input.name, _id: { $ne: id } })
@@ -73,9 +81,13 @@ export const remove = asyncHandler(async (req: Request, res: Response) => {
 
   const role = await RoleModel.findOne({ _id: id, tenantId: ctx.tenantId });
   if (!role) throw ApiError.notFound('Role not found');
+  // Authority first: someone who may not touch this role learns nothing more about it.
+  assertWithinAuthority(ctx, role.permissions, 'delete a role');
   if (role.isSystem) throw ApiError.badRequest('Built-in roles cannot be deleted. Deactivate it instead.');
 
-  const inUse = await UserModel.countDocuments({ tenantId: ctx.tenantId, roleId: id, deletedAt: null });
+  const inUse =
+    (await UserModel.countDocuments({ tenantId: ctx.tenantId, roleId: id, deletedAt: null })) +
+    (await WorkspaceMemberModel.countDocuments({ tenantId: ctx.tenantId, roleId: id, status: { $ne: 'removed' } }));
   if (inUse > 0) {
     throw ApiError.conflict(`${inUse} staff member(s) still use this role. Reassign them first.`);
   }

@@ -37,6 +37,8 @@ export interface SessionUser {
   storeId: string | null;
   isActive: boolean;
   permissions: Permission[];
+  /** Owns the customer account: sees billing across every workspace. */
+  isAccountOwner?: boolean;
 }
 
 export interface SessionStore {
@@ -52,19 +54,45 @@ export interface Entitlement {
   status: 'trial' | 'active' | 'past_due' | 'cancelled' | 'expired' | 'suspended';
   planCode: string | null;
   planName: string | null;
+  /** The POS vertical the plan's entitlements were resolved for. */
+  vertical?: 'clothing' | 'restaurant' | 'pharmacy' | 'supershop' | 'grocery' | null;
   interval: string | null;
   features: Record<string, boolean>;
   limits: Record<string, number>;
   currentPeriodEnd: string | null;
   daysRemaining: number;
   cancelAtPeriodEnd: boolean;
+  /** Set while an ended period stays usable because its automatic renewal is being retried. */
+  graceEndsAt?: string | null;
   isUsable: boolean;
   isReadOnly: boolean;
 }
 
+export interface WorkspaceSummary {
+  id: string;
+  name: string;
+  vertical: 'clothing' | 'restaurant' | 'pharmacy' | 'supershop' | 'grocery';
+  status: string;
+  isHome: boolean;
+  isActive: boolean;
+}
+
 export interface Session {
   user: SessionUser;
-  tenant: { id: string; name: string; slug: string; status: string } | null;
+  /** The active POS workspace, its owning account and its POS vertical. */
+  tenant: {
+    id: string;
+    name: string;
+    slug: string;
+    status: string;
+    accountId: string | null;
+    vertical: 'clothing' | 'restaurant' | 'pharmacy' | 'supershop' | 'grocery';
+  } | null;
+  /**
+   * Workspaces this user may switch between. The account owner sees every
+   * workspace of the account; staff see only their own.
+   */
+  workspaces: WorkspaceSummary[];
   stores: SessionStore[];
   entitlement: Entitlement | null;
   needsStoreSetup: boolean;

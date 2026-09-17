@@ -60,6 +60,7 @@ export class NagadPaymentProvider implements PaymentProvider {
       providerTransactionId: null,
       status: null,
       amountMinor: null,
+      currency: null,
       paidAt: null,
       raw: verified ? request.parsedBody : undefined,
     };

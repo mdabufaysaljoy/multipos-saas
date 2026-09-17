@@ -1,8 +1,9 @@
 import * as React from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
+import { useSearchParams } from 'react-router-dom';
 import { format } from 'date-fns';
-import { AlertTriangle, Check, CreditCard, Info, RotateCcw } from 'lucide-react';
+import { AlertTriangle, Check, CreditCard, Info, Lock, Plus, RotateCcw, Sparkles } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -12,8 +13,17 @@ import { LoadingState } from '@/components/states';
 import { PageHeader } from '@/components/PageHeader';
 import { PermissionGate } from '@/components/PermissionGate';
 import { ApiError } from '@/api/client';
-import { billingApi } from '@/api/endpoints';
-import { formatMoney } from '@/lib/money';
+import { billingApi, type SubscriptionEventRow } from '@/api/endpoints';
+import { DowngradeDialog } from '@/features/billing/DowngradeDialog';
+import { UpgradeDialog } from '@/features/billing/UpgradeDialog';
+import { RenewalCard } from '@/features/billing/RenewalCard';
+import { formatPlanPrice } from '@/lib/money';
+import { UsageMeter } from '@/components/UsageMeter';
+import { evaluateUsage, usageLimitsFor } from '@/lib/usageLimits';
+import { PlanComparisonTable } from '@/features/billing/PlanComparisonTable';
+import { upgradeGains } from '@/lib/planCatalog';
+import { FEATURE_LABELS } from '@/lib/planCatalog';
+import type { PlanOption, SubscriptionPlan } from '@/types/domain';
 import { useAuth } from '@/hooks/useAuth';
 import { cn } from '@/lib/utils';
 
@@ -26,27 +36,106 @@ const STATUS_STYLE: Record<string, { label: string; variant: 'success' | 'warnin
   suspended: { label: 'Suspended', variant: 'destructive' },
 };
 
-const FEATURE_LABELS: Record<string, string> = {
-  salesReports: 'Sales reports',
-  advancedReports: 'Advanced analytics',
-  customerManagement: 'Customer management',
-  inventoryLedger: 'Inventory ledger',
-  multiStore: 'Multiple stores',
-  customRoles: 'Custom roles',
-  exportData: 'Data export',
-  prioritySupport: 'Priority support',
+
+const EVENT_LABELS: Record<string, string> = {
+  created: 'Started',
+  activated: 'Activated',
+  extended: 'Extended',
+  plan_changed: 'Plan changed',
+  renewed: 'Renewed',
+  renewal_failed: 'Renewal failed',
+  cancelled: 'Cancelled',
+  reactivated: 'Resumed',
+  expired: 'Ended',
+  suspended: 'Suspended',
+  deactivated: 'Deactivated',
+  refund_adjusted: 'Changed after refund',
 };
+
+/** What happened to this workspace's subscription, newest first, including changes made by support. */
+function BillingActivity() {
+  const { data, isLoading } = useQuery({ queryKey: ['subscription', 'history'], queryFn: billingApi.history });
+  if (isLoading) return <LoadingState label="Loading billing activity…" />;
+  const events = (data?.events ?? []) as SubscriptionEventRow[];
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Billing activity</CardTitle>
+        <CardDescription>Every change to your subscription, and why it happened.</CardDescription>
+      </CardHeader>
+      <CardContent>
+        {events.length === 0 ? (
+          <p className="text-sm text-muted-foreground">Nothing has happened yet.</p>
+        ) : (
+          <ul className="divide-y">
+            {events.map((event) => (
+              <li key={event._id} className="flex flex-col gap-1 py-3 sm:flex-row sm:items-start sm:justify-between">
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2">
+                    <Badge variant={event.type === 'refund_adjusted' || event.type === 'renewal_failed' ? 'warning' : 'secondary'}>
+                      {EVENT_LABELS[event.type] ?? event.type}
+                    </Badge>
+                  </div>
+                  <p className="mt-1 break-words text-sm">{event.message}</p>
+                </div>
+                <time className="shrink-0 text-xs text-muted-foreground" dateTime={event.createdAt}>
+                  {format(new Date(event.createdAt), 'd MMM yyyy, HH:mm')}
+                </time>
+              </li>
+            ))}
+          </ul>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
 
 export function SubscriptionPage() {
   const queryClient = useQueryClient();
   const { refresh } = useAuth();
   const [interval, setInterval] = React.useState<'monthly' | 'yearly'>('monthly');
   const [cancelOpen, setCancelOpen] = React.useState(false);
+  const [upgradePlan, setUpgradePlan] = React.useState<SubscriptionPlan | null>(null);
+  // A downgrade opens the requirement panel first rather than being disabled.
+  const [downgradePlan, setDowngradePlan] = React.useState<PlanOption | null>(null);
 
   const { data, isLoading } = useQuery({ queryKey: ['subscription', 'current'], queryFn: billingApi.current });
-  const { data: plans } = useQuery({ queryKey: ['plans'], queryFn: billingApi.plans });
-  const { data: history } = useQuery({ queryKey: ['subscription', 'history'], queryFn: billingApi.history });
+  // The server classifies every plan against the current one, so the cards and
+  // the API can never disagree about what is allowed.
+  const { data: planOptions } = useQuery({ queryKey: ['plan-options'], queryFn: billingApi.planOptions });
+  // Shares the pricing page's cache; needed for the full plan definitions.
+  const { data: publicPlans } = useQuery({ queryKey: ['public', 'plans'], queryFn: billingApi.plans });
   const { data: providers } = useQuery({ queryKey: ['payment-providers'], queryFn: billingApi.providers });
+  const { data: payInfo } = useQuery({ queryKey: ['payment-instructions'], queryFn: billingApi.paymentInstructions });
+  const { data: requests } = useQuery({ queryKey: ['upgrade-requests'], queryFn: billingApi.upgradeRequests });
+
+  const pendingRequest = requests?.find((r) => r.status === 'pending') ?? null;
+
+  // Returning from an online payment page. The server already confirmed the
+  // result with the provider before redirecting; this only tells the customer.
+  const [searchParams, setSearchParams] = useSearchParams();
+  React.useEffect(() => {
+    const result = searchParams.get('payment');
+    if (!result) return;
+    if (result === 'success') {
+      toast.success('Payment confirmed', { description: 'Your plan is active.' });
+      void refresh();
+    } else if (result === 'pending') {
+      toast.info('Payment not completed yet', {
+        description: 'If money left your account, it will be confirmed automatically once bKash reports it.',
+      });
+    } else {
+      toast.error('Payment was not accepted', {
+        description: 'Nothing was activated. If you were charged, contact support with your bKash transaction ID.',
+      });
+    }
+    void queryClient.invalidateQueries({ queryKey: ['subscription'] });
+    const next = new URLSearchParams(searchParams);
+    next.delete('payment');
+    next.delete('ref');
+    setSearchParams(next, { replace: true });
+  }, [searchParams, setSearchParams, queryClient, refresh]);
 
   const cancel = useMutation({
     mutationFn: () => billingApi.cancel({ immediate: false }),
@@ -71,11 +160,35 @@ export function SubscriptionPage() {
     onError: (err) => toast.error(err instanceof ApiError ? err.message : 'Could not resume'),
   });
 
+  const scheduleChange = useMutation({
+    mutationFn: (plan: PlanOption) => billingApi.scheduleChange({ plan: plan.catalogPlanCode!, billingCycle: plan.billingCycle! }),
+    onSuccess: (result) => {
+      toast.success(`${result.scheduledChange?.planName ?? 'The new plan'} starts at your next renewal`, {
+        description: result.breaches.length > 0 ? 'Reduce your usage before then, or the renewal will not go through.' : undefined,
+      });
+      setDowngradePlan(null);
+      void queryClient.invalidateQueries({ queryKey: ['subscription'] });
+    },
+    onError: (err) => toast.error(err instanceof ApiError ? err.message : 'Could not schedule the change'),
+  });
+
   if (isLoading || !data) return <LoadingState label="Loading your plan…" />;
 
   const { entitlement, subscription, usage } = data;
   const status = STATUS_STYLE[entitlement.status] ?? { label: entitlement.status, variant: 'secondary' as const };
-  const visiblePlans = (plans ?? []).filter((plan) => plan.interval === interval);
+  const visiblePlans = (planOptions?.options ?? []).filter((plan) => plan.interval === interval);
+
+  // Full plan objects for the comparison and the upgrade summaries. The
+  // plan-options payload carries verdicts, not the whole plan.
+  const allPlans = (publicPlans ?? []).filter((plan) => plan.interval === interval).sort((a, b) => a.tier - b.tier);
+  const currentPlanFull = (publicPlans ?? []).find((plan) => plan.code === entitlement.planCode) ?? null;
+
+  const upgradeTargets = currentPlanFull
+    ? allPlans
+        .filter((plan) => plan.tier > currentPlanFull.tier)
+        .map((plan) => ({ plan, gains: upgradeGains(currentPlanFull, plan) }))
+        .filter((entry) => entry.gains.length > 0)
+    : [];
   const noOnlinePayments = (providers ?? []).length === 0;
 
   return (
@@ -92,7 +205,7 @@ export function SubscriptionPage() {
               </CardTitle>
               <CardDescription>
                 {subscription
-                  ? `${formatMoney(subscription.planSnapshot.priceMinor, subscription.planSnapshot.currency)} / ${subscription.planSnapshot.interval === 'yearly' ? 'year' : 'month'}`
+                  ? `${formatPlanPrice(subscription.planSnapshot.priceMinor, subscription.planSnapshot.currency)} / ${subscription.planSnapshot.interval === 'yearly' ? 'year' : 'month'}`
                   : 'Contact support to activate a plan.'}
               </CardDescription>
             </div>
@@ -141,8 +254,8 @@ export function SubscriptionPage() {
                   </p>
                 ) : (
                   <p>
-                    Ended on <strong>{format(new Date(entitlement.currentPeriodEnd), 'd MMMM yyyy')}</strong>. You can
-                    still read your data, but new sales and edits are blocked.
+                    Ended on <strong>{format(new Date(entitlement.currentPeriodEnd), 'd MMMM yyyy')}</strong>. Only
+                    your wallet and this page are available until you activate a plan.
                   </p>
                 )}
               </div>
@@ -150,15 +263,22 @@ export function SubscriptionPage() {
           )}
 
           <div className="grid gap-3 sm:grid-cols-3">
-            <UsageBar label="Products" used={usage.products} limit={entitlement.limits.maxProducts} />
-            <UsageBar label="Staff accounts" used={usage.staff} limit={entitlement.limits.maxStaff} />
-            <UsageBar label="Stores" used={usage.stores} limit={entitlement.limits.maxStores} />
+            {usageLimitsFor(usage.vertical).map((definition) => (
+              <UsageMeter
+                key={definition.limit}
+                status={evaluateUsage(
+                  definition,
+                  (usage as unknown as Record<string, number>)[definition.usage] ?? 0,
+                  (entitlement.limits as unknown as Record<string, number>)[definition.limit] ?? -1,
+                )}
+              />
+            ))}
           </div>
 
           <div className="flex flex-wrap gap-1.5">
             {Object.entries(entitlement.features).map(([key, enabled]) => (
               <Badge key={key} variant={enabled ? 'success' : 'secondary'}>
-                {enabled ? <Check className="mr-1 h-3 w-3" /> : null}
+                {enabled ? <Check className="mr-1 h-3 w-3" /> : <Lock className="mr-1 h-3 w-3" />}
                 {FEATURE_LABELS[key] ?? key}
               </Badge>
             ))}
@@ -166,11 +286,30 @@ export function SubscriptionPage() {
         </CardContent>
       </Card>
 
+      <RenewalCard />
+
+      {pendingRequest && (
+        <Card className="border-warning/40 bg-warning/5">
+          <CardContent className="flex flex-wrap items-center gap-3 p-4 text-sm">
+            <Badge variant="warning">Awaiting review</Badge>
+            <span className="min-w-0 flex-1">
+              Your upgrade to <strong>{pendingRequest.planSnapshot.name}</strong> is being verified
+              (<span className="font-mono">{pendingRequest.transactionId}</span>). Your current plan stays active until
+              it is approved.
+            </span>
+          </CardContent>
+        </Card>
+      )}
+
       <Tabs defaultValue="plans">
         <TabsList>
           <TabsTrigger value="plans">Plans</TabsTrigger>
-          <TabsTrigger value="history">History</TabsTrigger>
+          <TabsTrigger value="activity">Billing activity</TabsTrigger>
         </TabsList>
+
+        <TabsContent value="activity">
+          <BillingActivity />
+        </TabsContent>
 
         <TabsContent value="plans" className="space-y-4">
           <div className="flex items-center gap-2">
@@ -194,22 +333,42 @@ export function SubscriptionPage() {
           )}
 
           <div className="grid gap-4 md:grid-cols-3">
-            {visiblePlans.map((plan) => {
-              const isCurrent = subscription?.planSnapshot.code === plan.code;
+            {visiblePlans.map((plan, _index, all) => {
+              const analyticsPlans = [
+                ...new Set(all.filter((p) => p.features.advancedReports).map((p) => p.name.replace(/ Annual$/, ''))),
+              ].join(' & ');
+              const isCurrent = plan.kind === 'current';
+              // The plan the workspace was on, now lapsed - buying it again is
+              // the way back in, so it must stay clickable.
+              const isRenewal = plan.kind === 'renewal';
+              const locked = plan.kind === 'downgrade' && plan.breaches.length > 0;
               return (
-                <Card key={plan._id} className={cn(isCurrent && 'border-primary ring-1 ring-primary')}>
+                <Card
+                  key={plan.planId}
+                  className={cn(
+                    (isCurrent || isRenewal) && 'border-primary ring-1 ring-primary',
+                    locked && 'opacity-75',
+                  )}
+                >
                   <CardHeader className="pb-3">
                     <div className="flex items-center justify-between">
                       <CardTitle className="text-base">{plan.name}</CardTitle>
                       {isCurrent && <Badge>Current</Badge>}
+                      {isRenewal && <Badge variant="warning">Renew</Badge>}
+                      {plan.kind === 'upgrade' && <Badge variant="success">Upgrade</Badge>}
+                      {plan.kind === 'cycle-change' && <Badge variant="secondary">Switch to annual</Badge>}
+                      {plan.kind === 'cycle-downgrade' && <Badge variant="warning">Cancel first</Badge>}
+                      {plan.kind === 'downgrade' && <Badge variant="secondary">Downgrade</Badge>}
                     </div>
-                    <CardDescription>{plan.description}</CardDescription>
+                    <CardDescription>
+                      {plan.interval === 'yearly' ? 'Billed yearly' : 'Billed monthly'}
+                    </CardDescription>
                   </CardHeader>
                   <CardContent className="space-y-3">
                     <p className="tabular text-2xl font-semibold">
-                      {formatMoney(plan.priceMinor, plan.currency)}
+                      {formatPlanPrice(plan.priceMinor, plan.currency)}
                       <span className="text-sm font-normal text-muted-foreground">
-                        /{plan.interval === 'yearly' ? 'year' : 'month'}
+                        {' '}/ {plan.interval === 'yearly' ? 'year' : 'month'}
                       </span>
                     </p>
 
@@ -228,21 +387,60 @@ export function SubscriptionPage() {
                             {FEATURE_LABELS[key] ?? key}
                           </li>
                         ))}
+                      {!plan.features.advancedReports && (
+                        <li className="flex items-start gap-1.5 text-muted-foreground">
+                          <Lock className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                          <span>
+                            Advanced Analytics
+                            <span className="block text-xs">Available on {analyticsPlans}</span>
+                          </span>
+                        </li>
+                      )}
                     </ul>
 
                     <PermissionGate anyOf={['subscription.manage']}>
                       <Button
                         className="w-full"
-                        variant={isCurrent ? 'outline' : 'default'}
-                        disabled={isCurrent || noOnlinePayments}
+                        variant={isCurrent || locked ? 'outline' : 'default'}
+                        // The server rejects anything not `allowedDirect`, so the
+                        // button must not imply otherwise.
+                        disabled={isCurrent || Boolean(pendingRequest)}
                         onClick={() =>
-                          toast.info('Contact support to switch plans', {
-                            description: 'Online checkout is not enabled on this server yet.',
-                          })
+                          // Downgrades open the requirement panel; everything
+                          // else goes straight to payment.
+                          plan.kind === 'downgrade'
+                            ? setDowngradePlan(plan)
+                            : setUpgradePlan({
+                            _id: plan.planId,
+                            code: plan.code,
+                            name: plan.name,
+                            description: '',
+                            interval: plan.interval,
+                            priceMinor: plan.priceMinor,
+                            currency: plan.currency,
+                            trialDays: 0,
+                            features: plan.features,
+                            limits: plan.limits,
+                            isActive: true,
+                            sortOrder: 0,
+                                tier: plan.tier,
+                              })
                         }
                       >
                         <CreditCard />
-                        {isCurrent ? 'Current plan' : 'Choose plan'}
+                        {isCurrent
+                          ? 'Current plan'
+                          : pendingRequest
+                            ? 'Request pending'
+                            : plan.kind === 'downgrade'
+                              ? plan.breaches.length > 0
+                                ? `Downgrade — ${plan.breaches[0].excess} ${plan.breaches[0].label} over limit`
+                                : 'Downgrade'
+                              : plan.kind === 'cycle-change'
+                                ? 'Switch plan'
+                                : isRenewal
+                                  ? 'Renew plan'
+                                  : 'Upgrade'}
                       </Button>
                     </PermissionGate>
                   </CardContent>
@@ -250,39 +448,87 @@ export function SubscriptionPage() {
               );
             })}
           </div>
+
+          {/* What each upgrade actually buys, derived from the plans rather
+              than written by hand, so it cannot drift from what is enforced. */}
+          {upgradeTargets.length > 0 && (
+            <div className="mt-6 grid gap-4 sm:grid-cols-2">
+              {upgradeTargets.map(({ plan, gains }) => (
+                <Card key={plan._id} className="border-primary/30">
+                  <CardHeader className="pb-2">
+                    <CardTitle className="flex items-center gap-2 text-base">
+                      <Sparkles className="h-4 w-4 text-primary" />
+                      Upgrade to {plan.name.replace(/ Annual$/, '')}
+                    </CardTitle>
+                    <CardDescription>
+                      {formatPlanPrice(plan.priceMinor, plan.currency)} / {plan.interval === 'yearly' ? 'year' : 'month'}
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent>
+                    <ul className="space-y-1 text-sm">
+                      {gains.map((gain) => (
+                        <li key={gain} className="flex items-start gap-2">
+                          <Plus className="mt-0.5 h-3.5 w-3.5 shrink-0 text-success" />
+                          <span>{gain}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </CardContent>
+                </Card>
+              ))}
+            </div>
+          )}
+
+          {/* The same comparison a prospect sees on the public pricing page. */}
+          {allPlans.length > 0 && (
+            <section className="mt-8">
+              <h2 className="text-lg font-semibold tracking-tight">Compare every plan</h2>
+              <p className="mt-1 text-sm text-muted-foreground">
+                Everything each plan includes, and everything it does not.
+              </p>
+              <div className="mt-4">
+                <PlanComparisonTable plans={allPlans} currentPlanCode={entitlement.planCode} />
+              </div>
+            </section>
+          )}
         </TabsContent>
 
-        <TabsContent value="history">
-          <Card>
-            <CardHeader className="pb-3">
-              <CardTitle className="text-base">Subscription history</CardTitle>
-            </CardHeader>
-            <CardContent>
-              {(history?.events?.length ?? 0) === 0 ? (
-                <p className="py-6 text-center text-sm text-muted-foreground">No history yet</p>
-              ) : (
-                <ul className="divide-y">
-                  {(history?.events as { _id: string; type: string; message: string; createdAt: string; actorNameSnapshot: string }[]).map(
-                    (event) => (
-                      <li key={event._id} className="flex items-start gap-3 py-2.5 first:pt-0">
-                        <Badge variant="secondary" className="mt-0.5 shrink-0">
-                          {event.type.replace(/_/g, ' ')}
-                        </Badge>
-                        <div className="min-w-0 flex-1">
-                          <p className="text-sm">{event.message}</p>
-                          <p className="text-xs text-muted-foreground">
-                            {format(new Date(event.createdAt), 'd MMM yyyy, hh:mm a')} · {event.actorNameSnapshot}
-                          </p>
-                        </div>
-                      </li>
-                    ),
-                  )}
-                </ul>
-              )}
-            </CardContent>
-          </Card>
-        </TabsContent>
       </Tabs>
+
+      <DowngradeDialog
+        plan={downgradePlan}
+        currentPlanName={entitlement.planName}
+        onClose={() => setDowngradePlan(null)}
+        scheduling={scheduleChange.isPending}
+        onSchedule={entitlement.isUsable ? (plan) => scheduleChange.mutate(plan) : undefined}
+        onProceed={(plan) => {
+          setDowngradePlan(null);
+          setUpgradePlan({
+            _id: plan.planId,
+            code: plan.code,
+            name: plan.name,
+            description: '',
+            interval: plan.interval,
+            priceMinor: plan.priceMinor,
+            currency: plan.currency,
+            trialDays: 0,
+            features: plan.features,
+            limits: plan.limits,
+            isActive: true,
+            sortOrder: 0,
+            tier: plan.tier,
+            catalogPlanCode: plan.catalogPlanCode,
+            billingCycle: plan.billingCycle,
+          });
+        }}
+      />
+
+      <UpgradeDialog
+        plan={upgradePlan}
+        currentPlanName={entitlement.planName}
+        instructions={payInfo?.instructions ?? []}
+        onClose={() => setUpgradePlan(null)}
+      />
 
       <ConfirmDialog
         open={cancelOpen}
@@ -316,28 +562,4 @@ function LimitRow({ label, value }: { label: string; value: number }) {
   );
 }
 
-function UsageBar({ label, used, limit }: { label: string; used: number; limit: number }) {
-  const unlimited = limit === -1;
-  const percent = unlimited ? 0 : Math.min(100, Math.round((used / Math.max(1, limit)) * 100));
-  const near = !unlimited && percent >= 80;
 
-  return (
-    <div className="rounded-md border p-3">
-      <div className="flex items-baseline justify-between">
-        <span className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{label}</span>
-        <span className="tabular text-sm font-semibold">
-          {used}
-          <span className="font-normal text-muted-foreground">/{unlimited ? '∞' : limit}</span>
-        </span>
-      </div>
-      {!unlimited && (
-        <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-muted">
-          <div
-            className={cn('h-full rounded-full transition-all', near ? 'bg-warning' : 'bg-primary')}
-            style={{ width: `${percent}%` }}
-          />
-        </div>
-      )}
-    </div>
-  );
-}

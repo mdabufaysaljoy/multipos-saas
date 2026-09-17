@@ -10,7 +10,15 @@ export const TabsList = React.forwardRef<
 >(({ className, ...props }, ref) => (
   <TabsPrimitive.List
     ref={ref}
-    className={cn('inline-flex h-9 items-center justify-center rounded-lg bg-muted p-1 text-muted-foreground', className)}
+    className={cn(
+      'inline-flex h-9 items-center justify-center rounded-lg bg-muted p-1 text-muted-foreground',
+      // A tab row wider than the screen must scroll, not silently hide its
+      // later tabs. The platform admin's seven tabs measured 711px inside a
+      // 375px viewport with nothing scrollable, which put Integrations and the
+      // audit log completely out of reach on a phone.
+      'max-w-full overflow-x-auto scrollbar-thin',
+      className,
+    )}
     {...props}
   />
 ));
@@ -23,7 +31,9 @@ export const TabsTrigger = React.forwardRef<
   <TabsPrimitive.Trigger
     ref={ref}
     className={cn(
-      'inline-flex items-center justify-center whitespace-nowrap rounded-md px-3 py-1 text-sm font-medium transition-all',
+      // `shrink-0` keeps each tab at its natural width inside the scroller
+      // rather than being squeezed until the labels are unreadable.
+      'inline-flex shrink-0 items-center justify-center whitespace-nowrap rounded-md px-3 py-1 text-sm font-medium transition-all',
       'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50',
       'data-[state=active]:bg-card data-[state=active]:text-foreground data-[state=active]:shadow',
       className,

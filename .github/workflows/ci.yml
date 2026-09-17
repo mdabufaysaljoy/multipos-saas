@@ -1,0 +1,71 @@
+name: CI
+
+# Every push to main and every pull request must typecheck, build and pass the
+# end-to-end suite against a real MongoDB before it can be trusted.
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: Typecheck, build and test
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    services:
+      mongo:
+        image: mongo:7
+        ports:
+          - 27017:27017
+        options: >-
+          --health-cmd "mongosh --quiet --eval 'db.runCommand({ ping: 1 })'"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+
+    env:
+      # The suite derives its own isolated `*_test` database from this and drops
+      # it afterwards; nothing here is shared with any real environment.
+      MONGODB_URI: mongodb://127.0.0.1:27017/clothing_pos_ci
+      SMS_MOCK_ENABLED: 'true'
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      # Never commit secrets: CI mints throwaway ones for each run.
+      - name: Generate throwaway JWT secrets
+        run: |
+          access="$(openssl rand -hex 32)"
+          refresh="$(openssl rand -hex 32)"
+          echo "::add-mask::$access"
+          echo "::add-mask::$refresh"
+          echo "JWT_ACCESS_SECRET=$access" >> "$GITHUB_ENV"
+          echo "JWT_REFRESH_SECRET=$refresh" >> "$GITHUB_ENV"
+
+      - name: Install
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Build
+        run: npm run build
+
+      - name: End-to-end tests
+        run: npm test

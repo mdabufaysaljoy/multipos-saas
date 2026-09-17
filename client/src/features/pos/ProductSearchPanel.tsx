@@ -40,7 +40,8 @@ export function ProductSearchPanel({ onSelect, currency, onScanClick }: ProductS
     staleTime: 10_000,
   });
 
-  const variants = data ?? [];
+  // Memoised: a fresh `[]` on every render would re-run the grouping below each time.
+  const variants = React.useMemo(() => data ?? [], [data]);
   // ONE card per product, not one per variant.
   const groups = React.useMemo(() => groupVariantsByProduct(variants), [variants]);
 

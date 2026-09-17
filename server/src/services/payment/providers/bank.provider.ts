@@ -34,6 +34,6 @@ export class BankPaymentProvider implements PaymentProvider {
   }
 
   async handleWebhook(_request: WebhookRequest): Promise<WebhookResult> {
-    return { verified: false, providerTransactionId: null, status: null, amountMinor: null, paidAt: null };
+    return { verified: false, providerTransactionId: null, status: null, amountMinor: null, currency: null, paidAt: null };
   }
 }

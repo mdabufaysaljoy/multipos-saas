@@ -37,7 +37,31 @@ export const PAYMENT_PROVIDERS = {
   BKASH: 'bkash',
   NAGAD: 'nagad',
   BANK: 'bank',
+  /** Hosted checkout aggregator (bKash, Nagad, Rocket, Upay, card) - see uddoktapay.provider.ts. */
+  UDDOKTAPAY: 'uddoktapay',
+  /** Out-of-band Send Money, proven by a payment SMS reported by a registered device. */
+  SMS_VERIFIED: 'sms_verified',
 } as const;
+export type PaymentProviderKey = (typeof PAYMENT_PROVIDERS)[keyof typeof PAYMENT_PROVIDERS];
+
+/**
+ * What a payment is FOR. Previously carried in `metadata.purpose`; a first-class
+ * field so reconciliation can filter and index by it. `wallet_topup` keeps the
+ * exact string the existing activation path already looks for.
+ */
+export const PAYMENT_PURPOSES = {
+  WALLET_TOPUP: 'wallet_topup',
+  SUBSCRIPTION_PURCHASE: 'subscription_purchase',
+  SUBSCRIPTION_RENEWAL: 'subscription_renewal',
+  SUBSCRIPTION_UPGRADE: 'subscription_upgrade',
+  ADDON_PURCHASE: 'addon_purchase',
+  OTHER: 'other',
+} as const;
+export type PaymentPurpose = (typeof PAYMENT_PURPOSES)[keyof typeof PAYMENT_PURPOSES];
+
+/** How a payment was proven. Kept beside the status so reconciliation shows provenance. */
+export const VERIFICATION_METHODS = ['provider_api', 'provider_webhook', 'sms_event', 'manual_admin', 'none'] as const;
+export type VerificationMethod = (typeof VERIFICATION_METHODS)[number];
 export type PaymentProviderName = (typeof PAYMENT_PROVIDERS)[keyof typeof PAYMENT_PROVIDERS];
 
 export const BILLING_INTERVALS = ['monthly', 'yearly'] as const;

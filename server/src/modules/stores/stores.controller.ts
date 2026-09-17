@@ -38,3 +38,15 @@ export const updateCurrent = asyncHandler(async (req: Request, res: Response) =>
   const ctx = getContext(req);
   ok(res, await storeService.update(ctx, ctx.storeId, body<UpdateStoreInput>(req)));
 });
+
+export const remove = asyncHandler(async (req: Request, res: Response) => {
+  const ctx = getContext(req);
+  const { id } = params<{ id: import('mongoose').Types.ObjectId }>(req);
+  ok(res, await storeService.remove(ctx, id));
+});
+
+export const makeDefault = asyncHandler(async (req: Request, res: Response) => {
+  const ctx = getContext(req);
+  const { id } = params<{ id: import('mongoose').Types.ObjectId }>(req);
+  ok(res, await storeService.makeDefault(ctx, id));
+});

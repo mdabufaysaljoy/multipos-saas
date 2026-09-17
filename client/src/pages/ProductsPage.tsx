@@ -9,6 +9,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { DataTable, type Column } from '@/components/DataTable';
 import { PageHeader } from '@/components/PageHeader';
+import { LimitAlert } from '@/components/LimitAlert';
 import { PermissionGate } from '@/components/PermissionGate';
 import { SearchInput, useDebounced } from '@/components/SearchInput';
 import { ProductFormDialog } from '@/features/products/ProductFormDialog';
@@ -70,7 +71,7 @@ export function ProductsPage() {
 
   const columns: Column<Product>[] = [
     {
-      key: 'product',
+      key: 'product', mobile: 'title',
       header: 'Product',
       cell: (row) => {
         const image = row.images?.find((i) => i.isPrimary) ?? row.images?.[0];
@@ -126,13 +127,13 @@ export function ProductsPage() {
       },
     },
     {
-      key: 'status',
+      key: 'status', mobile: 'hide',
       header: 'Status',
       cell: (row) =>
         row.isActive ? <Badge variant="success">Active</Badge> : <Badge variant="secondary">Inactive</Badge>,
     },
     {
-      key: 'actions',
+      key: 'actions', mobile: 'actions',
       header: '',
       headerClassName: 'text-right',
       className: 'text-right',
@@ -186,6 +187,7 @@ export function ProductsPage() {
           </PermissionGate>
         }
       />
+      <LimitAlert resource="products" />
 
       <div className="flex flex-wrap gap-2">
         <SearchInput value={term} onChange={setTerm} placeholder="Search name, SKU or brand…" className="w-full sm:max-w-xs" />

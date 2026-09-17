@@ -52,7 +52,9 @@ export function createApp(): Express {
     '/api',
     rateLimit({
       windowMs: 60_000,
-      limit: 600,
+      // Relaxed in development so the end-to-end suite - which makes several
+      // thousand calls per run - is not throttled. Production stays strict.
+      limit: isProd ? 600 : 20_000,
       standardHeaders: 'draft-7',
       legacyHeaders: false,
       message: { success: false, error: { code: 'TOO_MANY_REQUESTS', message: 'Slow down a moment and try again.' } },

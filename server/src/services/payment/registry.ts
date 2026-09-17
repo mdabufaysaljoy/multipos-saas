@@ -5,6 +5,7 @@ import { ManualPaymentProvider } from './providers/manual.provider';
 import { BkashPaymentProvider } from './providers/bkash.provider';
 import { NagadPaymentProvider } from './providers/nagad.provider';
 import { BankPaymentProvider } from './providers/bank.provider';
+import { UddoktaPayProvider } from './providers/uddoktapay.provider';
 
 /**
  * Provider lookup. Application code depends on the PaymentProvider interface
@@ -53,7 +54,7 @@ export const paymentRegistry = new PaymentProviderRegistry([
     username: process.env.BKASH_USERNAME ?? '',
     password: process.env.BKASH_PASSWORD ?? '',
     baseUrl: process.env.BKASH_BASE_URL ?? '',
-    webhookSecret: process.env.BKASH_WEBHOOK_SECRET ?? '',
+    webhookTopicArn: process.env.BKASH_WEBHOOK_TOPIC_ARN ?? '',
   }),
   new NagadPaymentProvider({
     merchantId: process.env.NAGAD_MERCHANT_ID ?? '',
@@ -61,6 +62,11 @@ export const paymentRegistry = new PaymentProviderRegistry([
     publicKey: process.env.NAGAD_PUBLIC_KEY ?? '',
     baseUrl: process.env.NAGAD_BASE_URL ?? '',
     webhookSecret: process.env.NAGAD_WEBHOOK_SECRET ?? '',
+  }),
+  new UddoktaPayProvider({
+    apiKey: process.env.UDDOKTAPAY_API_KEY ?? '',
+    // Sandbox: https://sandbox.uddoktapay.com - production is the merchant's own installation.
+    baseUrl: process.env.UDDOKTAPAY_BASE_URL ?? '',
   }),
   new BankPaymentProvider(),
 ]);

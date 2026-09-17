@@ -1,4 +1,5 @@
 import { Types } from 'mongoose';
+import dayjs from 'dayjs';
 import { INVENTORY_TX_TYPES, SALE_STATUS } from '../../config/constants';
 import { PERMISSIONS } from '../../config/permissions';
 import { ProductModel } from '../../models/Product';
@@ -51,6 +52,8 @@ class SaleService {
   async create(ctx: TenantContext, input: CreateSaleInput) {
     const entitlement = await entitlementService.forTenant(ctx.tenantId);
     entitlementService.assertUsable(entitlement);
+    // Checked before any stock moves, so a rejected sale leaves nothing to undo.
+    await entitlementService.assertCanRecordSale(ctx.tenantId, entitlement, 'clothing');
 
     const store = await StoreModel.findOne({ _id: ctx.storeId, tenantId: ctx.tenantId }).lean();
     if (!store) throw ApiError.notFound('Store not found');
@@ -113,6 +116,25 @@ class SaleService {
         soldAt,
       });
 
+      // The pre-flight allowance check is not atomic, so confirm by ordinal now
+      // the sale exists. Racing tills each get a distinct position; any beyond
+      // the monthly allowance undo themselves and the catch below puts the
+      // stock back. The invoice sequence number is already spent, which leaves
+      // a gap - preferable to selling past a limit the customer has not bought.
+      const monthStart = dayjs(soldAt).startOf('month').toDate();
+      const ordinal = await SaleModel.countDocuments({
+        tenantId: ctx.tenantId,
+        status: SALE_STATUS.COMPLETED,
+        soldAt: { $gte: monthStart, $lte: soldAt },
+        _id: { $lte: sale._id },
+      });
+      try {
+        entitlementService.assertOrdinalWithinLimit(entitlement, 'maxMonthlySales', ordinal, 'sales per month');
+      } catch (error) {
+        await SaleModel.deleteOne({ _id: sale._id, tenantId: ctx.tenantId });
+        throw error;
+      }
+
       // Backfill the ledger rows with the invoice number now that it exists.
       await inventoryService.attachReference(ctx, applied, 'sale', sale._id, saleNumber);
 
@@ -133,7 +155,10 @@ class SaleService {
 
   async list(ctx: TenantContext, input: ListSalesInput) {
     const { page, limit, skip } = resolvePage(input);
-    const filter: Record<string, unknown> = { ...this.scope(ctx) };
+    // `allBranches` lets an owner see history from every branch, including any
+    // that have since been deleted.
+    const filter: Record<string, unknown> =
+      input.allBranches && ctx.isAdmin ? { tenantId: ctx.tenantId } : { ...this.scope(ctx) };
 
     if (input.status) filter.status = input.status;
     if (input.cashierId) filter.cashierId = input.cashierId;
@@ -169,23 +194,36 @@ class SaleService {
    * to later catalogue edits or deletions.
    */
   async getById(ctx: TenantContext, id: Types.ObjectId) {
-    const sale = await SaleModel.findOne({ _id: id, ...this.scope(ctx) }).lean();
+    // Branch scoping applies to LISTS. For a direct lookup an administrator is
+    // allowed tenant-wide access, otherwise sales made in a branch that has
+    // since been deleted would become unreachable - and the requirement is that
+    // historical business data stays auditable, not merely stored.
+    const filter = ctx.isAdmin
+      ? { _id: id, tenantId: ctx.tenantId }
+      : { _id: id, ...this.scope(ctx) };
+
+    const sale = await SaleModel.findOne(filter).lean();
     if (!sale) throw ApiError.notFound('Sale not found');
     return sale;
   }
 
   async getByNumber(ctx: TenantContext, saleNumber: string) {
-    const sale = await SaleModel.findOne({ ...this.scope(ctx), saleNumber: saleNumber.trim().toUpperCase() }).lean();
+    const filter = ctx.isAdmin ? { tenantId: ctx.tenantId } : this.scope(ctx);
+    const sale = await SaleModel.findOne({ ...filter, saleNumber: saleNumber.trim().toUpperCase() }).lean();
     if (!sale) throw ApiError.notFound(`No sale found with number ${saleNumber}`);
     return sale;
   }
 
   /** Everything the 58mm receipt needs, in one call. */
   async getReceipt(ctx: TenantContext, id: Types.ObjectId) {
-    const [sale, store] = await Promise.all([
-      this.getById(ctx, id),
-      StoreModel.findOne({ _id: ctx.storeId, tenantId: ctx.tenantId }).lean(),
-    ]);
+    const sale = await this.getById(ctx, id);
+
+    // Reprint the branch the sale was actually made in - including a deleted
+    // one - so an old receipt reproduces exactly as it was issued.
+    const store =
+      (await StoreModel.findOne({ _id: sale.storeId, tenantId: ctx.tenantId }).lean()) ??
+      (await StoreModel.findOne({ _id: ctx.storeId, tenantId: ctx.tenantId }).lean());
+
     if (!store) throw ApiError.notFound('Store not found');
 
     return {
@@ -193,6 +231,7 @@ class SaleService {
       store: {
         name: store.name,
         logoUrl: store.logoUrl,
+        receiptLogoUrl: store.receiptLogoUrl,
         phone: store.phone,
         email: store.email,
         address: store.address,

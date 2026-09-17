@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { minorAmount, nonNegativeIntegerQuantity, objectId, searchSchema } from '../common/common.validators';
+import { minorAmount, nonNegativeIntegerQuantity, objectId, searchSchema, httpUrl } from '../common/common.validators';
 
 const skuField = z
   .string()
@@ -32,7 +32,7 @@ export const createProductSchema = z.object({
   description: z.string().trim().max(2000).optional().default(''),
   brand: z.string().trim().max(120).optional().default(''),
   images: z
-    .array(z.object({ url: z.string().url(), key: z.string().nullable().default(null), isPrimary: z.boolean().default(false) }))
+    .array(z.object({ url: httpUrl, key: z.string().max(512).nullable().default(null), isPrimary: z.boolean().default(false) }))
     .max(10)
     .default([]),
   options: z

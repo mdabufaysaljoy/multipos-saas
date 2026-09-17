@@ -49,7 +49,7 @@ export function SalesPage() {
 
   const columns: Column<Sale>[] = [
     {
-      key: 'invoice',
+      key: 'invoice', mobile: 'title',
       header: 'Invoice',
       cell: (row) => (
         <div>
@@ -59,7 +59,7 @@ export function SalesPage() {
       ),
     },
     {
-      key: 'customer',
+      key: 'customer', mobile: 'meta',
       header: 'Customer',
       cell: (row) =>
         row.customerSnapshot ? (
@@ -71,7 +71,7 @@ export function SalesPage() {
           <span className="text-sm text-muted-foreground">Walk-in</span>
         ),
     },
-    { key: 'cashier', header: 'Cashier', cell: (row) => <span className="text-sm">{row.cashierNameSnapshot}</span> },
+    { key: 'cashier', mobile: 'hide', header: 'Cashier', cell: (row) => <span className="text-sm">{row.cashierNameSnapshot}</span> },
     {
       key: 'items',
       header: 'Items',
@@ -111,7 +111,7 @@ export function SalesPage() {
         ),
     },
     {
-      key: 'actions',
+      key: 'actions', mobile: 'actions',
       header: '',
       headerClassName: 'text-right',
       className: 'text-right',

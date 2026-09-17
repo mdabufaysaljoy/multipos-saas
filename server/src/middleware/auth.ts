@@ -7,6 +7,7 @@ import { UserModel } from '../models/User';
 import { ApiError } from '../utils/ApiError';
 import { asyncHandler } from '../utils/asyncHandler';
 import { verifyAccessToken } from '../utils/tokens';
+import { homeActor, permissionSourceOf, resolveActor, type WorkspaceActor } from '../services/account/workspaceAccess.service';
 import type { AuthUser } from '../types/express';
 
 const extractToken = (req: Request): string | null => {
@@ -63,6 +64,12 @@ export const authenticate = asyncHandler(async (req: Request, _res: Response, ne
     throw ApiError.unauthorized(expired ? 'Access token expired' : 'Invalid access token');
   }
 
+  // A token without a well-formed subject is never looked up: an undefined id
+  // would be dropped from the filter and match an arbitrary user.
+  if (typeof payload.sub !== 'string' || !Types.ObjectId.isValid(payload.sub)) {
+    throw ApiError.unauthorized('Invalid access token');
+  }
+
   const user = await UserModel.findOne({ _id: payload.sub, deletedAt: null })
     .select('+passwordHash')
     .lean();
@@ -70,17 +77,36 @@ export const authenticate = asyncHandler(async (req: Request, _res: Response, ne
   if (!user) throw ApiError.unauthorized('Account no longer exists');
   if (!user.isActive) throw ApiError.forbidden('This account has been deactivated');
 
-  const permissions = await resolvePermissions(user);
+  // The workspace this session acts in. The signed token names it, but a token
+  // is only a REQUEST: access is re-checked against account ownership on every
+  // call, so losing ownership takes effect immediately. A 401 (not 403) sends
+  // the client through a refresh, which returns the session to the home
+  // workspace instead of trapping it in one it can no longer use.
+  let tenantId = user.tenantId;
+  let actor: WorkspaceActor | null = user.tenantId ? homeActor(user) : null;
+  if (payload.tenantId && user.tenantId && payload.tenantId !== String(user.tenantId)) {
+    if (!Types.ObjectId.isValid(payload.tenantId)) throw ApiError.unauthorized('Invalid access token');
+    const requested = new Types.ObjectId(payload.tenantId);
+    actor = await resolveActor(user, requested);
+    if (!actor) throw ApiError.unauthorized('You no longer have access to this workspace');
+    tenantId = requested;
+  }
+
+  // Role, grants and branches are those of the workspace being acted in: the
+  // user record at home, account ownership or a membership elsewhere. A member
+  // is therefore exactly as capable as their membership says, and no more.
+  const permissions = await resolvePermissions(actor ? permissionSourceOf(actor) : user);
 
   const auth: AuthUser = {
     id: user._id,
     name: user.name,
     email: user.email,
-    role: user.role,
-    tenantId: user.tenantId,
-    storeId: user.storeId,
+    role: actor?.role ?? user.role,
+    tenantId,
+    storeId: actor?.storeId ?? null,
+    storeAccess: actor?.storeAccess ?? [],
     permissions,
-    isAdmin: user.role === ROLES.ADMIN,
+    isAdmin: actor?.isAdmin ?? false,
     isPlatformAdmin: user.role === ROLES.PLATFORM_ADMIN,
   };
 

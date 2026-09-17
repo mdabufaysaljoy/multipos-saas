@@ -8,6 +8,12 @@ export interface UserDoc extends BaseDoc {
   /** null for platform administrators, who are not owned by any tenant. */
   tenantId: Types.ObjectId | null;
   storeId: Types.ObjectId | null;
+  /**
+   * Extra branches this user may work in, beyond their home `storeId`.
+   * Empty means "home branch only". Ignored for admins, who reach every branch
+   * of their own tenant by definition.
+   */
+  storeAccess: Types.ObjectId[];
   name: string;
   email: string;
   phone: string;
@@ -20,6 +26,11 @@ export interface UserDoc extends BaseDoc {
   deniedPermissions: string[];
   isActive: boolean;
   lastLoginAt: Date | null;
+  /**
+   * The workspace this person last switched into. Sign-in lands there again if
+   * they may still act in it; it is a preference, never a grant of access.
+   */
+  lastActiveTenantId: Types.ObjectId | null;
   /** Bumped when permissions change so issued access tokens can be revalidated. */
   permissionVersion: number;
   deletedAt: Date | null;
@@ -30,6 +41,7 @@ const userSchema = new Schema<UserDoc>(
   {
     tenantId: { type: Schema.Types.ObjectId, ref: 'Tenant', default: null, index: true },
     storeId: { type: Schema.Types.ObjectId, ref: 'Store', default: null },
+    storeAccess: { type: [{ type: Schema.Types.ObjectId, ref: 'Store' }], default: [] },
     name: { type: String, required: true, trim: true, maxlength: 120 },
     email: { type: String, required: true, lowercase: true, trim: true },
     phone: { type: String, trim: true, default: '' },
@@ -40,6 +52,7 @@ const userSchema = new Schema<UserDoc>(
     deniedPermissions: { type: [String], default: [] },
     isActive: { type: Boolean, default: true, index: true },
     lastLoginAt: { type: Date, default: null },
+    lastActiveTenantId: { type: Schema.Types.ObjectId, ref: 'Tenant', default: null },
     permissionVersion: { type: Number, default: 1 },
     deletedAt: { type: Date, default: null },
   },
@@ -58,6 +71,9 @@ const userSchema = new Schema<UserDoc>(
 // workspaces; platform admins (tenantId null) share one global namespace.
 userSchema.index({ tenantId: 1, email: 1 }, { unique: true });
 userSchema.index({ tenantId: 1, isActive: 1, deletedAt: 1 });
+// Sign-in and the platform-wide email check look users up by email alone. Not
+// unique: identities from before unique logins may share an email.
+userSchema.index({ email: 1 });
 
 userSchema.methods.comparePassword = function comparePassword(candidate: string): Promise<boolean> {
   return bcrypt.compare(candidate, this.passwordHash);

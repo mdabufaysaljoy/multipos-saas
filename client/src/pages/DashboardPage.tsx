@@ -1,241 +1,168 @@
 import * as React from 'react';
 import { useQuery } from '@tanstack/react-query';
+import { useNavigate } from 'react-router-dom';
 import { format, parseISO } from 'date-fns';
+import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import {
-  Area,
-  AreaChart,
-  Bar,
-  BarChart,
-  CartesianGrid,
-  Cell,
-  Pie,
-  PieChart,
-  ResponsiveContainer,
-  Tooltip,
-  XAxis,
-  YAxis,
-} from 'recharts';
-import {
+  AlertTriangle,
+  ArrowRight,
   Banknote,
-  Package,
+  Boxes,
+  Lock,
+  PackageX,
   Receipt,
   RotateCcw,
   TrendingUp,
+  Wallet,
 } from 'lucide-react';
+import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
 import { EmptyState, LoadingState } from '@/components/states';
 import { PageHeader } from '@/components/PageHeader';
+import {
+  DASHBOARD_PRESETS,
+  RangePicker,
+  isRangeReady,
+  rangeParams,
+  type RangeValue,
+} from '@/features/reports/RangePicker';
 import { reportApi } from '@/api/endpoints';
 import { formatMoney, formatMoneyCompact } from '@/lib/money';
 import { useAuth } from '@/hooks/useAuth';
 import { cn } from '@/lib/utils';
 
-const PRESETS = [
-  { value: 'today', label: 'Today' },
-  { value: 'last7', label: 'Last 7 days' },
-  { value: 'last30', label: 'Last 30 days' },
-  { value: 'thisMonth', label: 'This month' },
-  { value: 'thisYear', label: 'This year' },
-] as const;
-
-// Brand-neutral categorical palette, readable in both themes.
-const CHART_COLORS = ['#2563eb', '#0891b2', '#7c3aed', '#db2777', '#ea580c', '#16a34a', '#ca8a04', '#64748b'];
-
+/**
+ * The Dashboard answers "how is the shop doing right now?" in one glance.
+ *
+ * Deliberately NOT a report: no breakdown tables, no sorting, no drill-down.
+ * Anything analytical lives on Advanced Analytics, which is what stops the two
+ * pages being near-duplicates of each other.
+ */
 export function DashboardPage() {
-  const { activeStore } = useAuth();
+  const { activeStore, session } = useAuth();
+  const navigate = useNavigate();
   const currency = activeStore?.currency ?? 'BDT';
+  const hasAdvanced = session?.entitlement?.features?.advancedReports ?? false;
 
-  const [preset, setPreset] = React.useState<string>('last7');
-  const [from, setFrom] = React.useState('');
-  const [to, setTo] = React.useState('');
-
-  const isCustom = preset === 'custom';
-  const customReady = isCustom && from && to;
+  const [range, setRange] = React.useState<RangeValue>({ preset: 'today', from: '', to: '' });
 
   const { data, isLoading, isError } = useQuery({
-    queryKey: ['dashboard', preset, from, to],
-    queryFn: () =>
-      reportApi.dashboard({
-        preset,
-        ...(customReady ? { from: new Date(from).toISOString(), to: new Date(`${to}T23:59:59`).toISOString() } : {}),
-        granularity: preset === 'thisYear' ? 'month' : 'day',
-      }),
-    enabled: !isCustom || Boolean(customReady),
+    queryKey: ['dashboard', 'overview', range],
+    queryFn: () => reportApi.overview({ ...rangeParams(range), granularity: 'day' }),
+    enabled: isRangeReady(range),
   });
 
-  const summary = data?.summary;
+  const kpis = data?.kpis;
 
   return (
     <div className="space-y-5 p-4 lg:p-6">
       <PageHeader
         title="Dashboard"
-        description={data ? `${data.range.label} · ${format(parseISO(data.range.from), 'dd MMM yyyy')} – ${format(parseISO(data.range.to), 'dd MMM yyyy')}` : 'Sales analytics'}
+        description={data ? `${data.range.label} · ${format(parseISO(data.range.from), 'dd MMM')} – ${format(parseISO(data.range.to), 'dd MMM yyyy')}` : 'Business at a glance'}
+        actions={
+          <Button variant="outline" onClick={() => navigate('/analytics')}>
+            Advanced Analytics
+            {hasAdvanced ? <ArrowRight /> : <Lock />}
+          </Button>
+        }
       />
 
-      <Card>
-        <CardContent className="flex flex-wrap items-end gap-2 p-4">
-          {PRESETS.map((option) => (
-            <Button
-              key={option.value}
-              variant={preset === option.value ? 'default' : 'outline'}
-              size="sm"
-              onClick={() => setPreset(option.value)}
-            >
-              {option.label}
-            </Button>
-          ))}
-          <Button variant={isCustom ? 'default' : 'outline'} size="sm" onClick={() => setPreset('custom')}>
-            Custom range
-          </Button>
+      <RangePicker value={range} onChange={setRange} presets={DASHBOARD_PRESETS} />
 
-          {isCustom && (
-            <div className="flex flex-wrap items-end gap-2">
-              <div className="space-y-1">
-                <Label className="text-xs">From</Label>
-                <Input type="date" value={from} onChange={(e) => setFrom(e.target.value)} className="w-40" />
-              </div>
-              <div className="space-y-1">
-                <Label className="text-xs">To</Label>
-                <Input type="date" value={to} onChange={(e) => setTo(e.target.value)} className="w-40" />
-              </div>
-              <p className="pb-2 text-xs text-muted-foreground">Any range, across any number of years.</p>
-            </div>
-          )}
-        </CardContent>
-      </Card>
-
-      {isCustom && !customReady && (
-        <EmptyState title="Pick a start and end date" description="Choose both dates to run the report." />
-      )}
-
-      {isLoading && <LoadingState label="Crunching the numbers…" />}
+      {isLoading && <LoadingState label="Loading your numbers…" />}
       {isError && <EmptyState title="Could not load the dashboard" description="Please try again." />}
 
-      {data && summary && (
+      {data && kpis && (
         <>
-          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-            <StatTile
+          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+            <Kpi
               icon={<Banknote className="h-4 w-4" />}
               label="Net sales"
-              value={formatMoney(summary.netSalesMinor, currency)}
-              hint={`Gross ${formatMoney(summary.totalSalesMinor, currency)}`}
+              value={formatMoney(kpis.salesMinor, currency)}
+              hint={`${kpis.orderCount} order${kpis.orderCount === 1 ? '' : 's'} · ${kpis.itemCount} item${kpis.itemCount === 1 ? '' : 's'}`}
             />
-            <StatTile
-              icon={<Receipt className="h-4 w-4" />}
-              label="Orders"
-              value={String(summary.orderCount)}
-              hint={`Avg ${formatMoney(summary.averageOrderValueMinor, currency)}`}
-            />
-            <StatTile
-              icon={<Package className="h-4 w-4" />}
-              label="Items sold"
-              value={String(summary.itemCount)}
-              hint={summary.discountMinor > 0 ? `Discounts ${formatMoney(summary.discountMinor, currency)}` : undefined}
-            />
-            <StatTile
+            {kpis.profitMinor === null ? (
+              // Profit is Advanced Analytics; the server omits it on other plans.
+              <Kpi
+                icon={<TrendingUp className="h-4 w-4" />}
+                label="Average order"
+                value={formatMoney(kpis.averageOrderValueMinor, currency)}
+                hint="🔒 Profit analytics on Professional & Enterprise"
+              />
+            ) : (
+              <Kpi
+                icon={<TrendingUp className="h-4 w-4" />}
+                label="Profit"
+                value={formatMoney(kpis.profitMinor, currency)}
+                hint={`Avg order ${formatMoney(kpis.averageOrderValueMinor, currency)}`}
+                tone={kpis.profitMinor >= 0 ? 'success' : 'destructive'}
+              />
+            )}
+            <Kpi
               icon={<RotateCcw className="h-4 w-4" />}
               label="Returns"
-              value={String(summary.returnCount)}
-              hint={`${formatMoney(summary.returnAmountMinor, currency)} refunded`}
-              tone={summary.returnCount > 0 ? 'warning' : undefined}
+              value={String(kpis.returnCount)}
+              hint={`${formatMoney(kpis.returnAmountMinor, currency)} refunded`}
+              tone={kpis.returnCount > 0 ? 'warning' : undefined}
+            />
+            <Kpi
+              icon={<Boxes className="h-4 w-4" />}
+              label="Stock value"
+              value={formatMoney(kpis.stockValueMinor, currency)}
+              hint={`${kpis.stockUnits} unit${kpis.stockUnits === 1 ? '' : 's'} on hand`}
             />
           </div>
 
-          <Card>
-            <CardHeader className="pb-2">
-              <CardTitle className="flex items-center gap-2 text-base">
-                <TrendingUp className="h-4 w-4" />
-                Sales trend
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              {data.trend.length === 0 ? (
-                <EmptyState title="No sales in this period" className="py-10" />
-              ) : (
-                <div className="h-64 w-full">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <AreaChart data={data.trend} margin={{ top: 8, right: 8, bottom: 0, left: 0 }}>
-                      <defs>
-                        <linearGradient id="salesGradient" x1="0" y1="0" x2="0" y2="1">
-                          <stop offset="0%" stopColor={CHART_COLORS[0]} stopOpacity={0.28} />
-                          <stop offset="100%" stopColor={CHART_COLORS[0]} stopOpacity={0.02} />
-                        </linearGradient>
-                      </defs>
-                      <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" vertical={false} />
-                      <XAxis
-                        dataKey="bucket"
-                        tick={{ fontSize: 11, fill: 'hsl(var(--muted-foreground))' }}
-                        tickLine={false}
-                        axisLine={false}
-                      />
-                      <YAxis
-                        tickFormatter={(value: number) => formatMoneyCompact(value, currency)}
-                        tick={{ fontSize: 11, fill: 'hsl(var(--muted-foreground))' }}
-                        tickLine={false}
-                        axisLine={false}
-                        width={64}
-                      />
-                      <Tooltip
-                        contentStyle={{
-                          background: 'hsl(var(--popover))',
-                          border: '1px solid hsl(var(--border))',
-                          borderRadius: 8,
-                          fontSize: 12,
-                        }}
-                        formatter={(value: number, name) =>
-                          name === 'totalMinor' ? [formatMoney(value, currency), 'Sales'] : [value, name]
-                        }
-                      />
-                      <Area
-                        type="monotone"
-                        dataKey="totalMinor"
-                        stroke={CHART_COLORS[0]}
-                        strokeWidth={2}
-                        fill="url(#salesGradient)"
-                      />
-                    </AreaChart>
-                  </ResponsiveContainer>
-                </div>
-              )}
-            </CardContent>
-          </Card>
+          {(kpis.lowStockCount > 0 || kpis.outOfStockCount > 0) && (
+            <div className="flex flex-wrap items-center gap-3 rounded-md border border-warning/30 bg-warning/10 px-4 py-2.5 text-sm text-warning">
+              <AlertTriangle className="h-4 w-4 shrink-0" />
+              <span>
+                {kpis.outOfStockCount > 0 && (
+                  <strong>{kpis.outOfStockCount} out of stock</strong>
+                )}
+                {kpis.outOfStockCount > 0 && kpis.lowStockCount > 0 && ' · '}
+                {kpis.lowStockCount > 0 && <>{kpis.lowStockCount} running low</>}
+              </span>
+              <Button variant="ghost" size="sm" className="ml-auto h-7" onClick={() => navigate('/inventory')}>
+                Review inventory
+              </Button>
+            </div>
+          )}
 
-          <div className="grid gap-4 lg:grid-cols-2">
-            <Card>
+          <div className="grid gap-4 lg:grid-cols-3">
+            <Card className="lg:col-span-2">
               <CardHeader className="pb-2">
-                <CardTitle className="text-base">Top products</CardTitle>
+                <CardTitle className="text-base">Sales trend</CardTitle>
               </CardHeader>
               <CardContent>
-                {data.topProducts.length === 0 ? (
-                  <EmptyState title="Nothing sold yet" className="py-8" />
+                {data.trend.length === 0 ? (
+                  <EmptyState title="No sales in this period" className="py-10" />
                 ) : (
-                  <div className="h-64 w-full">
+                  <div className="h-56 w-full">
                     <ResponsiveContainer width="100%" height="100%">
-                      <BarChart data={data.topProducts.slice(0, 8)} layout="vertical" margin={{ left: 8, right: 16 }}>
-                        <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" horizontal={false} />
-                        <XAxis type="number" tick={{ fontSize: 11, fill: 'hsl(var(--muted-foreground))' }} tickLine={false} axisLine={false} />
+                      <AreaChart data={data.trend} margin={{ top: 8, right: 8, bottom: 0, left: 0 }}>
+                        <defs>
+                          <linearGradient id="dashGradient" x1="0" y1="0" x2="0" y2="1">
+                            <stop offset="0%" stopColor="#2563eb" stopOpacity={0.28} />
+                            <stop offset="100%" stopColor="#2563eb" stopOpacity={0.02} />
+                          </linearGradient>
+                        </defs>
+                        <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" vertical={false} />
+                        <XAxis dataKey="bucket" tick={{ fontSize: 11, fill: 'hsl(var(--muted-foreground))' }} tickLine={false} axisLine={false} />
                         <YAxis
-                          type="category"
-                          dataKey="name"
-                          width={130}
+                          tickFormatter={(v: number) => formatMoneyCompact(v, currency)}
                           tick={{ fontSize: 11, fill: 'hsl(var(--muted-foreground))' }}
                           tickLine={false}
                           axisLine={false}
+                          width={60}
                         />
                         <Tooltip
-                          contentStyle={{
-                            background: 'hsl(var(--popover))',
-                            border: '1px solid hsl(var(--border))',
-                            borderRadius: 8,
-                            fontSize: 12,
-                          }}
-                          formatter={(value: number) => [`${value} units`, 'Sold']}
+                          contentStyle={{ background: 'hsl(var(--popover))', border: '1px solid hsl(var(--border))', borderRadius: 8, fontSize: 12 }}
+                          formatter={(v: number) => [formatMoney(v, currency), 'Sales']}
                         />
-                        <Bar dataKey="quantity" fill={CHART_COLORS[0]} radius={[0, 4, 4, 0]} />
-                      </BarChart>
+                        <Area type="monotone" dataKey="totalMinor" stroke="#2563eb" strokeWidth={2} fill="url(#dashGradient)" />
+                      </AreaChart>
                     </ResponsiveContainer>
                   </div>
                 )}
@@ -244,92 +171,106 @@ export function DashboardPage() {
 
             <Card>
               <CardHeader className="pb-2">
-                <CardTitle className="text-base">Sales by payment method</CardTitle>
+                <CardTitle className="flex items-center gap-2 text-base">
+                  <Wallet className="h-4 w-4" />
+                  Payments taken
+                </CardTitle>
               </CardHeader>
               <CardContent>
-                {data.byPaymentMethod.length === 0 ? (
-                  <EmptyState title="No payments yet" className="py-8" />
+                {data.payments.length === 0 ? (
+                  <p className="py-6 text-center text-sm text-muted-foreground">No payments yet</p>
                 ) : (
-                  <div className="flex h-64 items-center gap-4">
-                    <div className="h-full flex-1">
-                      <ResponsiveContainer width="100%" height="100%">
-                        <PieChart>
-                          <Pie
-                            data={data.byPaymentMethod}
-                            dataKey="totalMinor"
-                            nameKey="method"
-                            innerRadius="52%"
-                            outerRadius="82%"
-                            paddingAngle={2}
-                          >
-                            {data.byPaymentMethod.map((_, index) => (
-                              <Cell key={index} fill={CHART_COLORS[index % CHART_COLORS.length]} />
-                            ))}
-                          </Pie>
-                          <Tooltip
-                            contentStyle={{
-                              background: 'hsl(var(--popover))',
-                              border: '1px solid hsl(var(--border))',
-                              borderRadius: 8,
-                              fontSize: 12,
-                            }}
-                            formatter={(value: number) => formatMoney(value, currency)}
-                          />
-                        </PieChart>
-                      </ResponsiveContainer>
-                    </div>
-                    <ul className="w-40 space-y-1.5 text-sm">
-                      {data.byPaymentMethod.map((entry, index) => (
-                        <li key={entry.method} className="flex items-center gap-2">
-                          <span
-                            className="h-2.5 w-2.5 shrink-0 rounded-sm"
-                            style={{ background: CHART_COLORS[index % CHART_COLORS.length] }}
-                          />
-                          <span className="flex-1 capitalize">{entry.method}</span>
-                          <span className="tabular text-xs text-muted-foreground">
-                            {formatMoneyCompact(entry.totalMinor, currency)}
-                          </span>
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
+                  <ul className="space-y-2">
+                    {data.payments.map((row) => (
+                      <li key={row.method} className="flex items-center justify-between text-sm">
+                        <span className="capitalize">{row.method}</span>
+                        <span className="tabular font-medium">{formatMoney(row.amountMinor, currency)}</span>
+                      </li>
+                    ))}
+                  </ul>
                 )}
               </CardContent>
             </Card>
           </div>
 
           <div className="grid gap-4 lg:grid-cols-3">
-            <ListCard
-              title="Top variants"
-              rows={data.topVariants.map((variant) => ({
-                key: variant.variantId,
-                primary: variant.productName,
-                secondary: `${variant.variantName} · ${variant.sku}`,
-                value: `${variant.quantity} sold`,
-                sub: formatMoney(variant.revenueMinor, currency),
-              }))}
-              emptyLabel="No variants sold yet"
-            />
-            <ListCard
-              title="Sales by category"
-              rows={data.byCategory.map((category) => ({
-                key: String(category.categoryId ?? category.name),
-                primary: category.name,
-                secondary: `${category.quantity} item(s)`,
-                value: formatMoney(category.revenueMinor, currency),
-              }))}
-              emptyLabel="No category data"
-            />
-            <ListCard
-              title="Sales by staff"
-              rows={data.byStaff.map((staff) => ({
-                key: staff.cashierId,
-                primary: staff.name,
-                secondary: `${staff.orderCount} order(s)`,
-                value: formatMoney(staff.totalMinor, currency),
-              }))}
-              emptyLabel="No staff sales yet"
-            />
+            <Card>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-base">Top products</CardTitle>
+              </CardHeader>
+              <CardContent>
+                {data.topProducts.length === 0 ? (
+                  <p className="py-6 text-center text-sm text-muted-foreground">Nothing sold yet</p>
+                ) : (
+                  <ul className="divide-y">
+                    {data.topProducts.map((product) => (
+                      <li key={product.productId} className="flex items-center gap-2 py-2 first:pt-0 last:pb-0">
+                        <span className="min-w-0 flex-1 truncate text-sm">{product.name}</span>
+                        <Badge variant="secondary">{product.quantity}</Badge>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader className="pb-2">
+                <CardTitle className="flex items-center gap-2 text-base">
+                  <PackageX className="h-4 w-4" />
+                  Running low
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                {data.lowStock.length === 0 ? (
+                  <p className="py-6 text-center text-sm text-muted-foreground">Stock levels look healthy</p>
+                ) : (
+                  <ul className="divide-y">
+                    {data.lowStock.map((row) => (
+                      <li key={row._id} className="flex items-center gap-2 py-2 first:pt-0 last:pb-0">
+                        <div className="min-w-0 flex-1">
+                          <p className="truncate text-sm">{row.productNameSnapshot}</p>
+                          <p className="truncate text-xs text-muted-foreground">{row.name}</p>
+                        </div>
+                        <Badge variant="warning">{row.stock} left</Badge>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader className="pb-2">
+                <CardTitle className="flex items-center gap-2 text-base">
+                  <Receipt className="h-4 w-4" />
+                  Recent sales
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                {data.recentSales.length === 0 ? (
+                  <p className="py-6 text-center text-sm text-muted-foreground">No sales yet</p>
+                ) : (
+                  <ul className="divide-y">
+                    {data.recentSales.map((sale) => (
+                      <li
+                        key={sale.id}
+                        className="flex cursor-pointer items-center gap-2 py-2 first:pt-0 last:pb-0 hover:bg-accent/40"
+                        onClick={() => navigate('/sales')}
+                      >
+                        <div className="min-w-0 flex-1">
+                          <p className="truncate font-mono text-xs">{sale.saleNumber}</p>
+                          <p className="truncate text-xs text-muted-foreground">
+                            {format(new Date(sale.soldAt), 'dd MMM, hh:mm a')} · {sale.customer ?? 'Walk-in'}
+                          </p>
+                        </div>
+                        <span className="tabular text-sm font-medium">{formatMoney(sale.totalMinor, currency)}</span>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </CardContent>
+            </Card>
           </div>
         </>
       )}
@@ -337,7 +278,7 @@ export function DashboardPage() {
   );
 }
 
-function StatTile({
+function Kpi({
   icon,
   label,
   value,
@@ -348,7 +289,7 @@ function StatTile({
   label: string;
   value: string;
   hint?: string;
-  tone?: 'warning';
+  tone?: 'success' | 'warning' | 'destructive';
 }) {
   return (
     <Card>
@@ -357,46 +298,17 @@ function StatTile({
           {icon}
           {label}
         </div>
-        <p className={cn('tabular mt-1 text-2xl font-semibold', tone === 'warning' && 'text-warning')}>{value}</p>
+        <p
+          className={cn(
+            'tabular mt-1 text-2xl font-semibold',
+            tone === 'success' && 'text-success',
+            tone === 'warning' && 'text-warning',
+            tone === 'destructive' && 'text-destructive',
+          )}
+        >
+          {value}
+        </p>
         {hint && <p className="mt-0.5 text-xs text-muted-foreground">{hint}</p>}
-      </CardContent>
-    </Card>
-  );
-}
-
-function ListCard({
-  title,
-  rows,
-  emptyLabel,
-}: {
-  title: string;
-  rows: { key: string; primary: string; secondary?: string; value: string; sub?: string }[];
-  emptyLabel: string;
-}) {
-  return (
-    <Card>
-      <CardHeader className="pb-2">
-        <CardTitle className="text-base">{title}</CardTitle>
-      </CardHeader>
-      <CardContent>
-        {rows.length === 0 ? (
-          <p className="py-6 text-center text-sm text-muted-foreground">{emptyLabel}</p>
-        ) : (
-          <ul className="divide-y">
-            {rows.slice(0, 8).map((row) => (
-              <li key={row.key} className="flex items-center gap-3 py-2 first:pt-0 last:pb-0">
-                <div className="min-w-0 flex-1">
-                  <p className="truncate text-sm font-medium">{row.primary}</p>
-                  {row.secondary && <p className="truncate text-xs text-muted-foreground">{row.secondary}</p>}
-                </div>
-                <div className="shrink-0 text-right">
-                  <p className="tabular text-sm font-medium">{row.value}</p>
-                  {row.sub && <p className="tabular text-xs text-muted-foreground">{row.sub}</p>}
-                </div>
-              </li>
-            ))}
-          </ul>
-        )}
       </CardContent>
     </Card>
   );

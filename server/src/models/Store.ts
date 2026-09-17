@@ -24,7 +24,10 @@ export interface StoreDoc extends BaseDoc {
   tenantId: Types.ObjectId;
   name: string;
   code: string;
+  /** Store/application logo, shown in the POS UI. */
   logoUrl: string | null;
+  /** Receipt logo, printed on thermal receipts. Deliberately separate. */
+  receiptLogoUrl: string | null;
   phone: string;
   email: string;
   address: string;
@@ -37,6 +40,12 @@ export interface StoreDoc extends BaseDoc {
   lowStockThreshold: number;
   isActive: boolean;
   isDefault: boolean;
+  /**
+   * Soft delete. Sales, returns and inventory rows reference this store, so the
+   * record is retained and simply hidden - deleting it outright would orphan
+   * historical business data.
+   */
+  deletedAt: Date | null;
 }
 
 const storeSchema = new Schema<StoreDoc>(
@@ -45,6 +54,7 @@ const storeSchema = new Schema<StoreDoc>(
     name: { type: String, required: true, trim: true, maxlength: 160 },
     code: { type: String, required: true, trim: true, uppercase: true, maxlength: 16 },
     logoUrl: { type: String, default: null },
+    receiptLogoUrl: { type: String, default: null },
     phone: { type: String, trim: true, default: '' },
     email: { type: String, trim: true, lowercase: true, default: '' },
     address: { type: String, trim: true, default: '' },
@@ -69,10 +79,15 @@ const storeSchema = new Schema<StoreDoc>(
     lowStockThreshold: { type: Number, default: 5, min: 0 },
     isActive: { type: Boolean, default: true },
     isDefault: { type: Boolean, default: false },
+    deletedAt: { type: Date, default: null },
   },
   { timestamps: true },
 );
 
-storeSchema.index({ tenantId: 1, code: 1 }, { unique: true });
+storeSchema.index(
+  { tenantId: 1, code: 1 },
+  { unique: true, partialFilterExpression: { deletedAt: null } },
+);
+storeSchema.index({ tenantId: 1, deletedAt: 1, isActive: 1 });
 
 export const StoreModel = model<StoreDoc>('Store', storeSchema);

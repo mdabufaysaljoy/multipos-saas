@@ -10,6 +10,10 @@ export interface InitiatePaymentInput {
   /** Where the provider should send the customer back to. */
   returnUrl?: string;
   cancelUrl?: string;
+  /** Our own payment id, echoed back by the provider (e.g. bKash merchantInvoiceNumber). */
+  reference?: string;
+  /** Server endpoint the provider sends the customer's browser back to. */
+  callbackUrl?: string;
   metadata?: Record<string, unknown>;
 }
 
@@ -44,9 +48,18 @@ export interface WebhookResult {
   verified: boolean;
   providerTransactionId: string | null;
   status: 'pending' | 'paid' | 'failed' | 'cancelled' | 'refunded' | null;
+  /** A "paid" webhook activates nothing unless BOTH amount and currency are present. */
   amountMinor: number | null;
+  currency: string | null;
   paidAt: Date | null;
   failureReason?: string;
+  /** Our own payment id when the notification carries it instead of the provider's id. */
+  reference?: string | null;
+  /**
+   * The notification only names a payment. Its claims must not be applied;
+   * the caller asks the provider's API for the real state instead.
+   */
+  refetch?: boolean;
   raw?: unknown;
 }
 
@@ -67,6 +80,11 @@ export interface PaymentProvider {
 
   initiatePayment(input: InitiatePaymentInput): Promise<InitiatePaymentResult>;
   verifyPayment(providerTransactionId: string): Promise<VerifyPaymentResult>;
+  /**
+   * Optional: finalise a payment the customer has approved (bKash "execute"),
+   * then report its state. Must be safe to call more than once.
+   */
+  completePayment?(providerTransactionId: string): Promise<VerifyPaymentResult>;
   handleWebhook(request: WebhookRequest): Promise<WebhookResult>;
   /** Optional: charge an existing authorisation for automatic renewal. */
   chargeRecurring?(input: InitiatePaymentInput & { providerSubscriptionId: string }): Promise<VerifyPaymentResult>;

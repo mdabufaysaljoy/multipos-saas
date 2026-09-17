@@ -54,6 +54,15 @@ to end you can:
 | 18 | Subscription plans, limits, entitlements, manual activation | ✅ |
 | 19 | Platform-admin console (tenants, subscriptions, payments) | ✅ |
 | 20 | Payment provider abstraction (bKash / Nagad / bank scaffolding) | ✅ structure, ⏳ live gateways |
+| 21 | Prepaid wallet: top-ups, ledger, spend breakdown | ✅ |
+| 22 | Buy or renew a subscription from the wallet, settled instantly | ✅ |
+| 23 | Workspace locked to wallet + subscription when no plan is active | ✅ |
+| 24 | Plan limits on branches, staff, products, customers, monthly sales and storage | ✅ enforced server-side |
+| 25 | Usage warnings at 80% / 90% / 100% of every limit | ✅ |
+| 26 | 7-day free trial, Starter plan only | ✅ |
+| 27 | SMS marketing (Alpha SMS), gateway configured by the platform admin | ✅ structure, ⏳ live credentials |
+| 28 | Email marketing with a sanitised HTML composer | ✅ structure, ⏳ SMTP credentials |
+| 29 | Public pricing page with a full plan comparison | ✅ |
 
 ---
 
@@ -117,8 +126,12 @@ hardcoded. See `.env.example` for the full annotated list.
 | `STORAGE_LOCAL_DIR` | Upload folder when driver is `local` | `uploads` |
 | `PUBLIC_BASE_URL` | Base URL used to build public file URLs | `http://localhost:4100` |
 | `DEFAULT_CURRENCY` | ISO currency for new stores | `BDT` |
-| `TRIAL_DAYS` | Trial length when a plan does not specify one | `14` |
-| `BKASH_*`, `NAGAD_*` | Gateway credentials (phase 2) | empty |
+| `TRIAL_DAYS` | Length of the Starter free trial (the only plan that carries one) | `7` |
+| `BKASH_*`, `NAGAD_*` | Payment gateway credentials | empty |
+| `ALPHA_SMS_API_KEY` | Alpha SMS (sms.net.bd) key. Blank disables sending. | empty |
+| `ALPHA_SMS_BASE_URL` | Alpha SMS base URL | `https://api.sms.net.bd` |
+| `ALPHA_SMS_SENDER_ID` | Approved sender/mask ID | empty |
+| `SMS_MOCK_ENABLED` | Dev-only test double for the SMS billing path. **Never delivers a message** and is ignored when `NODE_ENV=production`. | `false` |
 | `SEED_*` | Development seed credentials | see below |
 
 The environment is validated with Zod at boot. A missing or too-short secret
@@ -173,6 +186,9 @@ To enable them locally, run `mongod --replSet rs0` and `rs.initiate()` once.
 | `npm run typecheck` | Type-checks both packages without emitting |
 | `npm run seed` | Seeds plans, permissions, a demo tenant and catalogue |
 | `npm run seed -- --reset` | **Wipes every collection** and re-seeds from scratch |
+| `npm test` | Runs the end-to-end suite against a throwaway database, then drops it |
+| `npm run test:only` | Runs the suite against whatever API `API_BASE` points at (no isolation) |
+| `npm run migrate` | Runs every data migration in order (safe to re-run) |
 | `node scripts/smoke-test.mjs` | 81-check end-to-end verification against a running API |
 
 `npm run seed` is safe to re-run: if the demo tenant already exists it does
@@ -428,8 +444,11 @@ node scripts/smoke-test.mjs
 ```
 
 ```
-==========  81 passed, 0 failed  ==========
+==========  241 passed, 0 failed  ==========
 ```
+
+> The suite soft-deletes products and consumes stock by design, so it needs a
+> clean database on each run — always reseed with `--reset` first.
 
 What it verifies, by section:
 
@@ -452,18 +471,52 @@ What it verifies, by section:
 
 ---
 
-## Phase 2 roadmap
+## Messaging & wallet
 
-The database and service layers are already shaped for these; none requires a
-migration.
+Tenants keep a **prepaid wallet** used for subscription upgrades and SMS.
+
+- Top-ups are **requests**: a customer submits an amount and transaction ID, and
+  a platform admin verifies it. Nothing is credited before approval.
+- Every movement writes a `WalletTransaction` with the balance before and after,
+  so the balance can always be reconstructed.
+- Debits use an atomic `$gte` precondition, so the wallet cannot be overdrawn
+  by concurrent spends.
+
+**SMS** is billed per segment at a price the platform admin sets at runtime.
+Segment counting is alphabet-aware: GSM-7 fits 160 characters, but Bengali
+forces UCS-2 at 70 — so a Bengali campaign is priced correctly rather than
+under-charged.
+
+A campaign is debited once up front, then **refunded** for every message the
+gateway rejects, giving two ledger rows instead of one per recipient.
+
+> With no gateway configured the app **refuses to send** and says so. It never
+> reports a fabricated success. `SMS_MOCK_ENABLED=true` registers a clearly
+> labelled test double for exercising the billing path locally; it is ignored
+> entirely in production.
+
+**Email** has the same abstraction and the same wallet-billing hook, but no
+provider has been selected, so `UnconfiguredEmailProvider` refuses to send
+rather than silently discarding mail.
+
+## Public website
+
+The marketing site lives at `/`, `/products`, `/pricing`, `/features` and
+`/contact`, separate from the signed-in app shell. Pricing is read live from
+`/api/plans`, so the page can never advertise a limit the backend does not
+enforce. The signed-in catalogue is at `/catalogue`.
+
+## Roadmap
+
+None of these requires a migration; the schema and service layers already
+accommodate them.
 
 - Live bKash / Nagad / bank gateways — implement `initiatePayment`,
   `verifyPayment` and `handleWebhook` in the existing provider classes
-- Automatic recurring billing (`chargeRecurring` + the renewal job already
-  written in `jobs/subscription.job.ts`)
+- Automatic recurring billing (`chargeRecurring` + the renewal job in
+  `jobs/subscription.job.ts`)
 - S3 / Cloudinary storage drivers behind the existing `StorageProvider`
-- Multi-branch stores (the schema is already store-scoped throughout)
+- An email provider behind `EmailProvider`
 - Direct ESC/POS thermal printing alongside browser printing
 - Purchase orders and supplier management
 - Audit log of every administrative action
-- Notifications (low stock, expiring subscriptions)

@@ -1,15 +1,17 @@
 import { Types } from 'mongoose';
 import { StoreModel } from '../../models/Store';
+import { SaleModel } from '../../models/Sale';
 import { UserModel } from '../../models/User';
 import { ApiError } from '../../utils/ApiError';
 import { codeFromName } from '../../utils/slug';
 import { entitlementService } from '../../services/subscription/entitlement.service';
+import { droppedKeys, releaseStorageUrls } from '../../services/storage/cleanup.service';
 import type { AuthUser, TenantContext } from '../../types/express';
 import type { CreateStoreInput, UpdateStoreInput } from './stores.validators';
 
 class StoreService {
   async list(tenantId: Types.ObjectId) {
-    return StoreModel.find({ tenantId }).sort({ isDefault: -1, createdAt: 1 }).lean();
+    return StoreModel.find({ tenantId, deletedAt: null }).sort({ isDefault: -1, createdAt: 1 }).lean();
   }
 
   /**
@@ -21,8 +23,8 @@ class StoreService {
    * whole configuration surface.
    */
   async posConfig(tenantId: Types.ObjectId, storeId: Types.ObjectId) {
-    const store = await StoreModel.findOne({ _id: storeId, tenantId })
-      .select('name currency paymentMethods tax receipt lowStockThreshold logoUrl')
+    const store = await StoreModel.findOne({ _id: storeId, tenantId, deletedAt: null })
+      .select('name currency paymentMethods tax receipt lowStockThreshold logoUrl receiptLogoUrl')
       .lean();
     if (!store) throw ApiError.notFound('Store not found');
 
@@ -35,11 +37,12 @@ class StoreService {
       receipt: store.receipt,
       lowStockThreshold: store.lowStockThreshold,
       logoUrl: store.logoUrl,
+      receiptLogoUrl: store.receiptLogoUrl,
     };
   }
 
   async getById(tenantId: Types.ObjectId, storeId: Types.ObjectId) {
-    const store = await StoreModel.findOne({ _id: storeId, tenantId }).lean();
+    const store = await StoreModel.findOne({ _id: storeId, tenantId, deletedAt: null }).lean();
     if (!store) throw ApiError.notFound('Store not found');
     return store;
   }
@@ -52,14 +55,21 @@ class StoreService {
     if (!auth.tenantId) throw ApiError.forbidden('You do not belong to a workspace');
     const tenantId = auth.tenantId;
 
-    const entitlement = await entitlementService.forTenant(tenantId);
-    entitlementService.assertUsable(entitlement);
-    await entitlementService.assertCanAddStore(tenantId, entitlement);
+    const existingCount = await StoreModel.countDocuments({ tenantId, deletedAt: null });
+    // The FIRST store is part of having a workspace at all, not a plan feature:
+    // without one, the workspace cannot even reach its wallet or subscription
+    // page to buy a plan. It is exempt from the plan checks; every further
+    // store is not. Selling still requires a usable subscription regardless.
+    const isFirstStore = existingCount === 0;
 
-    const existingCount = await StoreModel.countDocuments({ tenantId });
+    const entitlement = await entitlementService.forTenant(tenantId);
+    if (!isFirstStore) {
+      entitlementService.assertUsable(entitlement);
+      await entitlementService.assertCanAddStore(tenantId, entitlement);
+    }
     const code = (input.code ?? codeFromName(input.name)).toUpperCase();
 
-    const duplicate = await StoreModel.findOne({ tenantId, code }).select('_id').lean();
+    const duplicate = await StoreModel.findOne({ tenantId, code, deletedAt: null }).select('_id').lean();
     if (duplicate) throw ApiError.conflict('A store with this code already exists in your workspace');
 
     const store = await StoreModel.create({
@@ -73,6 +83,7 @@ class StoreService {
       invoicePrefix: input.invoicePrefix,
       returnPrefix: input.returnPrefix,
       logoUrl: input.logoUrl ?? null,
+      receiptLogoUrl: input.receiptLogoUrl ?? null,
       lowStockThreshold: input.lowStockThreshold,
       ...(input.paymentMethods ? { paymentMethods: input.paymentMethods } : {}),
       ...(input.receipt ? { receipt: input.receipt } : {}),
@@ -81,21 +92,42 @@ class StoreService {
       isActive: true,
     });
 
-    if (existingCount === 0) {
-      await UserModel.updateOne({ _id: auth.id }, { $set: { storeId: store._id } });
+    // Ordinal confirmation, because the pre-flight count is not atomic.
+    const ordinal = await StoreModel.countDocuments({
+      tenantId,
+      isActive: true,
+      deletedAt: null,
+      _id: { $lte: store._id },
+    });
+    try {
+      // A concurrent racer for the first slot is still held to the plan.
+      if (!(isFirstStore && ordinal === 1)) {
+        entitlementService.assertOrdinalWithinLimit(entitlement, 'maxStores', ordinal, 'stores');
+      }
+    } catch (error) {
+      await StoreModel.deleteOne({ _id: store._id, tenantId });
+      throw error;
+    }
+
+    if (isFirstStore) {
+      // Becomes the user's home branch ONLY if this is the user's own
+      // workspace. An account owner setting up another workspace must not have
+      // their home branch replaced by a branch that belongs somewhere else.
+      await UserModel.updateOne({ _id: auth.id, tenantId }, { $set: { storeId: store._id } });
     }
 
     return store.toObject();
   }
 
   async update(ctx: TenantContext, storeId: Types.ObjectId, input: UpdateStoreInput) {
-    const store = await StoreModel.findOne({ _id: storeId, tenantId: ctx.tenantId });
+    const store = await StoreModel.findOne({ _id: storeId, tenantId: ctx.tenantId, deletedAt: null });
     if (!store) throw ApiError.notFound('Store not found');
 
     if (input.code && input.code.toUpperCase() !== store.code) {
       const duplicate = await StoreModel.findOne({
         tenantId: ctx.tenantId,
         code: input.code.toUpperCase(),
+        deletedAt: null,
         _id: { $ne: storeId },
       })
         .select('_id')
@@ -104,9 +136,13 @@ class StoreService {
       store.code = input.code.toUpperCase();
     }
 
+    // Branding images are files. Swapping one out should release the old one
+    // rather than leaving it to consume quota forever.
+    const previousBranding = { logoUrl: store.logoUrl, receiptLogoUrl: store.receiptLogoUrl };
+
     const scalarKeys = [
       'name', 'phone', 'email', 'address', 'currency',
-      'invoicePrefix', 'returnPrefix', 'logoUrl', 'lowStockThreshold', 'paymentMethods',
+      'invoicePrefix', 'returnPrefix', 'logoUrl', 'receiptLogoUrl', 'lowStockThreshold', 'paymentMethods',
     ] as const;
 
     for (const key of scalarKeys) {
@@ -120,7 +156,98 @@ class StoreService {
     if (input.receipt) Object.assign(store.receipt, input.receipt);
     if (input.tax) Object.assign(store.tax, input.tax);
 
+    if (input.isActive !== undefined && input.isActive !== store.isActive) {
+      if (!input.isActive) {
+        // A workspace must always keep at least one usable branch.
+        const activeCount = await StoreModel.countDocuments({ tenantId: ctx.tenantId, isActive: true, deletedAt: null });
+        if (activeCount <= 1) {
+          throw ApiError.badRequest('You cannot deactivate your only active branch');
+        }
+        if (store.isDefault) {
+          throw ApiError.badRequest('The main branch cannot be deactivated. Make another branch the main one first.');
+        }
+      }
+      store.isActive = input.isActive;
+    }
+
     await store.save();
+
+    // After the save: a failed write must not destroy a logo still in use.
+    await releaseStorageUrls(
+      ctx.tenantId,
+      droppedKeys(
+        [previousBranding.logoUrl, previousBranding.receiptLogoUrl],
+        [store.logoUrl, store.receiptLogoUrl],
+      ),
+    );
+
+    return store.toObject();
+  }
+
+  /**
+   * Deletes a branch.
+   *
+   * Soft delete, for the same reason products are: sales, returns and inventory
+   * transactions reference the store, and destroying it would break historical
+   * reporting. The record is hidden everywhere, its code is freed for reuse,
+   * and every past sale still resolves.
+   */
+  async remove(ctx: TenantContext, storeId: Types.ObjectId) {
+    const store = await StoreModel.findOne({ _id: storeId, tenantId: ctx.tenantId, deletedAt: null });
+    if (!store) throw ApiError.notFound('Branch not found');
+
+    if (store.isDefault) {
+      throw ApiError.badRequest(
+        'The main branch cannot be deleted. Make another branch the main one first, then delete this one.',
+      );
+    }
+
+    const liveCount = await StoreModel.countDocuments({ tenantId: ctx.tenantId, deletedAt: null });
+    if (liveCount <= 1) throw ApiError.badRequest('You cannot delete your only branch');
+
+    // Surfaced so the UI can reassure the owner that nothing is lost.
+    const [saleCount, staffCount] = await Promise.all([
+      SaleModel.countDocuments({ tenantId: ctx.tenantId, storeId }),
+      UserModel.countDocuments({ tenantId: ctx.tenantId, storeId, deletedAt: null }),
+    ]);
+
+    store.deletedAt = new Date();
+    store.isActive = false;
+    await store.save();
+
+    // Staff whose home branch was this one are moved to the main branch so they
+    // are not stranded without a place to work.
+    const fallback = await StoreModel.findOne({ tenantId: ctx.tenantId, deletedAt: null })
+      .sort({ isDefault: -1, createdAt: 1 })
+      .select('_id')
+      .lean();
+
+    if (fallback) {
+      await UserModel.updateMany(
+        { tenantId: ctx.tenantId, storeId, deletedAt: null },
+        { $set: { storeId: fallback._id }, $inc: { permissionVersion: 1 } },
+      );
+      await UserModel.updateMany({ tenantId: ctx.tenantId, storeAccess: storeId }, { $pull: { storeAccess: storeId } });
+    }
+
+    return {
+      id: storeId,
+      softDeleted: true,
+      historicalSalesPreserved: saleCount,
+      staffReassigned: staffCount,
+    };
+  }
+
+  /** Promotes a branch to be the tenant's main one. */
+  async makeDefault(ctx: TenantContext, storeId: Types.ObjectId) {
+    const store = await StoreModel.findOne({ _id: storeId, tenantId: ctx.tenantId, deletedAt: null });
+    if (!store) throw ApiError.notFound('Branch not found');
+    if (!store.isActive) throw ApiError.badRequest('Activate the branch before making it the main one');
+
+    await StoreModel.updateMany({ tenantId: ctx.tenantId }, { $set: { isDefault: false } });
+    store.isDefault = true;
+    await store.save();
+
     return store.toObject();
   }
 }

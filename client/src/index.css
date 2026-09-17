@@ -149,7 +149,19 @@
 .receipt-paper .r-rule { border-top: 1px dashed #000; margin: 1.5mm 0; }
 .receipt-paper table { width: 100%; border-collapse: collapse; }
 .receipt-paper td { vertical-align: top; padding: 0.3mm 0; }
-.receipt-paper .r-logo { max-width: 60%; margin: 0 auto 1.5mm; display: block; }
+.receipt-paper .r-logo {
+  max-width: 55%;
+  max-height: 20mm;
+  margin: 0 auto 1.5mm;
+  display: block;
+  object-fit: contain;
+  /* Thermal heads are monochrome: a colour logo prints as muddy grey. Forcing
+     grayscale and pushing contrast produces the high-contrast black-and-white
+     artwork these printers reproduce well. This applies to the RECEIPT only -
+     the settings upload preview stays in colour. */
+  filter: grayscale(100%) contrast(2.2) brightness(1.05);
+  -webkit-filter: grayscale(100%) contrast(2.2) brightness(1.05);
+}
 
 @media print {
   /* The physical page size is injected by the receipt component as an inline
@@ -174,6 +186,14 @@
 
   .no-print {
     display: none !important;
+  }
+
+  /* Keep the monochrome treatment in the printed output. */
+  .receipt-paper .r-logo {
+    filter: grayscale(100%) contrast(2.6) brightness(1.02) !important;
+    -webkit-filter: grayscale(100%) contrast(2.6) brightness(1.02) !important;
+    print-color-adjust: exact;
+    -webkit-print-color-adjust: exact;
   }
 }
 
@@ -255,5 +275,70 @@
 
   .barcode-label {
     border: none;
+  }
+}
+
+
+/* --------------------------------------------------------------------------
+   Email preview
+   Mail clients apply their own default styles, so the preview restores basic
+   typography that Tailwind's reset removes - otherwise headings and lists look
+   nothing like the delivered email.
+   -------------------------------------------------------------------------- */
+.email-preview h1 { font-size: 1.5rem; font-weight: 700; margin: 0 0 0.5rem; }
+.email-preview h2 { font-size: 1.25rem; font-weight: 700; margin: 0 0 0.5rem; }
+.email-preview h3 { font-size: 1.1rem; font-weight: 600; margin: 0 0 0.5rem; }
+.email-preview p { margin: 0 0 0.75rem; line-height: 1.5; }
+.email-preview ul, .email-preview ol { margin: 0 0 0.75rem 1.25rem; list-style: disc; }
+.email-preview ol { list-style: decimal; }
+.email-preview li { margin-bottom: 0.25rem; }
+.email-preview a { color: #2563eb; text-decoration: underline; }
+.email-preview strong { font-weight: 700; }
+.email-preview em { font-style: italic; }
+.email-preview img { max-width: 100%; height: auto; }
+.email-preview hr { margin: 1rem 0; border-top: 1px solid #e5e7eb; }
+
+/* --------------------------------------------------------------------------
+   Subscription invoice
+   Printed through the same visibility rule as receipts: everything else on the
+   page is hidden, the invoice fills the sheet.
+   -------------------------------------------------------------------------- */
+@media print {
+  #invoice-print-area,
+  #invoice-print-area * {
+    visibility: visible;
+  }
+
+  #invoice-print-area {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
+    max-width: none;
+    border: none;
+    box-shadow: none;
+  }
+}
+
+/* --------------------------------------------------------------------------
+   Wallet receipt and account statement: printed like the invoice.
+   -------------------------------------------------------------------------- */
+@media print {
+  #wallet-receipt-print-area,
+  #wallet-receipt-print-area *,
+  #statement-print-area,
+  #statement-print-area * {
+    visibility: visible;
+  }
+
+  #wallet-receipt-print-area,
+  #statement-print-area {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
+    max-width: none;
+    border: none;
+    box-shadow: none;
   }
 }

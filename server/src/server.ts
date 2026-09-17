@@ -3,9 +3,15 @@ import { connectDatabase, disconnectDatabase } from './config/db';
 import { env } from './config/env';
 import { logger } from './utils/logger';
 import { startSubscriptionJobs, stopSubscriptionJobs } from './jobs/subscription.job';
+import { ensureDefaultPosProducts } from './services/posCatalog/posCatalog.service';
+import { ensurePricingCatalog } from './services/pricing/pricing.service';
 
 async function bootstrap(): Promise<void> {
   await connectDatabase();
+  // The catalog is also filled lazily on first read; doing it here just makes
+  // a fresh deployment's admin panel complete from the start.
+  await ensureDefaultPosProducts().catch((error) => logger.warn('Could not prepare the POS catalog', { error: String(error) }));
+  await ensurePricingCatalog().catch((error) => logger.warn('Could not prepare the pricing catalog', { error: String(error) }));
 
   const app = createApp();
   const server = app.listen(env.PORT, () => {

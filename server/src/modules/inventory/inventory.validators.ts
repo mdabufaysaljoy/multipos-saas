@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { INVENTORY_TX_TYPES } from '../../config/constants';
-import { objectId, paginationSchema, searchSchema } from '../common/common.validators';
+import { objectId, paginationSchema, searchSchema, calendarDate } from '../common/common.validators';
 
 export const adjustStockSchema = z.object({
   variantId: objectId,
@@ -34,8 +34,8 @@ export const ledgerSchema = paginationSchema.extend({
   variantId: objectId.optional(),
   productId: objectId.optional(),
   type: z.enum(Object.values(INVENTORY_TX_TYPES) as [string, ...string[]]).optional(),
-  from: z.coerce.date().optional(),
-  to: z.coerce.date().optional(),
+  from: calendarDate.optional(),
+  to: calendarDate.optional(),
 });
 
 export type AdjustStockInput = z.infer<typeof adjustStockSchema>;

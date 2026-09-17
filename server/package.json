@@ -8,7 +8,25 @@
     "build": "tsc -p tsconfig.json",
     "start": "node dist/server.js",
     "seed": "tsx src/seed/seed.ts",
-    "typecheck": "tsc -p tsconfig.json --noEmit"
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "migrate:plan-limits": "tsx src/migrations/backfillPlanLimits.ts",
+    "migrate:storage-ledger": "tsx src/migrations/backfillStorageLedger.ts",
+    "migrate:sms-credentials": "tsx src/migrations/migrateSmsCredentials.ts",
+    "migrate:subscription-storage": "tsx src/migrations/syncSubscriptionStorageLimits.ts",
+    "migrate:plan-packages": "tsx src/migrations/syncPlanPackages.ts",
+    "migrate:accounts": "tsx src/migrations/backfillAccounts.ts",
+    "migrate:wallets": "tsx src/migrations/migrateAccountWallets.ts",
+    "migrate:payment-review": "tsx src/migrations/backfillPaymentReview.ts",
+    "migrate:pos-catalog": "tsx src/migrations/backfillPosCatalog.ts",
+    "migrate:pricing-catalog": "tsx src/migrations/backfillPricingCatalog.ts",
+    "migrate:workspace-subscriptions": "tsx src/migrations/backfillWorkspaceSubscriptions.ts",
+    "migrate:invoices": "tsx src/migrations/backfillInvoices.ts",
+    "migrate:receipts": "tsx src/migrations/backfillReceipts.ts",
+    "migrate:wallet-ledger": "tsx src/migrations/backfillWalletLedger.ts",
+    "migrate:wallet-sequences": "tsx src/migrations/backfillWalletSequences.ts",
+    "migrate:verify-clothing": "tsx src/migrations/verifyClothingMigration.ts",
+    "report:identities": "tsx src/migrations/reportDuplicateIdentities.ts",
+    "bkash:sandbox": "tsx src/scripts/bkashSandboxCheck.ts"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",
@@ -20,10 +38,13 @@
     "express": "^4.21.2",
     "express-rate-limit": "^7.5.0",
     "helmet": "^8.0.0",
+    "isomorphic-dompurify": "^2.36.0",
     "jsonwebtoken": "^9.0.2",
     "mongoose": "^8.9.5",
     "morgan": "^1.10.0",
     "multer": "^1.4.5-lts.1",
+    "nodemailer": "^6.10.1",
+    "sharp": "^0.35.4",
     "zod": "^3.24.1"
   },
   "devDependencies": {
@@ -36,6 +57,7 @@
     "@types/morgan": "^1.9.9",
     "@types/multer": "^1.4.12",
     "@types/node": "^22.10.5",
+    "@types/nodemailer": "^8.0.1",
     "tsx": "^4.19.2",
     "typescript": "^5.7.3"
   }

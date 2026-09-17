@@ -6,7 +6,8 @@ import { created, ok } from '../../utils/apiResponse';
 import { ttlToMs } from '../../utils/tokens';
 import { body } from '../../middleware/validate';
 import { authService, type SessionMeta } from './auth.service';
-import type { ChangePasswordInput, LoginInput, RegisterInput } from './auth.validators';
+import type { ChangePasswordInput, LoginInput, RegisterInput, SelectLoginInput, SwitchWorkspaceInput } from './auth.validators';
+import { recordAudit } from '../../services/audit/audit.service';
 
 const REFRESH_COOKIE = 'refreshToken';
 
@@ -37,6 +38,13 @@ export const register = asyncHandler(async (req: Request, res: Response) => {
 
 export const login = asyncHandler(async (req: Request, res: Response) => {
   const result = await authService.login(body<LoginInput>(req), metaFrom(req));
+  // A sign-in awaiting a choice of identity has no session yet.
+  if ('tokens' in result) setRefreshCookie(res, result.tokens.refreshToken);
+  ok(res, result);
+});
+
+export const selectLogin = asyncHandler(async (req: Request, res: Response) => {
+  const result = await authService.selectLogin(body<SelectLoginInput>(req), metaFrom(req));
   setRefreshCookie(res, result.tokens.refreshToken);
   ok(res, result);
 });
@@ -60,7 +68,39 @@ export const logout = asyncHandler(async (req: Request, res: Response) => {
 
 export const me = asyncHandler(async (req: Request, res: Response) => {
   if (!req.auth) throw ApiError.unauthorized();
-  ok(res, await authService.buildSession(req.auth.id));
+  // `req.auth.tenantId` was authorised by `authenticate` for this request.
+  ok(res, await authService.buildSession(req.auth.id, req.auth.tenantId));
+});
+
+export const workspaces = asyncHandler(async (req: Request, res: Response) => {
+  if (!req.auth) throw ApiError.unauthorized();
+  ok(res, await authService.workspaces(req.auth.id, req.auth.tenantId));
+});
+
+export const switchWorkspace = asyncHandler(async (req: Request, res: Response) => {
+  if (!req.auth) throw ApiError.unauthorized();
+  const input = body<SwitchWorkspaceInput>(req);
+  const cookies = req.cookies as Record<string, string> | undefined;
+  const previousTenantId = req.auth.tenantId;
+
+  const result = await authService.switchWorkspace(
+    req.auth.id,
+    input.workspaceId,
+    cookies?.[REFRESH_COOKIE] ?? input.refreshToken,
+    metaFrom(req),
+  );
+  setRefreshCookie(res, result.tokens.refreshToken);
+
+  await recordAudit(req, {
+    action: 'auth.workspace_switched',
+    targetTenantId: input.workspaceId,
+    targetUserId: req.auth.id,
+    targetLabel: result.tenant?.name ?? '',
+    oldValue: { tenantId: previousTenantId },
+    newValue: { tenantId: input.workspaceId },
+  });
+
+  ok(res, result);
 });
 
 export const changePassword = asyncHandler(async (req: Request, res: Response) => {

@@ -157,5 +157,9 @@ saleSchema.index({ tenantId: 1, storeId: 1, soldAt: -1, status: 1 });
 saleSchema.index({ tenantId: 1, storeId: 1, cashierId: 1, soldAt: -1 });
 saleSchema.index({ tenantId: 1, storeId: 1, customerId: 1, soldAt: -1 });
 saleSchema.index({ tenantId: 1, 'customerSnapshot.phone': 1 });
+// Tenant-wide monthly transaction counting for the plan limit. The reporting
+// indexes above all lead with storeId, so none of them can serve a count
+// across every branch.
+saleSchema.index({ tenantId: 1, soldAt: -1, status: 1 });
 
 export const SaleModel = model<SaleDoc>('Sale', saleSchema);

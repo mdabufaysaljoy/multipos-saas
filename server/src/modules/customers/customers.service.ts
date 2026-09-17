@@ -2,6 +2,7 @@ import { Types, type ClientSession } from 'mongoose';
 import { CustomerModel } from '../../models/Customer';
 import { SaleModel } from '../../models/Sale';
 import { ApiError } from '../../utils/ApiError';
+import { entitlementService } from '../../services/subscription/entitlement.service';
 import { resolvePage, searchRegex } from '../../utils/pagination';
 import { sessionOpt } from '../../utils/tx';
 import type { TenantContext } from '../../types/express';
@@ -47,6 +48,9 @@ class CustomerService {
   }
 
   async create(ctx: TenantContext, input: CreateCustomerInput) {
+    const entitlement = await entitlementService.forTenant(ctx.tenantId);
+    await entitlementService.assertCanAddCustomer(ctx.tenantId, entitlement);
+
     const duplicate = await CustomerModel.findOne({ ...this.scope(ctx), phone: input.phone }).select('_id name').lean();
     if (duplicate) {
       throw ApiError.conflict(`A customer with this phone number already exists (${duplicate.name})`, {
@@ -55,10 +59,27 @@ class CustomerService {
     }
 
     const customer = await CustomerModel.create({
+      ...input,
+      // Last word, so the workspace and branch can only ever be the session's.
       tenantId: ctx.tenantId,
       storeId: ctx.storeId,
-      ...input,
     });
+
+    // The pre-flight count is not atomic; confirm by ordinal now the record
+    // exists, and undo it if this one landed past the ceiling.
+    const ordinal = await CustomerModel.countDocuments({
+      tenantId: ctx.tenantId,
+      deletedAt: null,
+      isActive: true,
+      _id: { $lte: customer._id },
+    });
+    try {
+      entitlementService.assertOrdinalWithinLimit(entitlement, 'maxCustomers', ordinal, 'customer profiles');
+    } catch (error) {
+      await CustomerModel.deleteOne({ _id: customer._id, tenantId: ctx.tenantId });
+      throw error;
+    }
+
     return customer.toObject();
   }
 

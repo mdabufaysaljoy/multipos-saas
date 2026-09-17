@@ -22,7 +22,8 @@ export function ThermalReceipt({ payload }: { payload: ReceiptPayload }) {
   const { sale, store } = payload;
   const currency = store.currency;
   const width = resolveReceiptWidth(store.receipt?.paperWidthMm);
-  const showLogo = store.receipt.showLogo && Boolean(store.logoUrl);
+  // The RECEIPT logo, not the UI store logo - they are separate settings.
+  const showLogo = store.receipt.showLogo && Boolean(store.receiptLogoUrl);
 
   return (
     <>
@@ -39,7 +40,7 @@ export function ThermalReceipt({ payload }: { payload: ReceiptPayload }) {
         style={{ ['--receipt-width' as string]: `${width}mm` }}
       >
         <div className="r-center">
-          {showLogo && <img src={store.logoUrl!} alt="" className="r-logo" />}
+          {showLogo && <img src={store.receiptLogoUrl!} alt="" className="r-logo" />}
           <div className="r-bold" style={{ fontSize: '1.15em' }}>
             {store.receipt.headerText || store.name}
           </div>

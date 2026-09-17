@@ -5,6 +5,11 @@ import { KeyRound, Save } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
+import { LimitAlert } from '@/components/LimitAlert';
+import { FieldError } from '@/components/FieldError';
+import { useValidatedForm } from '@/hooks/useValidatedForm';
+import { optionalEmailField, optionalPhoneField, requiredText, wholeNumberField } from '@/lib/validation';
+import { z } from 'zod';
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -27,6 +32,28 @@ export function SettingsPage() {
   const { data: store, isLoading } = useQuery({ queryKey: ['store', 'current'], queryFn: storeApi.current });
   const [draft, setDraft] = React.useState<StoreSettings | null>(null);
 
+  // Settings previously saved unconditionally - there was no validation on this
+  // screen at all, so a blank store name or a nonsense phone number reached the
+  // API and only failed there.
+  const settingsSchema = React.useMemo(
+    () =>
+      z.object({
+        name: requiredText('Store name', 120),
+        phone: optionalPhoneField,
+        email: optionalEmailField,
+        currency: z.string().trim().length(3, 'Use a 3-letter currency code'),
+        lowStockThreshold: wholeNumberField({ min: 0, max: 100000, label: 'Low-stock threshold' }),
+      }),
+    [],
+  );
+  const validation = useValidatedForm(settingsSchema, {
+    name: draft?.name ?? '',
+    phone: draft?.phone ?? '',
+    email: draft?.email ?? '',
+    currency: draft?.currency ?? '',
+    lowStockThreshold: draft?.lowStockThreshold ?? 0,
+  });
+
   React.useEffect(() => {
     if (store) setDraft(structuredClone(store));
   }, [store]);
@@ -39,6 +66,10 @@ export function SettingsPage() {
         email: draft!.email,
         address: draft!.address,
         currency: draft!.currency,
+        // These were previously omitted, so an uploaded logo lived only in
+        // React state and vanished on reload. That was the root cause.
+        logoUrl: draft!.logoUrl,
+        receiptLogoUrl: draft!.receiptLogoUrl,
         invoicePrefix: draft!.invoicePrefix,
         returnPrefix: draft!.returnPrefix,
         lowStockThreshold: draft!.lowStockThreshold,
@@ -137,13 +168,17 @@ export function SettingsPage() {
         description="Store details, receipt layout and tax configuration."
         actions={
           <PermissionGate anyOf={['settings.edit']}>
-            <Button onClick={() => save.mutate()} loading={save.isPending}>
+            <Button
+              onClick={() => (validation.valid ? save.mutate() : validation.touchAll())}
+              loading={save.isPending}
+            >
               <Save />
               Save changes
             </Button>
           </PermissionGate>
         }
       />
+      <LimitAlert resource="storageBytes" />
 
       <Tabs defaultValue="store">
         <TabsList>
@@ -160,10 +195,40 @@ export function SettingsPage() {
               <CardDescription>These appear on every printed receipt.</CardDescription>
             </CardHeader>
             <CardContent className="grid gap-4 sm:grid-cols-2">
-              <Field label="Store name" value={draft.name} disabled={readOnly} onChange={(v) => patch({ name: v })} />
-              <Field label="Phone" value={draft.phone} disabled={readOnly} onChange={(v) => patch({ phone: v })} />
-              <Field label="Email" value={draft.email} disabled={readOnly} onChange={(v) => patch({ email: v })} />
-              <Field label="Currency" value={draft.currency} disabled={readOnly} onChange={(v) => patch({ currency: v.toUpperCase().slice(0, 3) })} />
+              <Field
+                label="Store name"
+                value={draft.name}
+                disabled={readOnly}
+                error={validation.errorFor('name')}
+                onBlur={() => validation.touch('name')}
+                onChange={(v) => patch({ name: v })}
+              />
+              <Field
+                label="Phone"
+                value={draft.phone}
+                disabled={readOnly}
+                inputMode="tel"
+                error={validation.errorFor('phone')}
+                onBlur={() => validation.touch('phone')}
+                onChange={(v) => patch({ phone: v })}
+              />
+              <Field
+                label="Email"
+                value={draft.email}
+                disabled={readOnly}
+                inputMode="email"
+                error={validation.errorFor('email')}
+                onBlur={() => validation.touch('email')}
+                onChange={(v) => patch({ email: v })}
+              />
+              <Field
+                label="Currency"
+                value={draft.currency}
+                disabled={readOnly}
+                error={validation.errorFor('currency')}
+                onBlur={() => validation.touch('currency')}
+                onChange={(v) => patch({ currency: v.toUpperCase().slice(0, 3) })}
+              />
               <div className="space-y-1.5 sm:col-span-2">
                 <Label>Address</Label>
                 <Textarea
@@ -186,6 +251,16 @@ export function SettingsPage() {
                 disabled={readOnly}
                 onChange={(v) => patch({ returnPrefix: v })}
               />
+              <div className="rounded-md border p-3 sm:col-span-2">
+                <ImageUpload
+                  label="Store logo"
+                  hint="Optional. Shown in the POS sidebar. This is NOT the receipt logo."
+                  value={draft.logoUrl}
+                  disabled={readOnly}
+                  onChange={(url) => patch({ logoUrl: url })}
+                />
+              </div>
+
               <div className="space-y-1.5">
                 <Label>Low stock threshold</Label>
                 <Input
@@ -239,18 +314,18 @@ export function SettingsPage() {
                   <ImageUpload
                     variant="logo"
                     label="Receipt logo"
-                    hint="Optional. Printed at the top of every receipt. No blank space is reserved when empty."
-                    value={draft.logoUrl}
+                    hint="Optional, and separate from the store logo. Printed in black and white for thermal paper."
+                    value={draft.receiptLogoUrl}
                     disabled={readOnly}
-                    onChange={(url) => patch({ logoUrl: url })}
+                    onChange={(url) => patch({ receiptLogoUrl: url })}
                   />
                 </div>
 
                 <Toggle
                   label="Show logo on receipts"
-                  description={draft.logoUrl ? 'Prints the logo above the store name' : 'Upload a logo first'}
-                  checked={draft.receipt.showLogo && Boolean(draft.logoUrl)}
-                  disabled={readOnly || !draft.logoUrl}
+                  description={draft.receiptLogoUrl ? 'Prints the logo above the store name' : 'Upload a receipt logo first'}
+                  checked={draft.receipt.showLogo && Boolean(draft.receiptLogoUrl)}
+                  disabled={readOnly || !draft.receiptLogoUrl}
                   onChange={(checked) => patch({ receipt: { ...draft.receipt, showLogo: checked } })}
                 />
                 <Toggle
@@ -389,18 +464,31 @@ function Field({
   onChange,
   disabled,
   hint,
+  error,
+  onBlur,
+  inputMode,
 }: {
   label: string;
   value: string;
   onChange: (value: string) => void;
   disabled?: boolean;
   hint?: string;
+  error?: string;
+  onBlur?: () => void;
+  inputMode?: 'text' | 'tel' | 'email' | 'numeric';
 }) {
   return (
     <div className="space-y-1.5">
       <Label>{label}</Label>
-      <Input value={value} disabled={disabled} onChange={(e) => onChange(e.target.value)} />
-      {hint && <p className="text-xs text-muted-foreground">{hint}</p>}
+      <Input
+        value={value}
+        disabled={disabled}
+        inputMode={inputMode}
+        onBlur={onBlur}
+        onChange={(e) => onChange(e.target.value)}
+      />
+      <FieldError message={error} />
+      {!error && hint && <p className="text-xs text-muted-foreground">{hint}</p>}
     </div>
   );
 }

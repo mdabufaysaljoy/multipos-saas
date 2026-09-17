@@ -22,11 +22,18 @@ import { Switch } from '@/components/ui/switch';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { DataTable, type Column } from '@/components/DataTable';
 import { PageHeader } from '@/components/PageHeader';
+import { LimitAlert } from '@/components/LimitAlert';
 import { PermissionGate } from '@/components/PermissionGate';
 import { SearchInput, useDebounced } from '@/components/SearchInput';
 import { ApiError } from '@/api/client';
 import { roleApi, staffApi } from '@/api/endpoints';
+import { useAuth } from '@/hooks/useAuth';
+import { useValidatedForm } from '@/hooks/useValidatedForm';
+import { FieldError } from '@/components/FieldError';
+import { emailField, newPasswordField, optionalPhoneField, requiredText } from '@/lib/validation';
+import { z } from 'zod';
 import type { StaffMember } from '@/types/domain';
+import { WorkspaceMembersCard } from '@/features/staff/WorkspaceMembersCard';
 
 export function StaffPage() {
   const queryClient = useQueryClient();
@@ -55,7 +62,7 @@ export function StaffPage() {
 
   const columns: Column<StaffMember>[] = [
     {
-      key: 'person',
+      key: 'person', mobile: 'title',
       header: 'Name',
       cell: (row) => (
         <div>
@@ -87,7 +94,7 @@ export function StaffPage() {
         ),
     },
     {
-      key: 'perms',
+      key: 'perms', mobile: 'hide',
       header: 'Permissions',
       cell: (row) => (
         <span className="tabular text-sm text-muted-foreground">
@@ -96,7 +103,7 @@ export function StaffPage() {
       ),
     },
     {
-      key: 'last',
+      key: 'last', mobile: 'hide',
       header: 'Last sign-in',
       cell: (row) => (
         <span className="text-sm text-muted-foreground">
@@ -111,7 +118,7 @@ export function StaffPage() {
         row.isActive ? <Badge variant="success">Active</Badge> : <Badge variant="secondary">Inactive</Badge>,
     },
     {
-      key: 'actions',
+      key: 'actions', mobile: 'actions',
       header: '',
       headerClassName: 'text-right',
       className: 'text-right',
@@ -164,6 +171,7 @@ export function StaffPage() {
           </PermissionGate>
         }
       />
+      <LimitAlert resource="staff" />
 
       <SearchInput value={term} onChange={setTerm} placeholder="Search name, email or phone…" className="max-w-sm" />
 
@@ -189,6 +197,8 @@ export function StaffPage() {
           }
         />
       </Card>
+
+      <WorkspaceMembersCard />
 
       <StaffFormDialog
         open={formOpen}
@@ -236,6 +246,9 @@ function StaffFormDialog({
   });
   const [extra, setExtra] = React.useState<string[]>([]);
   const [denied, setDenied] = React.useState<string[]>([]);
+  const [storeAccess, setStoreAccess] = React.useState<string[]>([]);
+  const { session } = useAuth();
+  const branches = session?.stores ?? [];
 
   const { data: roles } = useQuery({ queryKey: ['roles'], queryFn: roleApi.list, enabled: open });
   const { data: catalog } = useQuery({ queryKey: ['permission-catalog'], queryFn: roleApi.catalog, enabled: open });
@@ -253,10 +266,12 @@ function StaffFormDialog({
       });
       setExtra(staff.extraPermissions);
       setDenied(staff.deniedPermissions);
+      setStoreAccess((staff.storeAccess ?? []).map(String));
     } else {
       setForm({ name: '', email: '', phone: '', password: '', roleId: 'none', isActive: true });
       setExtra([]);
       setDenied([]);
+      setStoreAccess([]);
     }
   }, [open, staff]);
 
@@ -271,6 +286,7 @@ function StaffFormDialog({
         roleId: form.roleId === 'none' ? null : form.roleId,
         extraPermissions: extra,
         deniedPermissions: denied,
+        storeAccess,
         isActive: form.isActive,
       };
       if (staff) return staffApi.update(staff.id, payload);
@@ -287,8 +303,20 @@ function StaffFormDialog({
   const toggle = (list: string[], setList: (next: string[]) => void, key: string) =>
     setList(list.includes(key) ? list.filter((item) => item !== key) : [...list, key]);
 
-  const invalid =
-    form.name.trim().length < 2 || (!isEdit && (form.email.trim().length < 5 || form.password.length < 8));
+  // The rules match the server's. Email was previously only checked for
+  // "longer than 4 characters", which let "abcde" through as an address, and
+  // the phone field had no rule at all.
+  const schema = React.useMemo(
+    () =>
+      z.object({
+        name: requiredText('Name').refine((v) => v.length >= 2, 'Name is too short'),
+        phone: optionalPhoneField,
+        ...(isEdit ? {} : { email: emailField, password: newPasswordField }),
+      }),
+    [isEdit],
+  );
+  const validation = useValidatedForm(schema, form);
+  const invalid = !validation.valid;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -304,11 +332,25 @@ function StaffFormDialog({
           <div className="grid gap-4 sm:grid-cols-2">
             <div className="space-y-1.5">
               <Label htmlFor="s-name">Name</Label>
-              <Input id="s-name" autoFocus value={form.name} onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))} />
+              <Input
+                id="s-name"
+                autoFocus
+                value={form.name}
+                onBlur={() => validation.touch('name')}
+                onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
+              />
+              <FieldError message={validation.errorFor('name')} />
             </div>
             <div className="space-y-1.5">
               <Label htmlFor="s-phone">Phone</Label>
-              <Input id="s-phone" value={form.phone} onChange={(e) => setForm((f) => ({ ...f, phone: e.target.value }))} />
+              <Input
+                id="s-phone"
+                inputMode="tel"
+                value={form.phone}
+                onBlur={() => validation.touch('phone')}
+                onChange={(e) => setForm((f) => ({ ...f, phone: e.target.value }))}
+              />
+              <FieldError message={validation.errorFor('phone')} />
             </div>
             <div className="space-y-1.5">
               <Label htmlFor="s-email">Email {isEdit && <span className="text-muted-foreground">(cannot change)</span>}</Label>
@@ -317,8 +359,10 @@ function StaffFormDialog({
                 type="email"
                 disabled={isEdit}
                 value={form.email}
+                onBlur={() => validation.touch('email')}
                 onChange={(e) => setForm((f) => ({ ...f, email: e.target.value }))}
               />
+              <FieldError message={validation.errorFor('email')} />
             </div>
             {!isEdit && (
               <div className="space-y-1.5">
@@ -327,9 +371,11 @@ function StaffFormDialog({
                   id="s-password"
                   type="password"
                   value={form.password}
+                  onBlur={() => validation.touch('password')}
                   onChange={(e) => setForm((f) => ({ ...f, password: e.target.value }))}
                   placeholder="At least 8 characters"
                 />
+                <FieldError message={validation.errorFor('password')} />
               </div>
             )}
             <div className="space-y-1.5">
@@ -360,6 +406,36 @@ function StaffFormDialog({
               />
             </div>
           </div>
+
+          {branches.length > 1 && (
+            <div className="space-y-2 rounded-md border p-3">
+              <div>
+                <Label>Branch access</Label>
+                <p className="text-xs text-muted-foreground">
+                  Staff work in their home branch only unless you grant more. The backend rejects any branch not ticked
+                  here, so this is a real restriction, not just a hidden menu.
+                </p>
+              </div>
+              {branches.map((branch) => {
+                const isHome = String(staff?.storeId ?? '') === branch.id;
+                return (
+                  <label key={branch.id} className="flex items-center gap-2 text-sm">
+                    <Checkbox
+                      checked={isHome || storeAccess.includes(branch.id)}
+                      disabled={isHome}
+                      onCheckedChange={() =>
+                        setStoreAccess((prev) =>
+                          prev.includes(branch.id) ? prev.filter((id) => id !== branch.id) : [...prev, branch.id],
+                        )
+                      }
+                    />
+                    <span className="flex-1">{branch.name}</span>
+                    {isHome && <Badge variant="secondary">Home branch</Badge>}
+                  </label>
+                );
+              })}
+            </div>
+          )}
 
           <div className="space-y-3">
             <div>
@@ -421,7 +497,10 @@ function StaffFormDialog({
           <Button variant="outline" onClick={() => onOpenChange(false)}>
             Cancel
           </Button>
-          <Button onClick={() => save.mutate()} disabled={invalid} loading={save.isPending}>
+          <Button
+            onClick={() => (invalid ? validation.touchAll() : save.mutate())}
+            loading={save.isPending}
+          >
             {isEdit ? 'Save changes' : 'Create account'}
           </Button>
         </DialogFooter>

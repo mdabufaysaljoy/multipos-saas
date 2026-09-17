@@ -31,7 +31,12 @@ const schema = z.object({
   PUBLIC_BASE_URL: z.string().default('http://localhost:4000'),
 
   DEFAULT_CURRENCY: z.string().length(3).default('BDT'),
-  TRIAL_DAYS: z.coerce.number().int().min(0).default(14),
+  /** Shown as the issuer on subscription invoices. Not secrets. */
+  INVOICE_ISSUER_NAME: z.string().max(120).default('POS Platform'),
+  INVOICE_ISSUER_ADDRESS: z.string().max(300).default(''),
+  TRIAL_DAYS: z.coerce.number().int().min(0).default(7),
+  /** Self-serve ceiling on POS workspaces per platform account. */
+  MAX_WORKSPACES_PER_ACCOUNT: z.coerce.number().int().min(1).max(100).default(10),
 
   SEED_PLATFORM_ADMIN_EMAIL: z.string().email().default('platform@pos.dev'),
   SEED_PLATFORM_ADMIN_PASSWORD: z.string().default('Platform@123'),

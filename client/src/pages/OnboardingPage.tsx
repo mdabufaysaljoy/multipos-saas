@@ -13,6 +13,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { ApiError } from '@/api/client';
 import { storeApi } from '@/api/endpoints';
 import { useAuth } from '@/hooks/useAuth';
+import { homePathForVertical } from '@/lib/verticalRoutes';
 
 const schema = z.object({
   name: z.string().trim().min(2, 'Store name is required'),
@@ -46,7 +47,8 @@ export function OnboardingPage() {
       await storeApi.create(values);
       await refresh();
       toast.success('Your store is ready');
-      navigate('/products', { replace: true });
+      // Each POS vertical starts somewhere different: products vs the menu.
+      navigate(homePathForVertical(session?.tenant?.vertical), { replace: true });
     } catch (error) {
       const message = error instanceof ApiError ? error.message : 'Could not create the store';
       toast.error(message);

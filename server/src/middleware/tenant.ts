@@ -6,6 +6,8 @@ import { ApiError } from '../utils/ApiError';
 import { asyncHandler } from '../utils/asyncHandler';
 import type { Permission } from '../config/permissions';
 import type { TenantContext } from '../types/express';
+import { DEFAULT_POS_VERTICAL } from '../config/verticals';
+import { isPosVertical } from '../services/subscription/planEntitlements';
 
 /**
  * Builds `req.ctx`, the tenant-scoped context every service call requires.
@@ -22,31 +24,47 @@ export const resolveTenant = asyncHandler(async (req: Request, _res: Response, n
   }
   if (!auth.tenantId) throw ApiError.forbidden('This account is not attached to a workspace');
 
-  const tenant = await TenantModel.findById(auth.tenantId).select('status name').lean();
+  const tenant = await TenantModel.findById(auth.tenantId).select('status name vertical').lean();
   if (!tenant) throw ApiError.forbidden('Workspace not found');
   if (tenant.status === 'suspended') {
     throw ApiError.forbidden('This workspace has been suspended. Please contact support.');
   }
 
-  // A store may be chosen with a header, but only among stores this tenant owns.
+  // A branch may be chosen with a header, but ONLY among branches this tenant
+  // owns AND this particular user is permitted to work in. Tenant admins reach
+  // every branch; staff are limited to their home branch plus any explicitly
+  // granted in `storeAccess`. Without this second check, any cashier could
+  // switch branches simply by changing a request header.
   const requestedStoreId = req.header('x-store-id');
   let storeId: Types.ObjectId | null = auth.storeId;
 
   if (requestedStoreId) {
     if (!Types.ObjectId.isValid(requestedStoreId)) throw ApiError.badRequest('Invalid store id');
-    const candidate = await StoreModel.findOne({
-      _id: new Types.ObjectId(requestedStoreId),
-      tenantId: auth.tenantId,
-      isActive: true,
-    })
+    const requested = new Types.ObjectId(requestedStoreId);
+
+    const candidate = await StoreModel.findOne({ _id: requested, tenantId: auth.tenantId, isActive: true, deletedAt: null })
       .select('_id')
       .lean();
-    if (!candidate) throw ApiError.forbidden('You do not have access to this store');
+    if (!candidate) throw ApiError.forbidden('You do not have access to this branch');
+
+    if (!auth.isAdmin && !isBranchAllowed(auth, requested)) {
+      throw ApiError.forbidden('You are not assigned to this branch');
+    }
+
     storeId = candidate._id;
   }
 
+  // Without a header, the default branch comes from the user record. Confirm it
+  // belongs to THIS workspace and is still open, otherwise fall back to the
+  // workspace's main branch - a branch id must never carry one workspace's
+  // context into another.
+  if (storeId && !requestedStoreId) {
+    const ownBranch = await StoreModel.exists({ _id: storeId, tenantId: auth.tenantId, isActive: true, deletedAt: null });
+    if (!ownBranch) storeId = null;
+  }
+
   if (!storeId) {
-    const fallback = await StoreModel.findOne({ tenantId: auth.tenantId, isActive: true })
+    const fallback = await StoreModel.findOne({ tenantId: auth.tenantId, isActive: true, deletedAt: null })
       .sort({ isDefault: -1, createdAt: 1 })
       .select('_id')
       .lean();
@@ -61,7 +79,12 @@ export const resolveTenant = asyncHandler(async (req: Request, _res: Response, n
 
   const ctx: TenantContext = {
     tenantId: auth.tenantId,
+    // From the workspace record, never the request. Legacy rows are Clothing.
+    vertical: isPosVertical(tenant.vertical) ? tenant.vertical : DEFAULT_POS_VERTICAL,
     storeId,
+    allowedStoreIds: isAdmin
+      ? []
+      : [auth.storeId, ...(auth.storeAccess ?? [])].filter((id): id is Types.ObjectId => Boolean(id)),
     userId: auth.id,
     userName: auth.name,
     role: auth.role,
@@ -74,6 +97,12 @@ export const resolveTenant = asyncHandler(async (req: Request, _res: Response, n
   req.ctx = ctx;
   next();
 });
+
+/** Home branch plus explicitly granted branches. */
+const isBranchAllowed = (auth: { storeId: Types.ObjectId | null; storeAccess?: Types.ObjectId[] }, storeId: Types.ObjectId) => {
+  if (auth.storeId && String(auth.storeId) === String(storeId)) return true;
+  return (auth.storeAccess ?? []).some((id) => String(id) === String(storeId));
+};
 
 /** Throws rather than returning undefined, so controllers can rely on it. */
 export const getContext = (req: Request): TenantContext => {

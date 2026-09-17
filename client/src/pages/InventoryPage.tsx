@@ -85,7 +85,7 @@ export function InventoryPage() {
 
   const stockColumns: Column<InventoryRow>[] = [
     {
-      key: 'item',
+      key: 'item', mobile: 'title',
       header: 'Item',
       cell: (row) => (
         <div className="min-w-0">
@@ -113,7 +113,7 @@ export function InventoryPage() {
         );
       },
     },
-    { key: 'threshold', header: 'Low at', cell: (row) => <span className="tabular">{row.lowStockThreshold || '—'}</span> },
+    { key: 'threshold', mobile: 'hide', header: 'Low at', cell: (row) => <span className="tabular">{row.lowStockThreshold || '—'}</span> },
     { key: 'cost', header: 'Cost', cell: (row) => <span className="tabular">{formatMoney(row.costPriceMinor, currency)}</span> },
     { key: 'price', header: 'Sell', cell: (row) => <span className="tabular">{formatMoney(row.sellingPriceMinor, currency)}</span> },
     {
@@ -122,7 +122,7 @@ export function InventoryPage() {
       cell: (row) => <span className="tabular">{formatMoney(row.stock * row.costPriceMinor, currency)}</span>,
     },
     {
-      key: 'actions',
+      key: 'actions', mobile: 'actions',
       header: '',
       headerClassName: 'text-right',
       className: 'text-right',
@@ -210,7 +210,7 @@ export function InventoryPage() {
         description="Live stock levels and a full audit trail of every movement."
       />
 
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         <StatCard icon={<Boxes className="h-4 w-4" />} label="Units on hand" value={String(summary?.totalUnits ?? 0)} />
         <StatCard
           label="Stock value (cost)"

@@ -1,15 +1,15 @@
 import { z } from 'zod';
 import { PAYMENT_PROVIDERS, SUBSCRIPTION_STATUS } from '../../config/constants';
-import { objectId, paginationSchema } from '../common/common.validators';
+import { objectId, paginationSchema, httpUrl, calendarDate } from '../common/common.validators';
 
 /** Platform admin manually assigning or changing a tenant's subscription. */
 export const assignSubscriptionSchema = z
   .object({
     tenantId: objectId,
     planId: objectId,
-    startDate: z.coerce.date().optional(),
+    startDate: calendarDate.optional(),
     /** Either an explicit end date, or a number of billing periods. */
-    endDate: z.coerce.date().optional(),
+    endDate: calendarDate.optional(),
     periods: z.number().int().min(1).max(60).optional(),
     status: z.enum([SUBSCRIPTION_STATUS.ACTIVE, SUBSCRIPTION_STATUS.TRIAL]).default(SUBSCRIPTION_STATUS.ACTIVE),
     autoRenew: z.boolean().default(false),
@@ -33,7 +33,7 @@ export const extendSubscriptionSchema = z.object({
   /** Additional whole billing periods to append. */
   periods: z.number().int().min(1).max(60).optional(),
   /** Or push the end date to a specific day. */
-  until: z.coerce.date().optional(),
+  until: calendarDate.optional(),
   notes: z.string().trim().max(500).optional().default(''),
 }).superRefine((data, ctx) => {
   if (!data.periods && !data.until) {
@@ -63,8 +63,8 @@ export const cancelSubscriptionSchema = z.object({
 export const checkoutSchema = z.object({
   planId: objectId,
   provider: z.enum([PAYMENT_PROVIDERS.BKASH, PAYMENT_PROVIDERS.NAGAD, PAYMENT_PROVIDERS.BANK]),
-  returnUrl: z.string().url().optional(),
-  cancelUrl: z.string().url().optional(),
+  returnUrl: httpUrl.optional(),
+  cancelUrl: httpUrl.optional(),
 });
 
 export const listSubscriptionsSchema = paginationSchema.extend({
@@ -78,3 +78,30 @@ export type SetSubscriptionStatusInput = z.infer<typeof setSubscriptionStatusSch
 export type CancelSubscriptionInput = z.infer<typeof cancelSubscriptionSchema>;
 export type CheckoutInput = z.infer<typeof checkoutSchema>;
 export type ListSubscriptionsInput = z.infer<typeof listSubscriptionsSchema>;
+
+/** Manual-payment upgrade request submitted by the customer. */
+export const submitUpgradeSchema = z.object({
+  planId: objectId,
+  /** "wallet" settles instantly from the prepaid balance. */
+  paymentMethod: z.enum([PAYMENT_PROVIDERS.BKASH, PAYMENT_PROVIDERS.NAGAD, PAYMENT_PROVIDERS.BANK, 'wallet']),
+  couponCode: z.string().trim().max(32).optional(),
+  amountMinor: z.number().int().min(1, 'Enter the amount you paid'),
+  // Required for manual methods and validated again in the service; a wallet
+  // payment is already settled and needs neither.
+  senderNumber: z.string().trim().max(32).optional().default(''),
+  transactionId: z.string().trim().max(64).optional().default(''),
+  note: z.string().trim().max(500).optional().default(''),
+});
+
+export const reviewUpgradeSchema = z.object({
+  reviewNote: z.string().trim().max(500).optional().default(''),
+});
+
+export type SubmitUpgradeInput = z.infer<typeof submitUpgradeSchema>;
+export type ReviewUpgradeInput = z.infer<typeof reviewUpgradeSchema>;
+
+export const couponQuoteSchema = z.object({
+  code: z.string().trim().min(1).max(32),
+  planId: objectId,
+});
+export type CouponQuoteInput = z.infer<typeof couponQuoteSchema>;

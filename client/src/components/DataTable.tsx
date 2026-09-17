@@ -13,6 +13,17 @@ export interface Column<T> {
   cell: (row: T) => ReactNode;
   className?: string;
   headerClassName?: string;
+  /**
+   * How this column behaves in the mobile card layout.
+   *
+   *  'title'   the card's heading (usually the name)
+   *  'meta'    a secondary line under the heading, unlabelled
+   *  'actions' pinned to the card's footer
+   *  'hide'    dropped on mobile - noise on a small screen
+   *
+   * Anything else becomes a labelled row inside the card.
+   */
+  mobile?: 'title' | 'meta' | 'actions' | 'hide';
 }
 
 interface DataTableProps<T> {
@@ -52,7 +63,7 @@ export function DataTable<T>({
    * (print, view, delete) triggers its own handler AND bubbles to the row -
    * which is what caused two dialogs to open at once from the sales table.
    */
-  const handleRowClick = (event: React.MouseEvent<HTMLTableRowElement>, row: T) => {
+  const handleRowClick = (event: React.MouseEvent<HTMLElement>, row: T) => {
     if (!onRowClick) return;
     const target = event.target as HTMLElement;
     if (target.closest('button, a, input, select, textarea, label, [role="menuitem"], [data-no-row-click]')) {
@@ -67,9 +78,59 @@ export function DataTable<T>({
     return <EmptyState title={emptyTitle} description={emptyDescription} action={emptyAction} />;
   }
 
+  const titleColumn = columns.find((c) => c.mobile === 'title') ?? columns[0];
+  const metaColumns = columns.filter((c) => c.mobile === 'meta');
+  const actionColumns = columns.filter((c) => c.mobile === 'actions');
+  const detailColumns = columns.filter(
+    (c) => c !== titleColumn && !['meta', 'actions', 'hide'].includes(c.mobile ?? ''),
+  );
+
   return (
     <div className={cn('flex flex-col', className)}>
-      <div className="scrollbar-thin overflow-x-auto">
+      {/* Cards on a phone, table from `sm` up. A table narrower than the screen
+          forces sideways scrolling to read a row, which is the single worst
+          thing to do to someone holding a phone behind a counter. */}
+      <ul className="divide-y sm:hidden">
+        {rows.map((row) => (
+          <li
+            key={rowKey(row)}
+            onClick={onRowClick ? (event) => handleRowClick(event, row) : undefined}
+            className={cn('space-y-2 p-4', onRowClick && 'cursor-pointer active:bg-accent/50')}
+          >
+            <div className="min-w-0 space-y-0.5">
+              <div className="font-medium">{titleColumn.cell(row)}</div>
+              {metaColumns.map((column) => (
+                <div key={column.key} className="text-xs text-muted-foreground">
+                  {column.cell(row)}
+                </div>
+              ))}
+            </div>
+
+            {detailColumns.length > 0 && (
+              <dl className="grid grid-cols-2 gap-x-3 gap-y-1.5 text-sm">
+                {detailColumns.map((column) => (
+                  <div key={column.key} className="min-w-0">
+                    <dt className="text-[11px] uppercase tracking-wide text-muted-foreground">{column.header}</dt>
+                    <dd className="truncate">{column.cell(row)}</dd>
+                  </div>
+                ))}
+              </dl>
+            )}
+
+            {/* Actions get their own wrapping row. Squeezed beside the title
+                they overflowed the card and covered the fields beneath. */}
+            {actionColumns.length > 0 && (
+              <div className="flex flex-wrap items-center gap-2 border-t pt-2">
+                {actionColumns.map((column) => (
+                  <React.Fragment key={column.key}>{column.cell(row)}</React.Fragment>
+                ))}
+              </div>
+            )}
+          </li>
+        ))}
+      </ul>
+
+      <div className="scrollbar-thin hidden overflow-x-auto sm:block">
         <table className="w-full border-collapse text-sm">
           <thead>
             <tr className="border-b bg-muted/40">
@@ -108,7 +169,7 @@ export function DataTable<T>({
       </div>
 
       {meta && meta.totalPages > 1 && onPageChange && (
-        <div className="flex items-center justify-between border-t px-4 py-3 text-sm">
+        <div className="flex flex-wrap items-center justify-between gap-2 border-t px-4 py-3 text-sm">
           <p className="text-muted-foreground">
             Page {meta.page} of {meta.totalPages} · {meta.total} record{meta.total === 1 ? '' : 's'}
           </p>

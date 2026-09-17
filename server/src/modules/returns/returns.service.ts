@@ -23,6 +23,7 @@ interface PreparedReturnLine {
   categoryNameSnapshot: string;
   quantity: number;
   unitPriceMinor: number;
+  costPriceMinorSnapshot: number;
   lineTotalMinor: number;
   restock: boolean;
 }
@@ -141,6 +142,8 @@ class ReturnService {
         quantity: requested.quantity,
         // Always the historical price, never today's catalogue price.
         unitPriceMinor: saleItem.unitPriceMinor,
+        // Carried from the sale so returned COGS can be backed out of profit.
+        costPriceMinorSnapshot: saleItem.costPriceMinorSnapshot,
         lineTotalMinor: saleItem.unitPriceMinor * requested.quantity,
         restock: requested.restock,
       });

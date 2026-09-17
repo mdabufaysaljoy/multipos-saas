@@ -1,0 +1,7 @@
+node_modules/
+dist/
+build/
+coverage/
+server/uploads/
+package-lock.json
+*.tsbuildinfo

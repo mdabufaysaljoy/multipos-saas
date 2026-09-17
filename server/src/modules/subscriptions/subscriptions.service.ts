@@ -1,15 +1,21 @@
 import { Types } from 'mongoose';
+import { PaymentModel, type PaymentDoc } from '../../models/Payment';
+import { issueInvoiceSafely, presentPayments } from '../../services/billing/invoice.service';
 import dayjs from 'dayjs';
 import { PAYMENT_STATUS, SUBSCRIPTION_STATUS } from '../../config/constants';
-import { PaymentModel } from '../../models/Payment';
-import { SubscriptionModel } from '../../models/Subscription';
+import { PRIMARY_FIRST, SubscriptionModel } from '../../models/Subscription';
 import { SubscriptionEventModel, type SubscriptionEventType } from '../../models/SubscriptionEvent';
 import { SubscriptionPlanModel } from '../../models/SubscriptionPlan';
 import { TenantModel } from '../../models/Tenant';
 import { ApiError } from '../../utils/ApiError';
 import { resolvePage } from '../../utils/pagination';
-import { addInterval, buildPlanSnapshot } from '../../services/subscription/provisioning.service';
+import { addInterval } from '../../services/subscription/provisioning.service';
 import { entitlementService } from '../../services/subscription/entitlement.service';
+import { openSubscriptionPeriod } from '../../services/subscription/activation.service';
+import { isPosVertical, resolvePlanForVertical } from '../../services/subscription/planEntitlements';
+import { DEFAULT_POS_VERTICAL } from '../../config/verticals';
+import { TRIAL_LENGTH_DAYS } from '../../services/subscription/trialPolicy';
+import { canRenewAutomatically } from '../../services/subscription/renewalCapability';
 import type {
   AssignSubscriptionInput,
   CancelSubscriptionInput,
@@ -27,7 +33,7 @@ class SubscriptionService {
   /** The tenant-facing view: current plan, usage and remaining days. */
   async current(tenantId: Types.ObjectId) {
     const [subscription, entitlement, usage] = await Promise.all([
-      SubscriptionModel.findOne({ tenantId }).sort({ createdAt: -1 }).lean(),
+      SubscriptionModel.findOne({ tenantId }).sort(PRIMARY_FIRST).lean(),
       entitlementService.forTenant(tenantId),
       entitlementService.usage(tenantId),
     ]);
@@ -38,9 +44,10 @@ class SubscriptionService {
     const [subscriptions, events, payments] = await Promise.all([
       SubscriptionModel.find({ tenantId }).sort({ createdAt: -1 }).lean(),
       SubscriptionEventModel.find({ tenantId }).sort({ createdAt: -1 }).limit(100).lean(),
-      PaymentModel.find({ tenantId }).sort({ createdAt: -1 }).limit(50).lean(),
+      PaymentModel.find({ tenantId }).sort({ createdAt: -1 }).limit(50).lean<(PaymentDoc & { _id: Types.ObjectId })[]>(),
     ]);
-    return { subscriptions, events, payments };
+    // Only what the customer may see of each payment (no review notes, approver names or metadata).
+    return { subscriptions, events, payments: await presentPayments(payments) };
   }
 
   /**
@@ -56,8 +63,12 @@ class SubscriptionService {
     if (!plan) throw ApiError.notFound('Plan not found');
 
     const start = input.startDate ?? new Date();
+    const isTrial = input.status === SUBSCRIPTION_STATUS.TRIAL;
     let end: Date;
-    if (input.endDate) {
+    if (isTrial) {
+      // Every trial lasts exactly TRIAL_LENGTH_DAYS, whoever grants it.
+      end = dayjs(start).add(TRIAL_LENGTH_DAYS, 'day').toDate();
+    } else if (input.endDate) {
       end = input.endDate;
     } else {
       const periods = input.periods ?? 1;
@@ -67,21 +78,37 @@ class SubscriptionService {
 
     if (end <= start) throw ApiError.badRequest('The subscription must end after it starts');
 
-    // Close out whatever is running now so only one subscription is live.
-    await SubscriptionModel.updateMany(
-      { tenantId: tenant._id, status: { $nin: [SUBSCRIPTION_STATUS.EXPIRED, SUBSCRIPTION_STATUS.CANCELLED] } },
-      { $set: { status: SUBSCRIPTION_STATUS.EXPIRED, autoRenew: false } },
-    );
+    // A trial is only ever offered on the trial-eligible plan. Without this the
+    // self-serve rule would be one admin request away from being bypassed.
+    if (input.status === SUBSCRIPTION_STATUS.TRIAL && plan.trialDays <= 0) {
+      throw ApiError.badRequest(
+        `${plan.name} does not offer a free trial. Assign it as an active subscription instead.`,
+        { planCode: plan.code },
+      );
+    }
+    if (isTrial && (input.endDate || input.periods)) {
+      throw ApiError.badRequest(`A free trial always lasts ${TRIAL_LENGTH_DAYS} days; leave out the end date and periods.`, {
+        reason: 'TRIAL_LENGTH_FIXED',
+      });
+    }
 
-    const subscription = await SubscriptionModel.create({
+    // The plan must be offered to this workspace's vertical. Checked before
+    // anything is closed, so a refused assignment changes nothing.
+    const vertical = isPosVertical(tenant.vertical) ? tenant.vertical : DEFAULT_POS_VERTICAL;
+    if (!resolvePlanForVertical(plan, vertical).isAvailable) {
+      throw ApiError.badRequest(`${plan.name} is not offered for ${vertical} workspaces.`, {
+        planCode: plan.code,
+        vertical,
+      });
+    }
+
+    // The shared activation core closes whatever was running and syncs the workspace.
+    const subscription = await openSubscriptionPeriod({
       tenantId: tenant._id,
-      planId: plan._id,
-      planSnapshot: buildPlanSnapshot(plan),
+      plan,
       status: input.status,
-      startedAt: start,
-      currentPeriodStart: start,
-      currentPeriodEnd: end,
-      trialEndsAt: input.status === SUBSCRIPTION_STATUS.TRIAL ? end : null,
+      start,
+      end,
       autoRenew: input.autoRenew,
       provider: 'manual',
       isManual: true,
@@ -113,6 +140,7 @@ class SubscriptionService {
       });
       subscription.lastPaymentId = payment._id;
       await subscription.save();
+      await issueInvoiceSafely(payment._id);
     }
 
     await this.syncTenant(tenant._id, subscription._id, input.status, end);
@@ -132,7 +160,7 @@ class SubscriptionService {
       if (input.until <= base) throw ApiError.badRequest('The new end date must be later than the current one');
       end = input.until;
     } else {
-      for (let i = 0; i < (input.periods ?? 1); i += 1) end = addInterval(end, subscription.planSnapshot.interval);
+      for (let i = 0; i < (input.periods ?? 1); i += 1) end = addInterval(end, subscription.planSnapshot?.interval ?? 'monthly');
     }
 
     subscription.currentPeriodEnd = end;
@@ -184,7 +212,7 @@ class SubscriptionService {
    * the period they already paid for; `immediate` ends access at once.
    */
   async cancel(tenantId: Types.ObjectId, input: CancelSubscriptionInput, actor: Actor) {
-    const subscription = await SubscriptionModel.findOne({ tenantId }).sort({ createdAt: -1 });
+    const subscription = await SubscriptionModel.findOne({ tenantId }).sort(PRIMARY_FIRST);
     if (!subscription) throw ApiError.notFound('No subscription found for this workspace');
     if (subscription.status === SUBSCRIPTION_STATUS.CANCELLED && subscription.cancelAtPeriodEnd) {
       throw ApiError.badRequest('This subscription is already scheduled to end');
@@ -221,7 +249,7 @@ class SubscriptionService {
 
   /** Undoes a pending cancellation while the period is still running. */
   async reactivate(tenantId: Types.ObjectId, actor: Actor) {
-    const subscription = await SubscriptionModel.findOne({ tenantId }).sort({ createdAt: -1 });
+    const subscription = await SubscriptionModel.findOne({ tenantId }).sort(PRIMARY_FIRST);
     if (!subscription) throw ApiError.notFound('No subscription found for this workspace');
     if (!subscription.cancelAtPeriodEnd) throw ApiError.badRequest('This subscription is not scheduled to end');
     if (subscription.currentPeriodEnd <= new Date()) {
@@ -230,7 +258,10 @@ class SubscriptionService {
 
     subscription.cancelAtPeriodEnd = false;
     subscription.cancelledAt = null;
-    subscription.autoRenew = true;
+    // Renewal resumes only where something can actually renew it (the wallet, or
+    // a recurring gateway); forcing it on for a manual payment made the renewal
+    // job fail on it every run.
+    subscription.autoRenew = canRenewAutomatically(subscription);
     subscription.status = SUBSCRIPTION_STATUS.ACTIVE;
     await subscription.save();
 

@@ -164,7 +164,10 @@ export interface StoreSettings {
   _id: string;
   name: string;
   code: string;
+  /** Shown in the POS UI. */
   logoUrl: string | null;
+  /** Printed on receipts - a separate image from the UI logo. */
+  receiptLogoUrl: string | null;
   phone: string;
   email: string;
   address: string;
@@ -188,7 +191,10 @@ export interface StoreSettings {
 
 export interface ReceiptPayload {
   sale: Sale;
-  store: Pick<StoreSettings, 'name' | 'logoUrl' | 'phone' | 'email' | 'address' | 'currency' | 'receipt' | 'tax'>;
+  store: Pick<
+    StoreSettings,
+    'name' | 'logoUrl' | 'receiptLogoUrl' | 'phone' | 'email' | 'address' | 'currency' | 'receipt' | 'tax'
+  >;
 }
 
 export interface ReturnItem {
@@ -246,7 +252,7 @@ export interface ReturnableSale {
   fullyReturned: boolean;
 }
 
-export interface InventoryRow extends ProductVariant {}
+export type InventoryRow = ProductVariant;
 
 export interface LedgerEntry {
   _id: string;
@@ -275,6 +281,8 @@ export interface InventorySummary {
 
 export interface StaffMember {
   id: string;
+  storeId?: string | null;
+  storeAccess?: string[];
   name: string;
   email: string;
   phone: string;
@@ -285,6 +293,28 @@ export interface StaffMember {
   deniedPermissions: string[];
   isActive: boolean;
   lastLoginAt: string | null;
+  createdAt: string;
+  effectivePermissions: string[];
+}
+
+/** Someone from another workspace of the same account, working in this one. */
+export interface WorkspaceMemberRow {
+  id: string;
+  userId: string;
+  name: string;
+  email: string;
+  phone: string;
+  homeWorkspace: { id: string; name: string } | null;
+  roleId: string | null;
+  roleName: string | null;
+  storeId: string | null;
+  storeAccess: string[];
+  extraPermissions: string[];
+  deniedPermissions: string[];
+  isActive: boolean;
+  accountActive: boolean;
+  lastLoginAt: string | null;
+  addedByNameSnapshot: string;
   createdAt: string;
   effectivePermissions: string[];
 }
@@ -342,6 +372,17 @@ export interface SubscriptionPlan {
   limits: Record<string, number>;
   isActive: boolean;
   sortOrder: number;
+  /** Upgrade ladder position; higher is a better plan. */
+  tier: number;
+  /** The POS product this plan is sold to; null/absent means every POS type. */
+  posProductCode?: string | null;
+  /** Catalog plan (starter / professional / enterprise) this SKU is sold as; null for a bespoke plan. */
+  catalogPlanCode?: string | null;
+  billingCycle?: 'monthly' | 'annual';
+  /** Shown on the pricing page (admin data; public plans only reach customers). */
+  isPublic?: boolean;
+  /** The vertical `features` and `limits` were resolved for (public catalogue). */
+  vertical?: 'clothing' | 'restaurant' | 'pharmacy' | 'supershop' | 'grocery';
 }
 
 export interface Subscription {
@@ -356,4 +397,320 @@ export interface Subscription {
   provider: string;
   notes: string;
   createdAt: string;
+}
+
+
+// ---------------------------------------------------------------- reports
+
+export interface ReportRange {
+  from: string;
+  to: string;
+  label: string;
+  preset?: string;
+}
+
+export interface SalesProfitReport {
+  range: ReportRange;
+  grossSalesMinor: number;
+  discountsMinor: number;
+  returnAmountMinor: number;
+  taxMinor: number;
+  cogsMinor: number;
+  netSalesMinor: number;
+  netProfitMinor: number;
+  /** 1% = 100 */
+  marginBasisPoints: number;
+  invoiceCount: number;
+  itemCount: number;
+  returnCount: number;
+  returnedItems: number;
+  averageOrderValueMinor: number;
+  trend: { bucket: string; totalMinor: number; orderCount: number; itemCount: number }[];
+  /** The same figures for the preceding period of equal length. */
+  previous: {
+    range: { from: string; to: string };
+    grossSalesMinor: number;
+    discountsMinor: number;
+    returnAmountMinor: number;
+    netSalesMinor: number;
+    cogsMinor: number;
+    netProfitMinor: number;
+    marginBasisPoints: number;
+    invoiceCount: number;
+    itemCount: number;
+    averageOrderValueMinor: number;
+  };
+}
+
+export interface BreakdownRow {
+  id: string | null;
+  label: string;
+  sub?: string;
+  sku?: string;
+  quantity: number;
+  grossQuantity: number;
+  returnedQuantity: number;
+  revenueMinor: number;
+  costMinor: number;
+  profitMinor: number;
+}
+
+export interface BreakdownReport {
+  range: ReportRange;
+  dimension: string;
+  rows: BreakdownRow[];
+}
+
+export interface StaffReportRow {
+  id: string;
+  label: string;
+  orderCount: number;
+  revenueMinor: number;
+  itemCount: number;
+  profitMinor: number;
+}
+
+export interface ReturnReport {
+  range: ReportRange;
+  summary: { count: number; amountMinor: number; items: number };
+  byProduct: { id: string; label: string; sub: string; sku: string; quantity: number; amountMinor: number }[];
+  byReason: { reason: string; count: number; amountMinor: number }[];
+}
+
+export interface InventoryReport {
+  summary: {
+    units: number;
+    costValueMinor: number;
+    retailValueMinor: number;
+    variants: number;
+    lowStockCount: number;
+    outOfStockCount: number;
+  };
+  lowStock: { _id: string; productNameSnapshot: string; name: string; sku: string; stock: number; lowStockThreshold: number; sellingPriceMinor: number }[];
+  outOfStock: { _id: string; productNameSnapshot: string; name: string; sku: string; stock: number; sellingPriceMinor: number }[];
+  topValue: { _id: string; productNameSnapshot: string; name: string; sku: string; stock: number; valueMinor: number }[];
+}
+
+export interface CustomerReport {
+  range: ReportRange;
+  rows: { id: string; label: string; sub: string; orderCount: number; spentMinor: number; itemCount: number }[];
+  walkIn: { count: number; totalMinor: number };
+  summary: { customers: number; repeatCustomers: number; orders: number; totalMinor: number; averageSpendMinor: number };
+}
+
+export interface OverviewReport {
+  range: ReportRange;
+  kpis: {
+    salesMinor: number;
+    grossSalesMinor: number;
+    orderCount: number;
+    itemCount: number;
+    /** Null when the plan does not include Advanced Analytics. */
+    profitMinor: number | null;
+    returnCount: number;
+    returnAmountMinor: number;
+    averageOrderValueMinor: number;
+    stockValueMinor: number;
+    stockUnits: number;
+    lowStockCount: number;
+    outOfStockCount: number;
+  };
+  trend: { bucket: string; totalMinor: number; orderCount: number; itemCount: number }[];
+  topProducts: { productId: string; name: string; quantity: number; revenueMinor: number }[];
+  lowStock: InventoryReport['lowStock'];
+  recentSales: {
+    id: string;
+    saleNumber: string;
+    soldAt: string;
+    totalMinor: number;
+    paymentMethod: string;
+    cashier: string;
+    customer: string | null;
+    itemCount: number;
+  }[];
+  payments: { method: string; amountMinor: number; count: number }[];
+}
+
+
+export interface BranchReportRow {
+  id: string;
+  name: string;
+  code: string;
+  isActive: boolean;
+  orders: number;
+  items: number;
+  revenueMinor: number;
+  returnCount: number;
+  returnAmountMinor: number;
+  netSalesMinor: number;
+  profitMinor: number;
+  stockUnits: number;
+  stockValueMinor: number;
+}
+
+export interface BranchReport {
+  range: ReportRange;
+  rows: BranchReportRow[];
+  totals: {
+    orders: number;
+    netSalesMinor: number;
+    profitMinor: number;
+    returnAmountMinor: number;
+    stockValueMinor: number;
+  };
+}
+
+export interface UpgradeRequest {
+  _id: string;
+  planSnapshot: { code: string; name: string; interval: string; priceMinor: number; currency: string };
+  currentPlanCodeSnapshot: string | null;
+  paymentMethod: string;
+  amountMinor: number;
+  senderNumber: string;
+  transactionId: string;
+  note: string;
+  status: 'pending' | 'approved' | 'rejected' | 'cancelled';
+  reviewNote: string;
+  reviewedAt: string | null;
+  createdAt: string;
+}
+
+
+export interface WalletTransaction {
+  _id: string;
+  type: 'credit' | 'debit' | 'refund' | 'adjustment';
+  amountMinor: number;
+  balanceBeforeMinor: number;
+  balanceAfterMinor: number;
+  reason: string;
+  referenceType: string | null;
+  performedByNameSnapshot: string;
+  createdAt: string;
+}
+
+export interface TopUp {
+  _id: string;
+  amountMinor: number;
+  currency: string;
+  paymentMethod: string;
+  transactionId: string;
+  status: 'pending' | 'approved' | 'rejected' | 'cancelled';
+  reviewNote: string;
+  createdAt: string;
+  /** Set once the top-up is approved and its receipt issued. */
+  receipt?: { id: string; number: string | null } | null;
+}
+
+
+export interface SmsEstimate {
+  recipients: number;
+  segments: number;
+  encoding: 'GSM7' | 'UCS2';
+  characters: number;
+  perSmsCostMinor: number;
+  totalCostMinor: number;
+}
+
+/**
+ * Two independent reasons a channel may be unusable, and the UI must tell them
+ * apart: `includedInPlan` is a billing question the customer can act on,
+ * `providerConfigured` is a server setup question they cannot. `available` is
+ * simply both, and governs SENDING only - never whether a campaign can be
+ * written.
+ */
+export interface MessagingChannelStatus {
+  available: boolean;
+  includedInPlan: boolean;
+  providerConfigured: boolean;
+  provider: string | null;
+  displayName: string | null;
+}
+
+export interface MessagingStatus {
+  sms: MessagingChannelStatus & {
+    perSegmentCostMinor: number;
+    providers: { name: string; displayName: string; configured: boolean }[];
+  };
+  email: MessagingChannelStatus & { perEmailCostMinor: number };
+  planName: string | null;
+  usage: { sent: number; failed: number; totalCostMinor: number; totalSegments: number };
+}
+
+export interface SmsMessage {
+  _id: string;
+  recipient: string;
+  message: string;
+  segments: number;
+  encoding: string;
+  costMinor: number;
+  status: 'queued' | 'sent' | 'failed';
+  error: string | null;
+  sentAt: string | null;
+  sentByNameSnapshot: string;
+  createdAt: string;
+}
+
+export interface SmsCampaign {
+  _id: string;
+  name: string;
+  message: string;
+  segments: number;
+  recipientCount: number;
+  sentCount: number;
+  failedCount: number;
+  estimatedCostMinor: number;
+  actualCostMinor: number;
+  status: string;
+  createdAt: string;
+  createdByNameSnapshot: string;
+}
+
+
+export interface LimitBreach {
+  resource: string;
+  /** Human label, e.g. "branches". */
+  label: string;
+  current: number;
+  limit: number;
+  excess: number;
+  /** What the owner must do, e.g. "Remove or deactivate 2 branches". */
+  action: string;
+}
+
+export interface PlanOption {
+  planId: string;
+  code: string;
+  name: string;
+  interval: 'monthly' | 'yearly';
+  tier: number;
+  priceMinor: number;
+  currency: string;
+  features: Record<string, boolean>;
+  limits: Record<string, number>;
+  /** current | renewal | upgrade | cycle-change | cycle-downgrade | downgrade */
+  kind: string;
+  /** Catalog terms for buying or scheduling this plan; null for a bespoke plan. */
+  catalogPlanCode?: string | null;
+  billingCycle?: 'monthly' | 'annual';
+  allowedDirect: boolean;
+  reason: string;
+  breaches: LimitBreach[];
+}
+
+export interface PlanOptionsResponse {
+  currentPlanCode: string | null;
+  usage: { branches: number; staff: number; products: number };
+  options: PlanOption[];
+}
+
+
+export interface WalletBreakdown {
+  balanceMinor: number;
+  currency: string;
+  totalCreditsMinor: number;
+  totalRefundsMinor: number;
+  /** Net of refunds. */
+  totalDebitsMinor: number;
+  grossDebitsMinor: number;
+  services: { service: string; label: string; amountMinor: number }[];
 }

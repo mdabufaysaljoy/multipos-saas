@@ -1,9 +1,9 @@
-/* eslint-disable no-console */
+import { withLedgerMaintenance } from '../utils/ledgerMaintenance';
 import mongoose, { Types } from 'mongoose';
 import dayjs from 'dayjs';
 import { connectDatabase, disconnectDatabase } from '../config/db';
 import { env } from '../config/env';
-import { PERMISSIONS, PERMISSION_CATALOG, DEFAULT_CASHIER_PERMISSIONS } from '../config/permissions';
+import { PERMISSION_CATALOG } from '../config/permissions';
 import { ROLES, SUBSCRIPTION_STATUS } from '../config/constants';
 import {
   CategoryModel,
@@ -12,25 +12,40 @@ import {
   InventoryTransactionModel,
   PaymentModel,
   PermissionModel,
+  PlatformSettingsModel,
   ProductModel,
   ProductVariantModel,
   RefreshTokenModel,
   ReturnModel,
   RoleModel,
   SaleModel,
+  StorageObjectModel,
   StoreModel,
   SubscriptionEventModel,
   SubscriptionModel,
   SubscriptionPlanModel,
   TenantModel,
+  TopUpRequestModel,
+  UpgradeRequestModel,
+  WalletModel,
+  WalletTransactionModel,
+  CouponModel,
+  CouponRedemptionModel,
   UserModel,
   hashPassword,
 } from '../models';
 import { codeFromName, slugify, uniqueSlug } from '../utils/slug';
 import { buildPlanSnapshot } from '../services/subscription/provisioning.service';
+import { verticalOfTenant } from '../services/subscription/planEntitlements';
+import { promoteToPrimary } from '../services/subscription/primarySubscription';
+import { PRIMARY_FIRST } from '../models/Subscription';
 import { createSystemRoles } from '../modules/roles/roles.defaults';
 import { seedPlans } from './plans.seed';
+import { AccountModel } from '../models/Account';
+import { DEFAULT_POS_VERTICAL } from '../config/verticals';
+import { ensureAccountForOwner } from '../services/account/account.service';
 import { SEED_CATEGORIES, SEED_CUSTOMERS, SEED_PRODUCTS } from './catalog.seed';
+import { issueInvoiceSafely } from '../services/billing/invoice.service';
 
 const RESET = process.argv.includes('--reset') || process.argv.includes('--fresh');
 
@@ -43,6 +58,7 @@ async function clearAll() {
     InventoryTransactionModel.deleteMany({}),
     PaymentModel.deleteMany({}),
     PermissionModel.deleteMany({}),
+    PlatformSettingsModel.deleteMany({}),
     ProductModel.deleteMany({}),
     ProductVariantModel.deleteMany({}),
     RefreshTokenModel.deleteMany({}),
@@ -54,8 +70,135 @@ async function clearAll() {
     SubscriptionModel.deleteMany({}),
     SubscriptionPlanModel.deleteMany({}),
     TenantModel.deleteMany({}),
+    AccountModel.deleteMany({}),
+    UpgradeRequestModel.deleteMany({}),
+    TopUpRequestModel.deleteMany({}),
+    WalletModel.deleteMany({}),
+    // A development reset is the one sanctioned removal of ledger history.
+    withLedgerMaintenance('development seed reset', () => WalletTransactionModel.deleteMany({}).exec()),
+    CouponModel.deleteMany({}),
+    CouponRedemptionModel.deleteMany({}),
+    // Without this a reseeded database reports phantom storage usage: the
+    // tenants are gone but their ledger rows are not.
+    StorageObjectModel.deleteMany({}),
     UserModel.deleteMany({}),
   ]);
+}
+
+/**
+ * Gives the demo tenant the subscription the seed intends: an ACTIVE monthly
+ * Showroom plan.
+ *
+ * Idempotent. A workspace already on an active, unexpired Showroom subscription
+ * is left exactly as it is; anything else is replaced with a fresh one, which
+ * is what makes `npm run seed` a reliable way to undo experimentation.
+ */
+const DEMO_PLAN_CODE = 'showroom-monthly';
+/** The demo workspace's name; its branch codes derive from this. */
+const BUSINESS_NAME = 'Denim Republic';
+
+async function ensureDemoSubscription(tenantId: Types.ObjectId, adminId: Types.ObjectId | null) {
+  const plan = await SubscriptionPlanModel.findOne({ code: DEMO_PLAN_CODE });
+  if (!plan) {
+    console.log(`  Demo subscription skipped: plan "${DEMO_PLAN_CODE}" is not seeded.`);
+    return;
+  }
+
+  const current = await SubscriptionModel.findOne({ tenantId }).sort(PRIMARY_FIRST).lean();
+  const healthy =
+    current?.planSnapshot?.code === DEMO_PLAN_CODE &&
+    current.status === SUBSCRIPTION_STATUS.ACTIVE &&
+    current.currentPeriodEnd > new Date();
+
+  if (healthy) {
+    console.log(`  Subscription: already on ${plan.name}, left unchanged`);
+    return;
+  }
+
+  const start = dayjs().subtract(3, 'day').toDate();
+  const end = dayjs(start).add(1, 'month').toDate();
+
+  // Close anything running so only one subscription is ever live.
+  await SubscriptionModel.updateMany(
+    { tenantId, status: { $nin: [SUBSCRIPTION_STATUS.EXPIRED, SUBSCRIPTION_STATUS.CANCELLED] } },
+    { $set: { status: SUBSCRIPTION_STATUS.EXPIRED, autoRenew: false } },
+  );
+
+  const subscription = await SubscriptionModel.create({
+    tenantId,
+    planId: plan._id,
+    planSnapshot: buildPlanSnapshot(plan, await verticalOfTenant(tenantId)),
+    status: SUBSCRIPTION_STATUS.ACTIVE,
+    startedAt: start,
+    currentPeriodStart: start,
+    currentPeriodEnd: end,
+    autoRenew: false,
+    provider: 'manual',
+    isManual: true,
+    notes: 'Seeded development subscription',
+  });
+  await promoteToPrimary(tenantId, subscription._id);
+
+  await SubscriptionEventModel.create({
+    tenantId,
+    subscriptionId: subscription._id,
+    type: 'activated',
+    message: `Seeded "${plan.name}" subscription`,
+    actorNameSnapshot: 'seed',
+  });
+
+  if (adminId) {
+    const seededPayment = await PaymentModel.create({
+      tenantId,
+      userId: adminId,
+      subscriptionId: subscription._id,
+      planId: plan._id,
+      amountMinor: plan.priceMinor,
+      currency: plan.currency,
+      provider: 'manual',
+      providerReference: `SEED-${subscription._id.toString().slice(-6).toUpperCase()}`,
+      status: 'paid',
+      paidAt: start,
+      metadata: { seeded: true },
+    });
+    await issueInvoiceSafely(seededPayment._id);
+  }
+
+  await TenantModel.updateOne(
+    { _id: tenantId },
+    { $set: { subscriptionStatus: SUBSCRIPTION_STATUS.ACTIVE, currentSubscriptionId: subscription._id, subscriptionEndsAt: end } },
+  );
+  console.log(`  Subscription: ${plan.name} until ${dayjs(end).format('D MMM YYYY')}`);
+}
+
+/**
+ * Keeps the demo workspace at exactly the two branches the seed creates.
+ *
+ * Anything beyond those two is development leftovers, so it is soft-deleted -
+ * the same mechanism the app uses, which preserves the sales history attached
+ * to those branches rather than orphaning it.
+ *
+ * Idempotent: a workspace already on the seeded two is untouched, so repeated
+ * seeding never accumulates branches.
+ */
+async function ensureDemoBranches(tenantId: Types.ObjectId) {
+  const seeded = [codeFromName(BUSINESS_NAME), `${codeFromName(BUSINESS_NAME)}2`];
+
+  const extras = await StoreModel.find({
+    tenantId,
+    deletedAt: null,
+    code: { $nin: seeded },
+  })
+    .select('_id name')
+    .lean();
+
+  if (extras.length === 0) return;
+
+  await StoreModel.updateMany(
+    { _id: { $in: extras.map((s) => s._id) } },
+    { $set: { deletedAt: new Date(), isActive: false, isDefault: false } },
+  );
+  console.log(`  Branches: removed ${extras.length} left over from development`);
 }
 
 /** Mirrors the in-code permission catalogue into the database. */
@@ -81,6 +224,80 @@ async function main() {
   const planCount = await seedPlans();
   console.log(`  ${planCount} subscription plans`);
 
+  // Manual-payment instructions are data, editable by a platform admin.
+  await PlatformSettingsModel.updateOne(
+    { key: 'platform' },
+    {
+      $set: {
+        supportEmail: 'support@pos.dev',
+        supportPhone: '+880 1700-111222',
+        smsCostMinor: 50,
+        // Carried over from the environment so an existing deployment keeps
+        // working after credentials moved into the database. A platform admin
+        // edits them in the UI from here on.
+        sms: {
+          provider: 'alpha',
+          apiKey: process.env.ALPHA_SMS_API_KEY ?? '',
+          baseUrl: process.env.ALPHA_SMS_BASE_URL || 'https://api.sms.net.bd',
+          senderId: process.env.ALPHA_SMS_SENDER_ID ?? '',
+          enabled: Boolean(process.env.ALPHA_SMS_API_KEY),
+        },
+        paymentInstructions: [
+          {
+            method: 'bkash',
+            label: 'bKash',
+            accountNumber: '01700-111222',
+            accountName: 'Clothing POS Ltd',
+            steps: [
+              'Open the bKash app and choose Send Money.',
+              'Send the exact plan amount to the number above.',
+              'Copy the Transaction ID from the confirmation message.',
+              'Enter it below - we verify before activating your plan.',
+            ],
+            isActive: true,
+          },
+          {
+            method: 'nagad',
+            label: 'Nagad',
+            accountNumber: '01800-333444',
+            accountName: 'Clothing POS Ltd',
+            steps: ['Open Nagad and choose Send Money.', 'Send the plan amount.', 'Enter the Transaction ID below.'],
+            isActive: true,
+          },
+          {
+            method: 'bank',
+            label: 'Bank transfer',
+            accountNumber: '1234 5678 9012',
+            accountName: 'Clothing POS Ltd — City Bank',
+            steps: ['Transfer the plan amount to the account above.', 'Enter the bank reference number below.'],
+            isActive: true,
+          },
+        ],
+      },
+    },
+    { upsert: true },
+  );
+  console.log('  Platform payment instructions');
+
+  // A demo coupon so the discount path is exercisable out of the box.
+  await CouponModel.updateOne(
+    { code: 'LAUNCH20' },
+    {
+      $set: {
+        code: 'LAUNCH20',
+        description: '20% off any plan, capped at BDT 1,000',
+        discountType: 'percent',
+        discountValue: 2000,
+        maxDiscountMinor: 100_000,
+        usageLimit: 100,
+        perTenantLimit: 1,
+        isActive: true,
+      },
+    },
+    { upsert: true },
+  );
+  console.log('  Demo coupon LAUNCH20');
+
   await seedPermissions();
   console.log(`  Permission catalogue mirrored`);
 
@@ -104,14 +321,35 @@ async function main() {
   // ---------------------------------------------------------------- tenant
   const existingTenant = await TenantModel.findOne({ contactEmail: env.SEED_TENANT_ADMIN_EMAIL });
   if (existingTenant && !RESET) {
-    console.log('\n  A demo tenant already exists. Re-run with --reset to rebuild it.\n');
+    // The demo subscription drifts whenever someone changes plans while trying
+    // the app out, so every seed run puts it back. Scoped strictly to the demo
+    // tenant - matched on the seed admin's email - so no customer workspace is
+    // ever touched by the seed.
+    const admin = await UserModel.findOne({ email: env.SEED_TENANT_ADMIN_EMAIL }).select('_id').lean();
+    await ensureDemoSubscription(existingTenant._id, admin?._id ?? null);
+    await ensureDemoBranches(existingTenant._id);
+    // A demo tenant from before the account layer gets linked; an existing link
+    // is left as it is.
+    if (!existingTenant.accountId) {
+      const accountId = await ensureAccountForOwner(existingTenant.ownerUserId, {
+        name: existingTenant.name,
+        contactEmail: existingTenant.contactEmail,
+      });
+      await TenantModel.updateOne(
+        { _id: existingTenant._id, accountId: null },
+        { $set: { accountId, vertical: existingTenant.vertical ?? DEFAULT_POS_VERTICAL } },
+      );
+    }
+
+    console.log('\n  A demo tenant already exists; its subscription was restored.');
+    console.log('  Re-run with --reset to rebuild everything.\n');
     await disconnectDatabase();
     return;
   }
 
   const tenantId = new Types.ObjectId();
   const adminId = new Types.ObjectId();
-  const businessName = 'Denim Republic';
+  const businessName = BUSINESS_NAME;
 
   const admin = await UserModel.create({
     _id: adminId,
@@ -124,8 +362,15 @@ async function main() {
     isActive: true,
   });
 
+  const accountId = await ensureAccountForOwner(adminId, {
+    name: businessName,
+    contactEmail: env.SEED_TENANT_ADMIN_EMAIL,
+  });
+
   await TenantModel.create({
     _id: tenantId,
+    accountId,
+    vertical: DEFAULT_POS_VERTICAL,
     name: businessName,
     slug: uniqueSlug(businessName),
     ownerUserId: adminId,
@@ -158,62 +403,40 @@ async function main() {
 
   await UserModel.updateOne({ _id: adminId }, { $set: { storeId: store._id } });
 
+  // The demo plan (Showroom) allows two branches, and a second one is what
+  // makes the multi-branch features worth looking at.
+  await StoreModel.create({
+    tenantId,
+    name: `${businessName} - Gulshan`,
+    code: `${codeFromName(businessName)}2`,
+    phone: '+880 1700-000001',
+    email: env.SEED_TENANT_ADMIN_EMAIL,
+    address: 'Plot 9, Road 11, Gulshan 1, Dhaka 1212',
+    currency: env.DEFAULT_CURRENCY,
+    invoicePrefix: 'INV-',
+    returnPrefix: 'RET-',
+    lowStockThreshold: 5,
+    isDefault: false,
+    receipt: {
+      headerText: 'Denim Republic',
+      footerText: 'Thank you for shopping with us!',
+      returnPolicy: 'Exchange within 7 days with the original receipt. Sale items are final.',
+      showLogo: true,
+      showCashier: true,
+      paperWidthMm: 58,
+    },
+  });
+
   const roles = await createSystemRoles(tenantId);
   const cashierRole = roles.find((r) => r.name === 'Cashier')!;
   const seniorRole = roles.find((r) => r.name === 'Senior Cashier')!;
   console.log(`  Tenant "${businessName}" with ${roles.length} roles`);
 
-  // Active paid subscription, so the demo workspace is immediately usable.
-  const plan = await SubscriptionPlanModel.findOne({ code: 'showroom-monthly' });
-  if (plan) {
-    const start = dayjs().subtract(3, 'day').toDate();
-    const end = dayjs(start).add(1, 'month').toDate();
-    const subscription = await SubscriptionModel.create({
-      tenantId,
-      planId: plan._id,
-      planSnapshot: buildPlanSnapshot(plan),
-      status: SUBSCRIPTION_STATUS.ACTIVE,
-      startedAt: start,
-      currentPeriodStart: start,
-      currentPeriodEnd: end,
-      autoRenew: false,
-      provider: 'manual',
-      isManual: true,
-      notes: 'Seeded development subscription',
-    });
-
-    await SubscriptionEventModel.create({
-      tenantId,
-      subscriptionId: subscription._id,
-      type: 'activated',
-      message: `Seeded "${plan.name}" subscription`,
-      actorNameSnapshot: 'seed',
-    });
-
-    await PaymentModel.create({
-      tenantId,
-      userId: adminId,
-      subscriptionId: subscription._id,
-      planId: plan._id,
-      amountMinor: plan.priceMinor,
-      currency: plan.currency,
-      provider: 'manual',
-      providerReference: 'SEED-0001',
-      status: 'paid',
-      paidAt: start,
-      metadata: { seeded: true },
-    });
-
-    await TenantModel.updateOne(
-      { _id: tenantId },
-      { $set: { subscriptionStatus: SUBSCRIPTION_STATUS.ACTIVE, currentSubscriptionId: subscription._id, subscriptionEndsAt: end } },
-    );
-    console.log(`  Subscription: ${plan.name} until ${dayjs(end).format('D MMM YYYY')}`);
-  }
+  await ensureDemoSubscription(tenantId, adminId);
 
   // ----------------------------------------------------------------- staff
   // Deliberately WITHOUT sales.changePrice, so the permission gate is testable.
-  const cashier = await UserModel.create({
+  await UserModel.create({
     tenantId,
     storeId: store._id,
     name: 'Sabbir Ahmed',
@@ -258,7 +481,7 @@ async function main() {
 
   // -------------------------------------------------------------- products
   let variantCount = 0;
-  for (const seed of SEED_PRODUCTS) {
+  for (const [productIndex, seed] of SEED_PRODUCTS.entries()) {
     const baseSku = codeFromName(`${seed.brand}${seed.name}`, 6);
     const categoryId = categoryByName.get(seed.category) ?? null;
 
@@ -270,7 +493,10 @@ async function main() {
       tenantId,
       storeId: store._id,
       name: seed.name,
-      sku: `${baseSku}${Math.floor(Math.random() * 90 + 10)}`,
+      // The position in the seed list, not a random number: two products whose
+      // names share a 6-letter prefix got the same random suffix often enough to
+      // fail a seed run on the unique SKU index. Positions never repeat.
+      sku: `${baseSku}${String(productIndex + 1).padStart(2, '0')}`,
       categoryId,
       categoryNameSnapshot: seed.category,
       description: seed.description,

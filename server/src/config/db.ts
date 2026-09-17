@@ -1,5 +1,5 @@
 import mongoose from 'mongoose';
-import { env } from './env';
+import { env, isProd } from './env';
 import { logger } from '../utils/logger';
 
 let transactionsSupported = false;
@@ -31,6 +31,13 @@ export async function connectDatabase(uri: string = env.MONGODB_URI): Promise<ty
     maxPoolSize: 20,
   });
 
+  // Mongoose creates missing indexes but never CHANGES an existing one, so a
+  // definition that gains a partial filter (as the store code and barcode
+  // indexes did) would keep the old, stricter index for ever. Syncing drops and
+  // rebuilds anything that has drifted. Dev/test only: on a large production
+  // collection this should be a deliberate, scheduled migration.
+  if (!isProd) await syncModelIndexes();
+
   transactionsSupported = await probeTransactionSupport();
   logger.info(
     `MongoDB connected (${mongoose.connection.name}); transactions ${
@@ -42,6 +49,27 @@ export async function connectDatabase(uri: string = env.MONGODB_URI): Promise<ty
   mongoose.connection.on('disconnected', () => logger.warn('MongoDB disconnected'));
 
   return mongoose;
+}
+
+/** Rebuilds any index whose definition no longer matches the schema. */
+async function syncModelIndexes(): Promise<void> {
+  const names = Object.keys(mongoose.models);
+  let changed = 0;
+
+  for (const name of names) {
+    try {
+      const dropped = await mongoose.models[name].syncIndexes();
+      if (dropped.length > 0) {
+        changed += dropped.length;
+        logger.debug(`Rebuilt ${dropped.length} index(es) on ${name}`, dropped);
+      }
+    } catch (error) {
+      // A single problematic collection must not stop the server booting.
+      logger.warn(`Could not sync indexes for ${name}`, error);
+    }
+  }
+
+  if (changed > 0) logger.info(`Index sync rebuilt ${changed} stale index(es)`);
 }
 
 export async function disconnectDatabase(): Promise<void> {

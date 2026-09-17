@@ -1,12 +1,6 @@
 import { z } from 'zod';
 import { PAYMENT_METHODS } from '../../config/constants';
-import {
-  minorAmount,
-  objectId,
-  positiveIntegerQuantity,
-  positiveMinorAmount,
-  searchSchema,
-} from '../common/common.validators';
+import { minorAmount, objectId, positiveIntegerQuantity, positiveMinorAmount, searchSchema, phoneNumber, optionalEmailAddress, calendarDate } from '../common/common.validators';
 
 /**
  * A checkout line.
@@ -37,8 +31,8 @@ export const createSaleSchema = z
     customer: z
       .object({
         name: z.string().trim().min(1).max(160),
-        phone: z.string().trim().min(3).max(32),
-        email: z.string().trim().toLowerCase().email().or(z.literal('')).optional(),
+        phone: phoneNumber,
+        email: optionalEmailAddress,
       })
       .optional(),
 
@@ -105,8 +99,10 @@ export const createSaleSchema = z
   });
 
 export const listSalesSchema = searchSchema.extend({
-  from: z.coerce.date().optional(),
-  to: z.coerce.date().optional(),
+  /** Owners only: include sales from every branch, deleted ones included. */
+  allBranches: z.coerce.boolean().optional(),
+  from: calendarDate.optional(),
+  to: calendarDate.optional(),
   cashierId: objectId.optional(),
   customerId: objectId.optional(),
   paymentMethod: z.enum(PAYMENT_METHODS).optional(),

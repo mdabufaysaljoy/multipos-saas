@@ -4,7 +4,8 @@ import { PERMISSIONS } from '../../config/permissions';
 import { authenticate } from '../../middleware/auth';
 import { requireAnyPermission, requirePermission } from '../../middleware/rbac';
 import { resolveTenant } from '../../middleware/tenant';
-import { requireActiveSubscription } from '../../middleware/subscription';
+import { requireVertical } from '../../middleware/vertical';
+import { requireActiveSubscription, requireSubscribedAccess } from '../../middleware/subscription';
 import { validate } from '../../middleware/validate';
 import { idParam, objectId } from '../common/common.validators';
 import * as controller from './products.controller';
@@ -18,7 +19,10 @@ import {
 } from './products.validators';
 
 const router = Router();
-router.use(authenticate, resolveTenant);
+// An unsubscribed workspace can reach only its wallet and subscription;
+// this module is locked entirely until a plan is active.
+// Clothing POS module: other verticals are refused before anything else runs.
+router.use(authenticate, resolveTenant, requireVertical('clothing'), requireSubscribedAccess);
 
 const variantParams = z.object({ id: objectId, variantId: objectId });
 

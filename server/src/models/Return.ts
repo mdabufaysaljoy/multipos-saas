@@ -15,6 +15,12 @@ export interface ReturnItemDoc {
   quantity: number;
   /** Always the price from the original sale, never the current price. */
   unitPriceMinor: number;
+  /**
+   * Cost carried over from the sale line, so refunding an item removes both its
+   * revenue AND its cost from profit. Without this the COGS of a returned item
+   * would stay on the books forever.
+   */
+  costPriceMinorSnapshot: number;
   lineTotalMinor: number;
   /** Whether the goods went back into sellable stock. */
   restock: boolean;
@@ -54,6 +60,8 @@ const returnItemSchema = new Schema<ReturnItemDoc>(
       validate: { validator: Number.isSafeInteger, message: 'quantity must be a whole number' },
     },
     unitPriceMinor: { type: Number, required: true, min: 0 },
+    // Defaults to 0 so returns created before this field existed still load.
+    costPriceMinorSnapshot: { type: Number, default: 0, min: 0 },
     lineTotalMinor: { type: Number, required: true, min: 0 },
     restock: { type: Boolean, default: true },
   },

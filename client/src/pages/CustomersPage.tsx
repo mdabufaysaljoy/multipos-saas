@@ -22,6 +22,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { DataTable, type Column } from '@/components/DataTable';
 import { PageHeader } from '@/components/PageHeader';
+import { LimitAlert } from '@/components/LimitAlert';
 import { PermissionGate } from '@/components/PermissionGate';
 import { SearchInput, useDebounced } from '@/components/SearchInput';
 import { ApiError } from '@/api/client';
@@ -102,7 +103,7 @@ export function CustomersPage() {
 
   const columns: Column<Customer>[] = [
     {
-      key: 'name',
+      key: 'name', mobile: 'title',
       header: 'Customer',
       cell: (row) => (
         <div>
@@ -111,7 +112,7 @@ export function CustomersPage() {
         </div>
       ),
     },
-    { key: 'email', header: 'Email', cell: (row) => <span className="text-sm">{row.email || '—'}</span> },
+    { key: 'email', mobile: 'meta', header: 'Email', cell: (row) => <span className="text-sm">{row.email || '—'}</span> },
     { key: 'orders', header: 'Orders', cell: (row) => <span className="tabular">{row.orderCount}</span> },
     {
       key: 'spent',
@@ -128,7 +129,7 @@ export function CustomersPage() {
       ),
     },
     {
-      key: 'actions',
+      key: 'actions', mobile: 'actions',
       header: '',
       headerClassName: 'text-right',
       className: 'text-right',
@@ -169,6 +170,7 @@ export function CustomersPage() {
           </PermissionGate>
         }
       />
+      <LimitAlert resource="customers" />
 
       <SearchInput value={term} onChange={setTerm} placeholder="Search name, phone or email…" className="max-w-sm" />
 

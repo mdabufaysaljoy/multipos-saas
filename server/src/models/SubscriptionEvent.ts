@@ -12,7 +12,12 @@ export type SubscriptionEventType =
   | 'reactivated'
   | 'expired'
   | 'suspended'
-  | 'deactivated';
+  | 'deactivated'
+  /** A platform admin ended or shortened the period after refunding its payment. */
+  | 'refund_adjusted'
+  | 'auto_renew_changed'
+  | 'change_scheduled'
+  | 'change_cancelled';
 
 /** Append-only audit trail powering the "subscription history" screen. */
 export interface SubscriptionEventDoc extends BaseDoc {

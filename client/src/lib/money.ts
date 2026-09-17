@@ -60,6 +60,18 @@ export function formatMoneyCompact(minor: number, currency = 'BDT'): string {
   return `${symbol}${major.toFixed(0)}`;
 }
 
+/**
+ * Subscription prices: "৳1,990", "৳29,900". Whole amounts drop the ".00" so a
+ * price reads like a price; anything with poisha keeps them. The value is
+ * still the plan's own `priceMinor` from the API, never a constant.
+ */
+export function formatPlanPrice(minor: number, currency = 'BDT'): string {
+  if (minor % MINOR_PER_MAJOR !== 0) return formatMoney(minor, currency).replace(/^(-?)(\S+) /, '$1$2');
+  const symbol = (CURRENCY_SYMBOLS[currency] ?? `${currency} `).trim();
+  const grouped = String(Math.abs(minor) / MINOR_PER_MAJOR).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+  return `${minor < 0 ? '-' : ''}${symbol}${grouped}`;
+}
+
 const CURRENCY_SYMBOLS: Record<string, string> = {
   BDT: '৳ ',
   USD: '$',

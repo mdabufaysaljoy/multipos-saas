@@ -1,7 +1,6 @@
 import { Types, type ClientSession } from 'mongoose';
 import { DEFAULT_CASHIER_PERMISSIONS, PERMISSIONS, type Permission } from '../../config/permissions';
 import { RoleModel } from '../../models/Role';
-import { sessionOpt } from '../../utils/tx';
 
 interface SystemRoleSeed {
   name: string;
@@ -50,6 +49,10 @@ export const SYSTEM_ROLES: SystemRoleSeed[] = [
       PERMISSIONS.REPORTS_VIEW,
       PERMISSIONS.STAFF_VIEW,
       PERMISSIONS.SETTINGS_VIEW,
+      // A manager may look at marketing, but spending the wallet stays with
+      // the owner unless explicitly granted.
+      PERMISSIONS.MARKETING_VIEW,
+      PERMISSIONS.MARKETING_VIEW_HISTORY,
     ],
   },
 ];

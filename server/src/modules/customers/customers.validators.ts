@@ -1,13 +1,16 @@
 import { z } from 'zod';
-import { searchSchema } from '../common/common.validators';
+import { searchSchema, phoneNumber, optionalEmailAddress } from '../common/common.validators';
 
-export const createCustomerSchema = z.object({
-  name: z.string().trim().min(1, 'Customer name is required').max(160),
-  phone: z.string().trim().min(3, 'Phone number is required').max(32),
-  email: z.string().trim().toLowerCase().email('Enter a valid email').or(z.literal('')).optional().default(''),
-  address: z.string().trim().max(400).optional().default(''),
-  notes: z.string().trim().max(1000).optional().default(''),
-});
+export const createCustomerSchema = z
+  .object({
+    name: z.string().trim().min(1, 'Customer name is required').max(160),
+    phone: phoneNumber,
+    email: optionalEmailAddress,
+    address: z.string().trim().max(400).optional().default(''),
+    notes: z.string().trim().max(1000).optional().default(''),
+  })
+  // A workspace, branch or owner named in the body is refused, not ignored.
+  .strict();
 
 export const updateCustomerSchema = createCustomerSchema.partial();
 

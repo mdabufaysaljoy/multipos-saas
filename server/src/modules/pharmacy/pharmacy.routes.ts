@@ -1,0 +1,70 @@
+import { requireEntitlement } from '../../middleware/access';
+import { Router } from 'express';
+import { PERMISSIONS } from '../../config/permissions';
+import { authenticate } from '../../middleware/auth';
+import { requirePermission } from '../../middleware/rbac';
+import { resolveTenant } from '../../middleware/tenant';
+import { requireActiveSubscription, requireSubscribedAccess } from '../../middleware/subscription';
+import { analyticsRangeSchema } from '../reports/reports.validators';
+import { requireVertical } from '../../middleware/vertical';
+import { validate } from '../../middleware/validate';
+import { idParam } from '../common/common.validators';
+import * as controller from './pharmacy.controller';
+import {
+  adjustBatchSchema,
+  createMedicineSchema,
+  createSaleSchema,
+  listBatchesSchema,
+  listMedicinesSchema,
+  listMovementsSchema,
+  listSalesSchema,
+  receiveBatchSchema,
+  updateMedicineSchema,
+  voidSaleSchema,
+} from './pharmacy.validators';
+
+const router = Router();
+
+/**
+ * Pharmacy workspaces only, subscribed, and every write needs an active plan.
+ * Permissions reuse the existing keys so staff roles work unchanged:
+ *   medicines        -> products.*
+ *   batches, ledger  -> inventory.view / inventory.adjust
+ *   sales            -> sales.create / sales.view / sales.cancel (void) / sales.discount
+ *   dashboard        -> reports.view
+ */
+router.use(authenticate, resolveTenant, requireVertical('pharmacy'), requireSubscribedAccess);
+
+// ------------------------------------------------------------- medicines
+router.get('/medicines', requirePermission(PERMISSIONS.PRODUCTS_VIEW), validate({ query: listMedicinesSchema }), controller.listMedicines);
+router.post('/medicines', requireActiveSubscription, requirePermission(PERMISSIONS.PRODUCTS_CREATE), validate({ body: createMedicineSchema }), controller.createMedicine);
+router.get('/medicines/:id', requirePermission(PERMISSIONS.PRODUCTS_VIEW), validate({ params: idParam }), controller.getMedicine);
+router.patch('/medicines/:id', requireActiveSubscription, requirePermission(PERMISSIONS.PRODUCTS_EDIT), validate({ params: idParam, body: updateMedicineSchema }), controller.updateMedicine);
+router.delete('/medicines/:id', requireActiveSubscription, requirePermission(PERMISSIONS.PRODUCTS_DELETE), validate({ params: idParam }), controller.removeMedicine);
+
+// ----------------------------------------------------------------- stock
+router.post('/medicines/:id/batches', requireActiveSubscription, requirePermission(PERMISSIONS.INVENTORY_ADJUST), validate({ params: idParam, body: receiveBatchSchema }), controller.receiveBatch);
+router.get('/batches', requirePermission(PERMISSIONS.INVENTORY_VIEW), validate({ query: listBatchesSchema }), controller.listBatches);
+router.post('/batches/:id/adjust', requireActiveSubscription, requirePermission(PERMISSIONS.INVENTORY_ADJUST), validate({ params: idParam, body: adjustBatchSchema }), controller.adjustBatch);
+router.get('/movements', requirePermission(PERMISSIONS.INVENTORY_VIEW), validate({ query: listMovementsSchema }), controller.listMovements);
+
+// ----------------------------------------------------------------- sales
+router.post('/sales', requireActiveSubscription, requirePermission(PERMISSIONS.SALES_CREATE), validate({ body: createSaleSchema }), controller.createSale);
+router.get('/sales', requirePermission(PERMISSIONS.SALES_VIEW), validate({ query: listSalesSchema }), controller.listSales);
+router.get('/sales/:id', requirePermission(PERMISSIONS.SALES_VIEW), validate({ params: idParam }), controller.getSale);
+router.get('/sales/:id/receipt', requirePermission(PERMISSIONS.SALES_VIEW), validate({ params: idParam }), controller.receipt);
+router.post('/sales/:id/void', requireActiveSubscription, requirePermission(PERMISSIONS.SALES_CANCEL), validate({ params: idParam, body: voidSaleSchema }), controller.voidSale);
+
+// The Pharmacy dashboard: on every plan, like the other verticals' dashboards.
+router.get('/dashboard', requirePermission(PERMISSIONS.REPORTS_VIEW), controller.dashboard);
+
+// Pharmacy Advanced Analytics: RBAC AND the plan feature, same gate as the other verticals.
+router.get(
+  '/reports',
+  requirePermission(PERMISSIONS.REPORTS_VIEW),
+  requireEntitlement('advancedAnalytics'),
+  validate({ query: analyticsRangeSchema }),
+  controller.reports,
+);
+
+export default router;

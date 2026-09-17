@@ -3,6 +3,7 @@ import { DEFAULT_VARIANT_NAME } from '../../config/constants';
 import { CategoryModel } from '../../models/Category';
 import { ProductModel } from '../../models/Product';
 import { ProductVariantModel } from '../../models/ProductVariant';
+import { InventoryTransactionModel } from '../../models/InventoryTransaction';
 import { SaleModel } from '../../models/Sale';
 import { ApiError } from '../../utils/ApiError';
 import { resolvePage, searchRegex } from '../../utils/pagination';
@@ -10,6 +11,7 @@ import { codeFromName } from '../../utils/slug';
 import { withTransaction } from '../../utils/tx';
 import { inventoryService } from '../../services/inventory/inventory.service';
 import { entitlementService } from '../../services/subscription/entitlement.service';
+import { droppedKeys, releaseStorageKeys } from '../../services/storage/cleanup.service';
 import type { TenantContext } from '../../types/express';
 import type {
   CreateProductInput,
@@ -99,7 +101,7 @@ class ProductService {
   async create(ctx: TenantContext, input: CreateProductInput) {
     const entitlement = await entitlementService.forTenant(ctx.tenantId);
     entitlementService.assertUsable(entitlement);
-    await entitlementService.assertCanAddProduct(ctx.tenantId, entitlement);
+    await entitlementService.assertCanAddProduct(ctx.tenantId, entitlement, 'clothing');
 
     const baseSku = input.sku ?? (await this.generateBaseSku(ctx, input.name));
     const category = await this.resolveCategory(ctx, input.categoryId ?? null);
@@ -184,7 +186,38 @@ class ProductService {
       return { product: product.toObject(), variants: variants.map((v) => v.toObject()) };
     });
 
+    // The pre-flight limit check is not atomic, so confirm this product is
+    // genuinely within the ceiling now that it exists. Racing requests each get
+    // a distinct ordinal; the ones past the limit undo themselves.
+    const ordinal = await ProductModel.countDocuments({
+      tenantId: ctx.tenantId,
+      deletedAt: null,
+      isActive: true,
+      _id: { $lte: productId },
+    });
+    try {
+      entitlementService.assertOrdinalWithinLimit(entitlement, 'maxProducts', ordinal, 'products');
+    } catch (error) {
+      await this.hardRollback(ctx, productId);
+      throw error;
+    }
+
     return { ...result.product, variants: result.variants };
+  }
+
+  /**
+   * Removes a product that lost a limit race.
+   *
+   * A hard delete, not the usual soft delete: this product never legitimately
+   * existed, has no sales against it, and leaving a tombstone would clutter the
+   * catalogue with records the customer never created.
+   */
+  private async hardRollback(ctx: TenantContext, productId: Types.ObjectId) {
+    await Promise.all([
+      ProductModel.deleteOne({ _id: productId, tenantId: ctx.tenantId }),
+      ProductVariantModel.deleteMany({ productId, tenantId: ctx.tenantId }),
+      InventoryTransactionModel.deleteMany({ productId, tenantId: ctx.tenantId }),
+    ]);
   }
 
   async update(ctx: TenantContext, id: Types.ObjectId, input: UpdateProductInput) {
@@ -205,7 +238,16 @@ class ProductService {
     if (input.name !== undefined) product.name = input.name;
     if (input.description !== undefined) product.description = input.description;
     if (input.brand !== undefined) product.brand = input.brand;
-    if (input.images !== undefined) product.images = input.images as never;
+    // Replacing the image list frees the storage held by the images that were
+    // dropped. Without this, every re-upload permanently consumed more quota.
+    let releasedImageKeys: string[] = [];
+    if (input.images !== undefined) {
+      releasedImageKeys = droppedKeys(
+        (product.images ?? []).map((image) => image.key),
+        input.images.map((image) => image.key ?? null),
+      );
+      product.images = input.images as never;
+    }
     if (input.options !== undefined) {
       product.options = input.options as never;
       product.hasVariants = input.options.length > 0;
@@ -214,6 +256,9 @@ class ProductService {
     product.updatedBy = ctx.userId;
 
     await product.save();
+
+    // After the save, so a failed write never destroys a file still in use.
+    if (releasedImageKeys.length > 0) await releaseStorageKeys(ctx.tenantId, releasedImageKeys);
 
     // Keep the denormalised name on live variants in step. Sale items are NOT
     // touched - they hold their own snapshot and must never change.

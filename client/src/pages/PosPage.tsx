@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { AlertTriangle, Banknote, Eraser, ShoppingCart } from 'lucide-react';
+import { AlertTriangle, Banknote, ChevronDown, ChevronUp, Eraser, ShoppingCart } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -10,6 +10,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Separator } from '@/components/ui/separator';
 import { MoneyInput } from '@/components/MoneyInput';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
+import { LimitAlert } from '@/components/LimitAlert';
 import { CartPanel } from '@/features/pos/CartPanel';
 import { CustomerPicker, type SelectedCustomer } from '@/features/pos/CustomerPicker';
 import { ProductSearchPanel } from '@/features/pos/ProductSearchPanel';
@@ -25,6 +26,7 @@ import { ApiError } from '@/api/client';
 import { productApi, saleApi, storeApi } from '@/api/endpoints';
 import { useAuth } from '@/hooks/useAuth';
 import { formatMoney } from '@/lib/money';
+import { cn } from '@/lib/utils';
 import type { PaymentMethod, Sale } from '@/types/domain';
 
 export function PosPage() {
@@ -37,6 +39,8 @@ export function PosPage() {
   const [receiptSaleId, setReceiptSaleId] = React.useState<string | null>(null);
   const [pickerGroup, setPickerGroup] = React.useState<PosProductGroup | null>(null);
   const [scanOpen, setScanOpen] = React.useState(false);
+  // Mobile-only: the cart sheet. Desktop ignores it entirely.
+  const [cartOpen, setCartOpen] = React.useState(false);
   const [confirmClear, setConfirmClear] = React.useState(false);
 
   const canChangePrice = can('sales.changePrice');
@@ -93,6 +97,7 @@ export function PosPage() {
         description: `${formatMoney(sale.totalMinor, currency)} · ${sale.items.length} line${sale.items.length === 1 ? '' : 's'}`,
       });
       setReceiptSaleId(sale._id);
+      setCartOpen(false);
       resetSale();
       // Stock, sales and dashboard figures have all moved.
       void queryClient.invalidateQueries({ queryKey: ['pos-search'] });
@@ -187,30 +192,88 @@ export function PosPage() {
   return (
     /*
       Layout.
+
       Desktop (lg+): two fixed-height columns side by side, each scrolling
-      internally - unchanged from before.
-      Mobile: ONE page-level scroll in the order Search -> Products -> Cart ->
-      Payment. The cart is a normal block in the flow, never fixed or sticky
-      over the grid, so the product area can never end up hidden underneath it.
+      internally - unchanged.
+
+      Mobile: the product grid owns the ONLY scroll area, and the cart lives in
+      a bottom sheet behind a persistent summary bar. Previously the cart was
+      stacked below the products, so with a large catalogue the cashier had to
+      scroll past every product to reach checkout. Now the cart is one tap away
+      no matter how far down the grid they are.
     */
-    <div className="flex h-full flex-col overflow-y-auto lg:flex-row lg:overflow-hidden">
+    <div className="flex h-full min-h-0 flex-col">
+      {/* The monthly sales allowance is the one limit that can stop a sale
+          mid-transaction, so the warning belongs here, not only on the
+          subscription page. It renders nothing below 80%, so it costs no space
+          in the normal case - and it stays in flow rather than overlaying the
+          till, which must never be covered. */}
+      <LimitAlert resource="monthlySales" className="m-3 mb-0 shrink-0" />
+
+      <div className="flex min-h-0 flex-1 flex-col lg:flex-row">
       {/* ------------------------------------------------ product search */}
-      <section className="flex min-h-[60vh] shrink-0 flex-col border-b lg:min-h-0 lg:flex-1 lg:shrink lg:border-b-0 lg:border-r">
+      <section className="flex min-h-0 flex-1 flex-col border-b lg:border-b-0 lg:border-r">
         <ProductSearchPanel
           onSelect={handleProductSelect}
           currency={currency}
           onScanClick={() => setScanOpen(true)}
         />
+        {/* Room for the fixed summary bar so the last row is never covered. */}
+        <div className="h-16 shrink-0 lg:hidden" aria-hidden />
       </section>
 
+      {/* ------------------------------------- mobile cart summary bar */}
+      <button
+        type="button"
+        onClick={() => setCartOpen(true)}
+        className="fixed inset-x-0 bottom-0 z-30 flex items-center gap-3 border-t bg-primary px-4 py-3 text-primary-foreground shadow-lg lg:hidden"
+      >
+        <span className="relative">
+          <ShoppingCart className="h-5 w-5" />
+          {totals.lineCount > 0 && (
+            <span className="absolute -right-2 -top-2 flex h-4 min-w-4 items-center justify-center rounded-full bg-background px-1 text-[10px] font-bold text-foreground">
+              {totals.itemCount}
+            </span>
+          )}
+        </span>
+        <span className="flex-1 text-left text-sm font-medium">
+          {totals.lineCount === 0 ? 'Cart is empty' : `${totals.lineCount} line${totals.lineCount === 1 ? '' : 's'}`}
+        </span>
+        <span className="tabular text-base font-semibold">{formatMoney(totals.totalMinor, currency)}</span>
+        <ChevronUp className="h-4 w-4" />
+      </button>
+
       {/* ---------------------------------------------------------- cart */}
-      <section className="flex w-full shrink-0 flex-col bg-card lg:h-full lg:w-[420px] xl:w-[460px]">
+      {/* Backdrop for the mobile sheet. */}
+      {cartOpen && (
+        <div className="fixed inset-0 z-40 bg-black/50 lg:hidden" onClick={() => setCartOpen(false)} aria-hidden />
+      )}
+
+      <section
+        className={cn(
+          'flex flex-col bg-card',
+          // Mobile: a bottom sheet that slides over the grid.
+          'fixed inset-x-0 bottom-0 z-50 max-h-[88vh] rounded-t-xl shadow-2xl transition-transform duration-200',
+          cartOpen ? 'translate-y-0' : 'translate-y-full',
+          // Desktop: a normal static column, always visible.
+          'lg:static lg:z-auto lg:h-full lg:max-h-none lg:w-[420px] lg:translate-y-0 lg:rounded-none lg:shadow-none xl:w-[460px]',
+        )}
+      >
         <header className="sticky top-0 z-10 flex h-12 shrink-0 items-center justify-between border-b bg-card px-4 lg:static">
           <div className="flex items-center gap-2">
             <ShoppingCart className="h-4 w-4" />
             <h2 className="font-semibold">Cart</h2>
             {totals.lineCount > 0 && <Badge variant="secondary">{totals.itemCount} item{totals.itemCount === 1 ? '' : 's'}</Badge>}
           </div>
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            className="lg:hidden"
+            onClick={() => setCartOpen(false)}
+            aria-label="Close cart"
+          >
+            <ChevronDown />
+          </Button>
           {totals.lineCount > 0 && (
             <Button variant="ghost" size="sm" onClick={() => setConfirmClear(true)}>
               <Eraser />
@@ -219,7 +282,7 @@ export function PosPage() {
           )}
         </header>
 
-        <div className="scrollbar-thin min-h-0 lg:flex-1 lg:overflow-y-auto">
+        <div className="scrollbar-thin min-h-0 flex-1 overflow-y-auto">
           <CartPanel
             lines={cart.state.lines}
             issues={issues}
@@ -369,6 +432,7 @@ export function PosPage() {
         }}
         onClose={() => setPickerGroup(null)}
       />
+      </div>
 
       <ScanDialog open={scanOpen} onOpenChange={setScanOpen} onSubmit={handleBarcode} />
 

@@ -1,27 +1,86 @@
 import { Navigate, Route, Routes } from 'react-router-dom';
 import { AppLayout } from '@/layouts/AppLayout';
+import { PublicLayout } from '@/layouts/PublicLayout';
 import { ProtectedRoute, PublicOnlyRoute } from '@/routes/ProtectedRoute';
-import { CategoriesPage } from '@/pages/CategoriesPage';
-import { CreateReturnPage } from '@/pages/CreateReturnPage';
-import { CustomersPage } from '@/pages/CustomersPage';
-import { DashboardPage } from '@/pages/DashboardPage';
-import { InventoryPage } from '@/pages/InventoryPage';
-import { LoginPage } from '@/pages/LoginPage';
-import { OnboardingPage } from '@/pages/OnboardingPage';
-import { PlatformPage } from '@/pages/PlatformPage';
-import { PosPage } from '@/pages/PosPage';
-import { ProductsPage } from '@/pages/ProductsPage';
-import { RegisterPage } from '@/pages/RegisterPage';
-import { ReturnsPage } from '@/pages/ReturnsPage';
-import { RolesPage } from '@/pages/RolesPage';
-import { SalesPage } from '@/pages/SalesPage';
-import { SettingsPage } from '@/pages/SettingsPage';
-import { StaffPage } from '@/pages/StaffPage';
-import { SubscriptionPage } from '@/pages/SubscriptionPage';
+import { lazyPage } from '@/lib/lazyPage';
+
+// Layouts and route guards load up front; every page is its own chunk, fetched
+// the first time its route is visited. The Suspense boundaries live in the
+// layouts (around <Outlet>) and in main.tsx for pages outside any layout.
+
+// Public site
+const HomePage = lazyPage(() => import('@/pages/public/HomePage'), 'HomePage');
+const PricingPage = lazyPage(() => import('@/pages/public/PricingPage'), 'PricingPage');
+const PublicProductsPage = lazyPage(() => import('@/pages/public/ProductsPage'), 'PublicProductsPage');
+const ContactPage = lazyPage(() => import('@/pages/public/ContactPage'), 'ContactPage');
+
+// Sign-in and setup
+const LoginPage = lazyPage(() => import('@/pages/LoginPage'), 'LoginPage');
+const RegisterPage = lazyPage(() => import('@/pages/RegisterPage'), 'RegisterPage');
+const OnboardingPage = lazyPage(() => import('@/pages/OnboardingPage'), 'OnboardingPage');
+
+// Platform administration
+const PlatformPage = lazyPage(() => import('@/pages/PlatformPage'), 'PlatformPage');
+const WorkspacePage = lazyPage(() => import('@/pages/WorkspacePage'), 'WorkspacePage');
+const PlatformAccountPage = lazyPage(() => import('@/pages/PlatformAccountPage'), 'PlatformAccountPage');
+
+// Vertical-aware screens (each loads only its own vertical's page)
+const VerticalPos = lazyPage(() => import('@/routes/VerticalPos'), 'VerticalPos');
+const VerticalDashboard = lazyPage(() => import('@/routes/VerticalDashboard'), 'VerticalDashboard');
+const VerticalAnalytics = lazyPage(() => import('@/routes/VerticalAnalytics'), 'VerticalAnalytics');
+
+// Clothing POS
+const SalesPage = lazyPage(() => import('@/pages/SalesPage'), 'SalesPage');
+const ReturnsPage = lazyPage(() => import('@/pages/ReturnsPage'), 'ReturnsPage');
+const CreateReturnPage = lazyPage(() => import('@/pages/CreateReturnPage'), 'CreateReturnPage');
+const ProductsPage = lazyPage(() => import('@/pages/ProductsPage'), 'ProductsPage');
+const CategoriesPage = lazyPage(() => import('@/pages/CategoriesPage'), 'CategoriesPage');
+const InventoryPage = lazyPage(() => import('@/pages/InventoryPage'), 'InventoryPage');
+
+// Restaurant POS
+const MenuPage = lazyPage(() => import('@/pages/restaurant/MenuPage'), 'MenuPage');
+const TablesPage = lazyPage(() => import('@/pages/restaurant/TablesPage'), 'TablesPage');
+const OrdersPage = lazyPage(() => import('@/pages/restaurant/OrdersPage'), 'OrdersPage');
+const KitchenPage = lazyPage(() => import('@/pages/restaurant/KitchenPage'), 'KitchenPage');
+const ShiftsPage = lazyPage(() => import('@/pages/restaurant/ShiftsPage'), 'ShiftsPage');
+
+// Pharmacy POS
+const MedicinesPage = lazyPage(() => import('@/pages/pharmacy/MedicinesPage'), 'MedicinesPage');
+const StockPage = lazyPage(() => import('@/pages/pharmacy/StockPage'), 'StockPage');
+const PharmacySalesPage = lazyPage(() => import('@/pages/pharmacy/PharmacySalesPage'), 'PharmacySalesPage');
+
+// Supershop POS
+const ShopProductsPage = lazyPage(() => import('@/pages/supershop/ShopProductsPage'), 'ShopProductsPage');
+const ShopSalesPage = lazyPage(() => import('@/pages/supershop/ShopSalesPage'), 'ShopSalesPage');
+
+// Shared workspace screens
+const CustomersPage = lazyPage(() => import('@/pages/CustomersPage'), 'CustomersPage');
+const MarketingPage = lazyPage(() => import('@/pages/MarketingPage'), 'MarketingPage');
+const StaffPage = lazyPage(() => import('@/pages/StaffPage'), 'StaffPage');
+const RolesPage = lazyPage(() => import('@/pages/RolesPage'), 'RolesPage');
+const WalletPage = lazyPage(() => import('@/pages/WalletPage'), 'WalletPage');
+const SubscriptionPage = lazyPage(() => import('@/pages/SubscriptionPage'), 'SubscriptionPage');
+const BillingOverviewPage = lazyPage(() => import('@/pages/BillingOverviewPage'), 'BillingOverviewPage');
+const AccountDashboardPage = lazyPage(() => import('@/pages/AccountDashboardPage'), 'AccountDashboardPage');
+const InvoicePage = lazyPage(() => import('@/pages/InvoicePage'), 'InvoicePage');
+const AccountReceiptPage = lazyPage(() => import('@/pages/ReceiptPage'), 'AccountReceiptPage');
+const WorkspaceReceiptPage = lazyPage(() => import('@/pages/ReceiptPage'), 'WorkspaceReceiptPage');
+const BranchesPage = lazyPage(() => import('@/pages/BranchesPage'), 'BranchesPage');
+const SettingsPage = lazyPage(() => import('@/pages/SettingsPage'), 'SettingsPage');
 
 export function AppRoutes() {
   return (
     <Routes>
+      {/* ------------------------------------------- public marketing site */}
+      <Route element={<PublicLayout />}>
+        <Route path="/" element={<HomePage />} />
+        <Route path="/products" element={<PublicProductsPage />} />
+        <Route path="/pricing" element={<PricingPage />} />
+        {/* Features live on the home page; keep the nav link meaningful. */}
+        <Route path="/features" element={<HomePage />} />
+        <Route path="/contact" element={<ContactPage />} />
+      </Route>
+
       {/* ---------------------------------------------------------- public */}
       <Route
         path="/login"
@@ -60,6 +119,24 @@ export function AppRoutes() {
           </ProtectedRoute>
         }
       />
+      {/* Managing ONE workspace. The tenant is explicit in the URL. */}
+      <Route
+        path="/platform/workspaces/:tenantId"
+        element={
+          <ProtectedRoute platformAdmin>
+            <WorkspacePage />
+          </ProtectedRoute>
+        }
+      />
+      {/* Support view of ONE customer account. Read-only; every read is audited with a reason. */}
+      <Route
+        path="/platform/accounts/:accountId"
+        element={
+          <ProtectedRoute platformAdmin>
+            <PlatformAccountPage />
+          </ProtectedRoute>
+        }
+      />
 
       {/* ------------------------------------------------------ tenant app */}
       <Route
@@ -73,7 +150,90 @@ export function AppRoutes() {
           path="/pos"
           element={
             <ProtectedRoute anyOf={['sales.create']}>
-              <PosPage />
+              <VerticalPos />
+            </ProtectedRoute>
+          }
+        />
+        {/* Restaurant POS screens. The layout keeps other verticals out. */}
+        <Route
+          path="/menu"
+          element={
+            <ProtectedRoute anyOf={['products.view']}>
+              <MenuPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/tables"
+          element={
+            <ProtectedRoute anyOf={['sales.create', 'settings.edit']}>
+              <TablesPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/orders"
+          element={
+            <ProtectedRoute anyOf={['sales.view']}>
+              <OrdersPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/kitchen"
+          element={
+            <ProtectedRoute anyOf={['sales.view']}>
+              <KitchenPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/shifts"
+          element={
+            <ProtectedRoute anyOf={['sales.create', 'reports.view']}>
+              <ShiftsPage />
+            </ProtectedRoute>
+          }
+        />
+        {/* Pharmacy POS screens. The layout keeps other verticals out. */}
+        <Route
+          path="/medicines"
+          element={
+            <ProtectedRoute anyOf={['products.view']}>
+              <MedicinesPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/stock"
+          element={
+            <ProtectedRoute anyOf={['inventory.view']}>
+              <StockPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/pharmacy-sales"
+          element={
+            <ProtectedRoute anyOf={['sales.view']}>
+              <PharmacySalesPage />
+            </ProtectedRoute>
+          }
+        />
+        {/* Supershop POS screens. The layout keeps other verticals out. */}
+        <Route
+          path="/shop-products"
+          element={
+            <ProtectedRoute anyOf={['products.view']}>
+              <ShopProductsPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/shop-sales"
+          element={
+            <ProtectedRoute anyOf={['sales.view']}>
+              <ShopSalesPage />
             </ProtectedRoute>
           }
         />
@@ -102,7 +262,7 @@ export function AppRoutes() {
           }
         />
         <Route
-          path="/products"
+          path="/catalogue"
           element={
             <ProtectedRoute anyOf={['products.view']}>
               <ProductsPage />
@@ -134,6 +294,16 @@ export function AppRoutes() {
           }
         />
         <Route
+          path="/marketing"
+          element={
+            <ProtectedRoute anyOf={['marketing.view']}>
+              <MarketingPage />
+            </ProtectedRoute>
+          }
+        />
+        {/* Old path kept so existing links do not 404. */}
+        <Route path="/messaging" element={<Navigate to="/marketing" replace />} />
+        <Route
           path="/staff"
           element={
             <ProtectedRoute anyOf={['staff.view']}>
@@ -153,16 +323,66 @@ export function AppRoutes() {
           path="/dashboard"
           element={
             <ProtectedRoute anyOf={['reports.view']}>
-              <DashboardPage />
+              <VerticalDashboard />
             </ProtectedRoute>
           }
         />
-        {/* Reports and the dashboard share one screen for now. */}
+        {/* Advanced Analytics is detailed analysis; the Dashboard is the quick
+            overview. The page itself shows a locked state on plans without it. */}
         <Route
-          path="/reports"
+          path="/analytics"
           element={
             <ProtectedRoute anyOf={['reports.view']}>
-              <DashboardPage />
+              <VerticalAnalytics />
+            </ProtectedRoute>
+          }
+        />
+        <Route path="/reports" element={<Navigate to="/analytics" replace />} />
+        <Route
+          path="/wallet"
+          element={
+            <ProtectedRoute anyOf={['wallet.view']}>
+              <WalletPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/account"
+          element={
+            <ProtectedRoute accountOwner>
+              <AccountDashboardPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/billing"
+          element={
+            <ProtectedRoute accountOwner>
+              <BillingOverviewPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/billing/invoices/:invoiceId"
+          element={
+            <ProtectedRoute accountOwner>
+              <InvoicePage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/billing/receipts/:receiptId"
+          element={
+            <ProtectedRoute accountOwner>
+              <AccountReceiptPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/wallet/receipts/:topUpId"
+          element={
+            <ProtectedRoute anyOf={['wallet.view']}>
+              <WorkspaceReceiptPage />
             </ProtectedRoute>
           }
         />
@@ -171,6 +391,14 @@ export function AppRoutes() {
           element={
             <ProtectedRoute anyOf={['subscription.view']}>
               <SubscriptionPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/branches"
+          element={
+            <ProtectedRoute anyOf={['settings.view']}>
+              <BranchesPage />
             </ProtectedRoute>
           }
         />
@@ -184,8 +412,7 @@ export function AppRoutes() {
         />
       </Route>
 
-      {/* A cashier has no dashboard, so land everyone on the POS. */}
-      <Route path="/" element={<Navigate to="/pos" replace />} />
+      {/* Unknown signed-in routes fall back to the POS. */}
       <Route path="*" element={<Navigate to="/pos" replace />} />
     </Routes>
   );
