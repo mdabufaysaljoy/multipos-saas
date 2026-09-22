@@ -361,7 +361,8 @@ export function VariantMatrixEditor({
         </div>
 
         <p className="text-xs text-muted-foreground">
-          Leave a SKU blank to have one generated. Opening stock is recorded in the inventory ledger.
+          Leave SKU blank to generate one from the product and variant name (e.g. OVERSIZED-TEE-BLACK-XL); if it is taken, -2, -3… is added
+          automatically. Opening stock is recorded in the inventory ledger.
         </p>
       </section>
     </div>
