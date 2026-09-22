@@ -11,7 +11,7 @@ import { Switch } from '@/components/ui/switch';
 import { cn } from '@/lib/utils';
 import { dotsPerLine, savePrinterSettings, useThermalPrinterSettings } from './printerSettings';
 import { ensureConnected, listPrinters, qzState, type QzState } from './qzTray';
-import { ThermalPrintError, printTestPage } from './thermalPrintService';
+import { RECEIPT_END_GAP_LINES, ThermalPrintError, printTestPage } from './thermalPrintService';
 
 const STATUS_TEXT: Record<QzState['status'], string> = {
   idle: 'Not connected yet',
@@ -170,7 +170,9 @@ export function PrinterSettingsCard() {
             </div>
           </div>
           <p className="text-xs text-muted-foreground">
-            {settings.printableWidthMm}mm at {settings.dpi} dpi = {dotsPerLine(settings)} dots per line. Receipt height always follows its content.
+            {settings.printableWidthMm}mm at {settings.dpi} dpi = {dotsPerLine(settings)} dots per line. Receipt height always follows its content. Receipts
+            also get {RECEIPT_END_GAP_LINES} extra blank lines at the end ({settings.feedLines + RECEIPT_END_GAP_LINES} in total), so the last line clears the
+            tear bar and back-to-back receipts stay apart. Raise "Feed after printing" if your printer needs more.
           </p>
 
           <label className="flex items-center justify-between rounded-md border p-3 text-sm">

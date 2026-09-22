@@ -78,6 +78,29 @@ export function classifyPrintError(error: unknown): ThermalPrintError {
   return new ThermalPrintError('PRINT_FAILED', error);
 }
 
+/**
+ * Blank lines added after every RECEIPT, on top of the device's "feed after
+ * printing": the print head sits some way below the tear bar, so without it the
+ * last line of a receipt stays inside the printer and back-to-back receipts
+ * run into each other. Labels are unaffected.
+ */
+export const RECEIPT_END_GAP_LINES = 3;
+
+/** ESC/POS default line spacing is 1/6 inch; used to size the same gap as blank rows for the driver path. */
+const LINE_MM = 25.4 / 6;
+
+/** Total lines fed after a document of this type. */
+export const feedLinesFor = (type: ThermalDocumentType, settings: Pick<ThermalPrinterSettings, 'feedLines'>) =>
+  settings.feedLines + (type === 'receipt' || type === 'test' ? RECEIPT_END_GAP_LINES : 0);
+
+/** Adds blank rows under a bitmap (the Windows-driver path has no ESC/POS feed command). */
+function withBlankRows(bitmap: MonoBitmap, rows: number): MonoBitmap {
+  if (rows <= 0) return bitmap;
+  const data = new Uint8Array(bitmap.width * (bitmap.height + rows));
+  data.set(bitmap.data);
+  return { width: bitmap.width, height: bitmap.height + rows, data };
+}
+
 /** Renders the job to the bitmap that will be printed (exported for previews and tests). */
 export async function renderJob(job: ThermalPrintJob, settings: ThermalPrinterSettings): Promise<MonoBitmap> {
   const target = dotsPerLine(settings);
@@ -107,13 +130,14 @@ export async function printThermalDocument(job: ThermalPrintJob, settings: Therm
     if (bitmap.height === 0) throw new ThermalPrintError('RENDER_FAILED', 'empty document');
 
     if (settings.language === 'escpos') {
-      const bytes = encodeEscPosJob(Array.from({ length: copies }, () => bitmap), { feedLines: settings.feedLines, autoCut: settings.autoCut });
+      const bytes = encodeEscPosJob(Array.from({ length: copies }, () => bitmap), { feedLines: feedLinesFor(job.type, settings), autoCut: settings.autoCut });
       await printTransport.printRawBase64(printer, bytesToBase64(bytes));
     } else {
-      const png = bitmapToCanvas(bitmap).toDataURL('image/png').split(',')[1];
+      const page = withBlankRows(bitmap, Math.round(feedLinesFor(job.type, settings) * LINE_MM * dotsPerMm(settings.dpi)));
+      const png = bitmapToCanvas(page).toDataURL('image/png').split(',')[1];
       await printTransport.printImageBase64(printer, png, {
-        widthMm: bitmap.width / dotsPerMm(settings.dpi),
-        heightMm: bitmap.height / dotsPerMm(settings.dpi),
+        widthMm: page.width / dotsPerMm(settings.dpi),
+        heightMm: page.height / dotsPerMm(settings.dpi),
         dpi: settings.dpi,
         copies,
       });
