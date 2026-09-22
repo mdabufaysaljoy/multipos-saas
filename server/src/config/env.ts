@@ -26,6 +26,17 @@ const schema = z.object({
 
   CLIENT_ORIGIN: z.string().default('http://localhost:5173'),
 
+  /**
+   * QZ Tray request signing (direct thermal printing). SERVER ONLY - the
+   * private key never reaches the browser and is never committed. Provide
+   * either a file path or the PEM text (with \n escapes). Unset in development
+   * means QZ Tray runs unsigned and asks the user to allow the site.
+   */
+  QZ_CERTIFICATE_PATH: z.string().trim().optional(),
+  QZ_PRIVATE_KEY_PATH: z.string().trim().optional(),
+  QZ_CERTIFICATE: z.string().optional(),
+  QZ_PRIVATE_KEY: z.string().optional(),
+
   STORAGE_DRIVER: z.enum(['local', 's3', 'cloudinary']).default('local'),
   STORAGE_LOCAL_DIR: z.string().default('uploads'),
   PUBLIC_BASE_URL: z.string().default('http://localhost:4000'),

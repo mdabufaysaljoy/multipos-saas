@@ -15,6 +15,8 @@ import { QuantityInput } from '@/components/QuantityInput';
 import { useQuery } from '@tanstack/react-query';
 import { storeApi } from '@/api/endpoints';
 import { DEFAULT_LABEL_SETTINGS } from '@/types/domain';
+import { DirectPrintStatus } from '@/features/printing/DirectPrintStatus';
+import { useThermalPrint } from '@/features/printing/useThermalPrint';
 import { BarcodeLabel, type BarcodeLabelData } from './BarcodeLabel';
 
 interface BarcodePrintDialogProps {
@@ -33,18 +35,30 @@ export function BarcodePrintDialog({ label, currency, storeName, onClose }: Barc
   const [copies, setCopies] = React.useState<number | null>(1);
   const [showPrice, setShowPrice] = React.useState(true);
   const [showStore, setShowStore] = React.useState(true);
+  const [showQr, setShowQr] = React.useState(false);
+  const thermal = useThermalPrint();
+  const sheetRef = React.useRef<HTMLDivElement>(null);
 
   React.useEffect(() => {
     if (label) {
       setCopies(1);
       setShowPrice(true);
     }
+    thermal.reset();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [label]);
 
   const count = copies && copies > 0 ? Math.min(copies, 100) : 1;
   // Label size and paper come from Settings → Labels.
   const { data: config } = useQuery({ queryKey: ['store', 'pos-config'], queryFn: storeApi.posConfig, enabled: Boolean(label) });
   const labels = { ...DEFAULT_LABEL_SETTINGS, ...(config?.labels ?? {}) };
+
+  // Direct (QZ Tray) printing sends ONE rendered label as `count` copies; the
+  // label's own height decides the paper used - no browser paper sizes.
+  const printDirect = () => {
+    const element = sheetRef.current?.querySelector<HTMLElement>('.barcode-label');
+    if (element) void thermal.print({ type: 'label', element, copies: count, contentWidthMm: labels.productWidthMm });
+  };
 
   return (
     <Dialog open={Boolean(label)} onOpenChange={(open) => !open && onClose()}>
@@ -71,6 +85,10 @@ export function BarcodePrintDialog({ label, currency, storeName, onClose }: Barc
                 Show store name
                 <Switch checked={showStore} onCheckedChange={setShowStore} />
               </label>
+              <label className="flex items-center justify-between gap-2 text-sm">
+                Add QR code
+                <Switch checked={showQr} onCheckedChange={setShowQr} />
+              </label>
             </div>
           </div>
         </div>
@@ -81,7 +99,7 @@ export function BarcodePrintDialog({ label, currency, storeName, onClose }: Barc
         )}
 
         {/* The print area: repeated once per copy. */}
-        <div id="barcode-print-area" className="barcode-sheet rounded-md bg-white p-2" data-paper={labels.paper}>
+        <div ref={sheetRef} id="barcode-print-area" className="barcode-sheet rounded-md bg-white p-2" data-paper={labels.paper}>
           {label &&
             Array.from({ length: count }).map((_, index) => (
               <BarcodeLabel
@@ -91,15 +109,20 @@ export function BarcodePrintDialog({ label, currency, storeName, onClose }: Barc
                 storeName={showStore ? storeName : undefined}
                 showPrice={showPrice}
                 widthMm={labels.productWidthMm}
+                showQr={showQr}
               />
             ))}
         </div>
+
+        {thermal.direct && (
+          <DirectPrintStatus status={thermal.status} message={thermal.message} noun="labels" onRetry={printDirect} onBrowserPrint={() => window.print()} />
+        )}
 
         <DialogFooter className="no-print">
           <Button variant="outline" onClick={onClose}>
             Close
           </Button>
-          <Button onClick={() => window.print()} disabled={!label}>
+          <Button onClick={thermal.direct ? printDirect : () => window.print()} disabled={!label} loading={thermal.direct && thermal.status === 'printing'}>
             <Printer />
             Print {count} label{count === 1 ? '' : 's'}
           </Button>
