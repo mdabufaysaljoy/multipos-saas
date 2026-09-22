@@ -6,6 +6,8 @@ import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Switch } from '@/components/ui/switch';
 import { DEFAULT_LABEL_SETTINGS } from '@/types/domain';
+import { DirectPrintStatus } from '@/features/printing/DirectPrintStatus';
+import { useThermalPrint } from '@/features/printing/useThermalPrint';
 import { LoyaltyCardSticker, type LoyaltyCardData } from './LoyaltyCardSticker';
 
 interface LoyaltyCardPrintDialogProps {
@@ -18,6 +20,17 @@ export function LoyaltyCardPrintDialog({ card, onClose }: LoyaltyCardPrintDialog
   const [showEmail, setShowEmail] = React.useState(true);
   const { data: store } = useQuery({ queryKey: ['store', 'pos-config'], queryFn: storeApi.posConfig, enabled: Boolean(card) });
   const labels = { ...DEFAULT_LABEL_SETTINGS, ...(store?.labels ?? {}) };
+  const thermal = useThermalPrint();
+  const areaRef = React.useRef<HTMLDivElement>(null);
+  React.useEffect(() => {
+    thermal.reset();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [card?.barcode]);
+  // Printing only renders the stored card: no membership, barcode or points change.
+  const printDirect = () => {
+    const element = areaRef.current?.querySelector<HTMLElement>('.loyalty-card');
+    if (element) void thermal.print({ type: 'loyalty-card', element, contentWidthMm: labels.loyaltyCardWidthMm });
+  };
 
   return (
     <Dialog open={Boolean(card)} onOpenChange={(open) => !open && onClose()}>
@@ -40,15 +53,19 @@ export function LoyaltyCardPrintDialog({ card, onClose }: LoyaltyCardPrintDialog
           <style>{`@media print { @page { size: ${labels.loyaltyCardWidthMm}mm auto; margin: 0; } #loyalty-card-print-area { width: ${labels.loyaltyCardWidthMm}mm; } }`}</style>
         )}
 
-        <div id="loyalty-card-print-area" className="flex justify-center overflow-x-auto rounded-md bg-muted/40 p-3">
+        <div ref={areaRef} id="loyalty-card-print-area" className="flex justify-center overflow-x-auto rounded-md bg-muted/40 p-3">
           {card && <LoyaltyCardSticker card={card} storeName={store?.name ?? ''} logoUrl={store?.receiptLogoUrl ?? store?.logoUrl} showEmail={showEmail} widthMm={labels.loyaltyCardWidthMm} />}
         </div>
+
+        {thermal.direct && (
+          <DirectPrintStatus status={thermal.status} message={thermal.message} noun="the card" onRetry={printDirect} onBrowserPrint={() => window.print()} />
+        )}
 
         <DialogFooter className="no-print">
           <Button variant="outline" onClick={onClose}>
             Close
           </Button>
-          <Button onClick={() => window.print()} disabled={!card}>
+          <Button onClick={thermal.direct ? printDirect : () => window.print()} disabled={!card} loading={thermal.direct && thermal.status === 'printing'}>
             <Printer />
             Print card
           </Button>

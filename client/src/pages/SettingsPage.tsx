@@ -21,6 +21,7 @@ import { PermissionGate } from '@/components/PermissionGate';
 import { ThermalReceipt } from '@/features/receipt/ThermalReceipt';
 import { LoyaltySettingsCard } from '@/features/loyalty/LoyaltySettingsCard';
 import { LabelSettingsCard } from '@/features/barcode/LabelSettingsCard';
+import { PrinterSettingsCard } from '@/features/printing/PrinterSettingsCard';
 import { useSearchParams } from 'react-router-dom';
 import { ApiError } from '@/api/client';
 import { authApi, storeApi } from '@/api/endpoints';
@@ -185,12 +186,13 @@ export function SettingsPage() {
       />
       <LimitAlert resource="storageBytes" />
 
-      <Tabs defaultValue={searchParams.get('tab') === 'loyalty' ? 'loyalty' : 'store'}>
+      <Tabs defaultValue={['loyalty', 'printer'].includes(searchParams.get('tab') ?? '') ? searchParams.get('tab')! : 'store'}>
         <TabsList className="h-auto flex-wrap">
           <TabsTrigger value="store">Store</TabsTrigger>
           <TabsTrigger value="receipt">Receipt</TabsTrigger>
           <TabsTrigger value="tax">Tax &amp; payments</TabsTrigger>
           {(session?.tenant?.vertical ?? 'clothing') === 'clothing' && <TabsTrigger value="labels">Labels</TabsTrigger>}
+          {(session?.tenant?.vertical ?? 'clothing') === 'clothing' && <TabsTrigger value="printer">Printer</TabsTrigger>}
           {(session?.tenant?.vertical ?? 'clothing') === 'clothing' && <TabsTrigger value="loyalty">Loyalty</TabsTrigger>}
           <TabsTrigger value="account">My account</TabsTrigger>
         </TabsList>
@@ -466,6 +468,11 @@ export function SettingsPage() {
             showLoyaltyCard={(session?.tenant?.vertical ?? 'clothing') === 'clothing'}
             onChange={(labels) => patch({ labels })}
           />
+        </TabsContent>
+
+        {/* Per computer: saved in this browser, not in the store settings. */}
+        <TabsContent value="printer">
+          <PrinterSettingsCard />
         </TabsContent>
 
         <TabsContent value="loyalty">

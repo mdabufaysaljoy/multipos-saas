@@ -13,3 +13,7 @@ coverage/
 .claude
 CLAUDE.MD
 IMPLIMENTATION_STATUS.md
+# QZ Tray signing material and any other private keys - never commit.
+*.pem
+*.key
+certs/

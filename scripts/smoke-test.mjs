@@ -8141,6 +8141,11 @@ async function main() {
     const loyBalanceNow = async () => (await api(`/loyalty/memberships/${card.id}`, { token: loyOwner, ...A })).data?.pointsBalance;
     const loyLedgerSum = async () => ((await api(`/loyalty/memberships/${card.id}/history?limit=100`, { token: loyOwner, ...A })).data ?? []).reduce((s, r) => s + r.points, 0);
     check('Balance equals the sum of the ledger', (await loyBalanceNow()) === (await loyLedgerSum()) && (await loyBalanceNow()) === 10 + 9 + 5 + 10);
+    // Reprinting (direct or browser) only reads GET /sales/:id/receipt - it must never move points.
+    const loyBeforeReprint = { balance: await loyBalanceNow(), ledger: ((await api(`/loyalty/memberships/${card.id}/history?limit=100`, { token: loyOwner, ...A })).data ?? []).length, sales: (await api('/sales?limit=1', { token: loyOwner, ...A })).meta?.total };
+    for (let i = 0; i < 3; i += 1) await api(`/sales/${loySale1.data._id}/receipt`, { token: loyOwner, ...A });
+    const loyAfterReprint = { balance: await loyBalanceNow(), ledger: ((await api(`/loyalty/memberships/${card.id}/history?limit=100`, { token: loyOwner, ...A })).data ?? []).length, sales: (await api('/sales?limit=1', { token: loyOwner, ...A })).meta?.total };
+    check('Reprinting a loyalty receipt 3 times changes no points, ledger or sales', JSON.stringify(loyBeforeReprint) === JSON.stringify(loyAfterReprint), { loyBeforeReprint, loyAfterReprint });
 
     // ---- manual adjustment ----
     check('Adjustment needs a reason', (await api(`/loyalty/memberships/${card.id}/adjust`, { method: 'POST', token: loyOwner, ...A, body: { points: 100, reason: '', idempotencyKey: key('adj0') } })).status === 422);
@@ -8268,6 +8273,22 @@ async function main() {
     await loySetPlan(loyTenantId, 'brand-monthly');
     const loyBack = await api(`/loyalty/memberships/${card.id}`, { token: loyOwner, ...A });
     check('Enterprise: loyalty is available and the card, points and history are all still there', loyBack.status === 200 && loyBack.data?.pointsBalance === loyKeep && (await loyLedgerSum()) === loyKeep, loyBack.error);
+  }
+
+  // --- Direct thermal printing: QZ Tray signing endpoints ----------------------
+  section('Direct thermal printing: QZ Tray signing');
+  {
+    const prCashier = await login('cashier@demostore.dev', 'Cashier@123');
+    check('The certificate endpoint needs a signed-in user', (await api('/printing/qz/certificate')).status === 401);
+    check('The signing endpoint needs a signed-in user', (await api('/printing/qz/sign', { method: 'POST', body: { request: 'x' } })).status === 401);
+    const prCert = await api('/printing/qz/certificate', { token: prCashier.token });
+    check('Without a configured key the API reports unsigned mode (no certificate, nothing secret)', prCert.status === 200 && prCert.data?.configured === false && prCert.data?.certificate === null, prCert.data);
+    const prSign = await api('/printing/qz/sign', { method: 'POST', token: prCashier.token, body: { request: '{"call":"printers.find"}' } });
+    check('...and signing returns no signature', prSign.status === 200 && prSign.data?.configured === false && prSign.data?.signature === null, prSign.data);
+    check('An oversized signing request is refused', (await api('/printing/qz/sign', { method: 'POST', token: prCashier.token, body: { request: 'x'.repeat(10_001) } })).status === 422);
+    check('An empty signing request is refused', (await api('/printing/qz/sign', { method: 'POST', token: prCashier.token, body: { request: '' } })).status === 422);
+    check('Unknown fields (e.g. raw printer commands) are refused', (await api('/printing/qz/sign', { method: 'POST', token: prCashier.token, body: { request: 'x', printer: 'POS', data: '1b40' } })).status === 422);
+    check('No endpoint accepts raw print jobs', (await api('/printing/print', { method: 'POST', token: prCashier.token, body: { data: '1b40' } })).status === 404);
   }
 
   // --- the new workspace, from inside ---------------------------------------

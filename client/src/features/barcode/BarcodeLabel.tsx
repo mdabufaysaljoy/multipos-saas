@@ -2,6 +2,7 @@ import * as React from 'react';
 import JsBarcode from 'jsbarcode';
 import { formatMoney } from '@/lib/money';
 import { cn } from '@/lib/utils';
+import { QrCodeView } from '@/features/printing/QrCodeView';
 
 export interface BarcodeLabelData {
   barcode: string;
@@ -18,6 +19,8 @@ interface BarcodeLabelProps {
   showPrice?: boolean;
   /** Label width from store settings (38, 48 or 58 mm). */
   widthMm?: number;
+  /** Adds a QR code of the barcode value (scannable by a phone). */
+  showQr?: boolean;
   className?: string;
 }
 
@@ -29,7 +32,7 @@ interface BarcodeLabelProps {
  * and CODE128 otherwise, so a barcode typed in from a supplier's label still
  * renders correctly.
  */
-export function BarcodeLabel({ data, currency, storeName, showPrice = true, widthMm = 38, className }: BarcodeLabelProps) {
+export function BarcodeLabel({ data, currency, storeName, showPrice = true, widthMm = 38, showQr = false, className }: BarcodeLabelProps) {
   const svgRef = React.useRef<SVGSVGElement>(null);
   const [error, setError] = React.useState<string | null>(null);
 
@@ -61,8 +64,10 @@ export function BarcodeLabel({ data, currency, storeName, showPrice = true, widt
       {error ? (
         <div className="bl-error">{error}</div>
       ) : (
-        <svg ref={svgRef} className="bl-svg" />
+        // data-barcode-*: direct thermal printing redraws this at printer resolution.
+        <svg ref={svgRef} className="bl-svg" data-barcode-value={data.barcode} data-barcode-format={/^\d{13}$/.test(data.barcode) ? 'EAN13' : 'CODE128'} />
       )}
+      {showQr && !error && <QrCodeView value={data.barcode} sizeMm={Math.min(18, Math.round(widthMm * 0.4))} className="bl-qr" />}
       {showPrice && <div className="bl-price">{formatMoney(data.priceMinor, currency)}</div>}
     </div>
   );

@@ -499,6 +499,16 @@ gateway rejects, giving two ledger rows instead of one per recipient.
 provider has been selected, so `UnconfiguredEmailProvider` refuses to send
 rather than silently discarding mail.
 
+## Direct thermal printing (QZ Tray)
+
+Clothing POS receipts, product labels and loyalty cards can print straight to a local thermal printer
+through [QZ Tray](https://qz.io), with **no browser print dialog** and a paper length that follows the content.
+Each POS computer installs QZ Tray and chooses its printer in **Settings → Printer** (saved per browser).
+Browser printing remains the default and the explicit fallback.
+
+Production signing uses `QZ_CERTIFICATE_PATH` / `QZ_PRIVATE_KEY_PATH` on the server only (never commit the key).
+Full design, setup and troubleshooting: [docs/PRINTING_ARCHITECTURE.md](docs/PRINTING_ARCHITECTURE.md).
+
 ## Public website
 
 The marketing site lives at `/`, `/products`, `/pricing`, `/features` and

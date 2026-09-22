@@ -58,7 +58,12 @@ export function LoyaltyCardSticker({ card, storeName, logoUrl, showEmail = true,
       <div className="lc-name">{card.customerName}</div>
       <div className="lc-contact">{card.phone}</div>
       {showEmail && card.email ? <div className="lc-contact">{card.email}</div> : null}
-      {error ? <div className="lc-error">This card code cannot be drawn as a barcode</div> : <svg ref={svgRef} className="lc-barcode" />}
+      {error ? (
+        <div className="lc-error">This card code cannot be drawn as a barcode</div>
+      ) : (
+        // The card's own stored barcode; direct printing redraws it at printer resolution.
+        <svg ref={svgRef} className="lc-barcode" data-barcode-value={card.barcode} data-barcode-format={/^\d{13}$/.test(card.barcode) ? 'EAN13' : 'CODE128'} />
+      )}
       <div className="lc-number">{card.cardNumber}</div>
     </div>
   );
