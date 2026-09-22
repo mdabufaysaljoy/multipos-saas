@@ -26,7 +26,9 @@ export const SYSTEM_ROLES: SystemRoleSeed[] = [
       ...DEFAULT_CASHIER_PERMISSIONS,
       PERMISSIONS.SALES_CHANGE_PRICE,
       PERMISSIONS.SALES_DISCOUNT,
+      PERMISSIONS.SALES_SELL_OUT_OF_STOCK,
       PERMISSIONS.RETURNS_CREATE,
+      PERMISSIONS.LOYALTY_VIEW,
     ],
   },
   {
@@ -44,7 +46,10 @@ export const SYSTEM_ROLES: SystemRoleSeed[] = [
       PERMISSIONS.SALES_CHANGE_PRICE,
       PERMISSIONS.SALES_DISCOUNT,
       PERMISSIONS.SALES_CANCEL,
+      PERMISSIONS.SALES_SELL_OUT_OF_STOCK,
       PERMISSIONS.RETURNS_CREATE,
+      PERMISSIONS.LOYALTY_VIEW,
+      PERMISSIONS.LOYALTY_MANAGE,
       PERMISSIONS.CUSTOMERS_EDIT,
       PERMISSIONS.REPORTS_VIEW,
       PERMISSIONS.STAFF_VIEW,
@@ -57,9 +62,18 @@ export const SYSTEM_ROLES: SystemRoleSeed[] = [
   },
 ];
 
+/** Every permission a default-grant migration has ever added; new roles already have today's defaults. */
+export const APPLIED_DEFAULT_KEYS = [
+  PERMISSIONS.SALES_SELL_OUT_OF_STOCK,
+  PERMISSIONS.LOYALTY_VIEW,
+  PERMISSIONS.LOYALTY_REDEEM,
+  PERMISSIONS.LOYALTY_MANAGE,
+];
+
 export async function createSystemRoles(tenantId: Types.ObjectId, session?: ClientSession) {
   return RoleModel.create(
-    SYSTEM_ROLES.map((role) => ({ ...role, tenantId, isSystem: true, isActive: true })),
+    // New roles already carry today's defaults, so later default-grant migrations skip them.
+    SYSTEM_ROLES.map((role) => ({ ...role, tenantId, isSystem: true, isActive: true, appliedPermissionDefaults: [...APPLIED_DEFAULT_KEYS] })),
     { session },
   );
 }

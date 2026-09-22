@@ -9,6 +9,12 @@ export interface RoleDoc extends BaseDoc {
   /** System roles ship with the tenant and cannot be deleted. */
   isSystem: boolean;
   isActive: boolean;
+  /**
+   * Permissions added to this role by a one-off default grant (see
+   * `migrations/grantOutOfStockPermission.ts`), so re-running the migration never
+   * re-grants a permission the tenant admin has since removed.
+   */
+  appliedPermissionDefaults?: string[];
 }
 
 const roleSchema = new Schema<RoleDoc>(
@@ -19,6 +25,7 @@ const roleSchema = new Schema<RoleDoc>(
     permissions: { type: [String], default: [] },
     isSystem: { type: Boolean, default: false },
     isActive: { type: Boolean, default: true },
+    appliedPermissionDefaults: { type: [String], default: undefined },
   },
   { timestamps: true },
 );

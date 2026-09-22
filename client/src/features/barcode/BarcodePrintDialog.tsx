@@ -12,6 +12,9 @@ import {
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
 import { QuantityInput } from '@/components/QuantityInput';
+import { useQuery } from '@tanstack/react-query';
+import { storeApi } from '@/api/endpoints';
+import { DEFAULT_LABEL_SETTINGS } from '@/types/domain';
 import { BarcodeLabel, type BarcodeLabelData } from './BarcodeLabel';
 
 interface BarcodePrintDialogProps {
@@ -39,6 +42,9 @@ export function BarcodePrintDialog({ label, currency, storeName, onClose }: Barc
   }, [label]);
 
   const count = copies && copies > 0 ? Math.min(copies, 100) : 1;
+  // Label size and paper come from Settings → Labels.
+  const { data: config } = useQuery({ queryKey: ['store', 'pos-config'], queryFn: storeApi.posConfig, enabled: Boolean(label) });
+  const labels = { ...DEFAULT_LABEL_SETTINGS, ...(config?.labels ?? {}) };
 
   return (
     <Dialog open={Boolean(label)} onOpenChange={(open) => !open && onClose()}>
@@ -46,7 +52,7 @@ export function BarcodePrintDialog({ label, currency, storeName, onClose }: Barc
         <DialogHeader className="no-print">
           <DialogTitle>Print barcode labels</DialogTitle>
           <DialogDescription>
-            {label?.productName} — {label?.barcode}
+            {label?.productName} — {label?.barcode} · {labels.productWidthMm}mm {labels.paper === 'roll' ? 'label roll' : 'sheet'}
           </DialogDescription>
         </DialogHeader>
 
@@ -69,8 +75,13 @@ export function BarcodePrintDialog({ label, currency, storeName, onClose }: Barc
           </div>
         </div>
 
+        {/* A label printer's page is one label wide; a sheet keeps the normal page. */}
+        {labels.paper === 'roll' && label && (
+          <style>{`@media print { @page { size: ${labels.productWidthMm}mm auto; margin: 0; } #barcode-print-area { width: ${labels.productWidthMm}mm; } }`}</style>
+        )}
+
         {/* The print area: repeated once per copy. */}
-        <div id="barcode-print-area" className="barcode-sheet rounded-md bg-white p-2">
+        <div id="barcode-print-area" className="barcode-sheet rounded-md bg-white p-2" data-paper={labels.paper}>
           {label &&
             Array.from({ length: count }).map((_, index) => (
               <BarcodeLabel
@@ -79,6 +90,7 @@ export function BarcodePrintDialog({ label, currency, storeName, onClose }: Barc
                 currency={currency}
                 storeName={showStore ? storeName : undefined}
                 showPrice={showPrice}
+                widthMm={labels.productWidthMm}
               />
             ))}
         </div>

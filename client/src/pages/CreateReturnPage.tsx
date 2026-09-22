@@ -3,7 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigate, useParams } from 'react-router-dom';
 import { format } from 'date-fns';
 import { toast } from 'sonner';
-import { ArrowLeft, CheckCircle2, Info, RotateCcw } from 'lucide-react';
+import { ArrowLeft, ArrowLeftRight, CheckCircle2, Info, RotateCcw } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -20,6 +20,10 @@ import { returnApi, storeApi } from '@/api/endpoints';
 import { formatMoney } from '@/lib/money';
 import { useAuth } from '@/hooks/useAuth';
 import { cn } from '@/lib/utils';
+import { ExchangePanel, type ExchangeState } from '@/features/returns/ExchangePanel';
+import { ReceiptDialog } from '@/features/receipt/ReceiptDialog';
+import { previewReturn } from '@/features/loyalty/loyaltyMath';
+import { PAYMENT_METHOD_LABELS, type PaymentMethod } from '@/types/domain';
 
 interface LineState {
   selected: boolean;
@@ -37,6 +41,14 @@ export function CreateReturnPage() {
   const [lines, setLines] = React.useState<Record<string, LineState>>({});
   const [reason, setReason] = React.useState('');
   const [refundMethod, setRefundMethod] = React.useState('cash');
+  // Refund pays money back; Exchange puts the value into replacement goods. A separate mode, not a refund method.
+  const [mode, setMode] = React.useState<'refund' | 'exchange'>('refund');
+  const isExchange = mode === 'exchange';
+  const [exchange, setExchange] = React.useState<ExchangeState | null>(null);
+  // One key per exchange attempt on this screen: a retried or doubled request cannot exchange twice.
+  const exchangeKey = React.useRef(`exch-${crypto.randomUUID()}`);
+  const [replacementSaleId, setReplacementSaleId] = React.useState<string | null>(null);
+  const [completed, setCompleted] = React.useState(false);
 
   const { data: store } = useQuery({ queryKey: ['store', 'pos-config'], queryFn: storeApi.posConfig });
 
@@ -89,10 +101,25 @@ export function CreateReturnPage() {
     return found;
   }, [selectedItems]);
 
-  const refundTotal = selectedItems.reduce(
+  const goodsValueMinor = selectedItems.reduce(
     (sum, { item, state }) => sum + (state.quantity ?? 0) * item.unitPriceMinor,
     0,
   );
+  // A loyalty sale: points spent on these goods come back as points, so the
+  // money refund is the goods' value less those points. Preview only - the
+  // server calculates the final figures.
+  const loyaltyPreview =
+    data?.sale.loyalty && goodsValueMinor > 0
+      ? previewReturn(
+          {
+            subtotalMinor: data.sale.subtotalMinor ?? data.items.reduce((sum, item) => sum + item.lineTotalMinor, 0),
+            returnedValueMinor: data.items.reduce((sum, item) => sum + item.unitPriceMinor * item.returnedQuantity, 0),
+          },
+          data.sale.loyalty,
+          goodsValueMinor,
+        )
+      : null;
+  const refundTotal = Math.max(0, goodsValueMinor - (loyaltyPreview?.valueMinor ?? 0));
 
   const submit = useMutation({
     mutationFn: () =>
@@ -104,9 +131,39 @@ export function CreateReturnPage() {
           restock: state.restock,
         })),
         reason: reason.trim(),
-        refundMethod,
+        refundMethod: isExchange ? 'exchange' : refundMethod,
+        ...(isExchange && exchange
+          ? {
+              exchange: {
+                items: exchange.lines.map((line) => ({ variantId: line.variant.variantId, quantity: line.quantity })),
+                ...(exchange.extraPayableMinor > 0
+                  ? {
+                      payments: exchange.payments.applied.map((row) => ({ method: row.method, amountMinor: row.amountMinor, reference: '' })),
+                      ...(exchange.payments.hasCash && exchange.payments.cashTenderedMinor !== null
+                        ? { cashTenderedMinor: exchange.payments.cashTenderedMinor }
+                        : {}),
+                    }
+                  : {}),
+                idempotencyKey: exchangeKey.current,
+              },
+            }
+          : {}),
       }),
     onSuccess: (result) => {
+      setCompleted(true);
+      if (result.exchange && result.replacementSale) {
+        toast.success(`Exchange ${result.returnNumber} completed`, {
+          description: `Replacement ${result.replacementSale.saleNumber} · extra paid ${formatMoney(result.exchange.extraPayableMinor, currency)}`,
+        });
+        void queryClient.invalidateQueries({ queryKey: ['returns'] });
+        void queryClient.invalidateQueries({ queryKey: ['sales'] });
+        void queryClient.invalidateQueries({ queryKey: ['inventory'] });
+        void queryClient.invalidateQueries({ queryKey: ['pos-search'] });
+        void queryClient.invalidateQueries({ queryKey: ['dashboard'] });
+        // The exchange receipt prints like a sale receipt; leaving it returns to the list.
+        setReplacementSaleId(String(result.replacementSale._id));
+        return;
+      }
       toast.success(`Return ${result.returnNumber} processed`, {
         description: `${formatMoney(result.totalMinor, currency)} refunded · stock restored`,
       });
@@ -158,7 +215,9 @@ export function CreateReturnPage() {
         </div>
       )}
 
-      <div className="grid gap-5 lg:grid-cols-[1fr_320px]">
+      <ReceiptDialog saleId={replacementSaleId} autoPrint onClose={() => navigate('/returns')} onNewSale={() => navigate('/returns')} />
+
+      <div className={cn('grid gap-5', isExchange ? 'lg:grid-cols-[1fr_400px]' : 'lg:grid-cols-[1fr_320px]')}>
         <Card>
           <CardHeader className="pb-3">
             <CardTitle className="text-base">Select what is coming back</CardTitle>
@@ -255,24 +314,49 @@ export function CreateReturnPage() {
         <div className="space-y-4">
           <Card>
             <CardHeader className="pb-3">
-              <CardTitle className="text-base">Refund details</CardTitle>
+              <CardTitle className="text-base">{isExchange ? 'Exchange details' : 'Refund details'}</CardTitle>
             </CardHeader>
             <CardContent className="space-y-4">
-              <div className="space-y-1.5">
-                <Label htmlFor="ret-method">Refund method</Label>
-                <Select value={refundMethod} onValueChange={setRefundMethod}>
-                  <SelectTrigger id="ret-method">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {(store?.paymentMethods ?? ['cash']).map((method) => (
-                      <SelectItem key={method} value={method}>
-                        {method}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+              <div className="grid grid-cols-2 gap-1 rounded-lg border bg-muted/40 p-1" role="radiogroup" aria-label="Return type">
+                {(
+                  [
+                    ['refund', 'Refund', RotateCcw],
+                    ['exchange', 'Exchange', ArrowLeftRight],
+                  ] as const
+                ).map(([value, label, Icon]) => (
+                  <Button
+                    key={value}
+                    type="button"
+                    role="radio"
+                    aria-checked={mode === value}
+                    size="sm"
+                    variant={mode === value ? 'default' : 'ghost'}
+                    disabled={completed}
+                    onClick={() => setMode(value)}
+                  >
+                    <Icon />
+                    {label}
+                  </Button>
+                ))}
               </div>
+
+              {!isExchange && (
+                <div className="space-y-1.5">
+                  <Label htmlFor="ret-method">Refund method</Label>
+                  <Select value={refundMethod} onValueChange={setRefundMethod} disabled={completed}>
+                    <SelectTrigger id="ret-method">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {(store?.paymentMethods ?? ['cash']).map((method) => (
+                        <SelectItem key={method} value={method}>
+                          {PAYMENT_METHOD_LABELS[method as PaymentMethod] ?? method}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              )}
 
               <div className="space-y-1.5">
                 <Label htmlFor="ret-reason">Reason</Label>
@@ -287,10 +371,32 @@ export function CreateReturnPage() {
 
               <Separator />
 
-              <div className="flex justify-between text-lg font-semibold">
-                <span>Refund total</span>
-                <span className="tabular">{formatMoney(refundTotal, currency)}</span>
-              </div>
+              {isExchange ? (
+                <ExchangePanel
+                  refundMinor={refundTotal}
+                  currency={currency}
+                  tax={store?.tax}
+                  availableMethods={(store?.paymentMethods ?? ['cash']) as PaymentMethod[]}
+                  onChange={setExchange}
+                />
+              ) : (
+                <div className="flex justify-between text-lg font-semibold">
+                  <span>Refund total</span>
+                  <span className="tabular">{formatMoney(refundTotal, currency)}</span>
+                </div>
+              )}
+
+              {loyaltyPreview && (loyaltyPreview.pointsRedeemedRestored > 0 || loyaltyPreview.pointsEarnedReversed > 0) && (
+                <div className="space-y-0.5 rounded-md border border-primary/30 bg-primary/5 px-3 py-2 text-xs">
+                  <p className="font-semibold">Loyalty card {data.sale.loyalty?.cardNumber}</p>
+                  {loyaltyPreview.pointsRedeemedRestored > 0 && (
+                    <p>
+                      {loyaltyPreview.pointsRedeemedRestored} redeemed points go back to the card, so {formatMoney(loyaltyPreview.valueMinor, currency)} is not paid out in money.
+                    </p>
+                  )}
+                  {loyaltyPreview.pointsEarnedReversed > 0 && <p>{loyaltyPreview.pointsEarnedReversed} points earned on these goods are taken back.</p>}
+                </div>
+              )}
 
               {issues.length > 0 && selectedItems.length > 0 && (
                 <ul className="list-inside list-disc rounded-md border border-destructive/30 bg-destructive/5 p-3 text-xs text-destructive">
@@ -300,15 +406,26 @@ export function CreateReturnPage() {
                 </ul>
               )}
 
+              {isExchange && exchange && exchange.issues.length > 0 && selectedItems.length > 0 && (
+                <ul className="list-inside list-disc rounded-md border border-destructive/30 bg-destructive/5 p-3 text-xs text-destructive">
+                  {exchange.issues.map((issue, index) => (
+                    <li key={index}>{issue}</li>
+                  ))}
+                </ul>
+              )}
+
               <Button
                 className="w-full"
                 size="lg"
-                disabled={issues.length > 0 || allReturned}
+                disabled={issues.length > 0 || allReturned || completed || (isExchange && (!exchange || exchange.issues.length > 0))}
                 loading={submit.isPending}
-                onClick={() => submit.mutate()}
+                onClick={() => {
+                  if (submit.isPending || completed) return;
+                  submit.mutate();
+                }}
               >
-                <RotateCcw />
-                Process return
+                {isExchange ? <ArrowLeftRight /> : <RotateCcw />}
+                {isExchange ? 'Complete exchange' : 'Process return'}
               </Button>
 
               <p className="flex items-start gap-1.5 text-xs text-muted-foreground">

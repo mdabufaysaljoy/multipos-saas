@@ -5,7 +5,7 @@ import { PERMISSIONS } from '../../config/permissions';
 import { ProductModel } from '../../models/Product';
 import { ProductVariantModel } from '../../models/ProductVariant';
 import { ReturnModel } from '../../models/Return';
-import { SaleModel, type SaleItemDoc } from '../../models/Sale';
+import { SaleModel, type SaleExchange, type SaleItemDoc } from '../../models/Sale';
 import { StoreModel } from '../../models/Store';
 import { ApiError } from '../../utils/ApiError';
 import { applyBasisPoints, clampDiscount } from '../../utils/money';
@@ -14,6 +14,9 @@ import { resolvePage, searchRegex } from '../../utils/pagination';
 import { inventoryService, type StockMovementResult } from '../../services/inventory/inventory.service';
 import { entitlementService } from '../../services/subscription/entitlement.service';
 import { customerService } from '../customers/customers.service';
+import { pointsForSpend } from '../loyalty/loyalty.math';
+import { loyaltyService } from '../loyalty/loyalty.service';
+import { logger } from '../../utils/logger';
 import type { TenantContext } from '../../types/express';
 import type { CancelSaleInput, CreateSaleInput, ListSalesInput } from './sales.validators';
 
@@ -33,6 +36,13 @@ interface PricedLine {
   lineTotalMinor: number;
 }
 
+/** Server-side options for creating the replacement sale of an exchange. Never read from a request. */
+export interface SaleExchangeOptions {
+  exchange?: { creditMinor: number; returnedItems: SaleExchange['returnedItems'] };
+  /** The original sale's loyalty card, so an exchange's replacement goods earn points. Server-side only. */
+  loyaltyMembershipId?: Types.ObjectId;
+}
+
 class SaleService {
   private scope(ctx: TenantContext) {
     return { tenantId: ctx.tenantId, storeId: ctx.storeId };
@@ -49,7 +59,15 @@ class SaleService {
    * so stock is never silently consumed by a sale that did not happen. If step
    * 3 fails, the same compensation runs.
    */
-  async create(ctx: TenantContext, input: CreateSaleInput) {
+  async create(ctx: TenantContext, input: CreateSaleInput, options: SaleExchangeOptions = {}) {
+    // A retried checkout (double click, refresh, network retry) returns the sale
+    // it already created instead of selling - and awarding points - twice.
+    if (input.idempotencyKey) {
+      const existing = await SaleModel.findOne({ ...this.scope(ctx), idempotencyKey: input.idempotencyKey }).lean();
+      if (existing) return { ...existing, replayed: true };
+    }
+
+    const creditMinor = options.exchange?.creditMinor ?? 0;
     const entitlement = await entitlementService.forTenant(ctx.tenantId);
     entitlementService.assertUsable(entitlement);
     // Checked before any stock moves, so a rejected sale leaves nothing to undo.
@@ -58,38 +76,88 @@ class SaleService {
     const store = await StoreModel.findOne({ _id: ctx.storeId, tenantId: ctx.tenantId }).lean();
     if (!store) throw ApiError.notFound('Store not found');
 
-    if (!store.paymentMethods.includes(input.paymentMethod)) {
-      throw ApiError.badRequest(`"${input.paymentMethod}" is not an enabled payment method for this store`);
+    // Loyalty applies only to a scanned card (or, for an exchange, the original
+    // sale's card) - never to a customer or phone number on its own.
+    const redeemPoints = input.redeemPoints ?? 0;
+    const loyalty = await loyaltyService.prepareForSale(ctx, {
+      membershipId: input.loyaltyMembershipId ?? options.loyaltyMembershipId,
+      redeemPoints,
+      internal: !input.loyaltyMembershipId && Boolean(options.loyaltyMembershipId),
+    });
+    if (loyalty) {
+      const cardCustomerId = String(loyalty.membership.customerId);
+      if (input.customer || (input.customerId && String(input.customerId) !== cardCustomerId)) {
+        throw ApiError.validation('The loyalty card belongs to a different customer. Remove the customer or the card.');
+      }
     }
+    const loyaltyDiscountMinor = loyalty ? redeemPoints * loyalty.settings.pointValueMinor : 0;
 
     const lines = await this.priceLines(ctx, input);
-    const totals = this.computeTotals(lines, input, store.tax);
+    const totals = this.computeTotals(lines, input, store.tax, creditMinor, loyaltyDiscountMinor);
 
-    const customer = await this.resolveCustomer(ctx, input);
+    // Every method that actually takes money must be enabled for the store.
+    // An exchange fully covered by its credit, or a sale fully paid with points, takes no money at all.
+    const takesNoMoney = loyaltyDiscountMinor > 0 && totals.totalMinor === 0;
+    const methodsUsed = input.payments?.length
+      ? input.payments.map((payment) => payment.method)
+      : creditMinor > 0 || takesNoMoney
+        ? []
+        : [input.paymentMethod];
+    for (const method of methodsUsed) {
+      if (!store.paymentMethods.includes(method)) {
+        throw ApiError.badRequest(`"${method}" is not an enabled payment method for this store`);
+      }
+    }
+
+    const customer = loyalty
+      ? await customerService.resolveForSale(ctx, loyalty.membership.customerId)
+      : await this.resolveCustomer(ctx, input);
+
+    // Names the point redemption before the sale exists. The sale's own id is
+    // still assigned at insert, which the monthly-allowance ordinal relies on.
+    const checkoutRef = new Types.ObjectId();
+
+    // ---- loyalty redemption (atomic; refused if the points are gone) ------
+    let redeemed: { balanceAfter: number } | null = null;
+    if (loyalty && redeemPoints > 0) {
+      redeemed = await loyaltyService.redeemForSale(ctx, loyalty.membership._id, redeemPoints, checkoutRef);
+    }
+    const undoRedemption = async () => {
+      if (loyalty && redeemed) await loyaltyService.reverseRedemption(ctx, loyalty.membership._id, redeemPoints, checkoutRef);
+    };
 
     // ---- stock ------------------------------------------------------------
     const applied: StockMovementResult[] = [];
+    // From the permissions resolved for THIS request (read from the database),
+    // never from anything the client sends - so a revoked grant stops working
+    // on the very next sale.
+    const allowOutOfStock = ctx.can(PERMISSIONS.SALES_SELL_OUT_OF_STOCK);
     try {
       for (const line of lines) {
-        const movement = await inventoryService.decrease(ctx, line.variantId, line.quantity, {
-          type: INVENTORY_TX_TYPES.SALE,
-          reason: 'POS sale',
-          referenceType: 'sale',
-        });
+        const movement = await inventoryService.decreaseForSale(
+          ctx,
+          line.variantId,
+          line.quantity,
+          { type: INVENTORY_TX_TYPES.SALE, reason: 'POS sale', referenceType: 'sale' },
+          { allowOutOfStock },
+        );
         applied.push(movement);
       }
     } catch (error) {
       await inventoryService.compensate(ctx, applied, 'sale could not be completed');
+      await undoRedemption();
       throw error;
     }
 
     // ---- persist ----------------------------------------------------------
+    let saleDoc: InstanceType<typeof SaleModel> | null = null;
     try {
       const seq = await nextSequence(ctx.tenantId, ctx.storeId, 'sale');
       const saleNumber = formatDocumentNumber(store.invoicePrefix, seq);
       const soldAt = new Date();
+      const qualifyingMinor = totals.subtotalMinor - totals.discountMinor - loyaltyDiscountMinor;
 
-      const sale = await SaleModel.create({
+      saleDoc = await SaleModel.create({
         tenantId: ctx.tenantId,
         storeId: ctx.storeId,
         saleNumber,
@@ -99,9 +167,15 @@ class SaleService {
         customerSnapshot: customer
           ? { name: customer.name, phone: customer.phone, email: customer.email ?? '' }
           : null,
-        items: lines.map((line) => ({ ...line, lineDiscountMinor: 0, returnedQuantity: 0 })),
+        items: lines.map((line, index) => ({
+          ...line,
+          lineDiscountMinor: 0,
+          returnedQuantity: 0,
+          ...(applied[index]?.outOfStockOverride ? { outOfStockOverride: true } : {}),
+        })),
         subtotalMinor: totals.subtotalMinor,
-        discountMinor: totals.discountMinor,
+        // Includes the loyalty discount, so every report that subtracts discounts stays right.
+        discountMinor: totals.discountMinor + loyaltyDiscountMinor,
         discountType: input.discountType,
         discountValue: input.discountValue,
         taxMinor: totals.taxMinor,
@@ -109,12 +183,33 @@ class SaleService {
         paidMinor: totals.paidMinor,
         changeMinor: totals.changeMinor,
         paymentMethod: input.paymentMethod,
-        payments: input.payments ?? [{ method: input.paymentMethod, amountMinor: totals.totalMinor, reference: '' }],
+        payments:
+          creditMinor > 0 || takesNoMoney
+            ? (input.payments ?? [])
+            : (input.payments ?? [{ method: input.paymentMethod, amountMinor: totals.totalMinor, reference: '' }]),
+        exchange: options.exchange ? { returnId: null, returnNumber: '', creditMinor, returnedItems: options.exchange.returnedItems } : null,
+        loyalty: loyalty
+          ? {
+              membershipId: loyalty.membership._id,
+              cardNumber: loyalty.membership.cardNumber,
+              pointValueMinor: loyalty.settings.pointValueMinor,
+              earnSpendMinor: loyalty.settings.earnSpendMinor,
+              pointsRedeemed: redeemPoints,
+              discountMinor: loyaltyDiscountMinor,
+              qualifyingMinor,
+              pointsEarned: 0,
+              balanceAfter: redeemed?.balanceAfter ?? loyalty.membership.pointsBalance,
+              pointsEarnedReversed: 0,
+              pointsRedeemedRestored: 0,
+            }
+          : null,
+        idempotencyKey: input.idempotencyKey ?? null,
         paymentStatus: totals.paymentStatus,
         status: SALE_STATUS.COMPLETED,
         note: input.note,
         soldAt,
       });
+      const sale = saleDoc;
 
       // The pre-flight allowance check is not atomic, so confirm by ordinal now
       // the sale exists. Racing tills each get a distinct position; any beyond
@@ -146,9 +241,39 @@ class SaleService {
         });
       }
 
+      // ---- loyalty earning: only now that the sale is complete, and once --
+      if (loyalty) {
+        await loyaltyService.attachSale(ctx, checkoutRef, sale._id, saleNumber);
+        try {
+          const points = pointsForSpend(qualifyingMinor, loyalty.settings.earnSpendMinor);
+          const earned = await loyaltyService.earnForSale(ctx, loyalty.membership._id, points, { _id: sale._id, saleNumber });
+          if (earned && sale.loyalty) {
+            sale.loyalty.pointsEarned = points;
+            sale.loyalty.balanceAfter = earned.balanceAfter;
+            await SaleModel.updateOne(
+              { _id: sale._id, tenantId: ctx.tenantId },
+              { $set: { 'loyalty.pointsEarned': points, 'loyalty.balanceAfter': earned.balanceAfter } },
+            );
+          }
+        } catch (error) {
+          // The customer has paid and the sale stands; the missing points are logged for a manual adjustment.
+          logger.error('CRITICAL: loyalty points could not be awarded for a completed sale', {
+            tenantId: String(ctx.tenantId),
+            saleId: String(sale._id),
+            error,
+          });
+        }
+      }
+
       return sale.toObject();
     } catch (error) {
       await inventoryService.compensate(ctx, applied, 'sale record could not be saved');
+      await undoRedemption();
+      // Two identical checkouts raced: the other one created the sale. Return it.
+      if ((error as { code?: number }).code === 11000 && input.idempotencyKey) {
+        const winner = await SaleModel.findOne({ ...this.scope(ctx), idempotencyKey: input.idempotencyKey }).lean();
+        if (winner) return { ...winner, replayed: true };
+      }
       throw error;
     }
   }
@@ -279,7 +404,10 @@ class SaleService {
       });
     }
 
-    return sale.toObject();
+    // Points earned are taken back and points redeemed are given back.
+    await loyaltyService.applyCancellation(ctx, sale.toObject(), input.reason);
+
+    return (await SaleModel.findOne({ _id: sale._id, tenantId: ctx.tenantId }).lean()) ?? sale.toObject();
   }
 
   // ---------------------------------------------------------------- internals
@@ -368,11 +496,29 @@ class SaleService {
     });
   }
 
+  /**
+   * Prices the replacement side of an exchange WITHOUT selling anything: the
+   * catalogue price of the exact variants chosen, no price overrides and no
+   * discount, with VAT as the store charges it. Used to check the exchange rule
+   * before any stock or return quantity moves.
+   */
+  async quoteReplacement(ctx: TenantContext, items: { variantId: Types.ObjectId; quantity: number }[]) {
+    const store = await StoreModel.findOne({ _id: ctx.storeId, tenantId: ctx.tenantId }).lean();
+    if (!store) throw ApiError.notFound('Store not found');
+    const input = { items, discountType: 'none', discountValue: 0, paymentMethod: 'cash', note: '' } as unknown as CreateSaleInput;
+    const lines = await this.priceLines(ctx, input);
+    const subtotalMinor = lines.reduce((sum, line) => sum + line.lineTotalMinor, 0);
+    const taxMinor = store.tax.enabled && !store.tax.inclusive ? applyBasisPoints(subtotalMinor, store.tax.rateBasisPoints) : 0;
+    return { lines, subtotalMinor, taxMinor, totalMinor: subtotalMinor + taxMinor };
+  }
+
   /** All-integer money maths; no floats anywhere in this path. */
   private computeTotals(
     lines: PricedLine[],
     input: CreateSaleInput,
     tax: { enabled: boolean; rateBasisPoints: number; inclusive: boolean },
+    creditMinor = 0,
+    loyaltyDiscountMinor = 0,
   ) {
     const subtotalMinor = lines.reduce((sum, line) => sum + line.lineTotalMinor, 0);
 
@@ -381,14 +527,92 @@ class SaleService {
     else if (input.discountType === 'percent') discountMinor = applyBasisPoints(subtotalMinor, input.discountValue);
     discountMinor = clampDiscount(discountMinor, subtotalMinor);
 
-    const taxableMinor = subtotalMinor - discountMinor;
+    // Loyalty points are a discount AFTER the cart discount, and can never take
+    // the goods below zero (so they never create a negative payable).
+    if (loyaltyDiscountMinor > subtotalMinor - discountMinor) {
+      throw ApiError.validation('The loyalty discount cannot be more than the amount of this sale.', {
+        reason: 'LOYALTY_REDEMPTION_TOO_HIGH',
+        maxDiscountMinor: subtotalMinor - discountMinor,
+        loyaltyDiscountMinor,
+      });
+    }
+    const taxableMinor = subtotalMinor - discountMinor - loyaltyDiscountMinor;
     // Inclusive tax is already inside the listed price, so it is reported but
     // not added again.
     const taxMinor = tax.enabled && !tax.inclusive ? applyBasisPoints(taxableMinor, tax.rateBasisPoints) : 0;
 
     const totalMinor = taxableMinor + taxMinor;
+    // Points covering the whole sale leave nothing to pay; any other zero total is a mistake.
+    if (totalMinor === 0 && loyaltyDiscountMinor > 0 && creditMinor === 0) {
+      if (input.payments?.length || (input.cashTenderedMinor ?? 0) > 0) {
+        throw ApiError.validation('Loyalty points cover this whole sale - remove the payment.', { reason: 'LOYALTY_NOTHING_PAYABLE' });
+      }
+      return { subtotalMinor, discountMinor, taxMinor, totalMinor, paidMinor: 0, changeMinor: 0, paymentStatus: 'paid' };
+    }
     if (totalMinor <= 0) {
       throw ApiError.validation('The sale total must be greater than zero');
+    }
+
+    // The replacement side of an exchange: the returned items' value (credit)
+    // pays for part of it, and the payments must cover EXACTLY the rest. Cash
+    // handed over beyond the cash row is change, as at the till.
+    if (creditMinor > 0) {
+      if (creditMinor > totalMinor) {
+        throw ApiError.validation('The replacement cannot be worth less than the returned items.', { totalMinor, creditMinor });
+      }
+      const dueMinor = totalMinor - creditMinor;
+      const rows = input.payments ?? [];
+      const appliedMinor = rows.reduce((sum, payment) => sum + payment.amountMinor, 0);
+      if (appliedMinor !== dueMinor) {
+        throw ApiError.validation(
+          dueMinor === 0
+            ? 'Nothing is payable on this exchange - remove the payments.'
+            : `The extra payment (${appliedMinor}) must add up to exactly the amount due (${dueMinor}).`,
+          { dueMinor, appliedMinor, reason: 'EXCHANGE_PAYMENT_MISMATCH' },
+        );
+      }
+      let changeMinor = 0;
+      if (input.cashTenderedMinor !== undefined) {
+        const cashRow = rows.find((payment) => payment.method === 'cash');
+        if (!cashRow) throw ApiError.validation('Cash received was entered, but no cash payment is part of this exchange.');
+        if (input.cashTenderedMinor < cashRow.amountMinor) {
+          throw ApiError.validation(`The cash received (${input.cashTenderedMinor}) is less than the cash due (${cashRow.amountMinor}).`, {
+            cashDueMinor: cashRow.amountMinor,
+            cashTenderedMinor: input.cashTenderedMinor,
+            shortfallMinor: cashRow.amountMinor - input.cashTenderedMinor,
+          });
+        }
+        changeMinor = input.cashTenderedMinor - cashRow.amountMinor;
+      }
+      return { subtotalMinor, discountMinor, taxMinor, totalMinor, paidMinor: totalMinor + changeMinor, changeMinor, paymentStatus: 'paid' };
+    }
+
+    // Cash tendered separately from what is applied to the sale. The payment
+    // rows are what the sale is settled with and must equal the total exactly;
+    // whatever cash was handed over beyond the cash row is change. So change can
+    // never inflate revenue or the recorded cash takings.
+    if (input.cashTenderedMinor !== undefined) {
+      const rows = input.payments ?? [{ method: input.paymentMethod, amountMinor: totalMinor, reference: '' }];
+      const appliedMinor = rows.reduce((sum, payment) => sum + payment.amountMinor, 0);
+      if (appliedMinor !== totalMinor) {
+        throw ApiError.validation(
+          `The payments (${appliedMinor}) must add up to exactly the total (${totalMinor}). Cash handed over beyond that is change.`,
+          { totalMinor, appliedMinor },
+        );
+      }
+      const cashRow = rows.find((payment) => payment.method === 'cash');
+      if (!cashRow) {
+        throw ApiError.validation('Cash received was entered, but no cash payment is part of this sale.');
+      }
+      if (input.cashTenderedMinor < cashRow.amountMinor) {
+        throw ApiError.validation(
+          `The cash received (${input.cashTenderedMinor}) is less than the cash due (${cashRow.amountMinor}). Collect the full amount to complete this sale.`,
+          { cashDueMinor: cashRow.amountMinor, cashTenderedMinor: input.cashTenderedMinor, shortfallMinor: cashRow.amountMinor - input.cashTenderedMinor },
+        );
+      }
+      const cashChangeMinor = input.cashTenderedMinor - cashRow.amountMinor;
+      // "Customer paid": everything handed over, including the change given back.
+      return { subtotalMinor, discountMinor, taxMinor, totalMinor, paidMinor: totalMinor + cashChangeMinor, changeMinor: cashChangeMinor, paymentStatus: 'paid' };
     }
 
     // Payments, when supplied, are the source of truth for what was tendered.

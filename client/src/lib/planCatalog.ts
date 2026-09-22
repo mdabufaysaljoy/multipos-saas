@@ -119,6 +119,7 @@ export const PLAN_SECTIONS: PlanSection[] = [
       { kind: 'flag', key: 'customerManagement', label: 'Purchase history' },
       { kind: 'flag', key: 'customerManagement', label: 'Customer wallet and dues' },
       { kind: 'flag', key: 'advancedReports', label: 'Customer spending analysis' },
+      { kind: 'flag', key: 'loyaltyProgram', label: 'Loyalty points and membership cards', hint: 'Clothing POS. Barcode membership cards, points on every purchase, redeem as a discount.', upsell: true },
     ],
   },
   {
@@ -179,6 +180,7 @@ export const FEATURE_LABELS: Record<string, string> = {
   smsMarketing: 'SMS marketing',
   emailMarketing: 'Email marketing',
   imageOptimization: 'Automatic image optimization',
+  loyaltyProgram: 'Loyalty program',
 };
 
 /** Every feature key the catalogue references, deduplicated. */
@@ -297,6 +299,7 @@ const UPGRADE_PHRASES: Record<string, string> = {
   smsMarketing: 'SMS marketing',
   emailMarketing: 'email marketing',
   imageOptimization: 'automatic image optimization and WebP conversion',
+  loyaltyProgram: 'the loyalty program',
   prioritySupport: 'priority support',
   salesReports: 'sales reports',
   customerManagement: 'customer profiles',

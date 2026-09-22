@@ -124,6 +124,8 @@ export interface SaleItem {
   lineDiscountMinor: number;
   lineTotalMinor: number;
   returnedQuantity: number;
+  /** Sold while the variant had no stock (permission `sales.sellOutOfStock`). Internal; not printed on receipts. */
+  outOfStockOverride?: boolean;
 }
 
 export interface SalePayment {
@@ -158,6 +160,97 @@ export interface Sale {
   fullyReturned: boolean;
   soldAt: string;
   createdAt: string;
+  /** Present when this sale is the replacement side of an exchange. */
+  exchange?: {
+    returnId: string | null;
+    returnNumber: string;
+    creditMinor: number;
+    returnedItems: { productNameSnapshot: string; variantNameSnapshot: string; quantity: number; lineTotalMinor: number }[];
+  } | null;
+  /** Present when a loyalty card was scanned. `discountMinor` above already includes `loyalty.discountMinor`. */
+  loyalty?: SaleLoyalty | null;
+}
+
+export interface SaleLoyalty {
+  membershipId: string;
+  cardNumber: string;
+  pointValueMinor: number;
+  earnSpendMinor: number;
+  pointsRedeemed: number;
+  discountMinor: number;
+  qualifyingMinor: number;
+  pointsEarned: number;
+  balanceAfter: number;
+  pointsEarnedReversed: number;
+  pointsRedeemedRestored: number;
+}
+
+/** Barcode label printing sizes (store settings). */
+export interface LabelSettings {
+  productWidthMm: 38 | 48 | 58;
+  loyaltyCardWidthMm: 48 | 58 | 85;
+  /** sheet = normal page / A4 sticker sheet; roll = label printer, page is one label wide. */
+  paper: 'sheet' | 'roll';
+}
+
+export const DEFAULT_LABEL_SETTINGS: LabelSettings = { productWidthMm: 38, loyaltyCardWidthMm: 85, paper: 'sheet' };
+
+/** Store loyalty rules, all in minor units. */
+export interface LoyaltySettings {
+  enabled: boolean;
+  /** Spend that earns one point (10000 = ৳100). */
+  earnSpendMinor: number;
+  /** Discount value of one point (100 = ৳1.00). */
+  pointValueMinor: number;
+  membershipFeeMinor: number;
+}
+
+/** What the till gets from scanning a card. */
+export interface LoyaltyLookup {
+  id: string;
+  cardNumber: string;
+  status: 'active' | 'inactive';
+  pointsBalance: number;
+  pointValueMinor: number;
+  valueMinor: number;
+  earnSpendMinor: number;
+  customer: { id: string; name: string; phone: string; email: string } | null;
+}
+
+export interface LoyaltyMember extends Omit<LoyaltyLookup, 'earnSpendMinor'> {
+  barcode: string;
+  pointsEarnedTotal: number;
+  pointsRedeemedTotal: number;
+  membershipFeeMinor: number;
+  feePayments: { method: string; amountMinor: number; reference: string }[];
+  feeChangeMinor: number;
+  issuedAt: string;
+  issuedByNameSnapshot: string;
+  statusChangedAt: string | null;
+  statusReason: string;
+  replayed?: boolean;
+}
+
+export interface LoyaltyTransaction {
+  _id: string;
+  type: 'earn' | 'redeem' | 'redeem_reversed' | 'earn_reversed' | 'redeem_restored' | 'adjustment';
+  points: number;
+  balanceBefore: number;
+  balanceAfter: number;
+  saleNumber: string;
+  returnNumber: string;
+  reason: string;
+  performedByNameSnapshot: string;
+  createdAt: string;
+}
+
+export interface LoyaltySummary {
+  totalMembers: number;
+  activeCards: number;
+  pointsIssued: number;
+  pointsRedeemed: number;
+  pointsOutstanding: number;
+  membershipFeesMinor: number;
 }
 
 export interface StoreSettings {
@@ -182,9 +275,11 @@ export interface StoreSettings {
     returnPolicy: string;
     showLogo: boolean;
     showCashier: boolean;
-    paperWidthMm: 58 | 78 | 80;
+    paperWidthMm: 48 | 58 | 78 | 80;
   };
   tax: { enabled: boolean; label: string; rateBasisPoints: number; inclusive: boolean };
+  loyalty?: LoyaltySettings;
+  labels?: LabelSettings;
   isActive: boolean;
   isDefault: boolean;
 }
@@ -223,6 +318,18 @@ export interface ReturnDoc {
   refundMethod: string;
   processedByNameSnapshot: string;
   returnedAt: string;
+  exchange?: {
+    saleId: string;
+    saleNumber: string;
+    refundableMinor: number;
+    replacementSubtotalMinor: number;
+    replacementTotalMinor: number;
+    extraPayableMinor: number;
+  } | null;
+  /** Returned by the create call for an exchange. */
+  replacementSale?: Sale | null;
+  /** Points effect of the return; its value was deducted from the money refund. */
+  loyalty?: { membershipId: string; pointsEarnedReversed: number; pointsRedeemedRestored: number; valueMinor: number } | null;
 }
 
 export interface ReturnableSale {
@@ -234,7 +341,9 @@ export interface ReturnableSale {
     cashierNameSnapshot: string;
     totalMinor: number;
     returnedTotalMinor: number;
+    subtotalMinor?: number;
     status: string;
+    loyalty?: Pick<SaleLoyalty, 'cardNumber' | 'pointValueMinor' | 'earnSpendMinor' | 'pointsRedeemed' | 'qualifyingMinor' | 'pointsEarned' | 'pointsEarnedReversed' | 'pointsRedeemedRestored'> | null;
   };
   items: {
     saleItemId: string;

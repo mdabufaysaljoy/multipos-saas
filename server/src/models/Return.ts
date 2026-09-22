@@ -41,6 +41,35 @@ export interface ReturnDoc extends BaseDoc {
   processedBy: Types.ObjectId;
   processedByNameSnapshot: string;
   returnedAt: Date;
+  /** Set when refundMethod is "exchange": the value went into a replacement sale instead of being paid out. */
+  exchange: ReturnExchange | null;
+  /** Guards an exchange against being submitted twice. Null for ordinary returns. */
+  idempotencyKey: string | null;
+  /** Loyalty effect of this return. Null when the sale had no loyalty card. */
+  loyalty: ReturnLoyalty | null;
+}
+
+export interface ReturnLoyalty {
+  membershipId: Types.ObjectId;
+  /** Points the returned goods had earned, taken back. */
+  pointsEarnedReversed: number;
+  /** Points the customer spent on the returned goods, given back instead of money. */
+  pointsRedeemedRestored: number;
+  /** pointsRedeemedRestored x the sale's point value: deducted from the money refund. */
+  valueMinor: number;
+}
+
+export interface ReturnExchange {
+  saleId: Types.ObjectId;
+  saleNumber: string;
+  /** Refund value of the returned items (original sale prices). */
+  refundableMinor: number;
+  /** Replacement items at their catalogue prices, before VAT. */
+  replacementSubtotalMinor: number;
+  /** Replacement sale total (including VAT when the store charges it on top). */
+  replacementTotalMinor: number;
+  /** What the customer paid on top of the refund value. */
+  extraPayableMinor: number;
 }
 
 const returnItemSchema = new Schema<ReturnItemDoc>(
@@ -87,8 +116,41 @@ const returnSchema = new Schema<ReturnDoc>(
     processedBy: { type: Schema.Types.ObjectId, ref: 'User', required: true },
     processedByNameSnapshot: { type: String, default: '' },
     returnedAt: { type: Date, default: Date.now, index: true },
+    exchange: {
+      type: new Schema<ReturnExchange>(
+        {
+          saleId: { type: Schema.Types.ObjectId, ref: 'Sale', required: true },
+          saleNumber: { type: String, default: '' },
+          refundableMinor: { type: Number, required: true, min: 0 },
+          replacementSubtotalMinor: { type: Number, required: true, min: 0 },
+          replacementTotalMinor: { type: Number, required: true, min: 0 },
+          extraPayableMinor: { type: Number, required: true, min: 0 },
+        },
+        { _id: false },
+      ),
+      default: null,
+    },
+    idempotencyKey: { type: String, default: null, maxlength: 100 },
+    loyalty: {
+      type: new Schema<ReturnLoyalty>(
+        {
+          membershipId: { type: Schema.Types.ObjectId, ref: 'LoyaltyMembership', required: true },
+          pointsEarnedReversed: { type: Number, default: 0, min: 0 },
+          pointsRedeemedRestored: { type: Number, default: 0, min: 0 },
+          valueMinor: { type: Number, default: 0, min: 0 },
+        },
+        { _id: false },
+      ),
+      default: null,
+    },
   },
   { timestamps: true },
+);
+
+// An exchange key is used once per branch; ordinary returns carry none.
+returnSchema.index(
+  { tenantId: 1, storeId: 1, idempotencyKey: 1 },
+  { unique: true, partialFilterExpression: { idempotencyKey: { $type: 'string' } } },
 );
 
 returnSchema.index({ tenantId: 1, storeId: 1, returnNumber: 1 }, { unique: true });

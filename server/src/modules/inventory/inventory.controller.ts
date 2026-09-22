@@ -106,9 +106,10 @@ export const summary = asyncHandler(async (req: Request, res: Response) => {
     {
       $group: {
         _id: null,
-        totalUnits: { $sum: '$stock' },
-        stockValueMinor: { $sum: { $multiply: ['$stock', '$costPriceMinor'] } },
-        retailValueMinor: { $sum: { $multiply: ['$stock', '$sellingPriceMinor'] } },
+        // Stock below zero (an out-of-stock sale) holds no value; it must not cancel out other variants.
+        totalUnits: { $sum: { $max: ['$stock', 0] } },
+        stockValueMinor: { $sum: { $multiply: [{ $max: ['$stock', 0] }, '$costPriceMinor'] } },
+        retailValueMinor: { $sum: { $multiply: [{ $max: ['$stock', 0] }, '$sellingPriceMinor'] } },
         variantCount: { $sum: 1 },
       },
     },

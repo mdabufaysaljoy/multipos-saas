@@ -13,6 +13,8 @@ const HomePage = lazyPage(() => import('@/pages/public/HomePage'), 'HomePage');
 const PricingPage = lazyPage(() => import('@/pages/public/PricingPage'), 'PricingPage');
 const PublicProductsPage = lazyPage(() => import('@/pages/public/ProductsPage'), 'PublicProductsPage');
 const ContactPage = lazyPage(() => import('@/pages/public/ContactPage'), 'ContactPage');
+const PosProductPage = lazyPage(() => import('@/pages/public/PosProductPage'), 'PosProductPage');
+const FeaturesPage = lazyPage(() => import('@/pages/public/FeaturesPage'), 'FeaturesPage');
 
 // Sign-in and setup
 const LoginPage = lazyPage(() => import('@/pages/LoginPage'), 'LoginPage');
@@ -55,6 +57,7 @@ const ShopSalesPage = lazyPage(() => import('@/pages/supershop/ShopSalesPage'), 
 
 // Shared workspace screens
 const CustomersPage = lazyPage(() => import('@/pages/CustomersPage'), 'CustomersPage');
+const LoyaltyPage = lazyPage(() => import('@/pages/LoyaltyPage'), 'LoyaltyPage');
 const MarketingPage = lazyPage(() => import('@/pages/MarketingPage'), 'MarketingPage');
 const StaffPage = lazyPage(() => import('@/pages/StaffPage'), 'StaffPage');
 const RolesPage = lazyPage(() => import('@/pages/RolesPage'), 'RolesPage');
@@ -75,9 +78,10 @@ export function AppRoutes() {
       <Route element={<PublicLayout />}>
         <Route path="/" element={<HomePage />} />
         <Route path="/products" element={<PublicProductsPage />} />
+        <Route path="/products/:slug" element={<PosProductPage />} />
         <Route path="/pricing" element={<PricingPage />} />
         {/* Features live on the home page; keep the nav link meaningful. */}
-        <Route path="/features" element={<HomePage />} />
+        <Route path="/features" element={<FeaturesPage />} />
         <Route path="/contact" element={<ContactPage />} />
       </Route>
 
@@ -290,6 +294,15 @@ export function AppRoutes() {
           element={
             <ProtectedRoute anyOf={['customers.view']}>
               <CustomersPage />
+            </ProtectedRoute>
+          }
+        />
+        {/* Shows its own locked state on plans without the loyalty program. */}
+        <Route
+          path="/loyalty"
+          element={
+            <ProtectedRoute anyOf={['loyalty.view', 'loyalty.manage']}>
+              <LoyaltyPage />
             </ProtectedRoute>
           }
         />

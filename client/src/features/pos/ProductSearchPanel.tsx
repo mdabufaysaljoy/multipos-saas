@@ -1,13 +1,16 @@
 import * as React from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useInfiniteQuery, useQuery } from '@tanstack/react-query';
 import { ImageOff, Layers, PackageX, ScanBarcode } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { SearchInput, useDebounced } from '@/components/SearchInput';
 import { EmptyState, LoadingState } from '@/components/states';
-import { productApi } from '@/api/endpoints';
+import { categoryApi, productApi } from '@/api/endpoints';
 import { formatMoney } from '@/lib/money';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
+import { CategorySelect } from './CategorySelect';
+import { useScannerPresence } from './useScannerPresence';
+import { isLoyaltyCardCode } from '@/features/loyalty/loyaltyMath';
 import { groupVariantsByProduct, type PosProductGroup } from './groupVariants';
 
 interface ProductSearchPanelProps {
@@ -15,12 +18,20 @@ interface ProductSearchPanelProps {
   onSelect: (group: PosProductGroup) => void;
   currency: string;
   onScanClick?: () => void;
+  /** UX only: the server checks the permission again when the sale is created. */
+  canSellOutOfStock?: boolean;
+  /**
+   * A loyalty card scanned or typed into the search box. Returns true when it
+   * was a member card, so the code is not also looked up as a product.
+   */
+  onCardCode?: (code: string) => Promise<boolean>;
 }
 
-export function ProductSearchPanel({ onSelect, currency, onScanClick }: ProductSearchPanelProps) {
+export function ProductSearchPanel({ onSelect, currency, onScanClick, canSellOutOfStock = false, onCardCode }: ProductSearchPanelProps) {
   const [term, setTerm] = React.useState('');
   const debounced = useDebounced(term, 250);
   const searchRef = React.useRef<HTMLInputElement>(null);
+  const scanner = useScannerPresence();
 
   // F2 focuses search from anywhere on the POS - the standard till shortcut.
   React.useEffect(() => {
@@ -34,36 +45,101 @@ export function ProductSearchPanel({ onSelect, currency, onScanClick }: ProductS
     return () => window.removeEventListener('keydown', handler);
   }, []);
 
-  const { data, isLoading, isError } = useQuery({
-    queryKey: ['pos-search', debounced],
-    queryFn: () => productApi.posSearch({ q: debounced, limit: 40 }),
+  const [categoryId, setCategoryId] = React.useState<string>('');
+  const scrollRef = React.useRef<HTMLDivElement>(null);
+  const sentinelRef = React.useRef<HTMLDivElement>(null);
+
+  // Categories come from the store's own catalogue - nothing is hard-coded.
+  // Only categories that hold products are offered as filters.
+  const { data: categoryPage } = useQuery({
+    // Under 'pos-search' so saving a product refreshes which categories hold products.
+    queryKey: ['pos-search', 'categories'],
+    queryFn: () => categoryApi.list({ limit: 100 }),
+    staleTime: 60_000,
+  });
+  const categories = React.useMemo(
+    () => (categoryPage?.items ?? []).filter((category) => (category.productCount ?? 0) > 0),
+    [categoryPage],
+  );
+  // A category that disappears (deleted, emptied) quietly falls back to All.
+  React.useEffect(() => {
+    if (categoryId && categoryPage && !categories.some((category) => category._id === categoryId)) setCategoryId('');
+  }, [categories, categoryId, categoryPage]);
+
+  // Paged by product. The key holds search AND category, so changing either
+  // starts again from page 1 - pages from different filters never mix. It sits
+  // under 'pos-search', which every screen that changes stock already refreshes.
+  const { data, isLoading, isError, hasNextPage, fetchNextPage, isFetchingNextPage } = useInfiniteQuery({
+    queryKey: ['pos-search', 'catalog', debounced, categoryId],
+    queryFn: ({ pageParam }) =>
+      productApi.posCatalog({ q: debounced, page: pageParam, limit: 24, ...(categoryId ? { categoryId } : {}) }),
+    initialPageParam: 1,
+    getNextPageParam: (last) => (last.hasMore ? last.page + 1 : undefined),
     staleTime: 10_000,
   });
 
+  // A new filter shows its first page from the top, not wherever the old list was scrolled.
+  React.useEffect(() => {
+    scrollRef.current?.scrollTo({ top: 0 });
+  }, [debounced, categoryId]);
+
+  // Infinite scroll: the next page loads as the end of the grid comes into view.
+  React.useEffect(() => {
+    const sentinel = sentinelRef.current;
+    if (!sentinel || !hasNextPage) return;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries[0]?.isIntersecting && !isFetchingNextPage) void fetchNextPage();
+      },
+      { root: scrollRef.current, rootMargin: '300px' },
+    );
+    observer.observe(sentinel);
+    return () => observer.disconnect();
+  }, [hasNextPage, isFetchingNextPage, fetchNextPage]);
+
   // Memoised: a fresh `[]` on every render would re-run the grouping below each time.
-  const variants = React.useMemo(() => data ?? [], [data]);
+  const variants = React.useMemo(() => (data?.pages ?? []).flatMap((page) => page.items), [data]);
+  const activeCategory = categories.find((category) => category._id === categoryId) ?? null;
   // ONE card per product, not one per variant.
   const groups = React.useMemo(() => groupVariantsByProduct(variants), [variants]);
 
   // A typed SKU/barcode that resolves to exactly one item is added immediately.
-  const handleKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
+  const handleKeyDown = async (event: React.KeyboardEvent<HTMLDivElement>) => {
     if (event.key !== 'Enter') return;
     const needle = term.trim();
     if (!needle) return;
+    if (onCardCode && isLoyaltyCardCode(needle)) {
+      event.preventDefault();
+      if (await onCardCode(needle)) {
+        setTerm('');
+        return;
+      }
+    }
 
-    const exact = variants.find((v) => v.barcode === needle || v.sku === needle.toUpperCase());
+    let pool = variants;
+    let exact = pool.find((v) => v.barcode === needle || v.sku === needle.toUpperCase());
+    // A code is looked up across the whole store, whatever category is selected
+    // or however far the grid has loaded - the same lookup the scanner uses.
+    if (!exact) {
+      try {
+        pool = await productApi.posSearch({ q: needle, limit: 5 });
+        exact = pool.find((v) => v.barcode === needle || v.sku === needle.toUpperCase());
+      } catch {
+        return;
+      }
+    }
     const target = exact ?? (variants.length === 1 ? variants[0] : null);
-    if (!target || target.stock <= 0) return;
+    if (!target || (target.stock <= 0 && !canSellOutOfStock)) return;
 
     // Wrap the single variant in its own group so the page adds it directly.
-    const group = groups.find((g) => g.productId === target.productId);
+    const group = groupVariantsByProduct(pool).find((g) => g.productId === target.productId);
     if (!group) return;
     onSelect({ ...group, variants: [target] });
     setTerm('');
   };
 
   return (
-    <div className="flex h-full flex-col" onKeyDown={handleKeyDown}>
+    <div className="flex h-full flex-col" onKeyDown={(event) => void handleKeyDown(event)}>
       <div className="border-b p-3">
         <div className="flex gap-2">
           <SearchInput
@@ -81,27 +157,62 @@ export function ProductSearchPanel({ onSelect, currency, onScanClick }: ProductS
             </Button>
           )}
         </div>
-        <p className="mt-1.5 flex items-center gap-1.5 text-xs text-muted-foreground">
-          <ScanBarcode className="h-3.5 w-3.5" />
-          A barcode scanner works anywhere on this screen — no need to click first
+        <p
+          className="mt-1.5 flex items-center gap-1.5 text-xs text-muted-foreground"
+          title="Browsers cannot see scanner hardware directly. The dot turns green once a scan is detected on this device."
+        >
+          {/* Green once a real scan has been seen on this device; warn until then. */}
+          <span
+            className={cn('h-2 w-2 shrink-0 rounded-full', scanner.ready ? 'bg-success' : 'bg-warning')}
+            role="status"
+            aria-label={scanner.ready ? 'Barcode scanner detected' : 'Barcode scanner not detected'}
+          />
+          <ScanBarcode className="h-3.5 w-3.5 shrink-0" />
+          <span className="min-w-0 truncate">
+            {scanner.ready
+              ? 'Scanner ready — scan anywhere on this screen'
+              : 'Scanner not detected yet — scan any barcode to check'}
+          </span>
         </p>
       </div>
 
-      <div className="scrollbar-thin flex-1 overflow-y-auto p-3">
+      {categories.length > 0 && (
+        <div className="flex items-center gap-2 border-b px-3 py-2">
+          <CategorySelect categories={categories} value={categoryId} onChange={setCategoryId} className="sm:max-w-xs" />
+          {categoryId && (
+            <Button type="button" variant="ghost" size="sm" className="shrink-0" onClick={() => setCategoryId('')}>
+              Clear
+            </Button>
+          )}
+        </div>
+      )}
+
+      <div ref={scrollRef} className="scrollbar-thin min-h-0 flex-1 overflow-y-auto p-3">
         {isLoading && <LoadingState label="Searching…" />}
         {isError && <EmptyState title="Could not load products" description="Check your connection and try again." />}
 
         {!isLoading && !isError && groups.length === 0 && (
           <EmptyState
             icon={<PackageX className="h-6 w-6" />}
-            title={term ? 'No matching products' : 'No products yet'}
-            description={term ? 'Try a different name, SKU or barcode.' : 'Add products to start selling.'}
+            title={
+              term
+                ? activeCategory
+                  ? `No matching products in ${activeCategory.name}`
+                  : 'No matching products'
+                : activeCategory
+                  ? 'No products found in this category.'
+                  : 'No products yet'
+            }
+            description={
+              term ? 'Try a different name, SKU or barcode.' : activeCategory ? 'Choose another category, or All.' : 'Add products to start selling.'
+            }
           />
         )}
 
         <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-3 2xl:grid-cols-4">
           {groups.map((group) => {
             const outOfStock = group.totalStock <= 0;
+            const blocked = outOfStock && !canSellOutOfStock;
             const multiVariant = group.variants.length > 1;
             const priceLabel =
               group.minPriceMinor === group.maxPriceMinor
@@ -112,11 +223,11 @@ export function ProductSearchPanel({ onSelect, currency, onScanClick }: ProductS
               <button
                 key={group.productId}
                 type="button"
-                disabled={outOfStock}
+                disabled={blocked}
                 onClick={() => onSelect(group)}
                 className={cn(
                   'group flex flex-col gap-2 rounded-lg border bg-card p-2.5 text-left transition-all',
-                  outOfStock
+                  blocked
                     ? 'cursor-not-allowed opacity-55'
                     : 'hover:border-primary hover:shadow-md focus:outline-none focus:ring-2 focus:ring-ring',
                 )}
@@ -160,7 +271,12 @@ export function ProductSearchPanel({ onSelect, currency, onScanClick }: ProductS
 
                 <div className="mt-auto flex items-center justify-between gap-1">
                   <span className="tabular truncate text-sm font-semibold">{priceLabel}</span>
-                  {outOfStock ? (
+                  {outOfStock && canSellOutOfStock ? (
+                    <span className="flex shrink-0 items-center gap-1">
+                      <span className="text-[10px] font-semibold text-warning">Sell anyway</span>
+                      <Badge variant="destructive">Out</Badge>
+                    </span>
+                  ) : outOfStock ? (
                     <Badge variant="destructive">Out</Badge>
                   ) : (
                     <Badge variant="secondary">{group.totalStock}</Badge>
@@ -170,6 +286,16 @@ export function ProductSearchPanel({ onSelect, currency, onScanClick }: ProductS
             );
           })}
         </div>
+
+        {/* Loads the next page when scrolled into view; the button is a fallback. */}
+        <div ref={sentinelRef} className="h-px" aria-hidden />
+        {hasNextPage && (
+          <div className="flex justify-center py-3">
+            <Button type="button" variant="outline" size="sm" loading={isFetchingNextPage} onClick={() => void fetchNextPage()}>
+              Load more products
+            </Button>
+          </div>
+        )}
       </div>
     </div>
   );

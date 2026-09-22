@@ -16,6 +16,8 @@ interface BarcodeLabelProps {
   currency: string;
   storeName?: string;
   showPrice?: boolean;
+  /** Label width from store settings (38, 48 or 58 mm). */
+  widthMm?: number;
   className?: string;
 }
 
@@ -27,7 +29,7 @@ interface BarcodeLabelProps {
  * and CODE128 otherwise, so a barcode typed in from a supplier's label still
  * renders correctly.
  */
-export function BarcodeLabel({ data, currency, storeName, showPrice = true, className }: BarcodeLabelProps) {
+export function BarcodeLabel({ data, currency, storeName, showPrice = true, widthMm = 38, className }: BarcodeLabelProps) {
   const svgRef = React.useRef<SVGSVGElement>(null);
   const [error, setError] = React.useState<string | null>(null);
 
@@ -52,7 +54,7 @@ export function BarcodeLabel({ data, currency, storeName, showPrice = true, clas
   }, [data.barcode]);
 
   return (
-    <div className={cn('barcode-label', className)}>
+    <div className={cn('barcode-label', className)} data-width={widthMm} style={{ ['--label-width' as string]: `${widthMm}mm` }}>
       {storeName && <div className="bl-store">{storeName}</div>}
       <div className="bl-name">{data.productName}</div>
       {data.variantName && data.variantName !== 'Default' && <div className="bl-variant">{data.variantName}</div>}

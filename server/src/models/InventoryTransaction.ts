@@ -25,6 +25,8 @@ export interface InventoryTransactionDoc extends BaseDoc {
   referenceNumber: string;
   performedBy: Types.ObjectId | null;
   performedByNameSnapshot: string;
+  /** True when a sale took this variant from zero or below (permission `sales.sellOutOfStock`). */
+  outOfStockOverride?: boolean;
 }
 
 const inventoryTxSchema = new Schema<InventoryTransactionDoc>(
@@ -46,6 +48,7 @@ const inventoryTxSchema = new Schema<InventoryTransactionDoc>(
     referenceNumber: { type: String, default: '' },
     performedBy: { type: Schema.Types.ObjectId, ref: 'User', default: null },
     performedByNameSnapshot: { type: String, default: '' },
+    outOfStockOverride: { type: Boolean },
   },
   { timestamps: true },
 );

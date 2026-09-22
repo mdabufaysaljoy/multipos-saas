@@ -110,7 +110,17 @@ export function PublicLayout() {
             </p>
           </div>
 
-          <FooterCol title="Product" links={[['Clothing POS', '/products'], ['Pricing', '/pricing'], ['Features', '/features']]} />
+          <FooterCol
+            title="Products"
+            links={[
+              ['Clothing POS', '/products/clothing-pos'],
+              ['Supershop POS', '/products/super-shop-pos'],
+              ['Restaurant POS', '/products/restaurant-pos'],
+              ['Pharmacy POS', '/products/pharmacy-pos'],
+              ['Pricing', '/pricing'],
+              ['Features', '/features'],
+            ]}
+          />
           <FooterCol title="Company" links={[['About', '/contact'], ['Contact', '/contact']]} />
           <FooterCol title="Account" links={[['Sign in', '/login'], ['Create account', '/register']]} />
         </div>

@@ -19,15 +19,19 @@ import { LoadingState } from '@/components/states';
 import { PageHeader } from '@/components/PageHeader';
 import { PermissionGate } from '@/components/PermissionGate';
 import { ThermalReceipt } from '@/features/receipt/ThermalReceipt';
+import { LoyaltySettingsCard } from '@/features/loyalty/LoyaltySettingsCard';
+import { LabelSettingsCard } from '@/features/barcode/LabelSettingsCard';
+import { useSearchParams } from 'react-router-dom';
 import { ApiError } from '@/api/client';
 import { authApi, storeApi } from '@/api/endpoints';
 import { useAuth } from '@/hooks/useAuth';
-import type { ReceiptPayload, StoreSettings } from '@/types/domain';
+import { DEFAULT_LABEL_SETTINGS, type ReceiptPayload, type StoreSettings } from '@/types/domain';
 
 export function SettingsPage() {
   const queryClient = useQueryClient();
-  const { can, refresh } = useAuth();
+  const { can, refresh, session } = useAuth();
   const readOnly = !can('settings.edit');
+  const [searchParams] = useSearchParams();
 
   const { data: store, isLoading } = useQuery({ queryKey: ['store', 'current'], queryFn: storeApi.current });
   const [draft, setDraft] = React.useState<StoreSettings | null>(null);
@@ -76,6 +80,7 @@ export function SettingsPage() {
         paymentMethods: draft!.paymentMethods,
         receipt: draft!.receipt,
         tax: draft!.tax,
+        labels: { ...DEFAULT_LABEL_SETTINGS, ...(draft!.labels ?? {}) },
       }),
     onSuccess: () => {
       toast.success('Settings saved');
@@ -180,11 +185,13 @@ export function SettingsPage() {
       />
       <LimitAlert resource="storageBytes" />
 
-      <Tabs defaultValue="store">
-        <TabsList>
+      <Tabs defaultValue={searchParams.get('tab') === 'loyalty' ? 'loyalty' : 'store'}>
+        <TabsList className="h-auto flex-wrap">
           <TabsTrigger value="store">Store</TabsTrigger>
           <TabsTrigger value="receipt">Receipt</TabsTrigger>
           <TabsTrigger value="tax">Tax &amp; payments</TabsTrigger>
+          {(session?.tenant?.vertical ?? 'clothing') === 'clothing' && <TabsTrigger value="labels">Labels</TabsTrigger>}
+          {(session?.tenant?.vertical ?? 'clothing') === 'clothing' && <TabsTrigger value="loyalty">Loyalty</TabsTrigger>}
           <TabsTrigger value="account">My account</TabsTrigger>
         </TabsList>
 
@@ -338,15 +345,15 @@ export function SettingsPage() {
 
                 <div className="space-y-1.5">
                   <Label>Paper width</Label>
-                  <div className="flex gap-2">
-                    {[58, 78, 80].map((width) => (
+                  <div className="flex flex-wrap gap-2">
+                    {[48, 58, 78, 80].map((width) => (
                       <Button
                         key={width}
                         type="button"
                         size="sm"
                         disabled={readOnly}
                         variant={draft.receipt.paperWidthMm === width ? 'default' : 'outline'}
-                        onClick={() => patch({ receipt: { ...draft.receipt, paperWidthMm: width as 58 | 78 | 80 } })}
+                        onClick={() => patch({ receipt: { ...draft.receipt, paperWidthMm: width as 48 | 58 | 78 | 80 } })}
                       >
                         {width}mm
                       </Button>
@@ -448,6 +455,21 @@ export function SettingsPage() {
               </CardContent>
             </Card>
           </div>
+        </TabsContent>
+
+        <TabsContent value="labels">
+          <LabelSettingsCard
+            value={{ ...DEFAULT_LABEL_SETTINGS, ...(draft.labels ?? {}) }}
+            storeName={draft.name}
+            currency={draft.currency}
+            readOnly={readOnly}
+            showLoyaltyCard={(session?.tenant?.vertical ?? 'clothing') === 'clothing'}
+            onChange={(labels) => patch({ labels })}
+          />
+        </TabsContent>
+
+        <TabsContent value="loyalty">
+          <LoyaltySettingsCard value={store?.loyalty} currency={draft.currency} readOnly={readOnly} />
         </TabsContent>
 
         <TabsContent value="account">

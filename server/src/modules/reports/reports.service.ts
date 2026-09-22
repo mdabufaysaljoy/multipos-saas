@@ -140,7 +140,7 @@ class ReportService {
       ]),
       ProductVariantModel.aggregate<{ _id: Types.ObjectId; units: number; valueMinor: number }>([
         { $match: { tenantId: ctx.tenantId, deletedAt: null } },
-        { $group: { _id: '$storeId', units: { $sum: '$stock' }, valueMinor: { $sum: { $multiply: ['$stock', '$costPriceMinor'] } } } },
+        { $group: { _id: '$storeId', units: { $sum: { $max: ['$stock', 0] } }, valueMinor: { $sum: { $multiply: [{ $max: ['$stock', 0] }, '$costPriceMinor'] } } } },
       ]),
     ]);
 
@@ -614,9 +614,10 @@ class ReportService {
         {
           $group: {
             _id: null,
-            units: { $sum: '$stock' },
-            costValueMinor: { $sum: { $multiply: ['$stock', '$costPriceMinor'] } },
-            retailValueMinor: { $sum: { $multiply: ['$stock', '$sellingPriceMinor'] } },
+            // Stock below zero (an out-of-stock sale) holds no value.
+            units: { $sum: { $max: ['$stock', 0] } },
+            costValueMinor: { $sum: { $multiply: [{ $max: ['$stock', 0] }, '$costPriceMinor'] } },
+            retailValueMinor: { $sum: { $multiply: [{ $max: ['$stock', 0] }, '$sellingPriceMinor'] } },
             variants: { $sum: 1 },
           },
         },
@@ -635,7 +636,7 @@ class ReportService {
         .lean(),
       ProductVariantModel.aggregate([
         { $match: base },
-        { $addFields: { valueMinor: { $multiply: ['$stock', '$costPriceMinor'] } } },
+        { $addFields: { valueMinor: { $multiply: [{ $max: ['$stock', 0] }, '$costPriceMinor'] } } },
         { $sort: { valueMinor: -1 } },
         { $limit: limit },
         { $project: { _id: 1, productNameSnapshot: 1, name: 1, sku: 1, stock: 1, valueMinor: 1 } },

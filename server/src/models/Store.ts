@@ -8,7 +8,7 @@ export interface ReceiptSettings {
   returnPolicy: string;
   showLogo: boolean;
   showCashier: boolean;
-  paperWidthMm: 58 | 78 | 80;
+  paperWidthMm: 48 | 58 | 78 | 80;
 }
 
 export interface TaxSettings {
@@ -19,6 +19,38 @@ export interface TaxSettings {
   /** When true, listed prices already include tax. */
   inclusive: boolean;
 }
+
+/**
+ * Loyalty program rules (Clothing POS, plans with the loyalty entitlement).
+ * All money in minor units, so no floating point anywhere:
+ *   earnSpendMinor 10000  = every ৳100 of qualifying spend earns 1 point
+ *   pointValueMinor 100   = 1 point is worth ৳1.00 of discount (50 = ৳0.50)
+ *   membershipFeeMinor 0  = cards are issued free until the owner sets a fee
+ */
+export interface LoyaltySettings {
+  enabled: boolean;
+  earnSpendMinor: number;
+  pointValueMinor: number;
+  membershipFeeMinor: number;
+}
+
+export const RECEIPT_WIDTHS_MM = [48, 58, 78, 80] as const;
+export const PRODUCT_LABEL_WIDTHS_MM = [38, 48, 58] as const;
+export const LOYALTY_CARD_WIDTHS_MM = [48, 58, 85] as const;
+export const LABEL_PAPERS = ['sheet', 'roll'] as const;
+
+/**
+ * Barcode label printing. `sheet` lays labels out on a normal page (A4 sticker
+ * sheets); `roll` sets the printed page to the label width, one label per row,
+ * for label printers.
+ */
+export interface LabelSettings {
+  productWidthMm: (typeof PRODUCT_LABEL_WIDTHS_MM)[number];
+  loyaltyCardWidthMm: (typeof LOYALTY_CARD_WIDTHS_MM)[number];
+  paper: (typeof LABEL_PAPERS)[number];
+}
+
+export const DEFAULT_LABEL_SETTINGS: LabelSettings = { productWidthMm: 38, loyaltyCardWidthMm: 85, paper: 'sheet' };
 
 export interface StoreDoc extends BaseDoc {
   tenantId: Types.ObjectId;
@@ -36,6 +68,8 @@ export interface StoreDoc extends BaseDoc {
   returnPrefix: string;
   receipt: ReceiptSettings;
   tax: TaxSettings;
+  loyalty: LoyaltySettings;
+  labels: LabelSettings;
   paymentMethods: string[];
   lowStockThreshold: number;
   isActive: boolean;
@@ -67,13 +101,24 @@ const storeSchema = new Schema<StoreDoc>(
       returnPolicy: { type: String, default: 'Exchange within 7 days with receipt.' },
       showLogo: { type: Boolean, default: true },
       showCashier: { type: Boolean, default: true },
-      paperWidthMm: { type: Number, enum: [58, 78, 80], default: 58 },
+      paperWidthMm: { type: Number, enum: [...RECEIPT_WIDTHS_MM], default: 58 },
     },
     tax: {
       enabled: { type: Boolean, default: false },
       label: { type: String, default: 'VAT' },
       rateBasisPoints: { type: Number, default: 0, min: 0, max: 10_000 },
       inclusive: { type: Boolean, default: false },
+    },
+    loyalty: {
+      enabled: { type: Boolean, default: false },
+      earnSpendMinor: { type: Number, default: 10_000, min: 1 },
+      pointValueMinor: { type: Number, default: 100, min: 1 },
+      membershipFeeMinor: { type: Number, default: 0, min: 0 },
+    },
+    labels: {
+      productWidthMm: { type: Number, enum: [...PRODUCT_LABEL_WIDTHS_MM], default: 38 },
+      loyaltyCardWidthMm: { type: Number, enum: [...LOYALTY_CARD_WIDTHS_MM], default: 85 },
+      paper: { type: String, enum: [...LABEL_PAPERS], default: 'sheet' },
     },
     paymentMethods: { type: [String], default: [...PAYMENT_METHODS] },
     lowStockThreshold: { type: Number, default: 5, min: 0 },

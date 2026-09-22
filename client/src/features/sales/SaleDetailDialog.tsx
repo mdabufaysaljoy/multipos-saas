@@ -104,6 +104,9 @@ export function SaleDetailDialog({ saleId, onClose, onPrint }: SaleDetailDialogP
                           <p className="text-xs text-muted-foreground">
                             {item.variantNameSnapshot} · <span className="font-mono">{item.skuSnapshot}</span>
                           </p>
+                          {item.outOfStockOverride && (
+                            <p className="mt-0.5 text-xs font-medium text-warning">Out-of-stock override</p>
+                          )}
                           {item.returnedQuantity > 0 && (
                             <p className="mt-0.5 text-xs text-destructive">{item.returnedQuantity} returned</p>
                           )}
@@ -131,10 +134,16 @@ export function SaleDetailDialog({ saleId, onClose, onPrint }: SaleDetailDialogP
                   <dt className="text-muted-foreground">Subtotal</dt>
                   <dd className="tabular">{formatMoney(sale.subtotalMinor, currency)}</dd>
                 </div>
-                {sale.discountMinor > 0 && (
+                {sale.discountMinor - (sale.loyalty?.discountMinor ?? 0) > 0 && (
                   <div className="flex justify-between text-success">
                     <dt>Discount</dt>
-                    <dd className="tabular">-{formatMoney(sale.discountMinor, currency)}</dd>
+                    <dd className="tabular">-{formatMoney(sale.discountMinor - (sale.loyalty?.discountMinor ?? 0), currency)}</dd>
+                  </div>
+                )}
+                {(sale.loyalty?.discountMinor ?? 0) > 0 && (
+                  <div className="flex justify-between text-success">
+                    <dt>Loyalty ({sale.loyalty!.pointsRedeemed} pts)</dt>
+                    <dd className="tabular">-{formatMoney(sale.loyalty!.discountMinor, currency)}</dd>
                   </div>
                 )}
                 {sale.taxMinor > 0 && (
@@ -165,6 +174,17 @@ export function SaleDetailDialog({ saleId, onClose, onPrint }: SaleDetailDialogP
                   </div>
                 )}
               </dl>
+
+              {sale.loyalty && (
+                <p className="rounded-md border border-primary/30 bg-primary/5 px-3 py-2 text-xs">
+                  Loyalty card <span className="font-mono">{sale.loyalty.cardNumber}</span>
+                  {sale.loyalty.pointsRedeemed > 0 && ` · ${sale.loyalty.pointsRedeemed} redeemed`}
+                  {sale.loyalty.pointsEarned > 0 && ` · ${sale.loyalty.pointsEarned} earned`}
+                  {` · balance after sale ${sale.loyalty.balanceAfter}`}
+                  {sale.loyalty.pointsEarnedReversed + sale.loyalty.pointsRedeemedRestored > 0 &&
+                    ` · returns: ${sale.loyalty.pointsEarnedReversed} taken back, ${sale.loyalty.pointsRedeemedRestored} given back`}
+                </p>
+              )}
 
               {sale.note && (
                 <p className="whitespace-pre-wrap rounded-md bg-muted p-3 text-sm text-muted-foreground">{sale.note}</p>

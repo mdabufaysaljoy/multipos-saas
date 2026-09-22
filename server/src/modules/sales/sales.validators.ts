@@ -60,10 +60,33 @@ export const createSaleSchema = z
       .optional(),
     /** Amount tendered when a single method is used. */
     paidMinor: minorAmount.optional(),
+    /**
+     * Physical cash the customer handed over. When present, `payments` are the
+     * amounts APPLIED to the sale (they must add up to exactly the total), and
+     * the surplus of this over the cash row is change - never revenue.
+     */
+    cashTenderedMinor: minorAmount.optional(),
 
     note: z.string().trim().max(500).optional().default(''),
+
+    /**
+     * The loyalty card scanned at the till. Points earned, point values and the
+     * discount are all worked out on the server; only WHICH card and HOW MANY
+     * points to spend come from the client, and both are checked.
+     */
+    loyaltyMembershipId: objectId.optional(),
+    redeemPoints: z
+      .number()
+      .refine(Number.isSafeInteger, { message: 'Points must be a whole number' })
+      .refine((value) => value >= 0 && value <= 100_000_000, { message: 'Enter a valid number of points' })
+      .optional(),
+    /** One key per checkout attempt; a retry with the same key returns the first sale. */
+    idempotencyKey: z.string().trim().min(8).max(100).regex(/^[A-Za-z0-9_-]+$/, 'Invalid request key').optional(),
   })
   .superRefine((data, ctx) => {
+    if ((data.redeemPoints ?? 0) > 0 && !data.loyaltyMembershipId) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['redeemPoints'], message: 'Scan the loyalty card before redeeming points' });
+    }
     if (data.discountType === 'percent' && data.discountValue > 10_000) {
       ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['discountValue'], message: 'A percentage discount cannot exceed 100%' });
     }

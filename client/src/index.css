@@ -112,7 +112,7 @@
 }
 
 /* --------------------------------------------------------------------------
-   Thermal receipt (58mm / 78mm / 80mm)
+   Thermal receipt (48mm / 58mm / 78mm / 80mm)
 
    One layout, parameterised by --receipt-width. The paper size comes from the
    store's receipt settings, so there is exactly one receipt implementation
@@ -132,6 +132,13 @@
   line-height: 1.35;
   color: #000;
   background: #fff;
+}
+
+/* 48mm paper: slightly smaller type and tighter margins so lines still fit. */
+.receipt-paper[data-width='48'] {
+  --receipt-font: 8.5pt;
+  --receipt-font-sm: 7.5pt;
+  padding: 1.5mm;
 }
 
 /* Wider paper gets slightly larger type and a little more breathing room. */
@@ -173,12 +180,15 @@
   #receipt-print-area,
   #receipt-print-area *,
   #barcode-print-area,
-  #barcode-print-area * {
+  #barcode-print-area *,
+  #loyalty-card-print-area,
+  #loyalty-card-print-area * {
     visibility: visible;
   }
 
   #receipt-print-area,
-  #barcode-print-area {
+  #barcode-print-area,
+  #loyalty-card-print-area {
     position: absolute;
     left: 0;
     top: 0;
@@ -212,7 +222,10 @@
 }
 
 .barcode-label {
-  width: 38mm;
+  /* Set per store (Settings → Labels): 38, 48 or 58 mm. */
+  --label-width: 38mm;
+  width: var(--label-width);
+  box-sizing: border-box;
   padding: 1.5mm;
   border: 1px dashed #d4d4d8;
   border-radius: 2px;
@@ -264,7 +277,29 @@
   padding: 2mm 0;
 }
 
+/* Wider labels get slightly larger type. */
+.barcode-label[data-width='48'] .bl-name { font-size: 8.5pt; }
+.barcode-label[data-width='48'] .bl-price { font-size: 10pt; }
+.barcode-label[data-width='58'] .bl-name { font-size: 9.5pt; }
+.barcode-label[data-width='58'] .bl-store { font-size: 7pt; }
+.barcode-label[data-width='58'] .bl-price { font-size: 11pt; }
+
+/* Label-printer roll: one label per row, the page is one label wide. */
+.barcode-sheet[data-paper='roll'] {
+  flex-direction: column;
+  flex-wrap: nowrap;
+  align-items: center;
+}
+
 @media print {
+  .barcode-sheet[data-paper='roll'] {
+    align-items: flex-start;
+  }
+  .barcode-sheet[data-paper='roll'] .barcode-label {
+    break-after: page;
+    page-break-after: always;
+  }
+
   .barcode-sheet {
     max-height: none;
     overflow: visible;
@@ -276,6 +311,63 @@
   .barcode-label {
     border: none;
   }
+
+  #loyalty-card-print-area {
+    padding: 0 !important;
+    background: #fff !important;
+  }
+}
+
+/* --------------------------------------------------------------------------
+   Loyalty membership card sticker (~85 x 54 mm). Black on white, no artwork
+   behind the barcode, so printed cards scan reliably.
+   -------------------------------------------------------------------------- */
+.loyalty-card {
+  /* Set per store (Settings → Labels): 48, 58 or 85 mm. */
+  --card-width: 85mm;
+  width: var(--card-width);
+  max-width: 100%;
+  min-height: 54mm;
+  box-sizing: border-box;
+  padding: 3mm 4mm;
+  background: #fff;
+  color: #000;
+  border: 1px dashed #d4d4d8;
+  border-radius: 3mm;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  font-family: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;
+}
+.loyalty-card .lc-head { display: flex; align-items: center; gap: 2mm; max-width: 100%; }
+.loyalty-card .lc-logo { max-height: 8mm; max-width: 20mm; object-fit: contain; }
+.loyalty-card .lc-store { font-size: 9pt; font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.loyalty-card .lc-title { margin-top: 1mm; font-size: 7pt; font-weight: 700; letter-spacing: 0.18em; }
+.loyalty-card .lc-name { margin-top: 1mm; font-size: 10pt; font-weight: 600; line-height: 1.2; overflow-wrap: anywhere; }
+.loyalty-card .lc-contact { font-size: 7.5pt; line-height: 1.25; overflow-wrap: anywhere; }
+.loyalty-card .lc-barcode { display: block; width: 62mm; max-width: 100%; height: auto; margin-top: 1.5mm; }
+.loyalty-card .lc-number { font-size: 8pt; font-weight: 600; letter-spacing: 0.08em; }
+.loyalty-card .lc-error { font-size: 7pt; color: #b91c1c; padding: 3mm 0; }
+
+/* Narrow stickers (48 / 58 mm label rolls): same content, tighter layout. The
+   barcode takes almost the full width so its bars stay large enough to scan. */
+.loyalty-card[data-width='48'],
+.loyalty-card[data-width='58'] {
+  min-height: 0;
+  padding: 2mm;
+  border-radius: 1.5mm;
+}
+.loyalty-card[data-width='48'] .lc-barcode,
+.loyalty-card[data-width='58'] .lc-barcode { width: 100%; }
+.loyalty-card[data-width='48'] .lc-store { font-size: 7.5pt; }
+.loyalty-card[data-width='48'] .lc-name { font-size: 8.5pt; }
+.loyalty-card[data-width='48'] .lc-contact { font-size: 6.5pt; }
+.loyalty-card[data-width='48'] .lc-number { font-size: 7pt; }
+.loyalty-card[data-width='48'] .lc-logo { max-height: 6mm; max-width: 14mm; }
+
+@media print {
+  .loyalty-card { border: none; }
 }
 
 

@@ -38,6 +38,7 @@ const DEFAULT_FEATURES: Record<string, boolean> = {
   smsMarketing: false,
   emailMarketing: false,
   imageOptimization: false,
+  loyaltyProgram: false,
 };
 
 const DEFAULT_LIMITS: Record<string, number> = {

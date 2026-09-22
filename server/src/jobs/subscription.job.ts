@@ -7,7 +7,8 @@ import { logger } from '../utils/logger';
 import { reconcileStalePayments } from '../services/payment/staleReconciler';
 import { sendPaymentAlertDigest } from '../services/payment/paymentAlerts.service';
 import { renewDueWalletSubscriptions, renewWithGateway } from '../services/subscription/walletRenewal.service';
-import { sendRenewalNotice, sendRenewalReminders } from '../services/subscription/renewalNotices.service';
+import { sendRenewalNotice } from '../services/subscription/renewalNotices.service';
+import { retryFailedEmails, sendExpiryReminders } from '../services/email/transactionalEmail.service';
 import { recurringProviderFor } from '../services/subscription/renewalCapability';
 import { RENEWAL_GRACE_MS, RENEWAL_MAX_ATTEMPTS, renewalGraceEndsAt } from '../services/subscription/renewalPolicy';
 import { subscriptionService } from '../modules/subscriptions/subscriptions.service';
@@ -196,12 +197,13 @@ let reconcileTimer: NodeJS.Timeout | null = null;
 export function startSubscriptionJobs(intervalMs = 60 * 60 * 1000, reconcileIntervalMs = 10 * 60 * 1000): void {
   const run = async () => {
     try {
-      await sendRenewalReminders();
+      await sendExpiryReminders();
       await renewDueWalletSubscriptions();
       await processRenewals();
       await expireLapsedSubscriptions();
       await issueMissingInvoices();
       await issueMissingReceipts();
+      await retryFailedEmails();
     } catch (error) {
       logger.error('Subscription job failed', error);
     }

@@ -15,6 +15,11 @@ export interface CartLine {
   /** null while the field is being edited - never coerced to a number. */
   quantity: number | null;
   availableStock: number;
+  /**
+   * Added while the variant had no stock, by a user allowed to sell out of stock.
+   * Display only - the server decides from its own stock and the user's permissions.
+   */
+  outOfStockSale: boolean;
 }
 
 export type DiscountType = 'none' | 'fixed' | 'percent';
@@ -40,7 +45,7 @@ const EMPTY: CartState = { lines: [], discountType: 'none', discountValue: 0 };
 export function useCart() {
   const [state, setState] = React.useState<CartState>(EMPTY);
 
-  const addVariant = React.useCallback((variant: PosVariant, quantity = 1) => {
+  const addVariant = React.useCallback((variant: PosVariant, quantity = 1, options: { allowOutOfStock?: boolean } = {}) => {
     setState((prev) => {
       const existingIndex = prev.lines.findIndex((line) => line.variantId === variant.variantId);
 
@@ -52,11 +57,13 @@ export function useCart() {
           ...existing,
           // Do not let the cart exceed what is on the shelf; the server checks
           // again at checkout, this is just early feedback.
-          quantity: Math.min(nextQuantity, existing.availableStock),
+          // An out-of-stock sale has no shelf quantity to cap at.
+          quantity: existing.outOfStockSale ? nextQuantity : Math.min(nextQuantity, existing.availableStock),
         };
         return { ...prev, lines };
       }
 
+      const outOfStockSale = variant.stock <= 0 && Boolean(options.allowOutOfStock);
       return {
         ...prev,
         lines: [
@@ -70,8 +77,9 @@ export function useCart() {
             imageUrl: variant.imageUrl,
             listPriceMinor: variant.sellingPriceMinor,
             unitPriceMinor: variant.sellingPriceMinor,
-            quantity: Math.min(quantity, variant.stock),
+            quantity: outOfStockSale ? quantity : Math.min(quantity, variant.stock),
             availableStock: variant.stock,
+            outOfStockSale,
           },
         ],
       };
@@ -118,7 +126,13 @@ export interface CartTotals {
  * before writing a sale, so a tampered client cannot change what is charged.
  * Lines with a cleared quantity or price contribute 0 rather than NaN.
  */
-export function computeTotals(state: CartState, taxRateBasisPoints = 0, taxEnabled = false): CartTotals & { taxMinor: number } {
+export function computeTotals(
+  state: CartState,
+  taxRateBasisPoints = 0,
+  taxEnabled = false,
+  /** Loyalty points discount, applied after the cart discount (as the server does). */
+  loyaltyDiscountMinor = 0,
+): CartTotals & { taxMinor: number; loyaltyDiscountMinor: number } {
   const subtotalMinor = state.lines.reduce((sum, line) => {
     if (line.quantity === null || line.unitPriceMinor === null) return sum;
     return sum + line.unitPriceMinor * line.quantity;
@@ -129,12 +143,14 @@ export function computeTotals(state: CartState, taxRateBasisPoints = 0, taxEnabl
   else if (state.discountType === 'percent') discountMinor = Math.round((subtotalMinor * state.discountValue) / 10_000);
   discountMinor = Math.min(Math.max(0, discountMinor), subtotalMinor);
 
-  const taxable = subtotalMinor - discountMinor;
+  const loyaltyMinor = Math.min(Math.max(0, loyaltyDiscountMinor), subtotalMinor - discountMinor);
+  const taxable = subtotalMinor - discountMinor - loyaltyMinor;
   const taxMinor = taxEnabled ? Math.round((taxable * taxRateBasisPoints) / 10_000) : 0;
 
   return {
     subtotalMinor,
     discountMinor,
+    loyaltyDiscountMinor: loyaltyMinor,
     taxMinor,
     totalMinor: taxable + taxMinor,
     itemCount: state.lines.reduce((sum, line) => sum + (line.quantity ?? 0), 0),
@@ -152,10 +168,10 @@ export interface CartValidationIssue {
  * The single place that decides whether a cart may be checked out.
  *
  * Mirrors the server rules exactly: whole positive quantities, positive prices,
- * and enough stock. An empty field is reported as "enter a quantity", never
+ * and enough stock (or, for a variant with none, permission to sell out of stock). An empty field is reported as "enter a quantity", never
  * quietly turned into a number.
  */
-export function validateCart(state: CartState): CartValidationIssue[] {
+export function validateCart(state: CartState, options: { canSellOutOfStock?: boolean } = {}): CartValidationIssue[] {
   const issues: CartValidationIssue[] = [];
 
   if (state.lines.length === 0) {
@@ -169,6 +185,11 @@ export function validateCart(state: CartState): CartValidationIssue[] {
       issues.push({ variantId: line.variantId, productName: label, message: 'Enter a quantity' });
     } else if (!Number.isSafeInteger(line.quantity) || line.quantity <= 0) {
       issues.push({ variantId: line.variantId, productName: label, message: 'Quantity must be at least 1' });
+    } else if (line.availableStock <= 0) {
+      // Out of stock: only a user allowed to sell out of stock may keep it (checked again on the server).
+      if (!options.canSellOutOfStock) {
+        issues.push({ variantId: line.variantId, productName: label, message: 'Out of stock' });
+      }
     } else if (line.quantity > line.availableStock) {
       issues.push({
         variantId: line.variantId,

@@ -16,7 +16,6 @@ import { useTrialOffer } from '@/hooks/useTrialDays';
 import { SAAS_PRODUCTS } from './products.data';
 
 export function HomePage() {
-  const live = SAAS_PRODUCTS.filter((p) => p.status === 'live');
   const { days: trialDays, planName: trialPlanName } = useTrialOffer();
 
   return (
@@ -31,8 +30,8 @@ export function HomePage() {
             Point-of-sale software that fits the shop you actually run
           </h1>
           <p className="mx-auto mt-5 max-w-2xl text-lg text-muted-foreground">
-            One platform, purpose-built systems. Start with Clothing POS — variants, barcodes, split payments and
-            real profit reporting, ready on day one.
+            One platform, four purpose-built systems — Clothing, Supershop, Restaurant and Pharmacy POS — sharing one
+            account and one wallet.
           </p>
 
           <div className="mt-8 flex flex-wrap justify-center gap-3">
@@ -58,7 +57,7 @@ export function HomePage() {
           <p className="mt-2 text-muted-foreground">A dedicated system per trade, sharing one account and one wallet.</p>
         </div>
 
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
           {SAAS_PRODUCTS.map((product) => (
             <Card key={product.slug} className="flex flex-col">
               <CardContent className="flex flex-1 flex-col gap-3 p-5">
@@ -66,11 +65,7 @@ export function HomePage() {
                   <span className="flex h-10 w-10 items-center justify-center rounded-lg bg-primary/10 text-primary">
                     <product.icon className="h-5 w-5" />
                   </span>
-                  {product.status === 'live' ? (
-                    <Badge variant="success">Available now</Badge>
-                  ) : (
-                    <Badge variant="secondary">Coming soon</Badge>
-                  )}
+                  <Badge variant="success">Available now</Badge>
                 </div>
 
                 <div>
@@ -80,14 +75,12 @@ export function HomePage() {
 
                 <p className="flex-1 text-sm text-muted-foreground">{product.description}</p>
 
-                {product.status === 'live' && (
-                  <Button variant="outline" size="sm" className="mt-auto w-full" asChild>
-                    <Link to="/products">
-                      Learn more
-                      <ArrowRight />
-                    </Link>
-                  </Button>
-                )}
+                <Button variant="outline" size="sm" className="mt-auto w-full" asChild>
+                  <Link to={`/products/${product.slug}`}>
+                    Learn more
+                    <ArrowRight />
+                  </Link>
+                </Button>
               </CardContent>
             </Card>
           ))}
@@ -100,7 +93,7 @@ export function HomePage() {
           <div className="mb-10 text-center">
             <h2 className="text-3xl font-bold tracking-tight">Everything at the till, and behind it</h2>
             <p className="mt-2 text-muted-foreground">
-              {live[0]?.name} in detail — the parts shopkeepers tell us actually matter.
+              Clothing POS in detail — the parts shopkeepers tell us actually matter.
             </p>
           </div>
 

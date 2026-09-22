@@ -33,6 +33,7 @@ export const FEATURE_KEYS = [
   'smsMarketing',
   'emailMarketing',
   'imageOptimization',
+  'loyaltyProgram',
 ] as const satisfies readonly (keyof PlanFeatures)[];
 
 export const LIMIT_KEYS = [

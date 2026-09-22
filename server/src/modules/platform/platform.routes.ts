@@ -1,3 +1,4 @@
+import * as emailNotifications from './emailNotifications.controller';
 import * as paymentDevices from './paymentDevices.controller';
 import { isProd } from '../../config/env';
 import rateLimit from 'express-rate-limit';
@@ -309,6 +310,21 @@ router.get(
 );
 router.post('/payments/:id/manual-verify', adminActionLimiter, validate({ params: idParam, body: reasonBody }), paymentDevices.manuallyVerify);
 router.post('/payments/:id/manual-reject', adminActionLimiter, validate({ params: idParam, body: reasonBody }), paymentDevices.manuallyReject);
+
+// Billing email delivery (invoices, renewal confirmations, expiry reminders).
+router.get(
+  '/email-notifications',
+  validate({
+    query: paginationSchema.extend({
+      status: z.enum(['pending', 'sent', 'failed', 'skipped']).optional(),
+      type: z.enum(['subscription_invoice', 'payment_confirmation', 'subscription_expiry_reminder']).optional(),
+      tenantId: objectId.optional(),
+      invoiceId: objectId.optional(),
+    }),
+  }),
+  emailNotifications.list,
+);
+router.post('/email-notifications/:id/retry', adminActionLimiter, validate({ params: idParam }), emailNotifications.retry);
 
 router.get('/coupons', validate({ query: listQuery }), controller.listCoupons);
 router.post('/coupons', adminActionLimiter, validate({ body: couponBody }), controller.createCoupon);

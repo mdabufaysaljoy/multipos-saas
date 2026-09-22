@@ -28,6 +28,11 @@ export interface SaleItemDoc {
   lineTotalMinor: number;
   /** Incremented atomically as returns are processed against this line. */
   returnedQuantity: number;
+  /**
+   * True when this line was sold with the variant at zero stock or below, by a
+   * user holding `sales.sellOutOfStock` (the sale's cashier). Absent on older sales.
+   */
+  outOfStockOverride?: boolean;
 }
 
 export interface SalePaymentEntry {
@@ -64,6 +69,47 @@ export interface SaleDoc extends BaseDoc {
   cancelledAt: Date | null;
   cancelledBy: Types.ObjectId | null;
   soldAt: Date;
+  /**
+   * Set when this sale is the REPLACEMENT side of an exchange: the returned
+   * items' refund value paid for part of it. Null for every ordinary sale.
+   */
+  exchange: SaleExchange | null;
+  /**
+   * Loyalty on this sale (Clothing POS). Null for every sale without a card.
+   * `discountMinor` on the sale INCLUDES `loyalty.discountMinor`, so reports that
+   * already subtract discounts stay correct.
+   */
+  loyalty: SaleLoyalty | null;
+  /** Client-supplied request key: a retried checkout returns the first sale instead of creating another. */
+  idempotencyKey: string | null;
+}
+
+export interface SaleLoyalty {
+  membershipId: Types.ObjectId;
+  cardNumber: string;
+  /** The store's rules at the moment of sale; later setting changes never rewrite them. */
+  pointValueMinor: number;
+  earnSpendMinor: number;
+  pointsRedeemed: number;
+  /** pointsRedeemed x pointValueMinor. */
+  discountMinor: number;
+  /** subtotal - cart discount - loyalty discount (never VAT added on top). */
+  qualifyingMinor: number;
+  pointsEarned: number;
+  /** Card balance right after this sale, for the receipt. */
+  balanceAfter: number;
+  /** Running totals given back by returns and cancellation. */
+  pointsEarnedReversed: number;
+  pointsRedeemedRestored: number;
+}
+
+export interface SaleExchange {
+  returnId: Types.ObjectId | null;
+  returnNumber: string;
+  /** Refund value of the returned items, applied to this sale instead of paid out. */
+  creditMinor: number;
+  /** What came back, for the exchange receipt. Snapshot at the time of the exchange. */
+  returnedItems: { productNameSnapshot: string; variantNameSnapshot: string; quantity: number; lineTotalMinor: number }[];
 }
 
 const saleItemSchema = new Schema<SaleItemDoc>(
@@ -93,6 +139,7 @@ const saleItemSchema = new Schema<SaleItemDoc>(
     lineDiscountMinor: { type: Number, default: 0, min: 0 },
     lineTotalMinor: { type: Number, required: true, min: 0 },
     returnedQuantity: { type: Number, default: 0, min: 0 },
+    outOfStockOverride: { type: Boolean },
   },
   { _id: true },
 );
@@ -147,11 +194,59 @@ const saleSchema = new Schema<SaleDoc>(
     cancelledAt: { type: Date, default: null },
     cancelledBy: { type: Schema.Types.ObjectId, ref: 'User', default: null },
     soldAt: { type: Date, default: Date.now, index: true },
+    exchange: {
+      type: new Schema<SaleExchange>(
+        {
+          returnId: { type: Schema.Types.ObjectId, ref: 'Return', default: null },
+          returnNumber: { type: String, default: '' },
+          creditMinor: { type: Number, required: true, min: 0 },
+          returnedItems: {
+            type: [
+              new Schema(
+                {
+                  productNameSnapshot: { type: String, default: '' },
+                  variantNameSnapshot: { type: String, default: '' },
+                  quantity: { type: Number, default: 0, min: 0 },
+                  lineTotalMinor: { type: Number, default: 0, min: 0 },
+                },
+                { _id: false },
+              ),
+            ],
+            default: [],
+          },
+        },
+        { _id: false },
+      ),
+      default: null,
+    },
+    loyalty: {
+      type: new Schema<SaleLoyalty>(
+        {
+          membershipId: { type: Schema.Types.ObjectId, ref: 'LoyaltyMembership', required: true },
+          cardNumber: { type: String, default: '' },
+          pointValueMinor: { type: Number, required: true, min: 1 },
+          earnSpendMinor: { type: Number, required: true, min: 1 },
+          pointsRedeemed: { type: Number, default: 0, min: 0 },
+          discountMinor: { type: Number, default: 0, min: 0 },
+          qualifyingMinor: { type: Number, default: 0, min: 0 },
+          pointsEarned: { type: Number, default: 0, min: 0 },
+          balanceAfter: { type: Number, default: 0 },
+          pointsEarnedReversed: { type: Number, default: 0, min: 0 },
+          pointsRedeemedRestored: { type: Number, default: 0, min: 0 },
+        },
+        { _id: false },
+      ),
+      default: null,
+    },
+    idempotencyKey: { type: String, default: null, maxlength: 100 },
   },
   { timestamps: true },
 );
 
 saleSchema.index({ tenantId: 1, storeId: 1, saleNumber: 1 }, { unique: true });
+// A checkout key is used once per branch; older sales carry none.
+saleSchema.index({ tenantId: 1, storeId: 1, idempotencyKey: 1 }, { unique: true, partialFilterExpression: { idempotencyKey: { $type: 'string' } } });
+saleSchema.index({ tenantId: 1, 'loyalty.membershipId': 1 }, { partialFilterExpression: { 'loyalty.membershipId': { $exists: true } } });
 // Primary reporting index: tenant + store + time range, with status filtering.
 saleSchema.index({ tenantId: 1, storeId: 1, soldAt: -1, status: 1 });
 saleSchema.index({ tenantId: 1, storeId: 1, cashierId: 1, soldAt: -1 });

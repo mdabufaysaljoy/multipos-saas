@@ -1,6 +1,6 @@
 import { Types } from 'mongoose';
 import { INVENTORY_TX_TYPES, SALE_STATUS } from '../../config/constants';
-import { ReturnModel } from '../../models/Return';
+import { ReturnModel, type ReturnExchange } from '../../models/Return';
 import { SaleModel } from '../../models/Sale';
 import { StoreModel } from '../../models/Store';
 import { ApiError } from '../../utils/ApiError';
@@ -10,7 +10,10 @@ import { inventoryService, type StockMovementResult } from '../../services/inven
 import { entitlementService } from '../../services/subscription/entitlement.service';
 import { customerService } from '../customers/customers.service';
 import type { TenantContext } from '../../types/express';
-import type { CreateReturnInput, ListReturnsInput } from './returns.validators';
+import { EXCHANGE_REFUND_METHOD, type CreateReturnInput, type ListReturnsInput } from './returns.validators';
+import { saleService } from '../sales/sales.service';
+import { loyaltyService } from '../loyalty/loyalty.service';
+import type { CreateSaleInput } from '../sales/sales.validators';
 
 interface PreparedReturnLine {
   saleItemId: Types.ObjectId;
@@ -55,7 +58,21 @@ class ReturnService {
         cashierNameSnapshot: sale.cashierNameSnapshot,
         totalMinor: sale.totalMinor,
         returnedTotalMinor: sale.returnedTotalMinor,
+        subtotalMinor: sale.subtotalMinor,
         status: sale.status,
+        // Enough for the return screen to preview the points effect; the server recalculates on submit.
+        loyalty: sale.loyalty
+          ? {
+              cardNumber: sale.loyalty.cardNumber,
+              pointValueMinor: sale.loyalty.pointValueMinor,
+              earnSpendMinor: sale.loyalty.earnSpendMinor,
+              pointsRedeemed: sale.loyalty.pointsRedeemed,
+              qualifyingMinor: sale.loyalty.qualifyingMinor,
+              pointsEarned: sale.loyalty.pointsEarned,
+              pointsEarnedReversed: sale.loyalty.pointsEarnedReversed,
+              pointsRedeemedRestored: sale.loyalty.pointsRedeemedRestored,
+            }
+          : null,
       },
       items: sale.items.map((item) => ({
         saleItemId: item._id,
@@ -88,6 +105,145 @@ class ReturnService {
    * line reserves its quantity does stock actually move.
    */
   async create(ctx: TenantContext, input: CreateReturnInput) {
+    const { sale, store, itemById, lines } = await this.prepare(ctx, input);
+    const reserved = await this.reserve(ctx, sale._id, itemById, lines);
+    return this.finalize(ctx, input, { sale, store, lines, reserved });
+  }
+
+  /**
+   * Exchange: the returned items' refund value pays for replacement goods
+   * instead of being paid out. Built from the same steps as a return plus an
+   * ordinary replacement sale, so stock, variants, VAT, split payment and cash
+   * change all follow the normal rules.
+   *
+   *   validate the return lines      -> refund value from the ORIGINAL sale prices
+   *   quote the replacement          -> catalogue price of the exact variants chosen
+   *   rule: replacement >= refund    -> nobody is paid out for trading down
+   *   reserve returned quantities    -> atomic, releasable
+   *   create the replacement sale    -> deducts replacement stock; payments must
+   *                                     cover exactly (total - refund value)
+   *   restock + write the return     -> refundMethod "exchange", linked both ways
+   *
+   * There are no multi-document transactions in this deployment, so every
+   * failure undoes the steps already taken (the same pattern returns and sales
+   * already use). A repeated key returns the first exchange instead of running
+   * it again.
+   */
+  async createExchange(ctx: TenantContext, input: CreateReturnInput) {
+    const exchange = input.exchange;
+    if (input.refundMethod !== EXCHANGE_REFUND_METHOD || !exchange) {
+      throw ApiError.validation('Select the replacement product for this exchange');
+    }
+
+    const existing = await this.findExchangeByKey(ctx, exchange.idempotencyKey);
+    if (existing) return existing;
+
+    const { sale, store, itemById, lines } = await this.prepare(ctx, input);
+    const refundableMinor = lines.reduce((sum, line) => sum + line.lineTotalMinor, 0);
+
+    // The rule is checked before anything moves. Prices come from the database.
+    const quote = await saleService.quoteReplacement(ctx, exchange.items);
+    if (quote.subtotalMinor < refundableMinor) {
+      throw ApiError.validation(
+        "Exchange product cannot be cheaper than the returned item's refund value. Please select a product with an equal or higher price.",
+        { reason: 'EXCHANGE_CHEAPER_REPLACEMENT', refundableMinor, replacementSubtotalMinor: quote.subtotalMinor },
+      );
+    }
+    const reserved = await this.reserve(ctx, sale._id, itemById, lines);
+
+    // Points spent on the returned goods come back as points, so the credit is
+    // only what the customer paid in money for them.
+    let loyaltyClaim: Awaited<ReturnType<typeof loyaltyService.claimReturn>> = null;
+    try {
+      loyaltyClaim = await loyaltyService.claimReturn(ctx, sale._id);
+    } catch (error) {
+      await this.releaseReservations(ctx, sale._id, reserved);
+      throw error;
+    }
+    const creditMinor = Math.max(0, refundableMinor - (loyaltyClaim?.valueMinor ?? 0));
+
+    let replacement: Awaited<ReturnType<typeof saleService.create>>;
+    try {
+      const payments = exchange.payments ?? [];
+      replacement = await saleService.create(
+        ctx,
+        {
+          items: exchange.items,
+          customerId: sale.customerId ?? undefined,
+          discountType: 'none',
+          discountValue: 0,
+          paymentMethod: payments.length ? [...payments].sort((a, b) => b.amountMinor - a.amountMinor)[0].method : 'other',
+          payments: payments.length ? payments : undefined,
+          cashTenderedMinor: exchange.cashTenderedMinor,
+          note: `Exchange for ${sale.saleNumber}`,
+        } as CreateSaleInput,
+        {
+          // The replacement earns points on the original card, while the returned goods' points are taken back.
+          loyaltyMembershipId: sale.loyalty?.membershipId ?? undefined,
+          exchange: {
+            creditMinor,
+            returnedItems: lines.map((line) => ({
+              productNameSnapshot: line.productNameSnapshot,
+              variantNameSnapshot: line.variantNameSnapshot,
+              quantity: line.quantity,
+              lineTotalMinor: line.lineTotalMinor,
+            })),
+          },
+        },
+      );
+    } catch (error) {
+      await this.releaseReservations(ctx, sale._id, reserved);
+      await loyaltyService.releaseReturnClaim(ctx, sale._id, loyaltyClaim);
+      throw error;
+    }
+
+    try {
+      const returnDoc = await this.finalize(ctx, input, {
+        sale,
+        store,
+        lines,
+        reserved,
+        exchange: {
+          saleId: replacement._id,
+          saleNumber: replacement.saleNumber,
+          refundableMinor: creditMinor,
+          replacementSubtotalMinor: replacement.subtotalMinor,
+          replacementTotalMinor: replacement.totalMinor,
+          extraPayableMinor: replacement.totalMinor - creditMinor,
+        },
+        idempotencyKey: exchange.idempotencyKey,
+        loyaltyClaim,
+      });
+      await SaleModel.updateOne(
+        { _id: replacement._id, tenantId: ctx.tenantId },
+        { $set: { 'exchange.returnId': returnDoc._id, 'exchange.returnNumber': returnDoc.returnNumber } },
+      );
+      return { ...returnDoc, replacementSale: { ...replacement, exchange: { ...replacement.exchange, returnId: returnDoc._id, returnNumber: returnDoc.returnNumber } } };
+    } catch (error) {
+      // finalize already undid its restock and released the reservations; the
+      // replacement sale is the last thing to undo. Its stock goes back too.
+      await saleService
+        .cancel(ctx, replacement._id, { reason: 'Exchange could not be completed' })
+        .catch(() => undefined);
+      // A duplicate key means the same exchange already went through: return it.
+      if ((error as { code?: number }).code === 11000) {
+        const winner = await this.findExchangeByKey(ctx, exchange.idempotencyKey);
+        if (winner) return winner;
+      }
+      throw error;
+    }
+  }
+
+  /** The exchange a key already produced, with its replacement sale. */
+  private async findExchangeByKey(ctx: TenantContext, idempotencyKey: string) {
+    const doc = await ReturnModel.findOne({ ...this.scope(ctx), idempotencyKey }).lean();
+    if (!doc) return null;
+    const replacementSale = doc.exchange ? await SaleModel.findOne({ _id: doc.exchange.saleId, ...this.scope(ctx) }).lean() : null;
+    return { ...doc, replacementSale, replayed: true };
+  }
+
+  /** Loads the sale in this branch and validates every requested line. Changes nothing. */
+  private async prepare(ctx: TenantContext, input: CreateReturnInput) {
     const entitlement = await entitlementService.forTenant(ctx.tenantId);
     entitlementService.assertUsable(entitlement);
 
@@ -103,7 +259,6 @@ class ReturnService {
     const itemById = new Map(sale.items.map((item) => [String(item._id), item]));
     const lines: PreparedReturnLine[] = [];
 
-    // ---- validate every line before touching anything ----------------------
     for (const requested of input.items) {
       const saleItem = itemById.get(String(requested.saleItemId));
       if (!saleItem) {
@@ -149,7 +304,16 @@ class ReturnService {
       });
     }
 
-    // ---- reserve the returned quantities atomically ------------------------
+    return { sale, store, itemById, lines };
+  }
+
+  /** Reserves every returned quantity atomically; releases them all if any line loses a race. */
+  private async reserve(
+    ctx: TenantContext,
+    saleId: Types.ObjectId,
+    itemById: Map<string, { quantity: number }>,
+    lines: PreparedReturnLine[],
+  ) {
     const reserved: PreparedReturnLine[] = [];
     try {
       for (const line of lines) {
@@ -158,7 +322,7 @@ class ReturnService {
 
         const result = await SaleModel.updateOne(
           {
-            _id: sale._id,
+            _id: saleId,
             tenantId: ctx.tenantId,
             storeId: ctx.storeId,
             items: { $elemMatch: { _id: line.saleItemId, returnedQuantity: { $lte: maxAllowedAfter } } },
@@ -174,18 +338,38 @@ class ReturnService {
         reserved.push(line);
       }
     } catch (error) {
-      await this.releaseReservations(ctx, sale._id, reserved);
+      await this.releaseReservations(ctx, saleId, reserved);
       throw error;
     }
+    return reserved;
+  }
 
-    // ---- move stock and write the return document --------------------------
+  /** Restocks, writes the return document and refreshes the sale's roll-ups. Undoes itself on failure. */
+  private async finalize(
+    ctx: TenantContext,
+    input: CreateReturnInput,
+    state: {
+      sale: { _id: Types.ObjectId; saleNumber: string; customerId: Types.ObjectId | null; customerSnapshot: { name: string; phone: string } | null };
+      store: { returnPrefix: string };
+      lines: PreparedReturnLine[];
+      reserved: PreparedReturnLine[];
+      exchange?: ReturnExchange;
+      idempotencyKey?: string;
+      /** Already claimed by the exchange; an ordinary return claims its own. */
+      loyaltyClaim?: Awaited<ReturnType<typeof loyaltyService.claimReturn>>;
+    },
+  ) {
+    const { sale, store, lines, reserved } = state;
     const restocked: StockMovementResult[] = [];
+    let loyaltyClaim = state.loyaltyClaim ?? null;
     try {
+      if (state.loyaltyClaim === undefined) loyaltyClaim = await loyaltyService.claimReturn(ctx, sale._id);
+
       for (const line of lines) {
         if (!line.restock) continue;
         const movement = await inventoryService.increase(ctx, line.variantId, line.quantity, {
           type: INVENTORY_TX_TYPES.RETURN,
-          reason: input.reason || 'Customer return',
+          reason: input.reason || (state.exchange ? 'Customer exchange' : 'Customer return'),
           referenceType: 'return',
         });
         restocked.push(movement);
@@ -193,7 +377,9 @@ class ReturnService {
 
       const seq = await nextSequence(ctx.tenantId, ctx.storeId, 'return');
       const returnNumber = formatDocumentNumber(store.returnPrefix, seq);
-      const totalMinor = lines.reduce((sum, line) => sum + line.lineTotalMinor, 0);
+      // Money refunded = the goods at their sale prices, less the value of any
+      // loyalty points that paid for them (those are given back as points).
+      const totalMinor = Math.max(0, lines.reduce((sum, line) => sum + line.lineTotalMinor, 0) - (loyaltyClaim?.valueMinor ?? 0));
 
       const returnDoc = await ReturnModel.create({
         tenantId: ctx.tenantId,
@@ -212,6 +398,16 @@ class ReturnService {
         processedBy: ctx.userId,
         processedByNameSnapshot: ctx.userName,
         returnedAt: new Date(),
+        exchange: state.exchange ?? null,
+        idempotencyKey: state.idempotencyKey ?? null,
+        loyalty: loyaltyClaim
+          ? {
+              membershipId: loyaltyClaim.membershipId,
+              pointsEarnedReversed: loyaltyClaim.pointsEarnedReversed,
+              pointsRedeemedRestored: loyaltyClaim.pointsRedeemedRestored,
+              valueMinor: loyaltyClaim.valueMinor,
+            }
+          : null,
       });
 
       await inventoryService.attachReference(ctx, restocked, 'return', returnDoc._id, returnNumber);
@@ -228,11 +424,23 @@ class ReturnService {
         await customerService.applySaleStats(ctx, sale.customerId, { amountMinor: -totalMinor, orderDelta: 0 });
       }
 
+      if (loyaltyClaim) {
+        await loyaltyService.applyReturnClaim(ctx, loyaltyClaim, {
+          key: `return:${returnDoc._id}`,
+          saleId: sale._id,
+          saleNumber: sale.saleNumber,
+          returnId: returnDoc._id,
+          returnNumber,
+          reason: state.exchange ? 'Goods exchanged' : 'Goods returned',
+        });
+      }
+
       return returnDoc.toObject();
     } catch (error) {
-      // Undo in reverse order: stock first, then the reservations.
+      // Undo in reverse order: stock first, then the reservations and the loyalty claim.
       await inventoryService.compensate(ctx, restocked, 'return could not be completed');
       await this.releaseReservations(ctx, sale._id, reserved);
+      await loyaltyService.releaseReturnClaim(ctx, sale._id, loyaltyClaim);
       throw error;
     }
   }

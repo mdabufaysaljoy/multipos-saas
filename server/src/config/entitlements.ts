@@ -54,6 +54,8 @@ export const ENTITLEMENT_FEATURES = {
   emailMarketing: { label: 'Email marketing', planFeature: 'emailMarketing' },
   marketing: { label: 'Marketing', anyOf: ['smsMarketing', 'emailMarketing'] },
   imageOptimization: { label: 'Image optimisation', planFeature: 'imageOptimization' },
+  // Clothing only for now; other POS types never receive it.
+  loyalty: { label: 'Loyalty program', planFeature: 'loyaltyProgram', verticals: ['clothing'] },
 } as const satisfies Record<string, FeatureDefinition>;
 
 export const ENTITLEMENT_LIMITS = {
