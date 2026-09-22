@@ -84,7 +84,7 @@ export function classifyPrintError(error: unknown): ThermalPrintError {
  * below the tear bar, so without it the last line stays inside the printer and
  * back-to-back prints run into each other.
  */
-export const RECEIPT_END_GAP_LINES = 3;
+export const RECEIPT_END_GAP_LINES = 2;
 
 /** ESC/POS default line spacing is 1/6 inch; used to size the same gap as blank rows for the driver path. */
 const LINE_MM = 25.4 / 6;
@@ -100,15 +100,15 @@ export const feedLinesFor = (_type: ThermalDocumentType, settings: Pick<ThermalP
  * left the website line inside the printer and receipts touching):
  *
  *   receipt content
- *   ~3 mm blank
+ *   ~1.5 mm blank
  *   - - - - - - - -   dashed tear line
- *   ~16 mm blank       carries the last line and the tear line past the tear bar
+ *   ~8 mm blank        carries the last line and the tear line past the tear bar
  *
  * Blank image rows advance the paper on every printer that can print the
  * receipt at all. The device's feed setting is still sent afterwards as extra.
  */
-export const RECEIPT_TAIL_MM = 16;
-const RECEIPT_GAP_BEFORE_LINE_MM = 3;
+export const RECEIPT_TAIL_MM = 8;
+const RECEIPT_GAP_BEFORE_LINE_MM = 1.5;
 
 export function withReceiptEnd(bitmap: MonoBitmap, dpi: number): MonoBitmap {
   const perMm = dotsPerMm(dpi);
