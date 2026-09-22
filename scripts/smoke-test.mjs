@@ -462,7 +462,7 @@ async function main() {
 
   // ------------------------------------------------------- receipt width
   section('Receipt width');
-  for (const width of [58, 78, 80]) {
+  for (const width of [48, 58, 78, 80]) {
     const saved = await api('/stores/current', {
       method: 'PATCH',
       token: admin.token,
@@ -480,6 +480,27 @@ async function main() {
   });
   check('Unsupported receipt width is rejected', badWidth.status === 422);
   await api('/stores/current', { method: 'PATCH', token: admin.token, body: { receipt: { paperWidthMm: 58 } } });
+
+  // ------------------------------------------------------- barcode label sizes
+  section('Barcode label sizes');
+  {
+    const lblStart = (await api('/stores/current', { token: admin.token })).data?.labels;
+    check('Label defaults: 38mm product labels, 85mm loyalty cards, sticker sheet', lblStart?.productWidthMm === 38 && lblStart?.loyaltyCardWidthMm === 85 && lblStart?.paper === 'sheet', lblStart);
+    check('The cashier gets the label sizes with the POS config', (await api('/stores/pos-config', { token: cashier.token })).data?.labels?.productWidthMm === 38);
+    const lbl48 = await api('/stores/current', { method: 'PATCH', token: admin.token, body: { labels: { productWidthMm: 48, loyaltyCardWidthMm: 48, paper: 'roll' } } });
+    check('Admin sets 48mm product labels and loyalty cards on a label roll', lbl48.status === 200 && lbl48.data?.labels?.productWidthMm === 48 && lbl48.data.labels.loyaltyCardWidthMm === 48 && lbl48.data.labels.paper === 'roll', lbl48.error);
+    const lblCfg = (await api('/stores/pos-config', { token: cashier.token })).data?.labels;
+    check('...and every till prints at those sizes', lblCfg?.productWidthMm === 48 && lblCfg?.loyaltyCardWidthMm === 48 && lblCfg?.paper === 'roll', lblCfg);
+    const lblPartial = await api('/stores/current', { method: 'PATCH', token: admin.token, body: { labels: { productWidthMm: 58 } } });
+    check('A partial change keeps the other label settings', lblPartial.data?.labels?.productWidthMm === 58 && lblPartial.data.labels.loyaltyCardWidthMm === 48 && lblPartial.data.labels.paper === 'roll', lblPartial.data?.labels);
+    check('An unsupported label width is refused', (await api('/stores/current', { method: 'PATCH', token: admin.token, body: { labels: { productWidthMm: 50 } } })).status === 422);
+    check('An unsupported loyalty card width is refused', (await api('/stores/current', { method: 'PATCH', token: admin.token, body: { labels: { loyaltyCardWidthMm: 38 } } })).status === 422);
+    check('An unknown paper type is refused', (await api('/stores/current', { method: 'PATCH', token: admin.token, body: { labels: { paper: 'a3' } } })).status === 422);
+    check('Unknown label fields are refused', (await api('/stores/current', { method: 'PATCH', token: admin.token, body: { labels: { productWidthMm: 48, heightMm: 30 } } })).status === 422);
+    check('A cashier cannot change label sizes', (await api('/stores/current', { method: 'PATCH', token: cashier.token, body: { labels: { productWidthMm: 48 } } })).status === 403);
+    check('Saving other settings leaves the label sizes alone', (await api('/stores/current', { method: 'PATCH', token: admin.token, body: { lowStockThreshold: 5 } })).data?.labels?.productWidthMm === 58);
+    await api('/stores/current', { method: 'PATCH', token: admin.token, body: { labels: { productWidthMm: 38, loyaltyCardWidthMm: 85, paper: 'sheet' } } });
+  }
 
   // --------------------------------------------------------------- returns
   section('Returns');
@@ -7482,6 +7503,773 @@ async function main() {
   check('A revoked device stops being accepted immediately', (await api(`/platform/payment-devices/${pviDeviceRow?.id}/revoke`, { method: 'POST', token: platform2.token, body: { reason: 'The handset was lost by the shop manager' } })).status === 200 && (await pviSms({ provider: 'bkash', sender: 'bKash', message: `You have received Tk 100.00 from 01711111111. TrxID AFTER${String(pviStamp).slice(-6)} at 16/09/2026` })).status === 401);
   check('The wallet is untouched after revocation', (await pviBalance()) === 100_000);
 
+  // ------------------------------------------------ clothing POS product grid + categories
+  section('Clothing POS: product grid paging and category filter');
+  const pcgStamp = Date.now();
+  const pcgReg = await api('/auth/register', { method: 'POST', body: { businessName: `PCG Clothing ${pcgStamp}`, name: 'PCG Owner', email: `pcg${pcgStamp}@example.com`, password: 'Password@123', vertical: 'clothing' } });
+  const pcgToken = pcgReg.data?.tokens?.accessToken;
+  const pcgStore = await api('/stores', { method: 'POST', token: pcgToken, body: { name: 'PCG Main', currency: 'BDT' } });
+  const pcgCat = async (name) => (await api('/categories', { method: 'POST', token: pcgToken, body: { name: `${name} ${pcgStamp}` } })).data?._id;
+  const pcgShirts = await pcgCat('Shirts');
+  const pcgPants = await pcgCat('Pants');
+  const pcgWinter = await pcgCat('Winter');
+  const pcgEmpty = await pcgCat('Empty');
+  check('Categories are created for the store', Boolean(pcgShirts && pcgPants && pcgWinter && pcgEmpty));
+
+  // Products with MANY variants each - the case that used to fill the grid after a handful of cards.
+  const pcgSizes = ['S', 'M', 'L', 'XL', 'XXL', '3XL'];
+  const pcgMake = async (label, categoryId, index) =>
+    api('/products', {
+      method: 'POST',
+      token: pcgToken,
+      body: {
+        name: `${label} ${String(index).padStart(2, '0')} ${pcgStamp}`,
+        categoryId,
+        variants: pcgSizes.map((size) => ({ attributes: [{ name: 'Size', value: size }], sku: `PCG${pcgStamp}${label.slice(0, 2)}${index}-${size}`, sellingPriceMinor: 100_000, stock: 5 })),
+      },
+    });
+  const pcgShirtIds = [];
+  for (let i = 1; i <= 20; i += 1) pcgShirtIds.push((await pcgMake('Shirt', pcgShirts, i)).data?._id);
+  const pcgPantIds = [];
+  for (let i = 1; i <= 10; i += 1) pcgPantIds.push((await pcgMake('Pant', pcgPants, i)).data?._id);
+  check('30 products with 6 variants each are created', [...pcgShirtIds, ...pcgPantIds].every(Boolean));
+
+  const pcgPage = (params) => api(`/products/pos-catalog?${new URLSearchParams(params)}`, { token: pcgToken });
+  const pcgProductsOf = (items) => [...new Set((items ?? []).map((row) => row.productId))];
+  const pcgAll = async (params) => {
+    const seen = [];
+    for (let page = 1; page < 20; page += 1) {
+      const res = await pcgPage({ ...params, page, limit: 12 });
+      seen.push(...pcgProductsOf(res.data?.items));
+      if (!res.data?.hasMore) break;
+    }
+    return seen;
+  };
+
+  // Paging is by PRODUCT: 180 variants no longer cap the grid at a handful of cards.
+  const pcgP1 = await pcgPage({ page: 1, limit: 12 });
+  check('Page 1 holds 12 products, not 12 variants', pcgP1.status === 200 && pcgProductsOf(pcgP1.data?.items).length === 12 && pcgP1.data.items.length === 72 && pcgP1.data.hasMore === true, { status: pcgP1.status, products: pcgProductsOf(pcgP1.data?.items).length, rows: pcgP1.data?.items?.length });
+  const pcgEvery = await pcgAll({});
+  check('Scrolling through every page reaches all 30 products', pcgEvery.length === 30 && new Set(pcgEvery).size === 30, pcgEvery.length);
+  check('The last page says there is nothing more', (await pcgPage({ page: 3, limit: 12 })).data?.hasMore === false);
+  check('Each card carries all of its variants for the variant picker', pcgP1.data?.items?.filter((row) => row.productId === pcgP1.data.items[0].productId).length === 6);
+
+  // Categories.
+  const pcgShirtAll = await pcgAll({ categoryId: pcgShirts });
+  check('A category shows ALL of its products, across pages', pcgShirtAll.length === 20 && pcgShirtAll.every((id) => pcgShirtIds.includes(id)), pcgShirtAll.length);
+  const pcgPantAll = await pcgAll({ categoryId: pcgPants });
+  check('Another category shows only its own products', pcgPantAll.length === 10 && pcgPantAll.every((id) => pcgPantIds.includes(id)));
+  const pcgEmptyRes = await pcgPage({ categoryId: pcgEmpty, page: 1, limit: 12 });
+  check('A category with no products returns an empty page', pcgEmptyRes.status === 200 && pcgEmptyRes.data?.items?.length === 0 && pcgEmptyRes.data.hasMore === false);
+  const pcgCats = (await api('/categories?limit=100', { token: pcgToken })).data ?? [];
+  check('The category list reports which categories hold products', pcgCats.find((c) => c._id === pcgShirts)?.productCount === 20 && pcgCats.find((c) => c._id === pcgEmpty)?.productCount === 0);
+
+  // Search, with and without a category.
+  const pcgSearchAll = await pcgAll({ q: 'Shirt 1' });
+  // 'Shirt 1' matches Shirt 10-19 (names are zero-padded, so not Shirt 01).
+  check('All + search finds every matching product', pcgSearchAll.length === 10, pcgSearchAll.length);
+  check('Category + search narrows to both', (await pcgAll({ q: 'Shirt 1', categoryId: pcgShirts })).length === 10 && (await pcgAll({ q: 'Shirt 1', categoryId: pcgPants })).length === 0);
+  check('A variant SKU finds its product', pcgProductsOf((await pcgPage({ q: `PCG${pcgStamp}Pa3-M` })).data?.items).includes(pcgPantIds[2]));
+  check('Clearing search and category returns everything', (await pcgAll({})).length === 30);
+
+  // Newly added, moved, inactive and deleted products.
+  const pcgCoat = (await api('/products', { method: 'POST', token: pcgToken, body: { name: `Coat ${pcgStamp}`, categoryId: pcgWinter, variants: [{ attributes: [], sku: `PCG${pcgStamp}COAT`, sellingPriceMinor: 300_000, stock: 2 }] } })).data?._id;
+  check('A newly added product appears under its new category', (await pcgAll({ categoryId: pcgWinter })).includes(pcgCoat));
+  await api(`/products/${pcgPantIds[0]}`, { method: 'PATCH', token: pcgToken, body: { categoryId: pcgShirts } });
+  check('A product moved to another category appears there, and not in the old one', (await pcgAll({ categoryId: pcgShirts })).includes(pcgPantIds[0]) && !(await pcgAll({ categoryId: pcgPants })).includes(pcgPantIds[0]));
+  await api(`/products/${pcgPantIds[1]}`, { method: 'PATCH', token: pcgToken, body: { isActive: false } });
+  await api(`/products/${pcgPantIds[2]}`, { method: 'DELETE', token: pcgToken });
+  const pcgAfter = await pcgAll({});
+  check('Inactive and deleted products are not offered for sale', !pcgAfter.includes(pcgPantIds[1]) && !pcgAfter.includes(pcgPantIds[2]) && pcgAfter.length === 29, pcgAfter.length);
+
+  // The fixed search: category is applied before the limit, not after.
+  const pcgLegacy = await api(`/products/pos-search?categoryId=${pcgPants}&limit=50`, { token: pcgToken });
+  check('pos-search with a category returns that category, not whatever fell in the first N', pcgLegacy.status === 200 && pcgLegacy.data.length > 0 && pcgLegacy.data.every((row) => String(row.categoryId) === String(pcgPants)), { n: pcgLegacy.data?.length });
+
+  // Barcode lookup is untouched.
+  const pcgBarcodeProduct = (await api('/products', { method: 'POST', token: pcgToken, body: { name: `Scarf ${pcgStamp}`, categoryId: pcgWinter, variants: [{ attributes: [], sku: `PCG${pcgStamp}SCARF`, barcode: `88${String(pcgStamp).slice(-10)}`, sellingPriceMinor: 50_000, stock: 3 }] } })).data;
+  const pcgScan = await api(`/products/pos-search?q=88${String(pcgStamp).slice(-10)}&limit=5`, { token: pcgToken });
+  check('Barcode lookup still returns the exact variant', pcgScan.status === 200 && pcgScan.data?.[0]?.barcode === `88${String(pcgStamp).slice(-10)}` && pcgScan.data[0].productId === pcgBarcodeProduct?._id);
+
+  // Validation and isolation.
+  check('A page larger than allowed is refused', (await pcgPage({ limit: 500 })).status === 422);
+  check('An unknown filter is refused', (await pcgPage({ tenantId: 'x' })).status === 422);
+  check('A malformed category id is refused', (await pcgPage({ categoryId: 'nope' })).status === 422);
+  const pcgForeign = await api(`/products/pos-catalog?categoryId=${pcgShirts}&limit=50`, { token: admin.token });
+  check("Another workspace's category shows none of its products", pcgForeign.status === 200 && pcgForeign.data?.items?.length === 0);
+  check("Another workspace's branch cannot be borrowed", (await api('/products/pos-catalog', { token: admin.token, storeId: pcgStore.data?._id })).status === 403);
+  check('Another workspace never sees these products in its grid', !JSON.stringify((await api('/products/pos-catalog?limit=60', { token: admin.token })).data ?? {}).includes(`${pcgStamp}`));
+  check('Signed-out requests are refused', (await api('/products/pos-catalog')).status === 401);
+
+  // A cashier can browse the grid and the categories, and the sale flow is unchanged.
+  const pcgCashierGrid = await api('/products/pos-catalog?limit=12', { token: cashier.token });
+  check('A cashier can browse the POS grid and categories', pcgCashierGrid.status === 200 && (await api('/categories?limit=100', { token: cashier.token })).status === 200);
+  const pcgVariant = pcgP1.data?.items?.find((row) => row.stock > 0);
+  const pcgSale = await api('/sales', { method: 'POST', token: pcgToken, body: { items: [{ variantId: pcgVariant?.variantId, quantity: 2 }], paymentMethod: 'cash' } });
+  check('A variant picked from the grid sells through the normal sale flow', pcgSale.status === 201 && pcgSale.data?.totalMinor === 200_000, pcgSale.error);
+  const pcgStockAfter = (await pcgPage({ q: pcgVariant?.sku ?? '' })).data?.items?.find((row) => row.variantId === pcgVariant?.variantId)?.stock;
+  check('The grid shows the stock after the sale', pcgStockAfter === 3, pcgStockAfter);
+
+  // ------------------------------------------------ POS payment without a tendered field
+  section('Clothing POS: payment without a tendered amount');
+  const ptnStamp = Date.now();
+  const ptnReg = await api('/auth/register', { method: 'POST', body: { businessName: `PTN Clothing ${ptnStamp}`, name: 'PTN Owner', email: `ptn${ptnStamp}@example.com`, password: 'Password@123', vertical: 'clothing' } });
+  const ptnToken = ptnReg.data?.tokens?.accessToken;
+  await api('/stores', { method: 'POST', token: ptnToken, body: { name: 'PTN Main', currency: 'BDT' } });
+  const ptnProduct = await api('/products', { method: 'POST', token: ptnToken, body: { name: `PTN Tee ${ptnStamp}`, variants: [{ attributes: [], sku: `PTN${ptnStamp}`, sellingPriceMinor: 100_000, stock: 20 }] } });
+  const ptnVariantId = ptnProduct.data?.variants?.[0]?._id;
+  const ptnSale = (payments, extra = {}) =>
+    api('/sales', { method: 'POST', token: ptnToken, body: { items: [{ variantId: ptnVariantId, quantity: 1 }], paymentMethod: payments[0].method, payments, ...extra } });
+
+  // A lower agreed price goes through the discount, and one method pays the new total in full.
+  const ptnDiscounted = await ptnSale([{ method: 'cash', amountMinor: 90_000, reference: '' }], { discountType: 'fixed', discountValue: 10_000 });
+  check('One method paying the discounted total in full completes the sale', ptnDiscounted.status === 201 && ptnDiscounted.data?.totalMinor === 90_000 && ptnDiscounted.data.paidMinor === 90_000 && ptnDiscounted.data.changeMinor === 0, ptnDiscounted.data ?? ptnDiscounted.error);
+  const ptnSplit = await ptnSale([{ method: 'cash', amountMinor: 70_000, reference: '' }, { method: 'bkash', amountMinor: 30_000, reference: '' }]);
+  check('A split where the first method covers the rest completes the sale', ptnSplit.status === 201 && ptnSplit.data?.payments?.length === 2 && ptnSplit.data.paidMinor === 100_000, ptnSplit.error);
+  const ptnShort = await ptnSale([{ method: 'cash', amountMinor: 70_000, reference: '' }]);
+  check('Paying less than the total is still refused by the server', ptnShort.status === 422, ptnShort.status);
+
+  // ------------------------------------------------ cash received, change and receipt
+  section('Clothing POS: cash received, change and receipt');
+  const ctnStamp = Date.now();
+  const ctnReg = await api('/auth/register', { method: 'POST', body: { businessName: `CTN Clothing ${ctnStamp}`, name: 'CTN Owner', email: `ctn${ctnStamp}@example.com`, password: 'Password@123', vertical: 'clothing' } });
+  const ctnToken = ctnReg.data?.tokens?.accessToken;
+  await api('/stores', { method: 'POST', token: ctnToken, body: { name: 'CTN Main', currency: 'BDT' } });
+  const ctnProduct = await api('/products', { method: 'POST', token: ctnToken, body: { name: `CTN Tee ${ctnStamp}`, variants: [{ attributes: [], sku: `CTN${ctnStamp}`, sellingPriceMinor: 100_000, stock: 100 }] } });
+  const ctnVariantId = ctnProduct.data?.variants?.[0]?._id;
+  // Exactly what the POS sends: applied amounts in `payments`, cash handed over in `cashTenderedMinor`.
+  const ctnSale = (payments, cashTenderedMinor, extra = {}) =>
+    api('/sales', {
+      method: 'POST',
+      token: ctnToken,
+      body: { items: [{ variantId: ctnVariantId, quantity: 1 }], paymentMethod: payments[0].method, payments: payments.map((p) => ({ ...p, reference: '' })), ...(cashTenderedMinor !== undefined ? { cashTenderedMinor } : {}), ...extra },
+    });
+  const ctnApplied = (sale) => (sale.data?.payments ?? []).reduce((sum, p) => sum + p.amountMinor, 0);
+  const ctnCashRow = (sale) => (sale.data?.payments ?? []).find((p) => p.method === 'cash')?.amountMinor;
+
+  // Cash only (total 1000).
+  const ctn1 = await ctnSale([{ method: 'cash', amountMinor: 100_000 }], 100_000);
+  check('Cash 1000 on 1000: change 0, customer paid 1000', ctn1.status === 201 && ctn1.data.totalMinor === 100_000 && ctn1.data.changeMinor === 0 && ctn1.data.paidMinor === 100_000, ctn1.data ?? ctn1.error);
+  const ctn2 = await ctnSale([{ method: 'cash', amountMinor: 100_000 }], 120_000);
+  check('Cash 1200 on 1000: change 200, customer paid 1200', ctn2.status === 201 && ctn2.data.changeMinor === 20_000 && ctn2.data.paidMinor === 120_000, ctn2.data ?? ctn2.error);
+  check('...and the total stays 1000 - change is not revenue', ctn2.data?.totalMinor === 100_000);
+  check('...and the recorded cash payment is 1000, not 1200', ctnCashRow(ctn2) === 100_000 && ctnApplied(ctn2) === 100_000, ctn2.data?.payments);
+  const ctn3 = await ctnSale([{ method: 'cash', amountMinor: 100_000 }], 200_000);
+  check('Cash 2000 on 1000: change 1000', ctn3.status === 201 && ctn3.data.changeMinor === 100_000 && ctn3.data.totalMinor === 100_000);
+  const ctn4 = await ctnSale([{ method: 'cash', amountMinor: 100_000 }], 70_000);
+  check('Cash 700 on 1000 is refused (300 still due)', ctn4.status === 422 && ctn4.error?.details?.shortfallMinor === 30_000, ctn4.error);
+
+  // Split (bKash 400).
+  const ctn5 = await ctnSale([{ method: 'bkash', amountMinor: 40_000 }, { method: 'cash', amountMinor: 60_000 }], 60_000);
+  check('bKash 400 + cash 600: change 0', ctn5.status === 201 && ctn5.data.changeMinor === 0 && ctnApplied(ctn5) === 100_000, ctn5.error);
+  const ctn6 = await ctnSale([{ method: 'bkash', amountMinor: 40_000 }, { method: 'cash', amountMinor: 60_000 }], 80_000);
+  check('bKash 400 + cash 800: change 200, cash recorded 600', ctn6.status === 201 && ctn6.data.changeMinor === 20_000 && ctnCashRow(ctn6) === 60_000 && ctn6.data.paidMinor === 120_000, ctn6.data ?? ctn6.error);
+  const ctn7 = await ctnSale([{ method: 'bkash', amountMinor: 40_000 }, { method: 'cash', amountMinor: 60_000 }], 50_000);
+  check('bKash 400 + cash 500 is refused (100 still due)', ctn7.status === 422 && ctn7.error?.details?.shortfallMinor === 10_000, ctn7.error);
+
+  // Input safety.
+  check('Negative cash received is refused', (await ctnSale([{ method: 'cash', amountMinor: 100_000 }], -1)).status === 422);
+  check('Non-numeric cash received is refused', (await ctnSale([{ method: 'cash', amountMinor: 100_000 }], '1200')).status === 422);
+  check('Fractional cash received is refused', (await ctnSale([{ method: 'cash', amountMinor: 100_000 }], 1200.5)).status === 422);
+
+  // A tampered request cannot move the total, invent revenue or pass an underpaid sale.
+  const ctnInflated = await ctnSale([{ method: 'cash', amountMinor: 120_000 }], 120_000);
+  check('Applied payments above the total are refused - change cannot be booked as payment', ctnInflated.status === 422 && ctnInflated.error?.details?.appliedMinor === 120_000, ctnInflated.error);
+  check('Applied payments below the total are refused', (await ctnSale([{ method: 'cash', amountMinor: 70_000 }], 200_000)).status === 422);
+  check('Cash received with no cash payment is refused', (await ctnSale([{ method: 'bkash', amountMinor: 100_000 }], 120_000)).status === 422);
+  const ctnTotalTamper = await ctnSale([{ method: 'cash', amountMinor: 100_000 }], 500_000, { totalMinor: 1, subtotalMinor: 1 });
+  // The sale schema strips unknown fields: a forged total is ignored and the server prices the sale.
+  check('A total in the body is ignored - the server prices the sale (1000) and computes change from it', ctnTotalTamper.status === 201 && ctnTotalTamper.data.totalMinor === 100_000 && ctnTotalTamper.data.subtotalMinor === 100_000 && ctnTotalTamper.data.changeMinor === 400_000, ctnTotalTamper.data ?? ctnTotalTamper.error);
+  const ctnDiscounted = await ctnSale([{ method: 'cash', amountMinor: 90_000 }], 100_000, { discountType: 'fixed', discountValue: 10_000 });
+  check('The server prices the sale itself: discount 100, cash 1000 -> total 900, change 100', ctnDiscounted.status === 201 && ctnDiscounted.data.totalMinor === 90_000 && ctnDiscounted.data.changeMinor === 10_000, ctnDiscounted.data ?? ctnDiscounted.error);
+
+  // Receipt data.
+  const ctnReceipt = (sale) => api(`/sales/${sale.data?._id}/receipt`, { token: ctnToken });
+  const ctnR2 = (await ctnReceipt(ctn2)).data?.sale;
+  check('Receipt (cash overpaid): total 1000, cash 1000, customer paid 1200, change 200', ctnR2?.totalMinor === 100_000 && ctnR2.payments?.[0]?.amountMinor === 100_000 && ctnR2.paidMinor === 120_000 && ctnR2.changeMinor === 20_000, ctnR2);
+  const ctnR1 = (await ctnReceipt(ctn1)).data?.sale;
+  check('Receipt (exact cash): customer paid 1000, change 0', ctnR1?.paidMinor === 100_000 && ctnR1.changeMinor === 0);
+  const ctnR6 = (await ctnReceipt(ctn6)).data?.sale;
+  check('Receipt (split + overpaid cash): bKash 400, cash 600, customer paid 1200, change 200, total 1000', ctnR6?.totalMinor === 100_000 && ctnR6.payments?.find((p) => p.method === 'bkash')?.amountMinor === 40_000 && ctnR6.payments?.find((p) => p.method === 'cash')?.amountMinor === 60_000 && ctnR6.paidMinor === 120_000 && ctnR6.changeMinor === 20_000, ctnR6);
+  check("Another workspace cannot read this sale's receipt", [403, 404].includes((await api(`/sales/${ctn2.data?._id}/receipt`, { token: admin.token })).status));
+
+  // The older request format still works unchanged.
+  const ctnLegacy = await api('/sales', { method: 'POST', token: ctnToken, body: { items: [{ variantId: ctnVariantId, quantity: 1 }], paymentMethod: 'cash', paidMinor: 120_000 } });
+  check('The legacy single-tender format still computes change', ctnLegacy.status === 201 && ctnLegacy.data.changeMinor === 20_000 && ctnLegacy.data.totalMinor === 100_000, ctnLegacy.error);
+
+  // ------------------------------------------------ VAT display source and receipt data
+  section('Clothing POS: VAT setting drives totals and receipt data');
+  const vatStamp = Date.now();
+  const vatReg = await api('/auth/register', { method: 'POST', body: { businessName: `VAT Clothing ${vatStamp}`, name: 'VAT Owner', email: `vat${vatStamp}@example.com`, password: 'Password@123', vertical: 'clothing' } });
+  const vatToken = vatReg.data?.tokens?.accessToken;
+  await api('/stores', { method: 'POST', token: vatToken, body: { name: 'VAT Main', currency: 'BDT' } });
+  const vatProduct = await api('/products', { method: 'POST', token: vatToken, body: { name: `VAT Tee ${vatStamp}`, variants: [{ attributes: [], sku: `VAT${vatStamp}`, sellingPriceMinor: 100_000, stock: 50 }] } });
+  const vatVariantId = vatProduct.data?.variants?.[0]?._id;
+  const vatSell = (cashTenderedMinor, amount) =>
+    api('/sales', { method: 'POST', token: vatToken, body: { items: [{ variantId: vatVariantId, quantity: 1 }], paymentMethod: 'cash', payments: [{ method: 'cash', amountMinor: amount, reference: '' }], cashTenderedMinor } });
+
+  // VAT off: no tax is charged, and the receipt data says VAT is off.
+  await api('/stores/current', { method: 'PATCH', token: vatToken, body: { tax: { enabled: false } } });
+  const vatOffSale = await vatSell(120_000, 100_000);
+  const vatOffReceipt = (await api(`/sales/${vatOffSale.data?._id}/receipt`, { token: vatToken })).data;
+  check('VAT off: no tax charged, total equals the item price', vatOffSale.status === 201 && vatOffSale.data.taxMinor === 0 && vatOffSale.data.totalMinor === 100_000, vatOffSale.data ?? vatOffSale.error);
+  check('VAT off: the receipt data carries the same VAT-off setting', vatOffReceipt?.store?.tax?.enabled === false);
+  check('VAT off: receipt data keeps cash change (customer paid 1200, change 200)', vatOffReceipt?.sale?.paidMinor === 120_000 && vatOffReceipt.sale.changeMinor === 20_000);
+
+  // VAT on (10%, added on top): the server charges it, and the receipt data says VAT is on.
+  const vatOn = await api('/stores/current', { method: 'PATCH', token: vatToken, body: { tax: { enabled: true, rateBasisPoints: 1000, inclusive: false, label: 'VAT' } } });
+  check('VAT can be switched on through the existing store setting', vatOn.status === 200 && vatOn.data?.tax?.enabled === true, vatOn.error);
+  const vatOnSale = await vatSell(110_000, 110_000);
+  const vatOnReceipt = (await api(`/sales/${vatOnSale.data?._id}/receipt`, { token: vatToken })).data;
+  check('VAT on: the server adds VAT to the total', vatOnSale.status === 201 && vatOnSale.data.subtotalMinor === 100_000 && vatOnSale.data.taxMinor === 10_000 && vatOnSale.data.totalMinor === 110_000, vatOnSale.data ?? vatOnSale.error);
+  check('VAT on: the receipt data carries the VAT-on setting and the tax', vatOnReceipt?.store?.tax?.enabled === true && vatOnReceipt.sale.taxMinor === 10_000);
+
+  // Turning VAT off later does not rewrite a sale that charged VAT.
+  await api('/stores/current', { method: 'PATCH', token: vatToken, body: { tax: { enabled: false } } });
+  const vatHistory = (await api(`/sales/${vatOnSale.data?._id}/receipt`, { token: vatToken })).data?.sale;
+  check('A past VAT sale keeps its recorded VAT after VAT is turned off', vatHistory?.taxMinor === 10_000 && vatHistory.totalMinor === 110_000);
+
+  // Branding has no setting: an attempt to switch it off is not stored anywhere.
+  const vatBranding = await api('/stores/current', { method: 'PATCH', token: vatToken, body: { receipt: { showBranding: false, platformBranding: false } } });
+  const vatAfterBranding = JSON.stringify((await api(`/sales/${vatOffSale.data?._id}/receipt`, { token: vatToken })).data ?? {});
+  check('There is no receipt setting that can hide the platform branding', [200, 422].includes(vatBranding.status) && !/showBranding|platformBranding/.test(vatAfterBranding));
+
+  // ------------------------------------------------ returns: exchange refund method
+  section('Clothing POS: exchange as a refund method');
+  const excStamp = Date.now();
+  const excReg = await api('/auth/register', { method: 'POST', body: { businessName: `EXC Clothing ${excStamp}`, name: 'EXC Owner', email: `exc${excStamp}@example.com`, password: 'Password@123', vertical: 'clothing' } });
+  const excToken = excReg.data?.tokens?.accessToken;
+  await api('/stores', { method: 'POST', token: excToken, body: { name: 'EXC Main', currency: 'BDT' } });
+  const excMake = async (name, variants) =>
+    (await api('/products', { method: 'POST', token: excToken, body: { name: `${name} ${excStamp}`, variants: variants.map(([label, price, stock], i) => ({ attributes: label ? [{ name: 'Size', value: label }] : [], sku: `EXC${excStamp}${name.slice(0, 3)}${i}`, sellingPriceMinor: price, stock })) } })).data;
+  const excA = await excMake('Shirt', [['M', 100_000, 60], ['L', 110_000, 20]]);
+  const excB = await excMake('Jeans', [['32', 120_000, 20]]);
+  const excC = await excMake('Jacket', [['', 130_000, 20]]);
+  const excCheap = await excMake('Socks', [['', 90_000, 20]]);
+  const excBig = await excMake('Coat', [['', 150_000, 20]]);
+  const excAM = excA?.variants?.find((v) => v.name.includes('M'))?._id ?? excA?.variants?.[0]?._id;
+  const excAL = excA?.variants?.find((v) => v.name.includes('L'))?._id ?? excA?.variants?.[1]?._id;
+  const excV = (product) => product?.variants?.[0]?._id;
+  const excStock = async (productId, variantId) => ((await api(`/products/${productId}`, { token: excToken })).data?.variants ?? []).find((v) => v._id === variantId)?.stock;
+
+  // The original sale: 20 x Shirt M at 1000.
+  const excSale = await api('/sales', { method: 'POST', token: excToken, body: { items: [{ variantId: excAM, quantity: 20 }], paymentMethod: 'cash' } });
+  const excSaleId = excSale.data?._id;
+  const excLineId = excSale.data?.items?.[0]?._id;
+  check('An original sale of 20 shirts at 1000 exists', excSale.status === 201 && Boolean(excLineId), excSale.error);
+  let excKeySeq = 0;
+  const excKey = () => `exc-${excStamp}-${(excKeySeq += 1)}`;
+  const excReturn = (exchange, extra = {}) =>
+    api('/returns', { method: 'POST', token: excToken, body: { saleId: excSaleId, items: [{ saleItemId: excLineId, quantity: 1, restock: true }], reason: 'Wrong size', refundMethod: 'exchange', ...(exchange ? { exchange } : {}), ...extra } });
+  const excReturnable = async () => (await api(`/returns/returnable/${excSaleId}`, { token: excToken })).data?.items?.[0]?.returnableQuantity;
+
+  // 1. Equal price: nothing to pay.
+  const excAMBefore = await excStock(excA?._id, excAM);
+  const exc1 = await excReturn({ items: [{ variantId: excAM, quantity: 1 }], idempotencyKey: excKey() });
+  check('Equal price (same product, same variant): exchange completes with 0 extra', exc1.status === 201 && exc1.data?.refundMethod === 'exchange' && exc1.data.exchange?.refundableMinor === 100_000 && exc1.data.exchange.extraPayableMinor === 0 && exc1.data.replacementSale?.totalMinor === 100_000 && exc1.data.replacementSale.payments.length === 0, exc1.data ?? exc1.error);
+  check('Equal price: stock of the same variant back in and out again (net unchanged)', (await excStock(excA?._id, excAM)) === excAMBefore);
+  check('Equal price: a payment on a 0 exchange is refused', (await excReturn({ items: [{ variantId: excAM, quantity: 1 }], payments: [{ method: 'cash', amountMinor: 100 }], idempotencyKey: excKey() })).status === 422);
+
+  // 2. Higher price, cash.
+  const exc2 = await excReturn({ items: [{ variantId: excV(excC), quantity: 1 }], payments: [{ method: 'cash', amountMinor: 30_000 }], idempotencyKey: excKey() });
+  check('Higher price (1300): extra 300 paid in cash', exc2.status === 201 && exc2.data?.exchange?.extraPayableMinor === 30_000 && exc2.data.replacementSale?.payments?.[0]?.amountMinor === 30_000, exc2.data ?? exc2.error);
+
+  // 3. Cheaper: refused, nothing moves.
+  const excReturnableBefore = await excReturnable();
+  const excCheapStockBefore = await excStock(excCheap?._id, excV(excCheap));
+  const exc3 = await excReturn({ items: [{ variantId: excV(excCheap), quantity: 1 }], idempotencyKey: excKey() });
+  check('Cheaper replacement (900) is refused with the exchange rule', exc3.status === 422 && exc3.error?.details?.reason === 'EXCHANGE_CHEAPER_REPLACEMENT', exc3.error);
+  check('...and nothing moved: returnable quantity and stock unchanged', (await excReturnable()) === excReturnableBefore && (await excStock(excCheap?._id, excV(excCheap))) === excCheapStockBefore);
+
+  // 4. Different product. 5. Same product, different variant.
+  const exc4 = await excReturn({ items: [{ variantId: excV(excB), quantity: 1 }], payments: [{ method: 'cash', amountMinor: 20_000 }], idempotencyKey: excKey() });
+  check('Different product (1200): allowed, extra 200', exc4.status === 201 && exc4.data?.exchange?.extraPayableMinor === 20_000, exc4.error);
+  const excALBefore = await excStock(excA?._id, excAL);
+  const exc5 = await excReturn({ items: [{ variantId: excAL, quantity: 1 }], payments: [{ method: 'bkash', amountMinor: 10_000 }], idempotencyKey: excKey() });
+  check('Same product, different variant (1100): allowed, extra 100 by bKash', exc5.status === 201 && exc5.data?.exchange?.extraPayableMinor === 10_000 && exc5.data.replacementSale?.payments?.[0]?.method === 'bkash', exc5.error);
+  check('Variant integrity: the exact variant picked (L) is the one deducted', (await excStock(excA?._id, excAL)) === excALBefore - 1 && String(exc5.data?.replacementSale?.items?.[0]?.variantId) === String(excAL));
+
+  // 6. Split payment. 7. Cash overpayment.
+  const exc6 = await excReturn({ items: [{ variantId: excV(excBig), quantity: 1 }], payments: [{ method: 'cash', amountMinor: 20_000 }, { method: 'bkash', amountMinor: 30_000 }], idempotencyKey: excKey() });
+  check('Split payment: extra 500 as cash 200 + bKash 300', exc6.status === 201 && exc6.data?.exchange?.extraPayableMinor === 50_000 && exc6.data.replacementSale?.payments?.length === 2, exc6.error);
+  const exc7 = await excReturn({ items: [{ variantId: excV(excC), quantity: 1 }], payments: [{ method: 'cash', amountMinor: 30_000 }], cashTenderedMinor: 50_000, idempotencyKey: excKey() });
+  check('Cash overpayment: extra 300, cash received 500 -> change 200, cash recorded 300', exc7.status === 201 && exc7.data?.replacementSale?.changeMinor === 20_000 && exc7.data.replacementSale.payments[0].amountMinor === 30_000, exc7.data?.replacementSale ?? exc7.error);
+
+  // 8. Insufficient payment.
+  check('Insufficient payment (200 of 300) is refused', (await excReturn({ items: [{ variantId: excV(excC), quantity: 1 }], payments: [{ method: 'cash', amountMinor: 20_000 }], idempotencyKey: excKey() })).status === 422);
+  check('Cash received below the cash due is refused', (await excReturn({ items: [{ variantId: excV(excC), quantity: 1 }], payments: [{ method: 'cash', amountMinor: 30_000 }], cashTenderedMinor: 20_000, idempotencyKey: excKey() })).status === 422);
+  check('Overpaying the applied amount is refused (extra is recalculated on the server)', (await excReturn({ items: [{ variantId: excV(excC), quantity: 1 }], payments: [{ method: 'cash', amountMinor: 50_000 }], idempotencyKey: excKey() })).status === 422);
+
+  // 9. Refund value is the price actually sold at, not today's catalogue price.
+  const excDiscSale = await api('/sales', { method: 'POST', token: excToken, body: { items: [{ variantId: excAM, quantity: 1, unitPriceMinor: 80_000 }], paymentMethod: 'cash' } });
+  const exc9 = await api('/returns', { method: 'POST', token: excToken, body: { saleId: excDiscSale.data?._id, items: [{ saleItemId: excDiscSale.data?.items?.[0]?._id, quantity: 1, restock: true }], refundMethod: 'exchange', exchange: { items: [{ variantId: excV(excCheap), quantity: 1 }], payments: [{ method: 'cash', amountMinor: 10_000 }], idempotencyKey: excKey() } } });
+  check('Sold at 800 (catalogue 1000): a 900 replacement is allowed with extra 100', exc9.status === 201 && exc9.data?.exchange?.refundableMinor === 80_000 && exc9.data.exchange.extraPayableMinor === 10_000, exc9.data ?? exc9.error);
+
+  // 11. Stock both ways.
+  const excAMStock = await excStock(excA?._id, excAM);
+  const excBStock = await excStock(excB?._id, excV(excB));
+  const exc11 = await excReturn({ items: [{ variantId: excV(excB), quantity: 1 }], payments: [{ method: 'cash', amountMinor: 20_000 }], idempotencyKey: excKey() });
+  check('Stock: returned shirt back in (+1), replacement jeans out (-1)', exc11.status === 201 && (await excStock(excA?._id, excAM)) === excAMStock + 1 && (await excStock(excB?._id, excV(excB))) === excBStock - 1);
+
+  // 12. Duplicate submission.
+  const excDupKey = excKey();
+  const excCStock = await excStock(excC?._id, excV(excC));
+  const excDupReturnable = await excReturnable();
+  const excBurst = await Promise.all([1, 2, 3, 4, 5].map(() => excReturn({ items: [{ variantId: excV(excC), quantity: 1 }], payments: [{ method: 'cash', amountMinor: 30_000 }], idempotencyKey: excDupKey })));
+  const excBurstNumbers = new Set(excBurst.filter((r) => [200, 201].includes(r.status)).map((r) => r.data?.returnNumber));
+  check('Five simultaneous identical exchanges produce ONE exchange', excBurstNumbers.size === 1 && excBurst.some((r) => r.status === 201), excBurst.map((r) => [r.status, r.data?.returnNumber, r.error?.message]));
+  check('...one replacement deducted, one unit returned', (await excStock(excC?._id, excV(excC))) === excCStock - 1 && (await excReturnable()) === excDupReturnable - 1);
+  const excReplay = await excReturn({ items: [{ variantId: excV(excC), quantity: 1 }], payments: [{ method: 'cash', amountMinor: 30_000 }], idempotencyKey: excDupKey });
+  check('Retrying with the same key returns the first exchange', excReplay.status === 200 && excReplay.data?.replayed === true && excBurstNumbers.has(excReplay.data.returnNumber));
+
+  // Receipt data for the replacement sale.
+  const excReceipt = (await api(`/sales/${exc7.data?.replacementSale?._id}/receipt`, { token: excToken })).data?.sale;
+  check('Receipt data: exchange with return number, returned items, refund value, change', excReceipt?.exchange?.returnNumber === exc7.data?.returnNumber && excReceipt.exchange.creditMinor === 100_000 && excReceipt.exchange.returnedItems?.[0]?.quantity === 1 && excReceipt.totalMinor === 130_000 && excReceipt.changeMinor === 20_000, excReceipt);
+
+  // Tampering and validation.
+  check('No replacement for an exchange is refused', (await excReturn(undefined)).status === 422);
+  check('Replacement data on a normal cash refund is refused', (await excReturn({ items: [{ variantId: excAM, quantity: 1 }], idempotencyKey: excKey() }, { refundMethod: 'cash' })).status === 422);
+  check('A price, refund value or extra amount in the request is refused', (await excReturn({ items: [{ variantId: excV(excC), quantity: 1, unitPriceMinor: 1 }], extraPayableMinor: 0, idempotencyKey: excKey() })).status === 422 && (await excReturn({ items: [{ variantId: excV(excC), quantity: 1 }], refundableMinor: 999_999, idempotencyKey: excKey() })).status === 422);
+  check('A replacement quantity above stock is refused', (await excReturn({ items: [{ variantId: excV(excBig), quantity: 999 }], payments: [{ method: 'cash', amountMinor: 1 }], idempotencyKey: excKey() })).status >= 400);
+
+  // 13. Normal returns unchanged.
+  const excCash = await api('/returns', { method: 'POST', token: excToken, body: { saleId: excSaleId, items: [{ saleItemId: excLineId, quantity: 1, restock: true }], refundMethod: 'cash' } });
+  check('A normal cash refund still works, with no exchange data', excCash.status === 201 && excCash.data?.refundMethod === 'cash' && excCash.data.exchange === null && excCash.data.totalMinor === 100_000, excCash.error);
+  const excBkash = await api('/returns', { method: 'POST', token: excToken, body: { saleId: excSaleId, items: [{ saleItemId: excLineId, quantity: 1, restock: true }], refundMethod: 'bkash' } });
+  check('A normal bKash refund still works', excBkash.status === 201 && excBkash.data?.refundMethod === 'bkash');
+
+  // 14. Isolation.
+  const excForeignVariant = (await api('/products/pos-search?limit=1', { token: admin.token })).data?.[0]?.variantId;
+  check("Another workspace's product cannot be the replacement", (await excReturn({ items: [{ variantId: excForeignVariant, quantity: 1 }], payments: [{ method: 'cash', amountMinor: 1 }], idempotencyKey: excKey() })).status >= 400);
+  check("Another workspace cannot exchange against this sale", [403, 404].includes((await api('/returns', { method: 'POST', token: admin.token, body: { saleId: excSaleId, items: [{ saleItemId: excLineId, quantity: 1, restock: true }], refundMethod: 'exchange', exchange: { items: [{ variantId: excForeignVariant, quantity: 1 }], idempotencyKey: excKey() } } })).status));
+
+  // ------------------------------------------------ billing emails: invoice, confirmation, expiry reminder
+  section('Billing emails: invoices, renewal confirmations and expiry reminders');
+  const bemStamp = Date.now();
+  const bemEmail = `bem${bemStamp}@example.com`;
+  const bemReg = await api('/auth/register', { method: 'POST', body: { businessName: `BEM Clothing ${bemStamp}`, name: 'BEM Owner', email: bemEmail, password: 'Password@123', vertical: 'clothing' } });
+  const bemToken = bemReg.data?.tokens?.accessToken;
+  const bemHomeId = bemReg.data?.tenant?.id;
+  const bemAccountId = bemReg.data?.tenant?.accountId;
+  await api('/stores', { method: 'POST', token: bemToken, body: { name: 'BEM Main', currency: 'BDT' } });
+  await api(`/platform/accounts/${bemAccountId}/wallet/adjustments`, { method: 'POST', token: platform2.token, body: { direction: 'credit', amountMinor: 2_000_000, reason: 'Smoke test: billing emails', idempotencyKey: `bem-${bemStamp}-fund` } });
+  const bemRows = async (params) => (await api(`/platform/email-notifications?limit=100&${new URLSearchParams(params)}`, { token: platform2.token })).data ?? [];
+  const bemWait = async (params, predicate) => {
+    // Delivery runs after the purchase returns, and a mail server that cannot be reached takes a while to fail.
+    for (let i = 0; i < 150; i += 1) {
+      const rows = await bemRows(params);
+      if (predicate(rows)) return rows;
+      await new Promise((resolve) => setTimeout(resolve, 150));
+    }
+    return bemRows(params);
+  };
+
+  // Purchase -> invoice email, after the payment and never instead of it.
+  const bemRest = (await api('/workspaces', { method: 'POST', token: bemToken, body: { businessName: `BEM Restaurant ${bemStamp}`, vertical: 'restaurant' } })).data?.workspace?.id;
+  const bemQuote = await api(`/workspaces/${bemRest}/checkout/quote`, { method: 'POST', token: bemToken, body: { plan: 'starter', billingCycle: 'monthly' } });
+  const bemBuy = await api(`/workspaces/${bemRest}/checkout`, { method: 'POST', token: bemToken, body: { paymentMethod: 'wallet', plan: 'starter', billingCycle: 'monthly', idempotencyKey: `bem${bemStamp}buy`, expectedPayableMinor: bemQuote.data?.payableMinor } });
+  check('A subscription is bought from the wallet', bemBuy.status === 201, bemBuy.error);
+  const bemInvoiceRows = await bemWait({ tenantId: bemRest }, (rows) => rows.some((r) => r.type === 'subscription_invoice' && ['sent', 'failed', 'skipped'].includes(r.status)));
+  const bemInvoiceRow = bemInvoiceRows.find((r) => r.type === 'subscription_invoice');
+  const bemInvoice = ((await api(`/account/invoices?workspaceId=${bemRest}`, { token: bemToken })).data ?? [])[0];
+  check('One invoice email is recorded for the purchase', bemInvoiceRows.filter((r) => r.type === 'subscription_invoice').length === 1 && Boolean(bemInvoiceRow?.invoiceId), bemInvoiceRows);
+  check("...addressed to the account owner's email, not anything from the request", bemInvoiceRow?.recipient === bemEmail.toLowerCase(), bemInvoiceRow);
+  check('...for the real invoice, by its number', bemInvoiceRow?.invoiceId === bemInvoice?.id && bemInvoiceRow.subject?.includes(bemInvoice?.number), { row: bemInvoiceRow?.subject, invoice: bemInvoice?.number });
+  check('Delivery failing (no reachable mail server here) is recorded, not thrown', ['failed', 'sent'].includes(bemInvoiceRow?.status) && (bemInvoiceRow.status === 'sent' || Boolean(bemInvoiceRow.lastError)), bemInvoiceRow);
+  check('...and the purchase stays completed', ((await api('/account/dashboard', { token: bemToken })).data?.workspaces ?? []).find((w) => w.id === bemRest)?.subscription?.status === 'active');
+  check('No email address or secret is exposed by the delivery log', !JSON.stringify(bemInvoiceRow ?? {}).match(/password|apiKey|html|"text"/i));
+
+  // A refused purchase sends nothing.
+  const bemPharm = (await api('/workspaces', { method: 'POST', token: bemToken, body: { businessName: `BEM Pharmacy ${bemStamp}`, vertical: 'pharmacy' } })).data?.workspace?.id;
+  const bemRefused = await api(`/workspaces/${bemPharm}/checkout`, { method: 'POST', token: bemToken, body: { paymentMethod: 'wallet', plan: 'starter', billingCycle: 'monthly', idempotencyKey: `bem${bemStamp}bad`, expectedPayableMinor: 1 } });
+  await new Promise((resolve) => setTimeout(resolve, 400));
+  check('A refused purchase creates no invoice email', bemRefused.status === 409 && (await bemRows({ tenantId: bemPharm })).length === 0);
+
+  // Sweeps and repeats never duplicate it.
+  const bemSweep = await api('/platform/subscriptions/run-renewals', { method: 'POST', token: platform2.token, body: {} });
+  check('The renewal pass reports email retries', bemSweep.status === 200 && typeof bemSweep.data?.emails?.checked === 'number', bemSweep.data);
+  check('Repeated sweeps do not create a second invoice email', (await bemRows({ tenantId: bemRest, type: 'subscription_invoice' })).length === 1);
+
+  // Expiry reminder: a period ending in 2 days, reminded once however often the job runs.
+  const bemDay = (offset) => new Date(Date.now() + offset * 86_400_000).toISOString().slice(0, 10);
+  const bemAssign = await api('/platform/subscriptions', { method: 'POST', token: platform2.token, body: { tenantId: bemHomeId, planId: plansByCode['showroom-monthly']._id, startDate: bemDay(-28), endDate: bemDay(2), status: 'active', autoRenew: false } });
+  check('A subscription ending in 2 days is set up', bemAssign.status === 201 || bemAssign.status === 200, bemAssign.error);
+  await api('/platform/subscriptions/run-renewals', { method: 'POST', token: platform2.token, body: {} });
+  await api('/platform/subscriptions/run-renewals', { method: 'POST', token: platform2.token, body: {} });
+  const bemReminders = await bemRows({ tenantId: bemHomeId, type: 'subscription_expiry_reminder' });
+  check('Exactly one expiry reminder for that period after repeated runs', bemReminders.length === 1 && bemReminders[0].recipient === bemEmail.toLowerCase(), bemReminders);
+  check('Other workspaces of the account get no reminder they do not need', (await bemRows({ tenantId: bemRest, type: 'subscription_expiry_reminder' })).length === 0);
+
+  // Renewal -> payment confirmation; the new period is not reminded now.
+  const bemRenew = await api(`/workspaces/${bemHomeId}/subscription/renew`, { method: 'POST', token: bemToken, body: {} });
+  check('Renewing now from the wallet succeeds', bemRenew.status === 200 || bemRenew.status === 201, bemRenew.error);
+  const bemConfirm = await bemWait({ tenantId: bemHomeId, type: 'payment_confirmation' }, (rows) => rows.length > 0 && ['sent', 'failed', 'skipped'].includes(rows[0].status));
+  check('The renewal records one payment confirmation email', bemConfirm.length === 1 && bemConfirm[0].subject?.startsWith('Payment Successful'), bemConfirm);
+  await api('/platform/subscriptions/run-renewals', { method: 'POST', token: platform2.token, body: {} });
+  check('The renewed period is not reminded (its end is weeks away)', (await bemRows({ tenantId: bemHomeId, type: 'subscription_expiry_reminder' })).length === 1);
+
+  // Admin visibility and retry.
+  check('Workspace owners cannot read the delivery log', (await api('/platform/email-notifications', { token: bemToken })).status === 403);
+  check('Staff cannot read the delivery log', (await api('/platform/email-notifications', { token: cashier.token })).status === 403);
+  const bemFailed = (await bemRows({ tenantId: bemRest, type: 'subscription_invoice' })).find((r) => r.status === 'failed');
+  if (bemFailed) {
+    const bemRetry = await api(`/platform/email-notifications/${bemFailed._id}/retry`, { method: 'POST', token: platform2.token, body: {} });
+    check('A platform admin can retry a failed email', bemRetry.status === 200 && ['failed', 'sent'].includes(bemRetry.data?.outcome), bemRetry.data ?? bemRetry.error);
+    check('...which reuses the same record and invoice (no duplicate)', (await bemRows({ tenantId: bemRest, type: 'subscription_invoice' })).length === 1);
+  }
+  check('A workspace owner cannot trigger a retry', (await api(`/platform/email-notifications/${bemInvoiceRow?._id}/retry`, { method: 'POST', token: bemToken, body: {} })).status === 403);
+
+  // --- Out-of-stock sale override (permission sales.sellOutOfStock) ---------
+  section('Clothing POS: out-of-stock sale override');
+  {
+    const oosStamp = String(Date.now()).slice(-6);
+    const oosAdmin = await login('admin@demostore.dev', 'Admin@123');
+    const oosCashier = await login('cashier@demostore.dev', 'Cashier@123');
+    const oosSenior = await login('senior@demostore.dev', 'Cashier@123');
+    const oosStores = (await api('/stores', { token: oosAdmin.token })).data ?? [];
+    const oosMain = oosStores.find((s) => s.isDefault) ?? oosStores[0];
+    const oosOther = oosStores.find((s) => String(s._id) !== String(oosMain._id));
+    const at = { storeId: oosMain._id };
+
+    check('Cashier does NOT hold sales.sellOutOfStock by default', !oosCashier.session.user.permissions.includes('sales.sellOutOfStock'));
+    check('Senior Cashier holds sales.sellOutOfStock by default', oosSenior.session.user.permissions.includes('sales.sellOutOfStock'));
+    check('Admin holds sales.sellOutOfStock', oosAdmin.session.user.permissions.includes('sales.sellOutOfStock'));
+    const oosRoles = (await api('/roles', { token: oosAdmin.token })).data ?? [];
+    check('Store Manager role grants it, Cashier role does not', oosRoles.find((r) => r.name === 'Store Manager')?.permissions.includes('sales.sellOutOfStock') && !oosRoles.find((r) => r.name === 'Cashier')?.permissions.includes('sales.sellOutOfStock'));
+    const oosCatalog = (await api('/roles/permissions/catalog', { token: oosAdmin.token })).data ?? [];
+    check('The permission is listed for assignment under Sales', JSON.stringify(oosCatalog).includes('Sell Out-of-Stock Products'));
+
+    const oosBarcode = (await api('/products/barcode/generate', { method: 'POST', token: oosAdmin.token, ...at })).data?.barcode;
+    const oosProduct = await api('/products', {
+      method: 'POST',
+      token: oosAdmin.token,
+      ...at,
+      body: {
+        name: `OOS Shirt ${oosStamp}`,
+        variants: [
+          { attributes: [{ name: 'Size', value: 'M' }], sellingPriceMinor: 90000, costPriceMinor: 40000, stock: 0, barcode: oosBarcode },
+          { attributes: [{ name: 'Size', value: 'L' }], sellingPriceMinor: 90000, costPriceMinor: 40000, stock: 5 },
+          { attributes: [{ name: 'Size', value: 'XL' }], sellingPriceMinor: 90000, costPriceMinor: 40000, stock: 2 },
+          { attributes: [{ name: 'Size', value: 'XXL' }], sellingPriceMinor: 90000, costPriceMinor: 40000, stock: 0 },
+        ],
+      },
+    });
+    check('A product with an out-of-stock and in-stock variants is created', oosProduct.status === 201, oosProduct.error);
+    const [oosA, oosB, oosC, oosD] = oosProduct.data?.variants ?? [];
+    const oosStock = async (v) => (await api(`/products/${oosProduct.data._id}`, { token: oosAdmin.token, ...at })).data?.variants?.find((x) => String(x._id) === String(v._id))?.stock;
+    const sell = (token, variantId, quantity = 1, extra = {}, itemExtra = {}) =>
+      api('/sales', { method: 'POST', token, ...at, body: { items: [{ variantId, quantity, ...itemExtra }], paymentMethod: 'cash', ...extra } });
+
+    // Unauthorized staff: unchanged behaviour.
+    const oosCash1 = await sell(oosCashier.token, oosA._id);
+    check('Cashier without the permission cannot sell a zero-stock variant', oosCash1.status >= 400 && oosCash1.error?.code === 'INSUFFICIENT_STOCK', oosCash1.error);
+    const oosForged = await sell(oosCashier.token, oosA._id, 1, { allowOutOfStock: true, overrideStock: true, skipStockCheck: true, forceSale: true });
+    check('...and client flags (allowOutOfStock, overrideStock, skipStockCheck, forceSale) do not bypass it', oosForged.status >= 400);
+    const oosForgedItem = await sell(oosCashier.token, oosA._id, 1, {}, { allowOutOfStock: true, stock: 10 });
+    check('...nor do flags or a stock value on the line', oosForgedItem.status >= 400);
+    check('Stock is untouched by the refused attempts', (await oosStock(oosA)) === 0);
+    const oosCashB = await sell(oosCashier.token, oosB._id);
+    check('Cashier still sells an in-stock variant of the same product normally', oosCashB.status === 201 && !oosCashB.data?.items?.[0]?.outOfStockOverride, oosCashB.error);
+    check('...which takes stock 5 -> 4 as before', (await oosStock(oosB)) === 4);
+
+    // Authorized staff.
+    const oosBefore = (await api('/reports/branches?preset=today', { token: oosAdmin.token })).data?.totals?.orders ?? 0;
+    const oosScan = await api(`/products/pos-search?q=${oosBarcode}&limit=5`, { token: oosSenior.token, ...at });
+    const oosScanned = (oosScan.data ?? []).find((v) => v.barcode === oosBarcode);
+    check('Barcode lookup finds the zero-stock variant (the POS decides by permission)', Boolean(oosScanned) && oosScanned.stock === 0, oosScan.data);
+    const oosSeniorSale = await sell(oosSenior.token, oosScanned?.variantId ?? oosA._id);
+    check('Senior Cashier sells the zero-stock variant', oosSeniorSale.status === 201, oosSeniorSale.error);
+    check('...the line is flagged as an out-of-stock override', oosSeniorSale.data?.items?.[0]?.outOfStockOverride === true);
+    check('...priced from the catalogue as normal', oosSeniorSale.data?.totalMinor === 90000);
+    check('...stock follows the ledger: 0 -> -1', (await oosStock(oosA)) === -1);
+    const oosLedger = (await api(`/inventory/ledger?variantId=${oosA._id}&limit=5`, { token: oosAdmin.token, ...at })).data ?? [];
+    const oosRow = oosLedger.find((r) => r.referenceNumber === oosSeniorSale.data?.saleNumber);
+    check('Ledger row: SALE, -1, 0 -> -1, override flag, performed by the senior cashier', oosRow?.type === 'SALE' && oosRow.quantityChange === -1 && oosRow.previousStock === 0 && oosRow.newStock === -1 && oosRow.outOfStockOverride === true && oosRow.performedByNameSnapshot === oosSeniorSale.data?.cashierNameSnapshot, oosRow);
+    const oosAfter = (await api('/reports/branches?preset=today', { token: oosAdmin.token })).data?.totals?.orders ?? 0;
+    check('The override sale counts as a normal completed sale in reports', oosAfter === oosBefore + 1 && oosSeniorSale.data?.status === 'completed', { oosBefore, oosAfter });
+    const oosReceipt = await api(`/sales/${oosSeniorSale.data?._id}/receipt`, { token: oosAdmin.token, ...at });
+    check('The receipt for an override sale loads like any other', oosReceipt.success, oosReceipt.error);
+    check('The printed customer receipt template never shows the internal override', !/outOfStock|out-of-stock/i.test(readFileSync(new URL('../client/src/features/receipt/ThermalReceipt.tsx', import.meta.url), 'utf8')));
+
+    check('Some stock but not enough is still refused, even with the permission (2 in stock, 5 asked)', (await sell(oosSenior.token, oosC._id, 5)).status >= 400 && (await oosStock(oosC)) === 2);
+    const oosFromNeg = await sell(oosSenior.token, oosA._id, 2);
+    check('Selling again below zero works for the authorized user (-1 -> -3)', oosFromNeg.status === 201 && (await oosStock(oosA)) === -3, oosFromNeg.error);
+    const oosAdminSale = await sell(oosAdmin.token, oosD._id);
+    check('Admin can sell out of stock', oosAdminSale.status === 201 && oosAdminSale.data?.items?.[0]?.outOfStockOverride === true, oosAdminSale.error);
+
+    // Custom staff: grant then revoke, with the SAME session.
+    const oosStaffEmail = `oos${oosStamp}@demostore.dev`;
+    const oosStaff = await api('/staff', { method: 'POST', token: oosAdmin.token, ...at, body: { name: 'OOS Staff', email: oosStaffEmail, password: 'Password@123', storeId: oosMain._id, extraPermissions: ['sales.create', 'sales.view', 'products.view'] } });
+    check('A custom staff member is created without the permission', oosStaff.status === 201, oosStaff.error);
+    const oosCustom = await login(oosStaffEmail, 'Password@123');
+    check('Custom staff cannot sell out of stock', (await sell(oosCustom.token, oosD._id)).status >= 400);
+    await api(`/staff/${oosStaff.data.id}`, { method: 'PATCH', token: oosAdmin.token, body: { extraPermissions: ['sales.create', 'sales.view', 'products.view', 'sales.sellOutOfStock'] } });
+    const oosGranted = await sell(oosCustom.token, oosD._id);
+    check('After the admin grants it, the same session can', oosGranted.status === 201 && oosGranted.data?.items?.[0]?.outOfStockOverride === true, oosGranted.error);
+    await api(`/staff/${oosStaff.data.id}`, { method: 'PATCH', token: oosAdmin.token, body: { extraPermissions: ['sales.create', 'sales.view', 'products.view'] } });
+    const oosRevoked = await sell(oosCustom.token, oosD._id);
+    check('After revoking it, the same session is refused at once', oosRevoked.status >= 400 && oosRevoked.error?.code === 'INSUFFICIENT_STOCK', oosRevoked.error);
+    check('...and the sale made while granted is unchanged', (await api(`/sales/${oosGranted.data?._id}`, { token: oosAdmin.token, ...at })).data?.items?.[0]?.outOfStockOverride === true);
+
+    // Store isolation.
+    if (oosOther) {
+      const oosCross = await api('/sales', { method: 'POST', token: oosAdmin.token, storeId: oosOther._id, body: { items: [{ variantId: oosD._id, quantity: 1 }], paymentMethod: 'cash' } });
+      check("Another branch's out-of-stock variant cannot be sold, even by an admin", oosCross.status >= 400, oosCross.status);
+      const oosSeniorCross = await api('/sales', { method: 'POST', token: oosSenior.token, storeId: oosOther._id, body: { items: [{ variantId: oosD._id, quantity: 1 }], paymentMethod: 'cash' } });
+      check('A senior cashier cannot use the override through a branch they cannot access', oosSeniorCross.status >= 400);
+    }
+
+    // Concurrency: two authorized tills at zero stock.
+    const oosD0 = await oosStock(oosD);
+    const oosRace = await Promise.all([sell(oosSenior.token, oosD._id), sell(oosAdmin.token, oosD._id)]);
+    const oosWon = oosRace.filter((r) => r.status === 201).length;
+    const oosRaceLedger = ((await api(`/inventory/ledger?variantId=${oosD._id}&limit=50`, { token: oosAdmin.token, ...at })).data ?? []).filter((r) => oosRace.some((x) => x.data?.saleNumber && x.data.saleNumber === r.referenceNumber));
+    check('Concurrent authorized sales each move stock exactly once', oosWon === 2 && (await oosStock(oosD)) === oosD0 - 2 && oosRaceLedger.length === 2, { oosWon, oosD0 });
+
+    // Negative stock stays workable: edit, cancel, restock.
+    const oosEdit = await api(`/products/${oosProduct.data._id}/variants/${oosA._id}`, { method: 'PATCH', token: oosAdmin.token, ...at, body: { sellingPriceMinor: 95000 } });
+    check('A variant below zero can still be edited', oosEdit.status === 200, oosEdit.error);
+    const oosCancel = await api(`/sales/${oosFromNeg.data?._id}/cancel`, { method: 'POST', token: oosAdmin.token, ...at, body: { reason: 'Test cancellation' } });
+    check('Cancelling an override sale puts its units back (-3 -> -1)', oosCancel.status === 200 && (await oosStock(oosA)) === -1, oosCancel.error);
+    const oosRestock = await api('/inventory/adjust', { method: 'POST', token: oosAdmin.token, ...at, body: { variantId: oosA._id, mode: 'delta', value: 4, reason: 'Delivery arrived' } });
+    check('Receiving stock reconciles it (-1 + 4 = 3)', oosRestock.success && (await oosStock(oosA)) === 3, oosRestock.error);
+    check('A plain adjustment still cannot take stock below zero', (await api('/inventory/adjust', { method: 'POST', token: oosAdmin.token, ...at, body: { variantId: oosA._id, mode: 'delta', value: -10, reason: 'Too much' } })).status >= 400 && (await oosStock(oosA)) === 3);
+    const oosNowIn = await sell(oosCashier.token, oosA._id);
+    check('Back in stock, the cashier sells it normally with no override flag', oosNowIn.status === 201 && !oosNowIn.data?.items?.[0]?.outOfStockOverride, oosNowIn.error);
+    const oosSummary = (await api('/inventory/summary', { token: oosAdmin.token, ...at })).data;
+    check('Stock value totals never go negative', oosSummary?.stockValueMinor >= 0 && oosSummary?.totalUnits >= 0, oosSummary);
+  }
+
+  // --- Clothing POS loyalty program -----------------------------------------
+  section('Clothing POS: loyalty points, membership cards and barcodes');
+  {
+    const loyStamp = String(Date.now()).slice(-7);
+    const loyPlatform = await login('platform@pos.dev', 'Platform@123');
+    const loyPlans = (await api('/plans', {})).data ?? [];
+    const loySetPlan = (tenantId, code) =>
+      api('/platform/subscriptions', { method: 'POST', token: loyPlatform.token, body: { tenantId, planId: loyPlans.find((p) => p.code === code)._id, periods: 1, status: 'active', autoRenew: false } });
+    const loyReg = await api('/auth/register', { method: 'POST', body: { businessName: `Loyal Wear ${loyStamp}`, name: 'Loyal Owner', email: `loy${loyStamp}@example.com`, password: 'Password@123', vertical: 'clothing' } });
+    const loyOwner = loyReg.data?.tokens?.accessToken;
+    const loyTenantId = loyReg.data?.tenant?.id ?? loyReg.data?.tenant?._id;
+    const loyStoreA = (await api('/stores', { method: 'POST', token: loyOwner, body: { name: 'Loyal Main', code: `LY${loyStamp}`, currency: 'BDT' } })).data;
+    check('A fresh Clothing workspace is set up for loyalty tests', Boolean(loyOwner && loyStoreA?._id), loyReg.error);
+    const A = { storeId: loyStoreA._id };
+    const key = (label) => `loy${loyStamp}${label}`.replace(/[^A-Za-z0-9_-]/g, '');
+
+    // ---- Starter: nothing works ----
+    await loySetPlan(loyTenantId, 'starter-store-monthly');
+    const loyStarterSummary = await api('/loyalty/summary', { token: loyOwner, ...A });
+    check('Starter: loyalty API is refused with ENTITLEMENT_REQUIRED', loyStarterSummary.status === 403 && loyStarterSummary.error?.code === 'ENTITLEMENT_REQUIRED', loyStarterSummary.error);
+    check('Starter: card lookup is refused', (await api('/loyalty/lookup?code=2990000000000', { token: loyOwner, ...A })).status === 403);
+    check('Starter: loyalty settings cannot be saved', (await api('/stores/current', { method: 'PATCH', token: loyOwner, ...A, body: { loyalty: { enabled: true } } })).status === 403);
+    check('Starter: POS config reports loyalty unavailable', (await api('/stores/pos-config', { token: loyOwner, ...A })).data?.loyalty?.available === false);
+
+    // ---- Professional ----
+    await loySetPlan(loyTenantId, 'showroom-monthly');
+    check('Professional: loyalty API is available', (await api('/loyalty/summary', { token: loyOwner, ...A })).status === 200);
+    const loyDefaults = (await api('/stores/current', { token: loyOwner, ...A })).data?.loyalty;
+    check('Defaults: ৳100 = 1 point, 1 point = ৳1, no fee, program off', loyDefaults?.earnSpendMinor === 10000 && loyDefaults?.pointValueMinor === 100 && loyDefaults?.membershipFeeMinor === 0 && loyDefaults?.enabled === false, loyDefaults);
+    check('Settings refuse ৳0 = 1 point', (await api('/stores/current', { method: 'PATCH', token: loyOwner, ...A, body: { loyalty: { earnSpendMinor: 0 } } })).status === 422);
+    check('Settings refuse a negative point value', (await api('/stores/current', { method: 'PATCH', token: loyOwner, ...A, body: { loyalty: { pointValueMinor: -100 } } })).status === 422);
+    check('Settings refuse a fractional-poisha value', (await api('/stores/current', { method: 'PATCH', token: loyOwner, ...A, body: { loyalty: { pointValueMinor: 0.5 } } })).status === 422);
+
+    const loyCust = async (name, phone) => (await api('/customers', { method: 'POST', token: loyOwner, ...A, body: { name, phone } })).data;
+    const john = await loyCust('John Loyal', `0171${loyStamp}`);
+    const loyDisabledIssue = await api('/loyalty/memberships', { method: 'POST', token: loyOwner, ...A, body: { customerId: john._id, idempotencyKey: key('off') } });
+    check('Cards cannot be issued while the program is switched off', loyDisabledIssue.status === 400, loyDisabledIssue.error);
+    const loyEnable = await api('/stores/current', { method: 'PATCH', token: loyOwner, ...A, body: { loyalty: { enabled: true, membershipFeeMinor: 20000 } } });
+    check('Owner enables the program with a ৳200 membership fee', loyEnable.status === 200 && loyEnable.data?.loyalty?.membershipFeeMinor === 20000, loyEnable.error);
+    check('POS config now reports loyalty available with the point value', (await api('/stores/pos-config', { token: loyOwner, ...A })).data?.loyalty?.available === true);
+
+    const loyProduct = async (name, price, stock) =>
+      (await api('/products', { method: 'POST', token: loyOwner, ...A, body: { name: `${name} ${loyStamp}`, variants: [{ attributes: [], sellingPriceMinor: price, costPriceMinor: 1000, stock }] } })).data?.variants?.[0]?._id;
+    const pShirt = await loyProduct('Loyal Shirt', 100000, 100);
+    const pTee = await loyProduct('Loyal Tee', 50000, 100);
+    const pRare = await loyProduct('Loyal Rare', 50000, 1);
+    const sell = (body, token = loyOwner, extra = A) => api('/sales', { method: 'POST', token, ...extra, body: { paymentMethod: 'cash', ...body } });
+
+    // ---- phone / customer alone never earns ----
+    const loyPhoneSale = await sell({ items: [{ variantId: pShirt, quantity: 1 }], customerId: john._id });
+    check('A customer (with a phone) but no card earns nothing', loyPhoneSale.status === 201 && loyPhoneSale.data?.loyalty === null, loyPhoneSale.error);
+    const loyNewCust = await sell({ items: [{ variantId: pShirt, quantity: 1 }], customer: { name: 'Walk In', phone: `0181${loyStamp}` } });
+    check('Entering a phone at checkout creates no card and no points', loyNewCust.status === 201 && loyNewCust.data?.loyalty === null && (await api('/loyalty/summary', { token: loyOwner, ...A })).data?.totalMembers === 0);
+
+    // ---- issuing a card: only with the fee paid ----
+    check('Issuing without the fee is refused', (await api('/loyalty/memberships', { method: 'POST', token: loyOwner, ...A, body: { customerId: john._id, idempotencyKey: key('nofee') } })).status === 422);
+    check('A payment that does not match the fee is refused', (await api('/loyalty/memberships', { method: 'POST', token: loyOwner, ...A, body: { customerId: john._id, payments: [{ method: 'cash', amountMinor: 10000 }], idempotencyKey: key('short') } })).status === 422);
+    check('Client-set points, barcode or fee are refused', (await api('/loyalty/memberships', { method: 'POST', token: loyOwner, ...A, body: { customerId: john._id, payments: [{ method: 'cash', amountMinor: 20000 }], idempotencyKey: key('forge'), pointsBalance: 5000, barcode: '2991234567890', membershipFeeMinor: 0 } })).status === 422);
+    check('No card exists after the refused attempts', (await api('/loyalty/summary', { token: loyOwner, ...A })).data?.totalMembers === 0);
+    const loyIssue = await api('/loyalty/memberships', { method: 'POST', token: loyOwner, ...A, body: { customerId: john._id, payments: [{ method: 'cash', amountMinor: 20000 }], cashTenderedMinor: 50000, idempotencyKey: key('john') } });
+    const card = loyIssue.data;
+    check('Card issued once the ৳200 fee is paid: ACTIVE, 0 points, change ৳300', loyIssue.status === 201 && card?.status === 'active' && card.pointsBalance === 0 && card.membershipFeeMinor === 20000 && card.feeChangeMinor === 30000, loyIssue.error ?? card);
+    const eanOk = (code) => /^299\d{10}$/.test(code) && (10 - (code.slice(0, 12).split('').reduce((a, d, i) => a + Number(d) * (i % 2 ? 3 : 1), 0) % 10)) % 10 === Number(code[12]);
+    check('The card has an opaque EAN-13 barcode (no phone or email in it) and a card number', eanOk(card?.barcode ?? '') && !card.barcode.includes(john.phone.slice(-7)) && /^LM-\d{6}$/.test(card.cardNumber), card);
+    const loyReplay = await api('/loyalty/memberships', { method: 'POST', token: loyOwner, ...A, body: { customerId: john._id, payments: [{ method: 'cash', amountMinor: 20000 }], idempotencyKey: key('john') } });
+    check('Retrying the same issue returns the same card', loyReplay.status === 200 && loyReplay.data?.id === card.id && loyReplay.data?.barcode === card.barcode);
+    check('A second active card for the same customer is refused', (await api('/loyalty/memberships', { method: 'POST', token: loyOwner, ...A, body: { customerId: john._id, payments: [{ method: 'cash', amountMinor: 20000 }], idempotencyKey: key('john2') } })).status === 409);
+    const reprintA = await api(`/loyalty/memberships/${card.id}`, { token: loyOwner, ...A });
+    const reprintB = await api(`/loyalty/memberships/${card.id}`, { token: loyOwner, ...A });
+    check('Reprinting reads the same card: same customer, card number and barcode', reprintA.data?.barcode === card.barcode && reprintB.data?.barcode === card.barcode && reprintB.data?.cardNumber === card.cardNumber && reprintB.data?.customer?.id === john._id);
+
+    // ---- scanning ----
+    const loyScan = await api(`/loyalty/lookup?code=${card.barcode}`, { token: loyOwner, ...A });
+    check('Scanning the barcode loads the right customer and points', loyScan.status === 200 && loyScan.data?.customer?.name === 'John Loyal' && loyScan.data.pointsBalance === 0 && loyScan.data.id === card.id, loyScan.data);
+    check('The printed card number also finds it', (await api(`/loyalty/lookup?code=${card.cardNumber}`, { token: loyOwner, ...A })).data?.id === card.id);
+    const loyBad = await api('/loyalty/lookup?code=2990000000017', { token: loyOwner, ...A });
+    check('An unknown barcode: "Loyalty member not found", nothing created', loyBad.status === 404 && /Loyalty member not found/.test(loyBad.error?.message ?? '') && (await api('/loyalty/summary', { token: loyOwner, ...A })).data?.totalMembers === 1);
+    check("A phone number is not a card", (await api(`/loyalty/lookup?code=${john.phone}`, { token: loyOwner, ...A })).status === 404);
+
+    // ---- earning ----
+    const loySale1 = await sell({ items: [{ variantId: pShirt, quantity: 1 }], loyaltyMembershipId: card.id, idempotencyKey: key('s1') });
+    check('৳1,000 sale with the card earns 10 points (default ৳100 = 1)', loySale1.status === 201 && loySale1.data?.loyalty?.pointsEarned === 10 && loySale1.data.loyalty.balanceAfter === 10, loySale1.error ?? loySale1.data?.loyalty);
+    check('The card attaches its customer to the sale', loySale1.data?.customerId === john._id);
+    const loyHist1 = (await api(`/loyalty/memberships/${card.id}/history`, { token: loyOwner, ...A })).data ?? [];
+    check('Ledger: one earn +10, 0 -> 10, with the sale number', loyHist1.length === 1 && loyHist1[0].type === 'earn' && loyHist1[0].points === 10 && loyHist1[0].balanceBefore === 0 && loyHist1[0].balanceAfter === 10 && loyHist1[0].saleNumber === loySale1.data?.saleNumber, loyHist1);
+    const loyOdd = await sell({ items: [{ variantId: pShirt, quantity: 1, unitPriceMinor: 99900 }], loyaltyMembershipId: card.id });
+    check('৳999 earns 9 points (whole earning units only)', loyOdd.data?.loyalty?.pointsEarned === 9, loyOdd.error);
+    const loyForged = await sell({ items: [{ variantId: pTee, quantity: 1 }], loyaltyMembershipId: card.id, pointsEarned: 10000, loyaltyDiscountMinor: 50000, points: 5000 });
+    check('Client-sent points or discounts are ignored (৳500 earns 5)', loyForged.status === 201 && loyForged.data?.loyalty?.pointsEarned === 5 && loyForged.data.totalMinor === 50000, loyForged.error);
+    check('A card cannot be combined with a different customer', (await sell({ items: [{ variantId: pTee, quantity: 1 }], loyaltyMembershipId: card.id, customerId: loyNewCust.data?.customerId })).status === 422);
+
+    // ---- duplicates ----
+    const loyDup = await sell({ items: [{ variantId: pShirt, quantity: 1 }], loyaltyMembershipId: card.id, idempotencyKey: key('s1') });
+    check('Retrying a checkout returns the same sale (200), no new points', loyDup.status === 200 && loyDup.data?._id === loySale1.data?._id);
+    const loyBurst = await Promise.all([1, 2, 3].map(() => sell({ items: [{ variantId: pTee, quantity: 2 }], loyaltyMembershipId: card.id, idempotencyKey: key('burst') })));
+    const loyBurstIds = new Set(loyBurst.filter((r) => r.data?._id).map((r) => r.data._id));
+    const loyBurstEarns = ((await api(`/loyalty/memberships/${card.id}/history?limit=100`, { token: loyOwner, ...A })).data ?? []).filter((r) => r.type === 'earn' && loyBurstIds.has(r.saleId));
+    check('Three simultaneous identical checkouts: one sale, one earning', loyBurstIds.size === 1 && loyBurstEarns.length === 1, { ids: [...loyBurstIds], earns: loyBurstEarns.length, statuses: loyBurst.map((r) => r.status) });
+    const loyBalanceNow = async () => (await api(`/loyalty/memberships/${card.id}`, { token: loyOwner, ...A })).data?.pointsBalance;
+    const loyLedgerSum = async () => ((await api(`/loyalty/memberships/${card.id}/history?limit=100`, { token: loyOwner, ...A })).data ?? []).reduce((s, r) => s + r.points, 0);
+    check('Balance equals the sum of the ledger', (await loyBalanceNow()) === (await loyLedgerSum()) && (await loyBalanceNow()) === 10 + 9 + 5 + 10);
+
+    // ---- manual adjustment ----
+    check('Adjustment needs a reason', (await api(`/loyalty/memberships/${card.id}/adjust`, { method: 'POST', token: loyOwner, ...A, body: { points: 100, reason: '', idempotencyKey: key('adj0') } })).status === 422);
+    const loyAdj = await api(`/loyalty/memberships/${card.id}/adjust`, { method: 'POST', token: loyOwner, ...A, body: { points: 1000, reason: 'Customer service compensation', idempotencyKey: key('adj1') } });
+    await api(`/loyalty/memberships/${card.id}/adjust`, { method: 'POST', token: loyOwner, ...A, body: { points: 1000, reason: 'Customer service compensation', idempotencyKey: key('adj1') } });
+    check('Owner adjusts +1000 with a reason, once even when retried', loyAdj.status === 200 && (await loyBalanceNow()) === 1034, loyAdj.error);
+    check('An adjustment cannot take the card below zero', (await api(`/loyalty/memberships/${card.id}/adjust`, { method: 'POST', token: loyOwner, ...A, body: { points: -999999, reason: 'Too much', idempotencyKey: key('adj2') } })).status === 422 && (await loyBalanceNow()) === 1034);
+
+    // ---- redemption ----
+    const loyRedeem = await sell({ items: [{ variantId: pTee, quantity: 1 }], loyaltyMembershipId: card.id, redeemPoints: 50 });
+    check('Redeem 50 points on ৳500: ৳50 off, pays ৳450, earns 4, balance 1034 - 50 + 4', loyRedeem.status === 201 && loyRedeem.data?.totalMinor === 45000 && loyRedeem.data.loyalty.discountMinor === 5000 && loyRedeem.data.loyalty.pointsEarned === 4 && loyRedeem.data.loyalty.balanceAfter === 988 && (await loyBalanceNow()) === 988, loyRedeem.error ?? loyRedeem.data?.loyalty);
+    check('The loyalty discount is part of the sale discount total (reports stay right)', loyRedeem.data?.discountMinor === 5000);
+    const loyTooMany = await sell({ items: [{ variantId: pShirt, quantity: 1 }], loyaltyMembershipId: card.id, redeemPoints: 5000 });
+    check('Redeeming more points than the card holds is refused', loyTooMany.status === 422 && loyTooMany.error?.details?.reason === 'LOYALTY_INSUFFICIENT_POINTS' && (await loyBalanceNow()) === 988, loyTooMany.error);
+    const loyTooHigh = await sell({ items: [{ variantId: pTee, quantity: 1 }], loyaltyMembershipId: card.id, redeemPoints: 600 });
+    check('Redeeming more than the sale is worth is refused (৳600 on ৳500)', loyTooHigh.status === 422 && loyTooHigh.error?.details?.reason === 'LOYALTY_REDEMPTION_TOO_HIGH' && (await loyBalanceNow()) === 988, loyTooHigh.error);
+    const loyFull = await sell({ items: [{ variantId: pTee, quantity: 1 }], loyaltyMembershipId: card.id, redeemPoints: 500 });
+    check('Points can cover the whole sale: total ৳0, no payment, earns 0', loyFull.status === 201 && loyFull.data?.totalMinor === 0 && loyFull.data.payments.length === 0 && loyFull.data.loyalty.pointsEarned === 0 && (await loyBalanceNow()) === 488, loyFull.error);
+    check('...and a payment on a fully covered sale is refused', (await sell({ items: [{ variantId: pTee, quantity: 1 }], loyaltyMembershipId: card.id, redeemPoints: 500, payments: [{ method: 'cash', amountMinor: 100 }] })).status === 422);
+    check('Redeeming without a card is refused', (await sell({ items: [{ variantId: pTee, quantity: 1 }], redeemPoints: 10 })).status === 422);
+    const loyStockBefore = (await api(`/products/pos-search?q=Loyal Rare&limit=5`, { token: loyOwner, ...A })).data?.[0]?.stock;
+    const loyFailed = await api('/sales', { method: 'POST', token: loyOwner, ...A, body: { paymentMethod: 'cash', items: [{ variantId: pTee, quantity: 1 }, { variantId: pRare, quantity: 5 }], loyaltyMembershipId: card.id, redeemPoints: 100 } });
+    check('A sale that fails (not enough stock) keeps the points: none deducted or earned', loyFailed.status >= 400 && (await loyBalanceNow()) === 488 && (await loyBalanceNow()) === (await loyLedgerSum()), loyFailed.error);
+    check('...and its stock is untouched', (await api(`/products/pos-search?q=Loyal Rare&limit=5`, { token: loyOwner, ...A })).data?.[0]?.stock === loyStockBefore);
+
+    // ---- concurrent redemption ----
+    await api(`/loyalty/memberships/${card.id}/adjust`, { method: 'POST', token: loyOwner, ...A, body: { points: -388, reason: 'Set up race test', idempotencyKey: key('adj3') } });
+    const loyRace = await Promise.all([1, 2].map(() => sell({ items: [{ variantId: pTee, quantity: 1 }], loyaltyMembershipId: card.id, redeemPoints: 80 })));
+    const loyRaceWon = loyRace.filter((r) => r.status === 201);
+    check('Two tills redeeming 80 of 100 points at once: only one succeeds', loyRaceWon.length === 1 && (await loyBalanceNow()) === 100 - 80 + loyRaceWon[0].data.loyalty.pointsEarned, loyRace.map((r) => r.status));
+    check('Balance still equals the ledger after the race', (await loyBalanceNow()) === (await loyLedgerSum()));
+
+    // ---- returns ----
+    await api(`/loyalty/memberships/${card.id}/adjust`, { method: 'POST', token: loyOwner, ...A, body: { points: 1000, reason: 'Set up return tests', idempotencyKey: key('adj4') } });
+    const loyRetSale = await sell({ items: [{ variantId: pTee, quantity: 4 }], loyaltyMembershipId: card.id });
+    const retItem = loyRetSale.data?.items?.[0]?._id;
+    check('৳2,000 sale earns 20', loyRetSale.data?.loyalty?.pointsEarned === 20);
+    let bal = await loyBalanceNow();
+    const loyRet1 = await api('/returns', { method: 'POST', token: loyOwner, ...A, body: { saleId: loyRetSale.data._id, items: [{ saleItemId: retItem, quantity: 1 }], refundMethod: 'cash' } });
+    check('Returning ৳500 of it takes back 5 points (kept ৳1,500 earns 15), refund ৳500', loyRet1.status === 201 && loyRet1.data?.loyalty?.pointsEarnedReversed === 5 && loyRet1.data.totalMinor === 50000 && (await loyBalanceNow()) === bal - 5, loyRet1.error ?? loyRet1.data?.loyalty);
+    const loyRet2 = await api('/returns', { method: 'POST', token: loyOwner, ...A, body: { saleId: loyRetSale.data._id, items: [{ saleItemId: retItem, quantity: 3 }], refundMethod: 'cash' } });
+    check('Returning the rest takes back the other 15 (20 in total, never more)', loyRet2.status === 201 && loyRet2.data?.loyalty?.pointsEarnedReversed === 15 && (await loyBalanceNow()) === bal - 20, loyRet2.error);
+
+    bal = await loyBalanceNow();
+    const loyRedeemRet = await sell({ items: [{ variantId: pTee, quantity: 2 }], loyaltyMembershipId: card.id, redeemPoints: 200 });
+    check('৳1,000 sale with 200 points redeemed: pays ৳800, earns 8', loyRedeemRet.data?.totalMinor === 80000 && loyRedeemRet.data.loyalty.pointsEarned === 8, loyRedeemRet.error);
+    bal = await loyBalanceNow();
+    const rrItem = loyRedeemRet.data?.items?.[0]?._id;
+    const loyRR1 = await api('/returns', { method: 'POST', token: loyOwner, ...A, body: { saleId: loyRedeemRet.data._id, items: [{ saleItemId: rrItem, quantity: 1 }], refundMethod: 'cash' } });
+    check('Returning half: 100 redeemed points given back, cash refund ৳400 (not ৳500), 4 earned taken back', loyRR1.status === 201 && loyRR1.data?.loyalty?.pointsRedeemedRestored === 100 && loyRR1.data.totalMinor === 40000 && loyRR1.data.loyalty.pointsEarnedReversed === 4 && (await loyBalanceNow()) === bal + 100 - 4, loyRR1.error ?? loyRR1.data?.loyalty);
+    const loyRR2 = await api('/returns', { method: 'POST', token: loyOwner, ...A, body: { saleId: loyRedeemRet.data._id, items: [{ saleItemId: rrItem, quantity: 1 }], refundMethod: 'cash' } });
+    check('Returning the rest: the other 100 back, ৳400 refund; the sale is fully undone on the card', loyRR2.status === 201 && loyRR2.data?.totalMinor === 40000 && (await loyBalanceNow()) === bal + 200 - 8, loyRR2.error);
+    const loyReturnable = await api(`/returns/returnable/${loyRedeemRet.data._id}`, { token: loyOwner, ...A });
+    check('The returnable-sale view carries the loyalty figures for the preview', loyReturnable.data?.sale?.loyalty?.pointsRedeemed === 200, loyReturnable.error);
+
+    // ---- cancellation ----
+    bal = await loyBalanceNow();
+    const loyCancelSale = await sell({ items: [{ variantId: pShirt, quantity: 1 }], loyaltyMembershipId: card.id, redeemPoints: 30 });
+    const loyCancel = await api(`/sales/${loyCancelSale.data?._id}/cancel`, { method: 'POST', token: loyOwner, ...A, body: { reason: 'Customer changed mind' } });
+    check('Cancelling a loyalty sale restores the card exactly (redeemed back, earned taken back)', loyCancel.status === 200 && (await loyBalanceNow()) === bal && (await loyBalanceNow()) === (await loyLedgerSum()), loyCancel.error);
+
+    // ---- exchange ----
+    bal = await loyBalanceNow();
+    const loyExSale = await sell({ items: [{ variantId: pTee, quantity: 1 }], loyaltyMembershipId: card.id });
+    const loyEx = await api('/returns', {
+      method: 'POST',
+      token: loyOwner,
+      ...A,
+      body: { saleId: loyExSale.data?._id, items: [{ saleItemId: loyExSale.data?.items?.[0]?._id, quantity: 1 }], refundMethod: 'exchange', exchange: { items: [{ variantId: pShirt, quantity: 1 }], payments: [{ method: 'cash', amountMinor: 50000 }], idempotencyKey: key('ex1') } },
+    });
+    check('Exchange ৳500 tee -> ৳1,000 shirt: tee points (5) taken back, shirt earns 10 - no double award', loyEx.status === 201 && loyEx.data?.loyalty?.pointsEarnedReversed === 5 && loyEx.data?.replacementSale?.loyalty?.pointsEarned === 10 && (await loyBalanceNow()) === bal + 5 - 5 + 10, loyEx.error ?? { r: loyEx.data?.loyalty, s: loyEx.data?.replacementSale?.loyalty });
+
+    // ---- inactive card ----
+    const loyDeact = await api(`/loyalty/memberships/${card.id}/status`, { method: 'POST', token: loyOwner, ...A, body: { status: 'inactive', reason: 'Card reported lost' } });
+    check('Owner deactivates the card; points and history are kept', loyDeact.status === 200 && loyDeact.data?.status === 'inactive' && loyDeact.data.pointsBalance === (await loyLedgerSum()));
+    check('An inactive card cannot earn or redeem', (await sell({ items: [{ variantId: pTee, quantity: 1 }], loyaltyMembershipId: card.id })).status === 400);
+    check('...and scanning it shows it as inactive', (await api(`/loyalty/lookup?code=${card.barcode}`, { token: loyOwner, ...A })).data?.status === 'inactive');
+    check('Reactivating works', (await api(`/loyalty/memberships/${card.id}/status`, { method: 'POST', token: loyOwner, ...A, body: { status: 'active', reason: 'Card found' } })).data?.status === 'active');
+
+    // ---- barcode uniqueness ----
+    await api('/stores/current', { method: 'PATCH', token: loyOwner, ...A, body: { loyalty: { membershipFeeMinor: 0 } } });
+    const loyMany = [];
+    for (let i = 0; i < 6; i += 1) {
+      const c = await loyCust(`Member ${i}`, `0191${loyStamp.slice(-6)}${i}`);
+      loyMany.push((await api('/loyalty/memberships', { method: 'POST', token: loyOwner, ...A, body: { customerId: c._id, idempotencyKey: key(`m${i}`) } })).data);
+    }
+    const loyCodes = loyMany.map((m) => m?.barcode);
+    check('Free cards issue without payment; every barcode and card number is unique and valid', loyCodes.every(eanOk) && new Set(loyCodes).size === 6 && new Set(loyMany.map((m) => m?.cardNumber)).size === 6, loyCodes);
+    check('A payment on a free card is refused', (await api('/loyalty/memberships', { method: 'POST', token: loyOwner, ...A, body: { customerId: (await loyCust('Free Pay', `0161${loyStamp}`))._id, payments: [{ method: 'cash', amountMinor: 100 }], idempotencyKey: key('freepay') } })).status === 422);
+
+    // ---- permissions ----
+    const loyRoles = (await api('/roles', { token: loyOwner, ...A })).data ?? [];
+    const cashierRole = loyRoles.find((r) => r.name === 'Cashier');
+    check('Default roles: Cashier redeems; Senior views; Manager manages', cashierRole?.permissions.includes('loyalty.redeem') && !cashierRole.permissions.includes('loyalty.manage') && loyRoles.find((r) => r.name === 'Store Manager')?.permissions.includes('loyalty.manage') && loyRoles.find((r) => r.name === 'Senior Cashier')?.permissions.includes('loyalty.view'));
+    await api('/staff', { method: 'POST', token: loyOwner, ...A, body: { name: 'Loyal Cashier', email: `loyc${loyStamp}@example.com`, password: 'Password@123', storeId: loyStoreA._id, roleId: cashierRole?._id } });
+    await api('/staff', { method: 'POST', token: loyOwner, ...A, body: { name: 'Plain Seller', email: `loyp${loyStamp}@example.com`, password: 'Password@123', storeId: loyStoreA._id, extraPermissions: ['sales.create', 'sales.view', 'products.view'] } });
+    const loyCashier = (await login(`loyc${loyStamp}@example.com`, 'Password@123')).token;
+    const loyPlain = (await login(`loyp${loyStamp}@example.com`, 'Password@123')).token;
+    check('Cashier cannot issue cards', (await api('/loyalty/memberships', { method: 'POST', token: loyCashier, ...A, body: { customerId: john._id, idempotencyKey: key('cash1') } })).status === 403);
+    check('Cashier cannot adjust points', (await api(`/loyalty/memberships/${card.id}/adjust`, { method: 'POST', token: loyCashier, ...A, body: { points: 10000, reason: 'Free points please', idempotencyKey: key('cash2') } })).status === 403);
+    check('Cashier cannot deactivate cards', (await api(`/loyalty/memberships/${card.id}/status`, { method: 'POST', token: loyCashier, ...A, body: { status: 'inactive', reason: 'nope' } })).status === 403);
+    check('Cashier cannot list members', (await api('/loyalty/memberships', { token: loyCashier, ...A })).status === 403);
+    check('Cashier CAN scan a card at the till', (await api(`/loyalty/lookup?code=${card.barcode}`, { token: loyCashier, ...A })).status === 200);
+    check('Cashier CAN redeem points', (await sell({ items: [{ variantId: pTee, quantity: 1 }], loyaltyMembershipId: card.id, redeemPoints: 10 }, loyCashier)).status === 201);
+    check('Staff without loyalty.redeem cannot redeem', (await sell({ items: [{ variantId: pTee, quantity: 1 }], loyaltyMembershipId: card.id, redeemPoints: 10 }, loyPlain)).status === 403);
+    check('...but their card sale still earns points', (await sell({ items: [{ variantId: pTee, quantity: 1 }], loyaltyMembershipId: card.id }, loyPlain)).data?.loyalty?.pointsEarned === 5);
+    check('Settings need settings.edit', (await api('/stores/current', { method: 'PATCH', token: loyCashier, ...A, body: { loyalty: { pointValueMinor: 100000 } } })).status === 403);
+
+    // ---- branch isolation ----
+    const loyStoreB = (await api('/stores', { method: 'POST', token: loyOwner, body: { name: 'Loyal Two', code: `LZ${loyStamp}`, currency: 'BDT' } })).data;
+    const B = { storeId: loyStoreB?._id };
+    await api('/stores/current', { method: 'PATCH', token: loyOwner, ...B, body: { loyalty: { enabled: true } } });
+    check("Another branch cannot find this branch's card", (await api(`/loyalty/lookup?code=${card.barcode}`, { token: loyOwner, ...B })).status === 404);
+    const loyBShirt = (await api('/products', { method: 'POST', token: loyOwner, ...B, body: { name: `B Shirt ${loyStamp}`, variants: [{ attributes: [], sellingPriceMinor: 100000, stock: 10 }] } })).data?.variants?.[0]?._id;
+    check("Another branch cannot use this branch's card on a sale", (await sell({ items: [{ variantId: loyBShirt, quantity: 1 }], loyaltyMembershipId: card.id, redeemPoints: 10 }, loyOwner, B)).status === 400);
+    check("Another branch cannot issue a card to this branch's customer", (await api('/loyalty/memberships', { method: 'POST', token: loyOwner, ...B, body: { customerId: john._id, idempotencyKey: key('crossb') } })).status === 400);
+    check('The cashier cannot reach the other branch at all', (await api(`/loyalty/lookup?code=${card.barcode}`, { token: loyCashier, ...B })).status === 403);
+
+    // ---- downgrade keeps the data ----
+    const loyKeep = await loyBalanceNow();
+    await loySetPlan(loyTenantId, 'starter-store-monthly');
+    check('After a downgrade to Starter the loyalty API is refused', (await api(`/loyalty/memberships/${card.id}`, { token: loyOwner, ...A })).status === 403);
+    check('...and a card sale is refused', (await sell({ items: [{ variantId: pTee, quantity: 1 }], loyaltyMembershipId: card.id })).status === 403);
+    check('...but ordinary sales still work', (await sell({ items: [{ variantId: pTee, quantity: 1 }] })).status === 201);
+    await loySetPlan(loyTenantId, 'brand-monthly');
+    const loyBack = await api(`/loyalty/memberships/${card.id}`, { token: loyOwner, ...A });
+    check('Enterprise: loyalty is available and the card, points and history are all still there', loyBack.status === 200 && loyBack.data?.pointsBalance === loyKeep && (await loyLedgerSum()) === loyKeep, loyBack.error);
+  }
+
   // --- the new workspace, from inside ---------------------------------------
   const wcSwitch = await api('/auth/switch-workspace', { method: 'POST', token: wcHomeToken, body: { workspaceId: wcSecondId } });
   const wcToken = wcSwitch.data?.tokens?.accessToken;
@@ -7900,6 +8688,7 @@ async function main() {
     'server/src/modules/reports/reports.routes.ts',
     'server/src/modules/roles/roles.routes.ts',
     'server/src/modules/uploads/uploads.routes.ts',
+    'server/src/modules/loyalty/loyalty.routes.ts',
   ]
     .map((file) => readFileSync(new URL(`../${file}`, import.meta.url), 'utf8'))
     .join('\n');

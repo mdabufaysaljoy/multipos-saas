@@ -54,7 +54,7 @@ export function groupVariantsByProduct(variants: PosVariant[]): PosProductGroup[
       categoryName: first.categoryName,
       imageUrl: group.find((v) => v.imageUrl)?.imageUrl ?? null,
       variants: group,
-      totalStock: group.reduce((sum, v) => sum + v.stock, 0),
+      totalStock: group.reduce((sum, v) => sum + Math.max(v.stock, 0), 0),
       minPriceMinor: Math.min(...prices),
       maxPriceMinor: Math.max(...prices),
       chipLabel: axisName,

@@ -37,6 +37,8 @@ export interface PlanFeatures {
    * high-resolution photo costs a fraction of the quota.
    */
   imageOptimization: boolean;
+  /** Loyalty points and membership cards (Clothing POS). Professional and Enterprise. */
+  loyaltyProgram: boolean;
 }
 
 /**
@@ -117,6 +119,7 @@ const planSchema = new Schema<SubscriptionPlanDoc>(
       smsMarketing: { type: Boolean, default: false },
       emailMarketing: { type: Boolean, default: false },
       imageOptimization: { type: Boolean, default: false },
+      loyaltyProgram: { type: Boolean, default: false },
     },
     limits: {
       maxStaff: { type: Number, default: 2 },

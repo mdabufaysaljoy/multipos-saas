@@ -5,7 +5,7 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import { toast } from 'sonner';
 import { format } from 'date-fns';
-import { Pencil, Plus, Trash2, UsersRound } from 'lucide-react';
+import { Gift, Pencil, Plus, Trash2, UsersRound } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import {
@@ -30,6 +30,8 @@ import { customerApi } from '@/api/endpoints';
 import { formatMoney } from '@/lib/money';
 import { useAuth } from '@/hooks/useAuth';
 import type { Customer } from '@/types/domain';
+import { CustomerLoyaltyDialog } from '@/features/loyalty/CustomerLoyaltyDialog';
+import { useLoyaltyAccess } from '@/features/loyalty/useLoyaltyAccess';
 
 const schema = z.object({
   name: z.string().trim().min(1, 'Name is required').max(160),
@@ -51,6 +53,8 @@ export function CustomersPage() {
   const [editing, setEditing] = React.useState<Customer | null>(null);
   const [dialogOpen, setDialogOpen] = React.useState(false);
   const [deleting, setDeleting] = React.useState<Customer | null>(null);
+  const [loyaltyFor, setLoyaltyFor] = React.useState<Customer | null>(null);
+  const loyalty = useLoyaltyAccess();
 
   const { data, isLoading, error, refetch } = useQuery({
     queryKey: ['customers', page, search],
@@ -135,6 +139,11 @@ export function CustomersPage() {
       className: 'text-right',
       cell: (row) => (
         <div className="flex justify-end gap-1">
+          {loyalty.inPlan && (loyalty.canView || loyalty.canManage) && (
+            <Button variant="ghost" size="icon-sm" onClick={() => setLoyaltyFor(row)} aria-label="Loyalty membership" title="Loyalty membership">
+              <Gift />
+            </Button>
+          )}
           <PermissionGate anyOf={['customers.edit']}>
             <Button variant="ghost" size="icon-sm" onClick={() => openEdit(row)} aria-label="Edit customer">
               <Pencil />
@@ -196,6 +205,8 @@ export function CustomersPage() {
           }
         />
       </Card>
+
+      <CustomerLoyaltyDialog customer={loyaltyFor} currency={currency} onClose={() => setLoyaltyFor(null)} />
 
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
         <DialogContent>

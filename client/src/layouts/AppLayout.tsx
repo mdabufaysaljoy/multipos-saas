@@ -27,6 +27,7 @@ import {
   Store,
   Tags,
   Users,
+  Gift,
   UsersRound,
   Wallet,
   X,
@@ -99,6 +100,7 @@ const NAV_SECTIONS: { heading: string; items: NavItem[] }[] = [
     heading: 'People',
     items: [
       { to: '/customers', label: 'Customers', icon: UsersRound, anyOf: ['customers.view'] },
+      { to: '/loyalty', label: 'Loyalty', icon: Gift, anyOf: ['loyalty.view', 'loyalty.manage'], feature: 'loyaltyProgram', verticals: ['clothing'] },
       { to: '/marketing', label: 'Marketing', icon: Megaphone, anyOf: ['marketing.view'] },
       { to: '/staff', label: 'Staff', icon: Users, anyOf: ['staff.view'] },
       { to: '/roles', label: 'Roles', icon: ShieldCheck, anyOf: ['roles.view'] },
@@ -377,7 +379,10 @@ export function AppLayout() {
           </div>
         )}
 
-        <main className="scrollbar-thin flex-1 overflow-y-auto">
+        {/* `relative`: the content area is the containing block for anything
+            absolutely positioned on a page, so nothing can stretch the document
+            past the app shell and leave a blank band below it. */}
+        <main className="scrollbar-thin relative flex-1 overflow-y-auto">
           {/* A screen from another POS vertical is never rendered; the API refuses it too. */}
           {isPathAllowedForVertical(location.pathname, session?.tenant?.vertical) ? (
             // Inside the shell, so the sidebar stays put while a page's code loads.

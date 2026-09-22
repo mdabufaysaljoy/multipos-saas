@@ -1,5 +1,7 @@
+import { assertEntitlement, hasEntitlement } from '../../services/entitlements/entitlementEngine';
+import { DEFAULT_LOYALTY_SETTINGS } from '../loyalty/loyalty.service';
 import { Types } from 'mongoose';
-import { StoreModel } from '../../models/Store';
+import { DEFAULT_LABEL_SETTINGS, StoreModel } from '../../models/Store';
 import { SaleModel } from '../../models/Sale';
 import { UserModel } from '../../models/User';
 import { ApiError } from '../../utils/ApiError';
@@ -24,7 +26,7 @@ class StoreService {
    */
   async posConfig(tenantId: Types.ObjectId, storeId: Types.ObjectId) {
     const store = await StoreModel.findOne({ _id: storeId, tenantId, deletedAt: null })
-      .select('name currency paymentMethods tax receipt lowStockThreshold logoUrl receiptLogoUrl')
+      .select('name currency paymentMethods tax receipt lowStockThreshold logoUrl receiptLogoUrl loyalty labels')
       .lean();
     if (!store) throw ApiError.notFound('Store not found');
 
@@ -38,13 +40,23 @@ class StoreService {
       lowStockThreshold: store.lowStockThreshold,
       logoUrl: store.logoUrl,
       receiptLogoUrl: store.receiptLogoUrl,
+      // Every till prints labels, so the sizes travel with the POS config.
+      labels: { ...DEFAULT_LABEL_SETTINGS, ...(store.labels ?? {}) },
+      // What the till needs to show and redeem points. Off unless the plan includes it AND the owner enabled it.
+      loyalty: {
+        available: Boolean(store.loyalty?.enabled) && (await hasEntitlement(tenantId, 'loyalty')),
+        pointValueMinor: store.loyalty?.pointValueMinor ?? 100,
+        earnSpendMinor: store.loyalty?.earnSpendMinor ?? 10_000,
+        membershipFeeMinor: store.loyalty?.membershipFeeMinor ?? 0,
+      },
     };
   }
 
   async getById(tenantId: Types.ObjectId, storeId: Types.ObjectId) {
     const store = await StoreModel.findOne({ _id: storeId, tenantId, deletedAt: null }).lean();
     if (!store) throw ApiError.notFound('Store not found');
-    return store;
+    // Older stores have no label block yet; the settings screen always gets a complete one.
+    return { ...store, labels: { ...DEFAULT_LABEL_SETTINGS, ...(store.labels ?? {}) } };
   }
 
   /**
@@ -155,6 +167,14 @@ class StoreService {
     // receipt block cannot silently clear the footer.
     if (input.receipt) Object.assign(store.receipt, input.receipt);
     if (input.tax) Object.assign(store.tax, input.tax);
+    // Stores created before label settings existed have no block, so merge onto the defaults.
+    if (input.labels) store.set('labels', { ...DEFAULT_LABEL_SETTINGS, ...(store.labels ?? {}), ...input.labels });
+    if (input.loyalty) {
+      // Loyalty rules are part of the plan, not just the settings screen.
+      await assertEntitlement(ctx.tenantId, 'loyalty');
+      // Stores created before loyalty existed have no block at all, so merge onto the defaults.
+      store.set('loyalty', { ...DEFAULT_LOYALTY_SETTINGS, ...(store.loyalty ?? {}), ...input.loyalty });
+    }
 
     if (input.isActive !== undefined && input.isActive !== store.isActive) {
       if (!input.isActive) {

@@ -60,6 +60,7 @@ const NO_PLAN_FEATURES: PlanFeatures = {
   smsMarketing: false,
   emailMarketing: false,
   imageOptimization: false,
+  loyaltyProgram: false,
 };
 
 const NO_PLAN_LIMITS: PlanLimits = {
@@ -105,6 +106,7 @@ const normalizeFeatures = (features: Partial<PlanFeatures> | null | undefined): 
   smsMarketing: features?.smsMarketing ?? false,
   emailMarketing: features?.emailMarketing ?? false,
   imageOptimization: features?.imageOptimization ?? false,
+  loyaltyProgram: features?.loyaltyProgram ?? false,
 });
 
 /**

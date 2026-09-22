@@ -25,7 +25,11 @@ export function PlanComparisonTable({
     /* A bounded scroll box, so the sticky header has something to stick to:
        `overflow-x` alone makes the wrapper the containing block and the header
        scrolls away with the page, 50 rows into a comparison. */
-    <div className="max-h-[75vh] overflow-auto rounded-lg border">
+    /* `relative` keeps the visually hidden cell labels (`sr-only`, which are
+       absolutely positioned) inside this scroll box. Without it they were
+       placed against the page and stretched it to the table's full unclipped
+       height - a long blank scroll below the app on the subscription page. */
+    <div className="relative max-h-[75vh] overflow-auto rounded-lg border">
       <table className="w-full min-w-[560px] border-collapse text-sm">
         <thead className="sticky top-0 z-20">
           <tr>

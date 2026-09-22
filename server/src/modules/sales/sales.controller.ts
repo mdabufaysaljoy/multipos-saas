@@ -8,7 +8,10 @@ import { saleService } from './sales.service';
 import type { CancelSaleInput, CreateSaleInput, ListSalesInput } from './sales.validators';
 
 export const create = asyncHandler(async (req: Request, res: Response) => {
-  created(res, await saleService.create(getContext(req), body<CreateSaleInput>(req)));
+  const sale = await saleService.create(getContext(req), body<CreateSaleInput>(req));
+  // A retried checkout gets the sale it already created, with 200 rather than 201.
+  if ('replayed' in sale && sale.replayed) return ok(res, sale);
+  created(res, sale);
 });
 
 export const list = asyncHandler(async (req: Request, res: Response) => {

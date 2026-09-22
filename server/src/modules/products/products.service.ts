@@ -20,6 +20,7 @@ import type {
   UpdateProductInput,
   UpdateVariantInput,
   VariantInput,
+  PosCatalogInput,
 } from './products.validators';
 
 /**
@@ -42,6 +43,41 @@ const variantSkuSuffix = (attributes: { name: string; value: string }[], index: 
   attributes.length === 0
     ? 'STD'
     : attributes.map((a) => codeFromName(a.value, 3)).join('-') || `V${index + 1}`;
+
+/** One sellable unit as the POS sees it. Shared by the search and the product grid. */
+function presentPosVariant(
+  variant: {
+    _id: unknown;
+    productId: unknown;
+    name: string;
+    attributes: unknown;
+    sku: string;
+    barcode?: string | null;
+    sellingPriceMinor: number;
+    costPriceMinor: number;
+    stock: number;
+    lowStockThreshold: number;
+  },
+  product: { name: string; brand?: string; categoryId?: unknown; categoryNameSnapshot?: string; images?: { url: string; isPrimary?: boolean }[] },
+) {
+  return {
+    variantId: variant._id,
+    productId: variant.productId,
+    productName: product.name,
+    variantName: variant.name,
+    attributes: variant.attributes,
+    sku: variant.sku,
+    barcode: variant.barcode,
+    brand: product.brand,
+    categoryId: product.categoryId,
+    categoryName: product.categoryNameSnapshot,
+    imageUrl: product.images?.find((i) => i.isPrimary)?.url ?? product.images?.[0]?.url ?? null,
+    sellingPriceMinor: variant.sellingPriceMinor,
+    costPriceMinor: variant.costPriceMinor,
+    stock: variant.stock,
+    lowStockThreshold: variant.lowStockThreshold,
+  };
+}
 
 class ProductService {
   private scope(ctx: TenantContext) {
@@ -70,7 +106,7 @@ class ProductService {
 
     // Stock filters apply to the aggregate across a product's variants.
     const filtered = withVariants.filter((product) => {
-      if (input.outOfStockOnly) return product.totalStock === 0;
+      if (input.outOfStockOnly) return product.totalStock <= 0;
       if (input.lowStockOnly) return product.hasLowStock;
       return true;
     });
@@ -418,21 +454,20 @@ class ProductService {
     }
     if (input.inStockOnly) filter.stock = { $gt: 0 };
 
-    let variants = await ProductVariantModel.find(filter).limit(input.limit).sort({ productNameSnapshot: 1, name: 1 }).lean();
-
-    // Category is a product-level attribute, so filter after the variant query.
+    // Category is a product-level attribute. It is resolved BEFORE the limit:
+    // filtering afterwards judged a category on whichever variants happened to
+    // fall inside the first N, so most of its products never appeared.
     if (input.categoryId) {
       const productIds = await ProductModel.find({
         tenantId: ctx.tenantId,
         storeId: ctx.storeId,
         categoryId: input.categoryId,
         deletedAt: null,
-      })
-        .select('_id')
-        .lean();
-      const allowed = new Set(productIds.map((p) => String(p._id)));
-      variants = variants.filter((v) => allowed.has(String(v.productId)));
+      }).distinct('_id');
+      filter.productId = { $in: productIds };
     }
+
+    const variants = await ProductVariantModel.find(filter).limit(input.limit).sort({ productNameSnapshot: 1, name: 1 }).lean();
 
     const products = await ProductModel.find({
       _id: { $in: [...new Set(variants.map((v) => v.productId))] },
@@ -447,26 +482,62 @@ class ProductService {
 
     return variants
       .filter((variant) => productById.has(String(variant.productId)))
-      .map((variant) => {
-        const product = productById.get(String(variant.productId))!;
-        return {
-          variantId: variant._id,
-          productId: variant.productId,
-          productName: product.name,
-          variantName: variant.name,
-          attributes: variant.attributes,
-          sku: variant.sku,
-          barcode: variant.barcode,
-          brand: product.brand,
-          categoryId: product.categoryId,
-          categoryName: product.categoryNameSnapshot,
-          imageUrl: product.images?.find((i) => i.isPrimary)?.url ?? product.images?.[0]?.url ?? null,
-          sellingPriceMinor: variant.sellingPriceMinor,
-          costPriceMinor: variant.costPriceMinor,
-          stock: variant.stock,
-          lowStockThreshold: variant.lowStockThreshold,
-        };
-      });
+      .map((variant) => presentPosVariant(variant, productById.get(String(variant.productId))!));
+  }
+
+  /**
+   * The POS product grid: one page of PRODUCTS, each with all of its sellable
+   * variants. Search and category are applied in the database before paging,
+   * and the page is scoped to the session's workspace and branch - never to an
+   * id from the request.
+   *
+   * `hasMore` comes from fetching one product past the page, so no count query
+   * runs on every scroll.
+   */
+  async posCatalog(ctx: TenantContext, input: PosCatalogInput) {
+    const { page, limit } = input;
+    const skip = (page - 1) * limit;
+    const scope = { tenantId: ctx.tenantId, storeId: ctx.storeId, deletedAt: null };
+    const filter: Record<string, unknown> = { ...scope, isActive: true };
+    if (input.categoryId) filter.categoryId = input.categoryId;
+
+    if (input.q) {
+      const rx = searchRegex(input.q);
+      // A variant SKU, barcode or name also finds its product.
+      const viaVariants = await ProductVariantModel.find({
+        ...scope,
+        isActive: true,
+        $or: [{ sku: rx }, { name: rx }, { barcode: input.q.trim() }],
+      }).distinct('productId');
+      filter.$or = [{ name: rx }, { brand: rx }, { sku: rx }, { _id: { $in: viaVariants } }];
+    }
+
+    const products = await ProductModel.find(filter)
+      .sort({ name: 1, _id: 1 })
+      .skip(skip)
+      .limit(limit + 1)
+      .select('_id name brand images categoryId categoryNameSnapshot')
+      .lean();
+    const hasMore = products.length > limit;
+    const pageProducts = hasMore ? products.slice(0, limit) : products;
+
+    // Every variant of the page's products, in ONE query.
+    const variants = pageProducts.length
+      ? await ProductVariantModel.find({ ...scope, isActive: true, productId: { $in: pageProducts.map((p) => p._id) } })
+          .sort({ name: 1 })
+          .lean()
+      : [];
+    const variantsByProduct = new Map<string, typeof variants>();
+    for (const variant of variants) {
+      const key = String(variant.productId);
+      variantsByProduct.set(key, [...(variantsByProduct.get(key) ?? []), variant]);
+    }
+
+    // Product order is kept; a product with no sellable variant has nothing to add to a cart.
+    const items = pageProducts.flatMap((product) =>
+      (variantsByProduct.get(String(product._id)) ?? []).map((variant) => presentPosVariant(variant, product)),
+    );
+    return { items, page, limit, hasMore };
   }
 
   // ---------------------------------------------------------------- helpers
@@ -496,7 +567,8 @@ class ProductService {
         ...product,
         variants: group,
         variantCount: group.length,
-        totalStock: group.reduce((sum, v) => sum + v.stock, 0),
+        // A variant sold below zero (out-of-stock sale) counts as 0, not against its siblings.
+        totalStock: group.reduce((sum, v) => sum + Math.max(v.stock, 0), 0),
         minPriceMinor: prices.length ? Math.min(...prices) : 0,
         maxPriceMinor: prices.length ? Math.max(...prices) : 0,
         hasLowStock: group.some((v) => v.lowStockThreshold > 0 && v.stock <= v.lowStockThreshold),

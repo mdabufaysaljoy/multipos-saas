@@ -6,6 +6,7 @@ import categoryRoutes from '../modules/categories/categories.routes';
 import productRoutes from '../modules/products/products.routes';
 import inventoryRoutes from '../modules/inventory/inventory.routes';
 import customerRoutes from '../modules/customers/customers.routes';
+import loyaltyRoutes from '../modules/loyalty/loyalty.routes';
 import saleRoutes from '../modules/sales/sales.routes';
 import returnRoutes from '../modules/returns/returns.routes';
 import staffRoutes from '../modules/staff/staff.routes';
@@ -56,6 +57,7 @@ router.use('/categories', categoryRoutes);
 router.use('/products', productRoutes);
 router.use('/inventory', inventoryRoutes);
 router.use('/customers', customerRoutes);
+router.use('/loyalty', loyaltyRoutes);
 router.use('/sales', saleRoutes);
 router.use('/returns', returnRoutes);
 // Registered before `/staff` so "members" is never read as a staff id.

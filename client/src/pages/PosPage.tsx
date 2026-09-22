@@ -1,13 +1,12 @@
 import * as React from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { AlertTriangle, Banknote, ChevronDown, ChevronUp, Eraser, ShoppingCart } from 'lucide-react';
+import { AlertTriangle, Banknote, ChevronDown, ChevronUp, CreditCard, Eraser, Gift, ShoppingCart } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Separator } from '@/components/ui/separator';
 import { MoneyInput } from '@/components/MoneyInput';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { LimitAlert } from '@/components/LimitAlert';
@@ -23,11 +22,15 @@ import type { PosProductGroup } from '@/features/pos/groupVariants';
 import { usePayments } from '@/features/pos/usePayments';
 import { ReceiptDialog } from '@/features/receipt/ReceiptDialog';
 import { ApiError } from '@/api/client';
-import { productApi, saleApi, storeApi } from '@/api/endpoints';
+import { loyaltyApi, productApi, saleApi, storeApi } from '@/api/endpoints';
+import { LoyaltyCardDialog } from '@/features/loyalty/LoyaltyCardDialog';
+import { LoyaltyStrip } from '@/features/loyalty/LoyaltyStrip';
+import { isLoyaltyCardCode, maxRedeemablePoints, pointsForSpend } from '@/features/loyalty/loyaltyMath';
+import { newRequestKey, useLoyaltyAccess } from '@/features/loyalty/useLoyaltyAccess';
 import { useAuth } from '@/hooks/useAuth';
 import { formatMoney } from '@/lib/money';
 import { cn } from '@/lib/utils';
-import type { PaymentMethod, Sale } from '@/types/domain';
+import type { LoyaltyLookup, PaymentMethod, PosVariant, Sale } from '@/types/domain';
 
 export function PosPage() {
   const { can, activeStore } = useAuth();
@@ -42,27 +45,55 @@ export function PosPage() {
   // Mobile-only: the cart sheet. Desktop ignores it entirely.
   const [cartOpen, setCartOpen] = React.useState(false);
   const [confirmClear, setConfirmClear] = React.useState(false);
+  // An out-of-stock variant waiting for the cashier to confirm "Sell anyway".
+  const [outOfStockPending, setOutOfStockPending] = React.useState<PosVariant | null>(null);
+  // Loyalty: only a scanned (or typed) CARD makes this a loyalty sale - never the customer or phone.
+  const [loyaltyMember, setLoyaltyMember] = React.useState<LoyaltyLookup | null>(null);
+  const [redeemPoints, setRedeemPoints] = React.useState<number | null>(null);
+  const [cardDialogOpen, setCardDialogOpen] = React.useState(false);
+  const [cardLookupPending, setCardLookupPending] = React.useState(false);
+  // One key per checkout: a double submit or network retry returns the same sale.
+  const checkoutKey = React.useRef(newRequestKey('sale'));
+  const loyaltyAccess = useLoyaltyAccess();
 
   const canChangePrice = can('sales.changePrice');
   const canDiscount = can('sales.discount');
   const canAddCustomer = can('customers.create');
+  // UX only. The server re-checks the permission (from the database) on every sale.
+  const canSellOutOfStock = can('sales.sellOutOfStock');
 
   const { data: store } = useQuery({ queryKey: ['store', 'pos-config'], queryFn: storeApi.posConfig });
   const currency = store?.currency ?? activeStore?.currency ?? 'BDT';
 
+  const taxOnTop = Boolean(store?.tax.enabled && !store?.tax.inclusive);
+  const loyaltyAvailable = loyaltyAccess.inPlan && store?.loyalty?.available === true;
+  // Points can pay for the goods after the cart discount, never more, never more than the card holds.
+  const baseTotals = computeTotals(cart.state, store?.tax.rateBasisPoints ?? 0, taxOnTop);
+  const maxRedeemable = loyaltyMember
+    ? maxRedeemablePoints(baseTotals.subtotalMinor - baseTotals.discountMinor, loyaltyMember.pointValueMinor, loyaltyMember.pointsBalance)
+    : 0;
+  const requestedPoints = loyaltyMember && loyaltyAccess.canRedeem ? (redeemPoints ?? 0) : 0;
+  const redeemTooHigh = requestedPoints > maxRedeemable;
+  const redeemingPoints = redeemTooHigh ? 0 : requestedPoints;
   const totals = computeTotals(
     cart.state,
     store?.tax.rateBasisPoints ?? 0,
-    Boolean(store?.tax.enabled && !store?.tax.inclusive),
+    taxOnTop,
+    loyaltyMember ? redeemingPoints * loyaltyMember.pointValueMinor : 0,
   );
-  const issues = validateCart(cart.state);
+  const pointsToEarn = loyaltyMember ? pointsForSpend(totals.subtotalMinor - totals.discountMinor - totals.loyaltyDiscountMinor, loyaltyMember.earnSpendMinor) : 0;
+  const issues = validateCart(cart.state, { canSellOutOfStock });
+  // The store's VAT switch decides what the summary shows; the receipt reads the same setting.
+  const vatEnabled = Boolean(store?.tax.enabled);
   const cartReady = cart.state.lines.length > 0 && issues.length === 0;
 
   const availableMethods = (store?.paymentMethods ?? ['cash']) as PaymentMethod[];
   const payments = usePayments(cartReady ? totals.totalMinor : 0);
 
-  // Both halves must be satisfied: a valid cart AND a fully tendered amount.
-  const canCheckout = cartReady && payments.isSettled;
+  // Both halves must be satisfied: a valid cart AND a payment allocation that covers the total.
+  // Points covering the whole sale leave nothing to pay, so no payment is taken.
+  const coveredByPoints = cartReady && totals.loyaltyDiscountMinor > 0 && totals.totalMinor === 0;
+  const canCheckout = cartReady && !redeemTooHigh && (payments.isSettled || coveredByPoints);
 
   const checkout = useMutation({
     mutationFn: (): Promise<Sale> =>
@@ -80,22 +111,41 @@ export function PosPage() {
           : {}),
         discountType: cart.state.discountType,
         discountValue: cart.state.discountValue,
-        // The largest tender is recorded as the headline method; the full
-        // breakdown travels in `payments` and is what the server trusts.
-        paymentMethod: payments.rows
-          .slice()
-          .sort((a, b) => (b.amountMinor ?? 0) - (a.amountMinor ?? 0))[0].method,
-        payments: payments.rows.map((row) => ({
-          method: row.method,
-          amountMinor: row.amountMinor ?? 0,
-          reference: '',
-        })),
+        // The amounts APPLIED to the sale (they add up to the total); cash
+        // handed over beyond that travels separately and becomes change. The
+        // server re-prices the sale and checks all of it.
+        ...(coveredByPoints
+          ? { paymentMethod: 'cash' }
+          : {
+              paymentMethod: payments.applied.slice().sort((a, b) => b.amountMinor - a.amountMinor)[0].method,
+              payments: payments.applied.map((row) => ({ method: row.method, amountMinor: row.amountMinor, reference: '' })),
+              ...(payments.hasCash && payments.cashTenderedMinor !== null ? { cashTenderedMinor: payments.cashTenderedMinor } : {}),
+            }),
+        // Which card and how many points - the server works out their value and what is earned.
+        ...(loyaltyMember ? { loyaltyMembershipId: loyaltyMember.id } : {}),
+        ...(loyaltyMember && redeemingPoints > 0 ? { redeemPoints: redeemingPoints } : {}),
+        idempotencyKey: checkoutKey.current,
         note,
       }),
     onSuccess: (sale) => {
       toast.success(`Sale ${sale.saleNumber} completed`, {
         description: `${formatMoney(sale.totalMinor, currency)} · ${sale.items.length} line${sale.items.length === 1 ? '' : 's'}`,
       });
+      // The server is the one that knows stock at the moment of sale, so say so when it sold below zero.
+      const overridden = sale.items.filter((item) => item.outOfStockOverride);
+      if (overridden.length > 0) {
+        toast.warning('Includes an out-of-stock sale', {
+          description: overridden.map((item) => `${item.productNameSnapshot} (${item.variantNameSnapshot})`).join(', '),
+        });
+      }
+      if (sale.loyalty) {
+        const parts = [
+          sale.loyalty.pointsRedeemed > 0 ? `${sale.loyalty.pointsRedeemed} redeemed` : null,
+          sale.loyalty.pointsEarned > 0 ? `${sale.loyalty.pointsEarned} earned` : null,
+          `balance ${sale.loyalty.balanceAfter}`,
+        ].filter(Boolean);
+        toast.success('Loyalty points updated', { description: parts.join(' · ') });
+      }
       setReceiptSaleId(sale._id);
       setCartOpen(false);
       resetSale();
@@ -108,6 +158,8 @@ export function PosPage() {
     onError: (error) => {
       const message = error instanceof ApiError ? error.message : 'Could not complete the sale';
       toast.error('Sale failed', { description: message });
+      // The balance may have changed at another till: reload the card's figures.
+      if (loyaltyMember) void attachCard(loyaltyMember.cardNumber, { quiet: true });
     },
   });
 
@@ -116,21 +168,89 @@ export function PosPage() {
    * anything with real options prompts for the variant first.
    */
   const handleProductSelect = (group: PosProductGroup) => {
-    const sellable = group.variants.filter((variant) => variant.stock > 0);
+    const sellable = group.variants.filter((variant) => variant.stock > 0 || canSellOutOfStock);
     if (sellable.length === 1) {
-      cart.addVariant(sellable[0]);
+      requestAdd(sellable[0]);
       return;
     }
     setPickerGroup(group);
   };
 
   /**
+   * Every way into the cart (grid, variant picker, barcode) goes through here,
+   * so the out-of-stock rule is the same for all of them. An out-of-stock
+   * variant needs the permission and a one-time confirmation; adding more of a
+   * line already confirmed does not ask again.
+   */
+  const requestAdd = (variant: PosVariant): boolean => {
+    if (variant.stock > 0) {
+      cart.addVariant(variant);
+      return true;
+    }
+    if (!canSellOutOfStock) {
+      toast.error('Out of stock', { description: `${variant.productName} (${variant.variantName})` });
+      return false;
+    }
+    if (cart.state.lines.some((line) => line.variantId === variant.variantId && line.outOfStockSale)) {
+      cart.addVariant(variant, 1, { allowOutOfStock: true });
+      return true;
+    }
+    setOutOfStockPending(variant);
+    return false;
+  };
+  const requestAddRef = React.useRef(requestAdd);
+  requestAddRef.current = requestAdd;
+
+  /**
    * Barcode resolution. Looks the code up server-side, then adds the matching
    * variant. `cart.addVariant` increments an existing line rather than creating
    * a duplicate row, so scanning the same item twice reads as quantity 2.
    */
+  /**
+   * Finds a member by card barcode or card number and attaches the card and its
+   * customer to this sale. Creates nothing and awards nothing. Returns false
+   * when no member has that code.
+   */
+  const attachCard = async (code: string, options: { quiet?: boolean } = {}): Promise<boolean> => {
+    if (!loyaltyAvailable) return false;
+    setCardLookupPending(true);
+    try {
+      const member = await loyaltyApi.lookup(code);
+      if (member.status !== 'active') {
+        toast.error('Loyalty card is inactive', { description: `${member.cardNumber} cannot earn or redeem points.` });
+        return true;
+      }
+      setLoyaltyMember(member);
+      if (!options.quiet) setRedeemPoints(null);
+      if (member.customer) setCustomer({ id: member.customer.id, name: member.customer.name, phone: member.customer.phone, email: member.customer.email });
+      if (!options.quiet) toast.success(`Loyalty member: ${member.customer?.name ?? member.cardNumber}`, { description: `${member.pointsBalance} points` });
+      setCardDialogOpen(false);
+      return true;
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 404) {
+        if (!options.quiet) toast.error('Loyalty member not found');
+        return false;
+      }
+      toast.error(error instanceof ApiError ? error.message : 'Could not look up that card');
+      return true;
+    } finally {
+      setCardLookupPending(false);
+    }
+  };
+  const attachCardRef = React.useRef(attachCard);
+  attachCardRef.current = attachCard;
+  const loyaltyAvailableRef = React.useRef(loyaltyAvailable);
+  loyaltyAvailableRef.current = loyaltyAvailable;
+
+  const removeCard = () => {
+    setLoyaltyMember(null);
+    setRedeemPoints(null);
+  };
+
   const handleBarcode = React.useCallback(
     async (code: string) => {
+      // A membership card scanned anywhere on the till attaches the member instead of a product.
+      if (loyaltyAvailableRef.current && isLoyaltyCardCode(code) && (await attachCardRef.current(code))) return;
       try {
         const matches = await productApi.posSearch({ q: code, limit: 5 });
         const variant =
@@ -142,35 +262,36 @@ export function PosPage() {
           toast.error('Product not found', { description: `No product matches barcode "${code}".` });
           return;
         }
-        if (variant.stock <= 0) {
-          toast.error('Out of stock', { description: `${variant.productName} (${variant.variantName})` });
-          return;
+        // Same rule as a tap on the grid: blocked without the permission, confirmed with it.
+        if (requestAddRef.current(variant)) {
+          toast.success(`${variant.productName} added`, { description: variant.variantName });
         }
-
-        cart.addVariant(variant);
-        toast.success(`${variant.productName} added`, { description: variant.variantName });
       } catch {
         toast.error('Could not look up that barcode');
       }
     },
-    [cart],
+    [],
   );
 
   // Scanners type-and-Enter anywhere on the screen; no field needs focus first.
-  useBarcodeScanner({ onScan: handleBarcode, enabled: !scanOpen });
+  useBarcodeScanner({ onScan: handleBarcode, enabled: !scanOpen && !outOfStockPending && !cardDialogOpen });
 
   const resetSale = () => {
     cart.clear();
     setCustomer(null);
     setNote('');
     payments.reset();
+    removeCard();
+    checkoutKey.current = newRequestKey('sale');
   };
 
   const handleCheckout = () => {
+    // One sale at a time: F9 must not submit again while a sale is still being created.
+    if (checkout.isPending) return;
     if (!canCheckout) {
       // The button is disabled, but a keyboard shortcut could still get here.
       toast.error('Cannot complete this sale', {
-        description: issues[0]?.message ?? payments.issues[0],
+        description: issues[0]?.message ?? (redeemTooHigh ? `At most ${maxRedeemable} loyalty points can be used on this sale.` : payments.issues[0]),
       });
       return;
     }
@@ -217,6 +338,8 @@ export function PosPage() {
           onSelect={handleProductSelect}
           currency={currency}
           onScanClick={() => setScanOpen(true)}
+          canSellOutOfStock={canSellOutOfStock}
+          onCardCode={loyaltyAvailable ? (code) => attachCard(code) : undefined}
         />
         {/* Room for the fixed summary bar so the last row is never covered. */}
         <div className="h-16 shrink-0 lg:hidden" aria-hidden />
@@ -294,8 +417,39 @@ export function PosPage() {
           />
         </div>
 
-        <footer className="shrink-0 space-y-3 border-t p-4">
-          <CustomerPicker value={customer} onChange={setCustomer} canCreate={canAddCustomer} />
+        {/* Compact, so the cart list above keeps room for several lines on a laptop. */}
+        <footer className="shrink-0 space-y-2 border-t p-3">
+          <div className="flex items-stretch gap-2">
+            <div className="min-w-0 flex-1">
+              <CustomerPicker
+                value={customer}
+                onChange={(next) => {
+                  setCustomer(next);
+                  // A different customer (or none) cannot keep someone else's card.
+                  if (loyaltyMember && next?.id !== loyaltyMember.customer?.id) removeCard();
+                }}
+                canCreate={canAddCustomer}
+              />
+            </div>
+            {loyaltyAvailable && !loyaltyMember && (
+              <Button type="button" variant="outline" size="sm" className="h-auto shrink-0" onClick={() => setCardDialogOpen(true)} title="Scan or enter a loyalty card">
+                <CreditCard />
+                <span className="hidden sm:inline">Card</span>
+              </Button>
+            )}
+          </div>
+          {loyaltyMember && (
+            <LoyaltyStrip
+              member={loyaltyMember}
+              currency={currency}
+              canRedeem={loyaltyAccess.canRedeem}
+              redeemPoints={redeemPoints}
+              maxRedeemable={maxRedeemable}
+              pointsToEarn={pointsToEarn}
+              onRedeemChange={setRedeemPoints}
+              onRemove={removeCard}
+            />
+          )}
 
           {canDiscount && (
             <div className="flex items-end gap-2">
@@ -351,38 +505,55 @@ export function PosPage() {
             </div>
           )}
 
-          <Separator />
-
-          <dl className="space-y-1 text-sm">
-            <div className="flex justify-between">
-              <dt className="text-muted-foreground">Subtotal</dt>
-              <dd className="tabular">{formatMoney(totals.subtotalMinor, currency)}</dd>
-            </div>
+          {/* With VAT off the store's own setting leaves only Total (and a discount,
+              if any): Subtotal would just repeat it, and the freed rows go to the
+              cart list above. The sale maths is unchanged either way. */}
+          <dl className="space-y-0.5 border-t pt-2 text-sm">
+            {vatEnabled && (
+              <div className="flex justify-between">
+                <dt className="text-muted-foreground">Subtotal</dt>
+                <dd className="tabular">{formatMoney(totals.subtotalMinor, currency)}</dd>
+              </div>
+            )}
             {totals.discountMinor > 0 && (
               <div className="flex justify-between text-success">
                 <dt>Discount</dt>
                 <dd className="tabular">-{formatMoney(totals.discountMinor, currency)}</dd>
               </div>
             )}
-            {totals.taxMinor > 0 && (
+            {totals.loyaltyDiscountMinor > 0 && (
+              <div className="flex justify-between text-success">
+                <dt className="flex items-center gap-1">
+                  <Gift className="h-3.5 w-3.5" />
+                  Loyalty ({redeemingPoints} pts)
+                </dt>
+                <dd className="tabular">-{formatMoney(totals.loyaltyDiscountMinor, currency)}</dd>
+              </div>
+            )}
+            {vatEnabled && totals.taxMinor > 0 && (
               <div className="flex justify-between">
                 <dt className="text-muted-foreground">{store?.tax.label ?? 'Tax'}</dt>
                 <dd className="tabular">{formatMoney(totals.taxMinor, currency)}</dd>
               </div>
             )}
-            <div className="flex justify-between border-t pt-1.5 text-lg font-semibold">
+            <div className={cn('flex justify-between text-base font-semibold', (vatEnabled || totals.discountMinor > 0 || totals.loyaltyDiscountMinor > 0) && 'border-t pt-1')}>
               <dt>Total</dt>
               <dd className="tabular">{formatMoney(totals.totalMinor, currency)}</dd>
             </div>
           </dl>
 
+          {coveredByPoints ? (
+            <p className="rounded-md bg-success/10 px-3 py-2 text-xs font-medium text-success">Paid in full with loyalty points - nothing to collect.</p>
+          ) : (
           <PaymentPanel
             rows={payments.rows}
             availableMethods={availableMethods}
             totalMinor={totals.totalMinor}
-            allocatedMinor={payments.allocatedMinor}
-            remainingMinor={payments.remainingMinor}
+            hasCash={payments.hasCash}
+            remainingPayableMinor={payments.remainingPayableMinor}
             changeMinor={payments.changeMinor}
+            dueMinor={payments.dueMinor}
+            cashTyped={payments.cashTyped}
             issues={cartReady ? payments.issues : []}
             currency={currency}
             onAmountChange={payments.setAmount}
@@ -390,6 +561,7 @@ export function PosPage() {
             onAddRow={payments.addRow}
             onRemoveRow={payments.removeRow}
           />
+          )}
 
           {issues.length > 0 && cart.state.lines.length > 0 && (
             <div className="flex items-start gap-2 rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs text-destructive">
@@ -409,8 +581,8 @@ export function PosPage() {
           )}
 
           <Button
-            size="xl"
-            className="w-full"
+            size="lg"
+            className="w-full font-semibold"
             variant="success"
             disabled={!canCheckout}
             loading={checkout.isPending}
@@ -426,17 +598,42 @@ export function PosPage() {
       <VariantPickerDialog
         group={pickerGroup}
         currency={currency}
+        canSellOutOfStock={canSellOutOfStock}
         onSelect={(variant) => {
-          cart.addVariant(variant);
           setPickerGroup(null);
+          requestAdd(variant);
         }}
         onClose={() => setPickerGroup(null)}
       />
       </div>
 
       <ScanDialog open={scanOpen} onOpenChange={setScanOpen} onSubmit={handleBarcode} />
+      <LoyaltyCardDialog open={cardDialogOpen} onOpenChange={setCardDialogOpen} onSubmit={(code) => void attachCard(code)} loading={cardLookupPending} />
 
-      <ReceiptDialog saleId={receiptSaleId} onClose={() => setReceiptSaleId(null)} onNewSale={() => setReceiptSaleId(null)} />
+      {/* Opened only after the sale was created, so a receipt never prints for a failed sale. */}
+      <ReceiptDialog saleId={receiptSaleId} autoPrint onClose={() => setReceiptSaleId(null)} onNewSale={() => setReceiptSaleId(null)} />
+
+      <ConfirmDialog
+        open={Boolean(outOfStockPending)}
+        onOpenChange={(open) => !open && setOutOfStockPending(null)}
+        title="Out-of-Stock Sale"
+        description={
+          outOfStockPending && (
+            <span className="block space-y-1">
+              <span className="block">This product currently has no available stock. You have permission to sell it anyway.</span>
+              <span className="block font-medium text-foreground">
+                {outOfStockPending.productName} · {outOfStockPending.variantName}
+              </span>
+              <span className="block">Current stock: {outOfStockPending.stock}</span>
+            </span>
+          )
+        }
+        confirmLabel="Sell Anyway"
+        onConfirm={() => {
+          if (outOfStockPending) cart.addVariant(outOfStockPending, 1, { allowOutOfStock: true });
+          setOutOfStockPending(null);
+        }}
+      />
 
       <ConfirmDialog
         open={confirmClear}

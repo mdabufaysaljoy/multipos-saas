@@ -14,7 +14,12 @@ import type {
   StaffReportRow,
   InventoryRow,
   InventorySummary,
+  LabelSettings,
   LedgerEntry,
+  LoyaltyLookup,
+  LoyaltyMember,
+  LoyaltySummary,
+  LoyaltyTransaction,
   PermissionGroup,
   PosVariant,
   Product,
@@ -113,9 +118,12 @@ export const storeApi = {
   current: () => get<StoreSettings>('/stores/current'),
   /** Lightweight config every till can read, regardless of settings.view. */
   posConfig: () =>
-    get<Pick<StoreSettings, '_id' | 'name' | 'currency' | 'paymentMethods' | 'tax' | 'receipt' | 'lowStockThreshold' | 'logoUrl'>>(
-      '/stores/pos-config',
-    ),
+    get<
+      Pick<StoreSettings, '_id' | 'name' | 'currency' | 'paymentMethods' | 'tax' | 'receipt' | 'lowStockThreshold' | 'logoUrl' | 'receiptLogoUrl'> & {
+        loyalty?: { available: boolean; pointValueMinor: number; earnSpendMinor: number; membershipFeeMinor: number };
+        labels?: LabelSettings;
+      }
+    >('/stores/pos-config'),
   updateCurrent: (body: Record<string, unknown>) => patch<StoreSettings>('/stores/current', body),
   update: (id: string, body: Record<string, unknown>) => patch<StoreSettings>(`/stores/${id}`, body),
   remove: (id: string) =>
@@ -137,6 +145,9 @@ export const productApi = {
   update: (id: string, body: Record<string, unknown>) => patch<Product>(`/products/${id}`, body),
   remove: (id: string) => del<{ id: string; historicalSalesPreserved: number }>(`/products/${id}`),
   posSearch: (params: Query) => get<PosVariant[]>('/products/pos-search', params),
+  /** The POS product grid: one page of products (with all their variants), filtered by search and category. */
+  posCatalog: (params: Query) =>
+    get<{ items: PosVariant[]; page: number; limit: number; hasMore: boolean }>('/products/pos-catalog', params),
   generateBarcode: () => post<{ barcode: string }>('/products/barcode/generate'),
   addVariant: (productId: string, body: Record<string, unknown>) =>
     post<ProductVariant>(`/products/${productId}/variants`, body),
@@ -160,6 +171,18 @@ export const customerApi = {
   create: (body: Record<string, unknown>) => post<Customer>('/customers', body),
   update: (id: string, body: Record<string, unknown>) => patch<Customer>(`/customers/${id}`, body),
   remove: (id: string) => del<{ id: string }>(`/customers/${id}`),
+};
+
+export const loyaltyApi = {
+  summary: () => get<LoyaltySummary>('/loyalty/summary'),
+  lookup: (code: string) => get<LoyaltyLookup>('/loyalty/lookup', { code }),
+  list: (params?: Query) => getPaginated<LoyaltyMember>('/loyalty/memberships', params),
+  get: (id: string) => get<LoyaltyMember>(`/loyalty/memberships/${id}`),
+  forCustomer: (customerId: string) => get<LoyaltyMember | null>(`/loyalty/customers/${customerId}`),
+  history: (id: string, params?: Query) => getPaginated<LoyaltyTransaction>(`/loyalty/memberships/${id}/history`, params),
+  issue: (body: Record<string, unknown>) => post<LoyaltyMember>('/loyalty/memberships', body),
+  setStatus: (id: string, body: { status: 'active' | 'inactive'; reason: string }) => post<LoyaltyMember>(`/loyalty/memberships/${id}/status`, body),
+  adjust: (id: string, body: { points: number; reason: string; idempotencyKey: string }) => post<LoyaltyMember>(`/loyalty/memberships/${id}/adjust`, body),
 };
 
 export const saleApi = {

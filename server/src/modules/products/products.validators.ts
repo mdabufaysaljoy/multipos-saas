@@ -66,9 +66,25 @@ export const posSearchSchema = z.object({
   inStockOnly: z.coerce.boolean().default(false),
 });
 
+/**
+ * The POS product grid, paged by PRODUCT (not variant): a product with twelve
+ * size/colour variants is one card and counts once toward the page. Search and
+ * category are applied in the database before paging, so every page is a true
+ * slice of the filtered catalogue.
+ */
+export const posCatalogSchema = z
+  .object({
+    q: z.string().trim().max(120).optional().default(''),
+    categoryId: objectId.optional(),
+    page: z.coerce.number().int().min(1).max(10_000).default(1),
+    limit: z.coerce.number().int().min(1).max(60).default(24),
+  })
+  .strict();
+
 export type VariantInput = z.infer<typeof variantInputSchema>;
 export type CreateProductInput = z.infer<typeof createProductSchema>;
 export type UpdateProductInput = z.infer<typeof updateProductSchema>;
 export type ListProductsInput = z.infer<typeof listProductsSchema>;
 export type PosSearchInput = z.infer<typeof posSearchSchema>;
+export type PosCatalogInput = z.infer<typeof posCatalogSchema>;
 export type UpdateVariantInput = z.infer<typeof updateVariantSchema>;

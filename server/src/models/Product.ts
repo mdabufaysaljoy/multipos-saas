@@ -80,6 +80,8 @@ const productSchema = new Schema<ProductDoc>(
 productSchema.index({ tenantId: 1, storeId: 1, sku: 1 }, { unique: true, partialFilterExpression: { deletedAt: null } });
 productSchema.index({ tenantId: 1, storeId: 1, deletedAt: 1, isActive: 1 });
 productSchema.index({ tenantId: 1, storeId: 1, categoryId: 1 });
+// The POS product grid: active products of a branch, in name order, paged.
+productSchema.index({ tenantId: 1, storeId: 1, deletedAt: 1, isActive: 1, name: 1 });
 productSchema.index({ tenantId: 1, name: 'text', brand: 'text', sku: 'text' });
 
 export const ProductModel = model<ProductDoc>('Product', productSchema);

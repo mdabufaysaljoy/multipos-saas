@@ -17,6 +17,8 @@ export * from './Customer';
 export * from './Sale';
 export * from './Return';
 export * from './InventoryTransaction';
+export * from './LoyaltyMembership';
+export * from './LoyaltyTransaction';
 export * from './SubscriptionPlan';
 export * from './Subscription';
 export * from './SubscriptionEvent';

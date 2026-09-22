@@ -1,3 +1,4 @@
+import { queueInvoiceEmail } from '../email/transactionalEmail.service';
 import { Types } from 'mongoose';
 import { env } from '../../config/env';
 import { PAYMENT_STATUS } from '../../config/constants';
@@ -149,7 +150,10 @@ export async function issueInvoiceForPayment(paymentId: Types.ObjectId): Promise
 export async function issueInvoiceSafely(paymentId: Types.ObjectId | null | undefined) {
   if (!paymentId) return null;
   try {
-    return await issueInvoiceForPayment(paymentId);
+    const invoice = await issueInvoiceForPayment(paymentId);
+    // Emailed after the invoice exists; delivery never touches the payment.
+    if (invoice) queueInvoiceEmail(invoice._id);
+    return invoice;
   } catch (error) {
     logger.error('Issuing an invoice failed; the invoice sweep will retry', { paymentId: String(paymentId), error: error instanceof Error ? error.message : 'unknown' });
     return null;

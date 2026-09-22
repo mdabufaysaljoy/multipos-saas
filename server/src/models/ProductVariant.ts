@@ -64,7 +64,11 @@ const variantSchema = new Schema<ProductVariantDoc>(
     stock: {
       type: Number,
       default: 0,
-      min: [0, 'Stock can never be negative'],
+      // Normally never below 0: every decrement is guarded by `stock >= quantity`,
+      // adjustments refuse negative results and inputs are validated. The one
+      // exception is a sale by a user holding `sales.sellOutOfStock`, which may
+      // take stock below 0 (units sold but not yet received). A schema minimum
+      // would make such a variant impossible to edit afterwards.
       validate: { validator: Number.isSafeInteger, message: 'stock must be a whole number' },
     },
     lowStockThreshold: { type: Number, default: 0, min: 0 },

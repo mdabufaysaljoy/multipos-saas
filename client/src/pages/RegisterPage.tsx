@@ -4,7 +4,7 @@ import { useQuery } from '@tanstack/react-query';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { toast } from 'sonner';
 import { Store } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -38,10 +38,15 @@ export function RegisterPage() {
   // The POS types come from the platform catalog: active products only.
   const { data: posTypes, isLoading: posTypesLoading } = useQuery({ queryKey: ['public-pos-types'], queryFn: onboardingApi.publicPosTypes, staleTime: 5 * 60 * 1000 });
   const available = (posTypes ?? []).filter((option) => option.available);
+  const [searchParams] = useSearchParams();
+  const requestedPos = searchParams.get('pos');
   const [vertical, setVertical] = React.useState('');
   React.useEffect(() => {
-    if (!vertical && available[0]) setVertical(available[0].vertical);
-  }, [available, vertical]);
+    if (vertical || available.length === 0) return;
+    // A POS chosen on a product page is preselected - but only if it is really offered.
+    const requested = available.find((option) => option.vertical === requestedPos);
+    setVertical((requested ?? available[0]).vertical);
+  }, [available, vertical, requestedPos]);
 
   const form = useForm<FormValues>({
     resolver: zodResolver(schema),

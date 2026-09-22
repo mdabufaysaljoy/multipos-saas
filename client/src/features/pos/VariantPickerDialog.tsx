@@ -16,6 +16,8 @@ import type { PosProductGroup } from './groupVariants';
 interface VariantPickerDialogProps {
   group: PosProductGroup | null;
   currency: string;
+  /** UX only: the server checks the permission again when the sale is created. */
+  canSellOutOfStock?: boolean;
   onSelect: (variant: PosVariant) => void;
   onClose: () => void;
 }
@@ -24,7 +26,7 @@ interface VariantPickerDialogProps {
  * Shown when a product has more than one sellable variant. A single-variant
  * product skips this entirely and goes straight into the cart.
  */
-export function VariantPickerDialog({ group, currency, onSelect, onClose }: VariantPickerDialogProps) {
+export function VariantPickerDialog({ group, currency, canSellOutOfStock = false, onSelect, onClose }: VariantPickerDialogProps) {
   return (
     <Dialog open={Boolean(group)} onOpenChange={(open) => !open && onClose()}>
       <DialogContent className="max-w-lg">
@@ -45,11 +47,11 @@ export function VariantPickerDialog({ group, currency, onSelect, onClose }: Vari
               <button
                 key={variant.variantId}
                 type="button"
-                disabled={outOfStock}
+                disabled={outOfStock && !canSellOutOfStock}
                 onClick={() => onSelect(variant)}
                 className={cn(
                   'flex w-full items-center gap-3 rounded-md border px-3 py-2.5 text-left transition-colors',
-                  outOfStock
+                  outOfStock && !canSellOutOfStock
                     ? 'cursor-not-allowed opacity-55'
                     : 'hover:border-primary hover:bg-accent focus:outline-none focus:ring-2 focus:ring-ring',
                 )}
@@ -63,7 +65,12 @@ export function VariantPickerDialog({ group, currency, onSelect, onClose }: Vari
                   {formatMoney(variant.sellingPriceMinor, currency)}
                 </span>
 
-                {outOfStock ? (
+                {outOfStock && canSellOutOfStock ? (
+                  <span className="flex shrink-0 flex-col items-end gap-0.5">
+                    <Badge variant="destructive">Out</Badge>
+                    <span className="text-[10px] font-semibold text-warning">Sell anyway</span>
+                  </span>
+                ) : outOfStock ? (
                   <Badge variant="destructive">Out</Badge>
                 ) : lowStock ? (
                   <Badge variant="warning">{variant.stock} left</Badge>

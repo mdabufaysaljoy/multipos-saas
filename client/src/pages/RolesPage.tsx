@@ -249,7 +249,7 @@ function RoleFormDialog({
                           <p className="text-sm font-medium">{permission.label}</p>
                           <p className="text-xs text-muted-foreground">{permission.description}</p>
                         </div>
-                        {permission.key === 'sales.changePrice' && <Badge variant="warning">Sensitive</Badge>}
+                        {(permission.key === 'sales.changePrice' || permission.key === 'sales.sellOutOfStock') && <Badge variant="warning">Sensitive</Badge>}
                       </label>
                     ))}
                   </div>

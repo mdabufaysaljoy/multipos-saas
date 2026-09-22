@@ -22,6 +22,13 @@ export const PERMISSIONS = {
   SALES_CANCEL: 'sales.cancel',
   SALES_CHANGE_PRICE: 'sales.changePrice',
   SALES_DISCOUNT: 'sales.discount',
+  /** Sell a variant whose stock is zero or below. Checked on the server at sale time. */
+  SALES_SELL_OUT_OF_STOCK: 'sales.sellOutOfStock',
+
+  /** Loyalty program (Clothing POS, plans with the loyalty entitlement). */
+  LOYALTY_VIEW: 'loyalty.view',
+  LOYALTY_REDEEM: 'loyalty.redeem',
+  LOYALTY_MANAGE: 'loyalty.manage',
 
   RETURNS_VIEW: 'returns.view',
   RETURNS_CREATE: 'returns.create',
@@ -107,6 +114,24 @@ export const PERMISSION_CATALOG: PermissionGroup[] = [
       { key: PERMISSIONS.SALES_CANCEL, label: 'Cancel sales', description: 'Void a completed sale and restore stock' },
       { key: PERMISSIONS.SALES_CHANGE_PRICE, label: 'Change price at checkout', description: 'Override the selling price during a sale' },
       { key: PERMISSIONS.SALES_DISCOUNT, label: 'Apply discounts', description: 'Apply an order-level discount' },
+      {
+        key: PERMISSIONS.SALES_SELL_OUT_OF_STOCK,
+        label: 'Sell Out-of-Stock Products',
+        description: 'Allows this staff member to intentionally sell products or variants with zero available stock',
+      },
+    ],
+  },
+  {
+    group: 'loyalty',
+    label: 'Loyalty program',
+    permissions: [
+      { key: PERMISSIONS.LOYALTY_VIEW, label: 'View loyalty members', description: 'See loyalty members, cards, points and point history' },
+      { key: PERMISSIONS.LOYALTY_REDEEM, label: 'Redeem loyalty points', description: 'Apply a member\'s points as a discount at checkout' },
+      {
+        key: PERMISSIONS.LOYALTY_MANAGE,
+        label: 'Manage loyalty memberships',
+        description: 'Issue membership cards, activate or deactivate them and adjust points with a reason',
+      },
     ],
   },
   {
@@ -197,6 +222,7 @@ export const DEFAULT_CASHIER_PERMISSIONS: Permission[] = [
   PERMISSIONS.INVENTORY_VIEW,
   PERMISSIONS.SALES_VIEW,
   PERMISSIONS.SALES_CREATE,
+  PERMISSIONS.LOYALTY_REDEEM,
   PERMISSIONS.RETURNS_VIEW,
   PERMISSIONS.CUSTOMERS_VIEW,
   PERMISSIONS.CUSTOMERS_CREATE,

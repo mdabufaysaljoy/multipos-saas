@@ -8,7 +8,7 @@ import { productService } from './products.service';
 import type {
   CreateProductInput,
   ListProductsInput,
-  PosSearchInput,
+  PosCatalogInput, PosSearchInput,
   UpdateProductInput,
   UpdateVariantInput,
   VariantInput,
@@ -20,6 +20,10 @@ type VariantParams = { id: Types.ObjectId; variantId: Types.ObjectId };
 export const list = asyncHandler(async (req: Request, res: Response) => {
   const result = await productService.list(getContext(req), query<ListProductsInput>(req));
   paginated(res, result.items, buildPageMeta(result.page, result.limit, result.total));
+});
+
+export const posCatalog = asyncHandler(async (req: Request, res: Response) => {
+  ok(res, await productService.posCatalog(getContext(req), query<PosCatalogInput>(req)));
 });
 
 export const posSearch = asyncHandler(async (req: Request, res: Response) => {

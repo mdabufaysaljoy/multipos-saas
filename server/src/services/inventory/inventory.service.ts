@@ -23,6 +23,8 @@ export interface StockMovementResult {
   quantityChange: number;
   /** Id of the ledger row this movement wrote, so it can be back-referenced. */
   ledgerId: Types.ObjectId | null;
+  /** Set when a sale took the variant from zero or below (see `decreaseForSale`). */
+  outOfStockOverride?: boolean;
 }
 
 type LeanVariant = Pick<
@@ -114,6 +116,52 @@ class InventoryService {
       `Not enough stock for ${variant.productNameSnapshot} (${variant.name}). Available: ${variant.stock}, requested: ${quantity}.`,
       { variantId, sku: variant.sku, available: variant.stock, requested: quantity },
     );
+  }
+
+  /**
+   * The stock movement for a sale line.
+   *
+   * Normal rule first: stock must cover the quantity. When it does not and
+   * `allowOutOfStock` is true (the CALLER decides, from the user's current
+   * server-side permissions - never from the request), a second atomic update
+   * sells the line only if the variant is at zero or below at that instant.
+   * A variant that still has SOME stock but not enough is refused as before:
+   * the permission overrides "out of stock", not "not enough stock".
+   */
+  async decreaseForSale(
+    ctx: TenantContext,
+    variantId: Types.ObjectId,
+    quantity: number,
+    ref: StockMovementRef,
+    options: { allowOutOfStock: boolean },
+  ): Promise<StockMovementResult> {
+    if (!options.allowOutOfStock) return this.decrease(ctx, variantId, quantity, ref);
+
+    const normal = await this.tryDecrease(ctx, variantId, quantity, ref);
+    if (normal) return normal;
+
+    const before = await ProductVariantModel.findOneAndUpdate(
+      { _id: variantId, tenantId: ctx.tenantId, storeId: ctx.storeId, deletedAt: null, stock: { $lte: 0 } },
+      { $inc: { stock: -quantity } },
+      { new: false },
+    )
+      .select('_id productId stock name sku productNameSnapshot')
+      .lean<LeanVariant>();
+
+    // Gone, or it has some stock but not enough: the normal error explains which.
+    if (!before) return this.decrease(ctx, variantId, quantity, ref);
+
+    const result: StockMovementResult = {
+      variantId: before._id,
+      productId: before.productId,
+      previousStock: before.stock,
+      newStock: before.stock - quantity,
+      quantityChange: -quantity,
+      ledgerId: null,
+      outOfStockOverride: true,
+    };
+    result.ledgerId = await this.writeLedger(ctx, before, result, { ...ref, reason: `${ref.reason ?? 'Sale'} (out-of-stock sale)` });
+    return result;
   }
 
   /** Atomically adds stock (returns, purchases, cancellations). */
@@ -337,6 +385,7 @@ class InventoryService {
           referenceNumber: ref.referenceNumber ?? '',
           performedBy: ctx.userId,
           performedByNameSnapshot: ctx.userName,
+          ...(result.outOfStockOverride ? { outOfStockOverride: true } : {}),
         },
       ],
       { session },

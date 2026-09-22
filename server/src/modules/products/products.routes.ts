@@ -13,7 +13,7 @@ import {
   createProductSchema,
   createVariantSchema,
   listProductsSchema,
-  posSearchSchema,
+  posCatalogSchema, posSearchSchema,
   updateProductSchema,
   updateVariantSchema,
 } from './products.validators';
@@ -28,6 +28,8 @@ const variantParams = z.object({ id: objectId, variantId: objectId });
 
 // POS lookup sits before "/:id" so "pos-search" is not parsed as an id.
 router.get('/pos-search', requirePermission(PERMISSIONS.PRODUCTS_VIEW), validate({ query: posSearchSchema }), controller.posSearch);
+// The POS product grid: paged by product, filtered by category and search in the database.
+router.get('/pos-catalog', requirePermission(PERMISSIONS.PRODUCTS_VIEW), validate({ query: posCatalogSchema }), controller.posCatalog);
 
 // Static segments before "/:id" so they are not parsed as ids.
 router.post(
