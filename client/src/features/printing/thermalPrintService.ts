@@ -1,4 +1,4 @@
-import { bytesToBase64, encodeEscPosJob, trimBlankRows, type MonoBitmap } from './escpos';
+import { bytesToBase64, describeEscPosJob, encodeEscPosJob, encodeEscPosText, trimBlankRows, type MonoBitmap } from './escpos';
 import { dotsPerLine, dotsPerMm, loadPrinterSettings, mmToDots, type ThermalPrinterSettings } from './printerSettings';
 import { bitmapToCanvas, rasterizeElement } from './raster';
 import { QzUnavailableError, ensureConnected, printImageBase64, printRawBase64, printerExists } from './qzTray';
@@ -101,6 +101,49 @@ function withBlankRows(bitmap: MonoBitmap, rows: number): MonoBitmap {
   return { width: bitmap.width, height: bitmap.height + rows, data };
 }
 
+/**
+ * One print job at a time for the whole app. Receipts, labels, cards and test
+ * pages from any dialog wait their turn, so two jobs can never be handed to
+ * QZ Tray / the spooler at the same moment.
+ */
+let queueTail: Promise<unknown> = Promise.resolve();
+function enqueue<T>(task: () => Promise<T>): Promise<T> {
+  const run = queueTail.then(task, task);
+  queueTail = run.catch(() => undefined);
+  return run;
+}
+
+/** What was last handed to QZ Tray - command bytes and sizes only, never customer data. */
+export interface PrintDiagnostics {
+  at: string;
+  type: ThermalDocumentType | 'diagnostic';
+  printer: string;
+  language: ThermalPrinterSettings['language'];
+  rasterMode: ThermalPrinterSettings['rasterMode'];
+  bandHeight: number;
+  widthDots: number;
+  heightDots: number;
+  payload: ReturnType<typeof describeEscPosJob> | { pngBytes: number };
+  qz: { type: 'raw' | 'pixel'; format: 'command' | 'image'; flavor: 'base64' };
+  result: 'sent' | 'failed';
+  error?: string;
+}
+let lastDiagnostics: PrintDiagnostics | null = null;
+const diagnosticListeners = new Set<() => void>();
+export const printDiagnostics = {
+  get: () => lastDiagnostics,
+  subscribe(listener: () => void) {
+    diagnosticListeners.add(listener);
+    return () => diagnosticListeners.delete(listener);
+  },
+};
+function recordDiagnostics(entry: PrintDiagnostics) {
+  lastDiagnostics = entry;
+  // Safe to log: sizes and command bytes only.
+  console.info('[thermal-print] job', entry);
+  diagnosticListeners.forEach((listener) => listener());
+}
+
 /** Renders the job to the bitmap that will be printed (exported for previews and tests). */
 export async function renderJob(job: ThermalPrintJob, settings: ThermalPrinterSettings): Promise<MonoBitmap> {
   const target = dotsPerLine(settings);
@@ -117,7 +160,11 @@ export async function renderJob(job: ThermalPrintJob, settings: ThermalPrinterSe
  * Prints a document on this computer's thermal printer through QZ Tray.
  * Resolves when QZ Tray has accepted the job; rejects with ThermalPrintError.
  */
-export async function printThermalDocument(job: ThermalPrintJob, settings: ThermalPrinterSettings = loadPrinterSettings()): Promise<{ printer: string; heightDots: number }> {
+export function printThermalDocument(job: ThermalPrintJob, settings: ThermalPrinterSettings = loadPrinterSettings()): Promise<{ printer: string; heightDots: number }> {
+  return enqueue(() => runPrintJob(job, settings));
+}
+
+async function runPrintJob(job: ThermalPrintJob, settings: ThermalPrinterSettings): Promise<{ printer: string; heightDots: number }> {
   const printer = settings.printerName;
   if (!printer) throw new ThermalPrintError('PRINTER_NOT_SELECTED');
   const copies = Math.max(1, Math.min(100, Math.round(job.copies ?? 1)));
@@ -129,12 +176,35 @@ export async function printThermalDocument(job: ThermalPrintJob, settings: Therm
     const bitmap = await renderJob(job, settings);
     if (bitmap.height === 0) throw new ThermalPrintError('RENDER_FAILED', 'empty document');
 
+    const base = {
+      at: new Date().toISOString(),
+      type: job.type,
+      printer,
+      language: settings.language,
+      rasterMode: settings.rasterMode,
+      bandHeight: settings.bandHeight,
+      widthDots: bitmap.width,
+      heightDots: bitmap.height,
+    };
     if (settings.language === 'escpos') {
-      const bytes = encodeEscPosJob(Array.from({ length: copies }, () => bitmap), { feedLines: feedLinesFor(job.type, settings), autoCut: settings.autoCut });
-      await printTransport.printRawBase64(printer, bytesToBase64(bytes));
+      const bytes = encodeEscPosJob(Array.from({ length: copies }, () => bitmap), {
+        feedLines: feedLinesFor(job.type, settings),
+        autoCut: settings.autoCut,
+        bandHeight: settings.bandHeight,
+        rasterMode: settings.rasterMode,
+      });
+      const entry: PrintDiagnostics = { ...base, payload: describeEscPosJob(bytes), qz: { type: 'raw', format: 'command', flavor: 'base64' }, result: 'sent' };
+      try {
+        await printTransport.printRawBase64(printer, bytesToBase64(bytes));
+        recordDiagnostics(entry);
+      } catch (error) {
+        recordDiagnostics({ ...entry, result: 'failed', error: describe(error).slice(0, 200) });
+        throw error;
+      }
     } else {
       const page = withBlankRows(bitmap, Math.round(feedLinesFor(job.type, settings) * LINE_MM * dotsPerMm(settings.dpi)));
       const png = bitmapToCanvas(page).toDataURL('image/png').split(',')[1];
+      recordDiagnostics({ ...base, payload: { pngBytes: Math.round((png.length * 3) / 4) }, qz: { type: 'pixel', format: 'image', flavor: 'base64' }, result: 'sent' });
       await printTransport.printImageBase64(printer, png, {
         widthMm: page.width / dotsPerMm(settings.dpi),
         heightMm: page.height / dotsPerMm(settings.dpi),
@@ -189,4 +259,118 @@ export async function printTestPage(settings: ThermalPrinterSettings = loadPrint
   } finally {
     element.remove();
   }
+}
+
+
+// ------------------------------------------------------------------ diagnostics
+
+export type DiagnosticKind = 'raw-text' | 'raster-text' | 'barcode' | 'qr' | 'logo';
+
+/**
+ * Isolation tests for a garbled printer (Settings → Printer → Diagnostics).
+ * None of them touch any sale, customer or loyalty data.
+ *   raw-text     plain ESC/POS text - NO image. Garbled here = driver/port problem.
+ *   raster-text  text as a raster image
+ *   barcode      EAN-13 1234567890128 (the test value 123456789012 + check digit)
+ *   qr           https://retailersuites.com
+ *   logo         the store's receipt logo (if configured) between two text lines
+ */
+export function printDiagnostic(kind: DiagnosticKind, settings: ThermalPrinterSettings = loadPrinterSettings(), logoUrl?: string | null) {
+  if (kind === 'raw-text') return enqueue(() => runRawTextTest(settings));
+  return enqueue(async () => {
+    const element = diagnosticElement(kind, settings, logoUrl);
+    document.body.appendChild(element);
+    try {
+      if (kind === 'logo') await waitForImages(element);
+      return await runPrintJob({ type: 'test', element }, settings);
+    } finally {
+      element.remove();
+    }
+  });
+}
+
+async function runRawTextTest(settings: ThermalPrinterSettings) {
+  const printer = settings.printerName;
+  if (!printer) throw new ThermalPrintError('PRINTER_NOT_SELECTED');
+  if (settings.language !== 'escpos') throw new ThermalPrintError('UNSUPPORTED', 'raw text test needs ESC/POS');
+  try {
+    await printTransport.ensureConnected();
+    if (!(await printTransport.printerExists(printer))) throw new ThermalPrintError('PRINTER_NOT_FOUND');
+    const rule = '================================';
+    const bytes = encodeEscPosText(
+      [rule, 'RetailerSuites.com', 'QZ TRAY RAW TEXT TEST', 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz', '0123456789', rule],
+      { feedLines: feedLinesFor('test', settings), autoCut: settings.autoCut },
+    );
+    const entry: PrintDiagnostics = {
+      at: new Date().toISOString(),
+      type: 'diagnostic',
+      printer,
+      language: settings.language,
+      rasterMode: settings.rasterMode,
+      bandHeight: settings.bandHeight,
+      widthDots: 0,
+      heightDots: 0,
+      payload: describeEscPosJob(bytes),
+      qz: { type: 'raw', format: 'command', flavor: 'base64' },
+      result: 'sent',
+    };
+    await printTransport.printRawBase64(printer, bytesToBase64(bytes));
+    recordDiagnostics(entry);
+    return { printer, heightDots: 0 };
+  } catch (error) {
+    throw classifyPrintError(error);
+  }
+}
+
+function diagnosticElement(kind: Exclude<DiagnosticKind, 'raw-text'>, settings: ThermalPrinterSettings, logoUrl?: string | null) {
+  const element = document.createElement('div');
+  element.setAttribute('aria-hidden', 'true');
+  element.style.cssText = `position:fixed;left:-10000px;top:0;width:${settings.printableWidthMm}mm;padding:1mm;background:#fff;color:#000;font:10pt/1.35 ui-monospace,Menlo,monospace;text-align:center;`;
+  const line = (text: string, bold = false) => {
+    const div = document.createElement('div');
+    div.textContent = text;
+    if (bold) div.style.fontWeight = '700';
+    element.appendChild(div);
+  };
+  const titles = { 'raster-text': 'RASTER TEXT TEST', barcode: 'BARCODE TEST', qr: 'QR TEST', logo: 'LOGO TEST' } as const;
+  line('RetailerSuites.com', true);
+  line(titles[kind], true);
+  if (kind === 'raster-text') {
+    line('ABCDEFGHIJKLMNOPQRSTUVWXYZ');
+    line('0123456789');
+  }
+  if (kind === 'barcode') {
+    const code = document.createElement('div');
+    code.setAttribute('data-barcode-value', '1234567890128');
+    code.setAttribute('data-barcode-format', 'EAN13');
+    code.style.cssText = 'height:16mm;margin:2mm 0';
+    element.appendChild(code);
+  }
+  if (kind === 'qr') {
+    const qr = document.createElement('div');
+    qr.setAttribute('data-qr-value', 'https://retailersuites.com');
+    qr.style.cssText = 'width:24mm;height:24mm;margin:2mm auto';
+    element.appendChild(qr);
+  }
+  if (kind === 'logo') {
+    if (logoUrl) {
+      const img = document.createElement('img');
+      img.src = logoUrl;
+      img.crossOrigin = 'anonymous';
+      img.style.cssText = 'max-width:32mm;max-height:18mm;margin:2mm auto;display:block;filter:grayscale(100%) contrast(2)';
+      element.appendChild(img);
+    } else {
+      line('(no receipt logo set)');
+    }
+  }
+  line('TEXT AFTER - OK');
+  return element;
+}
+
+function waitForImages(element: HTMLElement) {
+  return Promise.all(
+    Array.from(element.querySelectorAll('img')).map(
+      (img) => (img.complete ? Promise.resolve() : new Promise<void>((resolve) => { img.onload = () => resolve(); img.onerror = () => resolve(); })),
+    ),
+  );
 }

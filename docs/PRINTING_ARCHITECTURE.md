@@ -106,6 +106,23 @@ These are separate values:
 | **Dots per line** | printable mm × dots/mm (`round(dpi / 25.4)`: 203 dpi = 8, 300 dpi = 12), rounded down to a whole byte → 48 mm @ 203 dpi = **384 dots**; 72 mm = 576. Derived from the two settings, never hard-coded. |
 | **CSS width** | The receipt's own layout width (store setting, e.g. 48 mm). It is scaled to exactly the dots per line when rasterised. |
 
+### Raw job structure (after the garbled-output fix, see PRINTING_BUG_ANALYSIS.md)
+
+```
+1B 40                          ESC @      reset modes a previous job may have left on
+00 × 64                        NUL        resync padding (bytes a printer drops during the reset hit this, not the image)
+1D 76 30 00 30 00 18 00 …      GS v 0     raster block: 48 bytes × 24 rows (default; 48 / 128 selectable)
+…                                         one self-contained block every 24 rows, so an error spoils at most ~3 mm
+1B 64 07                       ESC d 7    feed (device feed + 3 for receipts)
+1D 56 42 00                    GS V 66 0  cut - only when the device has a cutter
+```
+
+- **QZ call:** `qz.print(qz.configs.create(printer, { copies: 1 }), [{ type: 'raw', format: 'command', flavor: 'base64', data }])`.
+  No text encoding is involved: QZ decodes the base64 to the exact bytes.
+- **Compatibility mode:** `ESC *` 24-dot column stripes, for clones with incomplete `GS v 0` support.
+- **App-wide queue:** one job at a time, from any dialog.
+- **Diagnostics:** the last job's command summary, plus isolation tests (Settings → Printer → Diagnostics).
+
 ### Device-specific settings
 
 Printer choices belong to a **computer**, not to the SaaS account: different tills can use
@@ -121,6 +138,8 @@ and never in the database. There is no device-management module to attach them t
 | dpi | 203 |
 | feed lines after print | 4 (receipts add 3 more — `RECEIPT_END_GAP_LINES` — so the last line clears the tear bar and consecutive receipts stay apart: 7 in total by default) |
 | auto cutter | off (a cut command is sent only when this is on) |
+| raster block height | 24 rows (48 / 128 selectable) |
+| raster command | `GS v 0` (or `ESC *` compatibility) |
 
 ### Sale safety and retry
 

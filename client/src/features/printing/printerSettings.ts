@@ -23,6 +23,10 @@ export interface ThermalPrinterSettings {
   feedLines: number;
   /** Send a cut command - only for printers that have a cutter. */
   autoCut: boolean;
+  /** Rows per raster command (GS v 0). Small = robust; see docs/PRINTING_BUG_ANALYSIS.md. */
+  bandHeight: 24 | 48 | 128;
+  /** GS v 0 (default) or ESC * compatibility raster. */
+  rasterMode: 'gsv0' | 'escstar';
 }
 
 export const DEFAULT_PRINTER_SETTINGS: ThermalPrinterSettings = {
@@ -33,6 +37,8 @@ export const DEFAULT_PRINTER_SETTINGS: ThermalPrinterSettings = {
   dpi: 203,
   feedLines: 4,
   autoCut: false,
+  bandHeight: 24,
+  rasterMode: 'gsv0',
 };
 
 export const PRINTER_SETTINGS_KEY = 'pos.thermalPrinter.v1';
@@ -53,6 +59,8 @@ export function parsePrinterSettings(raw: unknown): ThermalPrinterSettings {
     dpi: clampInt(value.dpi, 150, 600, DEFAULT_PRINTER_SETTINGS.dpi),
     feedLines: clampInt(value.feedLines, 0, 20, DEFAULT_PRINTER_SETTINGS.feedLines),
     autoCut: value.autoCut === true,
+    bandHeight: value.bandHeight === 48 || value.bandHeight === 128 ? value.bandHeight : 24,
+    rasterMode: value.rasterMode === 'escstar' ? 'escstar' : 'gsv0',
   };
 }
 

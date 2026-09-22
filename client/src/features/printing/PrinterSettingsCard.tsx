@@ -12,6 +12,7 @@ import { cn } from '@/lib/utils';
 import { dotsPerLine, savePrinterSettings, useThermalPrinterSettings } from './printerSettings';
 import { ensureConnected, listPrinters, qzState, type QzState } from './qzTray';
 import { RECEIPT_END_GAP_LINES, ThermalPrintError, printTestPage } from './thermalPrintService';
+import { PrinterDiagnosticsCard } from './PrinterDiagnosticsCard';
 
 const STATUS_TEXT: Record<QzState['status'], string> = {
   idle: 'Not connected yet',
@@ -227,6 +228,8 @@ export function PrinterSettingsCard() {
           <p className="text-xs text-muted-foreground">The test page prints the width, a barcode and a QR code. It creates no sale.</p>
         </CardContent>
       </Card>
+
+      <PrinterDiagnosticsCard connected={connected} />
     </div>
   );
 }
