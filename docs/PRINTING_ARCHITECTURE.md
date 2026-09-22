@@ -113,7 +113,7 @@ These are separate values:
 00 × 64                        NUL        resync padding (bytes a printer drops during the reset hit this, not the image)
 1D 76 30 00 30 00 18 00 …      GS v 0     raster block: 48 bytes × 24 rows (default; 48 / 128 selectable)
 …                                         one self-contained block every 24 rows, so an error spoils at most ~3 mm
-…                                         receipts END with image rows: ~3 mm blank, a dashed tear line,
+…                                         EVERY print (receipt, each label copy, loyalty card, test) ENDS with image rows: ~3 mm blank, a dashed tear line,
                                           ~16 mm blank (RECEIPT_TAIL_MM) - moves the paper even on printers
                                           that ignore ESC d, so the website line clears the tear bar
 1B 64 07                       ESC d 7    feed (device feed + 3 for receipts), as extra
@@ -139,7 +139,7 @@ and never in the database. There is no device-management module to attach them t
 | language | `escpos` or `driver` |
 | printable width | 48 mm |
 | dpi | 203 |
-| feed lines after print | 4 (receipts add 3 more — `RECEIPT_END_GAP_LINES` — so the last line clears the tear bar and consecutive receipts stay apart: 7 in total by default) |
+| feed lines after print | 4 (+3 `RECEIPT_END_GAP_LINES` on every print = 7), sent after the printed tail (dashed tear line + ~16 mm blank rows) that every print ends with |
 | auto cutter | off (a cut command is sent only when this is on) |
 | raster block height | 24 rows (48 / 128 selectable) |
 | raster command | `GS v 0` (or `ESC *` compatibility) |

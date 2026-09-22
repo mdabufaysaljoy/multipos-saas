@@ -79,10 +79,10 @@ export function classifyPrintError(error: unknown): ThermalPrintError {
 }
 
 /**
- * Blank lines added after every RECEIPT, on top of the device's "feed after
- * printing": the print head sits some way below the tear bar, so without it the
- * last line of a receipt stays inside the printer and back-to-back receipts
- * run into each other. Labels are unaffected.
+ * Blank lines added after every print (receipts, labels, loyalty cards, tests),
+ * on top of the device's "feed after printing": the print head sits some way
+ * below the tear bar, so without it the last line stays inside the printer and
+ * back-to-back prints run into each other.
  */
 export const RECEIPT_END_GAP_LINES = 3;
 
@@ -90,11 +90,12 @@ export const RECEIPT_END_GAP_LINES = 3;
 const LINE_MM = 25.4 / 6;
 
 /** Total lines fed after a document of this type. */
-export const feedLinesFor = (type: ThermalDocumentType, settings: Pick<ThermalPrinterSettings, 'feedLines'>) =>
-  settings.feedLines + (type === 'receipt' || type === 'test' ? RECEIPT_END_GAP_LINES : 0);
+export const feedLinesFor = (_type: ThermalDocumentType, settings: Pick<ThermalPrinterSettings, 'feedLines'>) =>
+  settings.feedLines + RECEIPT_END_GAP_LINES;
 
 /**
- * The end of every receipt, drawn INTO the image rather than left to the
+ * The end of every thermal print - receipts, variant barcode labels (each
+ * copy), loyalty cards and test pages - drawn INTO the image rather than left to the
  * printer's feed command (some 58 mm printers ignore or shorten ESC d, which
  * left the website line inside the printer and receipts touching):
  *
@@ -129,7 +130,6 @@ export function withReceiptEnd(bitmap: MonoBitmap, dpi: number): MonoBitmap {
   return { width, height, data };
 }
 
-const endsWithTearLine = (type: ThermalDocumentType) => type === 'receipt' || type === 'test';
 
 /** Adds blank rows under a bitmap (the Windows-driver path has no ESC/POS feed command). */
 function withBlankRows(bitmap: MonoBitmap, rows: number): MonoBitmap {
@@ -213,7 +213,8 @@ async function runPrintJob(job: ThermalPrintJob, settings: ThermalPrinterSetting
 
     const content = await renderJob(job, settings);
     if (content.height === 0) throw new ThermalPrintError('RENDER_FAILED', 'empty document');
-    const bitmap = endsWithTearLine(job.type) ? withReceiptEnd(content, settings.dpi) : content;
+    // Every print ends with the same tear line and blank tail; label copies each get their own.
+    const bitmap = withReceiptEnd(content, settings.dpi);
 
     const base = {
       at: new Date().toISOString(),

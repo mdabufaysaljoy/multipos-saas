@@ -171,9 +171,9 @@ export function PrinterSettingsCard() {
             </div>
           </div>
           <p className="text-xs text-muted-foreground">
-            {settings.printableWidthMm}mm at {settings.dpi} dpi = {dotsPerLine(settings)} dots per line. Receipt height always follows its content. Every receipt
-            ends with a dashed tear line and about {RECEIPT_TAIL_MM}mm of blank paper printed as part of the receipt, so the website line clears the tear bar
-            and back-to-back receipts stay apart - even on printers that ignore the feed command. Then {settings.feedLines + RECEIPT_END_GAP_LINES} feed lines are
+            {settings.printableWidthMm}mm at {settings.dpi} dpi = {dotsPerLine(settings)} dots per line. Receipt height always follows its content. Every print -
+            receipts, barcode labels (each copy), loyalty cards and test pages - ends with a dashed tear line and about {RECEIPT_TAIL_MM}mm of blank paper
+            printed as part of the image, so the last line clears the tear bar and back-to-back prints stay apart - even on printers that ignore the feed command. Then {settings.feedLines + RECEIPT_END_GAP_LINES} feed lines are
             sent as extra.
           </p>
 
