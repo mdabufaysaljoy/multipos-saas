@@ -113,7 +113,10 @@ These are separate values:
 00 × 64                        NUL        resync padding (bytes a printer drops during the reset hit this, not the image)
 1D 76 30 00 30 00 18 00 …      GS v 0     raster block: 48 bytes × 24 rows (default; 48 / 128 selectable)
 …                                         one self-contained block every 24 rows, so an error spoils at most ~3 mm
-1B 64 07                       ESC d 7    feed (device feed + 3 for receipts)
+…                                         receipts END with image rows: ~3 mm blank, a dashed tear line,
+                                          ~16 mm blank (RECEIPT_TAIL_MM) - moves the paper even on printers
+                                          that ignore ESC d, so the website line clears the tear bar
+1B 64 07                       ESC d 7    feed (device feed + 3 for receipts), as extra
 1D 56 42 00                    GS V 66 0  cut - only when the device has a cutter
 ```
 

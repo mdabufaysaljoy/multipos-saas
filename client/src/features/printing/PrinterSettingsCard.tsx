@@ -11,7 +11,7 @@ import { Switch } from '@/components/ui/switch';
 import { cn } from '@/lib/utils';
 import { dotsPerLine, savePrinterSettings, useThermalPrinterSettings } from './printerSettings';
 import { ensureConnected, listPrinters, qzState, type QzState } from './qzTray';
-import { RECEIPT_END_GAP_LINES, ThermalPrintError, printTestPage } from './thermalPrintService';
+import { RECEIPT_END_GAP_LINES, RECEIPT_TAIL_MM, ThermalPrintError, printTestPage } from './thermalPrintService';
 import { PrinterDiagnosticsCard } from './PrinterDiagnosticsCard';
 
 const STATUS_TEXT: Record<QzState['status'], string> = {
@@ -171,9 +171,10 @@ export function PrinterSettingsCard() {
             </div>
           </div>
           <p className="text-xs text-muted-foreground">
-            {settings.printableWidthMm}mm at {settings.dpi} dpi = {dotsPerLine(settings)} dots per line. Receipt height always follows its content. Receipts
-            also get {RECEIPT_END_GAP_LINES} extra blank lines at the end ({settings.feedLines + RECEIPT_END_GAP_LINES} in total), so the last line clears the
-            tear bar and back-to-back receipts stay apart. Raise "Feed after printing" if your printer needs more.
+            {settings.printableWidthMm}mm at {settings.dpi} dpi = {dotsPerLine(settings)} dots per line. Receipt height always follows its content. Every receipt
+            ends with a dashed tear line and about {RECEIPT_TAIL_MM}mm of blank paper printed as part of the receipt, so the website line clears the tear bar
+            and back-to-back receipts stay apart - even on printers that ignore the feed command. Then {settings.feedLines + RECEIPT_END_GAP_LINES} feed lines are
+            sent as extra.
           </p>
 
           <label className="flex items-center justify-between rounded-md border p-3 text-sm">

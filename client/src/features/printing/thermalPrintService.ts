@@ -93,6 +93,44 @@ const LINE_MM = 25.4 / 6;
 export const feedLinesFor = (type: ThermalDocumentType, settings: Pick<ThermalPrinterSettings, 'feedLines'>) =>
   settings.feedLines + (type === 'receipt' || type === 'test' ? RECEIPT_END_GAP_LINES : 0);
 
+/**
+ * The end of every receipt, drawn INTO the image rather than left to the
+ * printer's feed command (some 58 mm printers ignore or shorten ESC d, which
+ * left the website line inside the printer and receipts touching):
+ *
+ *   receipt content
+ *   ~3 mm blank
+ *   - - - - - - - -   dashed tear line
+ *   ~16 mm blank       carries the last line and the tear line past the tear bar
+ *
+ * Blank image rows advance the paper on every printer that can print the
+ * receipt at all. The device's feed setting is still sent afterwards as extra.
+ */
+export const RECEIPT_TAIL_MM = 16;
+const RECEIPT_GAP_BEFORE_LINE_MM = 3;
+
+export function withReceiptEnd(bitmap: MonoBitmap, dpi: number): MonoBitmap {
+  const perMm = dotsPerMm(dpi);
+  const before = Math.round(RECEIPT_GAP_BEFORE_LINE_MM * perMm);
+  const lineRows = Math.max(2, Math.round(perMm / 3)); // ~0.4 mm thick
+  const tail = Math.round(RECEIPT_TAIL_MM * perMm);
+  const { width } = bitmap;
+  const height = bitmap.height + before + lineRows + tail;
+  const data = new Uint8Array(width * height);
+  data.set(bitmap.data);
+  const dash = Math.max(4, perMm * 1.5); // 1.5 mm dashes, 1 mm gaps
+  const gap = Math.max(3, perMm);
+  for (let r = 0; r < lineRows; r += 1) {
+    const rowStart = (bitmap.height + before + r) * width;
+    for (let x = 0; x < width; x += 1) {
+      if (x % (dash + gap) < dash) data[rowStart + x] = 1;
+    }
+  }
+  return { width, height, data };
+}
+
+const endsWithTearLine = (type: ThermalDocumentType) => type === 'receipt' || type === 'test';
+
 /** Adds blank rows under a bitmap (the Windows-driver path has no ESC/POS feed command). */
 function withBlankRows(bitmap: MonoBitmap, rows: number): MonoBitmap {
   if (rows <= 0) return bitmap;
@@ -173,8 +211,9 @@ async function runPrintJob(job: ThermalPrintJob, settings: ThermalPrinterSetting
     await printTransport.ensureConnected();
     if (!(await printTransport.printerExists(printer))) throw new ThermalPrintError('PRINTER_NOT_FOUND');
 
-    const bitmap = await renderJob(job, settings);
-    if (bitmap.height === 0) throw new ThermalPrintError('RENDER_FAILED', 'empty document');
+    const content = await renderJob(job, settings);
+    if (content.height === 0) throw new ThermalPrintError('RENDER_FAILED', 'empty document');
+    const bitmap = endsWithTearLine(job.type) ? withReceiptEnd(content, settings.dpi) : content;
 
     const base = {
       at: new Date().toISOString(),
@@ -298,7 +337,8 @@ async function runRawTextTest(settings: ThermalPrinterSettings) {
     if (!(await printTransport.printerExists(printer))) throw new ThermalPrintError('PRINTER_NOT_FOUND');
     const rule = '================================';
     const bytes = encodeEscPosText(
-      [rule, 'RetailerSuites.com', 'QZ TRAY RAW TEXT TEST', 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz', '0123456789', rule],
+      // Plain line feeds after the dashed line carry the text past the tear bar even if ESC d is ignored.
+      [rule, 'RetailerSuites.com', 'QZ TRAY RAW TEXT TEST', 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz', '0123456789', rule, '', '- - - - - - - - - - - - - - - -', '', '', '', ''],
       { feedLines: feedLinesFor('test', settings), autoCut: settings.autoCut },
     );
     const entry: PrintDiagnostics = {
