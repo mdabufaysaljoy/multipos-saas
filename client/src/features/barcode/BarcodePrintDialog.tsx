@@ -110,6 +110,7 @@ export function BarcodePrintDialog({ label, currency, storeName, onClose }: Barc
                 showPrice={showPrice}
                 widthMm={labels.productWidthMm}
                 showQr={showQr}
+                vatEnabled={config?.tax?.enabled === true}
               />
             ))}
         </div>
