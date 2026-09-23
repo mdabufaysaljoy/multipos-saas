@@ -1,4 +1,4 @@
-import type { Qz } from 'qz-tray';
+import type { Qz, QzHidDevice } from 'qz-tray';
 import { get, post } from '@/api/client';
 
 /**
@@ -148,4 +148,87 @@ export async function printImageBase64(printerName: string, pngBase64: string, p
     copies: page.copies,
   });
   await qz.print(config, [{ type: 'pixel', format: 'image', flavor: 'base64', data: pngBase64 }]);
+}
+
+/**
+ * Watches the HID devices attached to this computer, through a QZ Tray
+ * connection that is ALREADY open.
+ *
+ * It never connects by itself: direct printing is a per-till choice, and a
+ * status dot must not pop QZ's permission prompt. When QZ is connected it asks
+ * for attach/detach events and re-lists on each one, with a slow poll as a
+ * safety net, so a scanner being plugged in or pulled out is seen within
+ * seconds without anyone clicking anything.
+ */
+export function watchHidDevices(onDevices: (devices: QzHidDevice[]) => void): () => void {
+  let stopped = false;
+  let timer = 0;
+  let listening = false;
+  let starting = false;
+  let qzRef: Qz | null = null;
+
+  const refresh = async () => {
+    if (stopped || !qzRef) return;
+    try {
+      const devices = await qzRef.hid.listDevices();
+      if (!stopped) onDevices(Array.isArray(devices) ? devices : []);
+    } catch {
+      if (!stopped) onDevices([]);
+    }
+  };
+
+  const stopWatching = () => {
+    window.clearInterval(timer);
+    timer = 0;
+    if (listening && qzRef) {
+      try {
+        qzRef.hid.setHidCallbacks([]);
+        void qzRef.hid.stopListening().catch(() => undefined);
+      } catch {
+        // Nothing to undo if the connection has already gone.
+      }
+    }
+    listening = false;
+    qzRef = null;
+  };
+
+  const start = async () => {
+    if (starting || qzRef || stopped || state.status !== 'connected') return;
+    starting = true;
+    try {
+      const qz = await loadQz();
+      if (stopped || !qz.websocket.isActive()) return;
+      qzRef = qz;
+      try {
+        qz.hid.setHidCallbacks(() => void refresh());
+        await qz.hid.startListening();
+        listening = true;
+      } catch {
+        // Events unavailable (older QZ, or HID not permitted): the poll still works.
+        listening = false;
+      }
+      await refresh();
+      timer = window.setInterval(() => void refresh(), 10_000);
+    } finally {
+      starting = false;
+    }
+  };
+
+  void start();
+  const unsubscribe = qzState.subscribe(() => {
+    if (state.status === 'connected') {
+      void start();
+    } else if (qzRef) {
+      // QZ went away: stop polling a dead socket and report nothing attached,
+      // so a reconnection starts the watch cleanly.
+      stopWatching();
+      onDevices([]);
+    }
+  });
+
+  return () => {
+    stopped = true;
+    unsubscribe();
+    stopWatching();
+  };
 }

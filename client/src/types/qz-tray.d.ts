@@ -42,6 +42,29 @@ declare module 'qz-tray' {
     api: {
       getVersion(): Promise<string>;
     };
+    /** HID devices attached to the computer QZ Tray runs on (read-only here). */
+    hid: {
+      listDevices(): Promise<QzHidDevice[]>;
+      startListening(): Promise<void>;
+      stopListening(): Promise<void>;
+      setHidCallbacks(calls: ((event: QzHidEvent) => void) | ((event: QzHidEvent) => void)[]): void;
+    };
+  }
+
+  export interface QzHidDevice {
+    vendorId: string;
+    productId: string;
+    manufacturer?: string;
+    product?: string;
+    serial?: string;
+    usagePage?: string;
+  }
+
+  export interface QzHidEvent {
+    vendorId?: string;
+    productId?: string;
+    eventType?: string;
+    actionType?: string;
   }
 
   const qz: Qz;
