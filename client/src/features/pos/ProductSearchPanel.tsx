@@ -9,8 +9,6 @@ import { formatMoney } from '@/lib/money';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { CategorySelect } from './CategorySelect';
-import { ScannerStatus } from './ScannerStatus';
-import { useScannerPresence } from './useScannerPresence';
 import { isLoyaltyCardCode } from '@/features/loyalty/loyaltyMath';
 import { groupVariantsByProduct, type PosProductGroup } from './groupVariants';
 
@@ -32,7 +30,6 @@ export function ProductSearchPanel({ onSelect, currency, onScanClick, canSellOut
   const [term, setTerm] = React.useState('');
   const debounced = useDebounced(term, 250);
   const searchRef = React.useRef<HTMLInputElement>(null);
-  const scanner = useScannerPresence();
 
   // F2 focuses search from anywhere on the POS - the standard till shortcut.
   React.useEffect(() => {
@@ -158,7 +155,6 @@ export function ProductSearchPanel({ onSelect, currency, onScanClick, canSellOut
             </Button>
           )}
         </div>
-        <ScannerStatus scanner={scanner} hint="scan anywhere on this screen" />
       </div>
 
       {categories.length > 0 && (
