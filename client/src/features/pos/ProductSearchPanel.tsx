@@ -9,6 +9,7 @@ import { formatMoney } from '@/lib/money';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { CategorySelect } from './CategorySelect';
+import { ScannerStatus } from './ScannerStatus';
 import { useScannerPresence } from './useScannerPresence';
 import { isLoyaltyCardCode } from '@/features/loyalty/loyaltyMath';
 import { groupVariantsByProduct, type PosProductGroup } from './groupVariants';
@@ -157,23 +158,7 @@ export function ProductSearchPanel({ onSelect, currency, onScanClick, canSellOut
             </Button>
           )}
         </div>
-        <p
-          className="mt-1.5 flex items-center gap-1.5 text-xs text-muted-foreground"
-          title="Browsers cannot see scanner hardware directly. The dot turns green once a scan is detected on this device."
-        >
-          {/* Green once a real scan has been seen on this device; warn until then. */}
-          <span
-            className={cn('h-2 w-2 shrink-0 rounded-full', scanner.ready ? 'bg-success' : 'bg-warning')}
-            role="status"
-            aria-label={scanner.ready ? 'Barcode scanner detected' : 'Barcode scanner not detected'}
-          />
-          <ScanBarcode className="h-3.5 w-3.5 shrink-0" />
-          <span className="min-w-0 truncate">
-            {scanner.ready
-              ? 'Scanner ready — scan anywhere on this screen'
-              : 'Scanner not detected yet — scan any barcode to check'}
-          </span>
-        </p>
+        <ScannerStatus scanner={scanner} hint="scan anywhere on this screen" />
       </div>
 
       {categories.length > 0 && (

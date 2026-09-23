@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { toast } from 'sonner';
-import { AlertTriangle, ArrowLeftRight, ScanBarcode, Trash2 } from 'lucide-react';
+import { AlertTriangle, ArrowLeftRight, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { SearchInput, useDebounced } from '@/components/SearchInput';
 import { QuantityInput } from '@/components/QuantityInput';
@@ -11,6 +11,7 @@ import { cn } from '@/lib/utils';
 import { PaymentPanel } from '@/features/pos/PaymentPanel';
 import { usePayments } from '@/features/pos/usePayments';
 import { useBarcodeScanner } from '@/features/pos/useBarcodeScanner';
+import { ScannerStatus } from '@/features/pos/ScannerStatus';
 import { useScannerPresence } from '@/features/pos/useScannerPresence';
 import type { PaymentMethod, PosVariant } from '@/types/domain';
 
@@ -122,21 +123,8 @@ export function ExchangePanel({ refundMinor, currency, tax, availableMethods, on
 
       <div className="space-y-1.5">
         <SearchInput value={term} onChange={setTerm} placeholder="Search product, SKU or barcode…" />
-        <p
-          className="flex items-center gap-1.5 text-[11px] text-muted-foreground"
-          title="Browsers cannot see scanner hardware directly. The dot turns green once a scan is detected on this device."
-        >
-          {/* Same status as the POS: green once a real scan has been seen on this device. */}
-          <span
-            className={cn('h-2 w-2 shrink-0 rounded-full', scanner.ready ? 'bg-success' : 'bg-warning')}
-            role="status"
-            aria-label={scanner.ready ? 'Barcode scanner detected' : 'Barcode scanner not detected'}
-          />
-          <ScanBarcode className="h-3.5 w-3.5 shrink-0" />
-          <span className="min-w-0 truncate">
-            {scanner.ready ? "Scanner ready — scan the replacement's barcode" : 'Scanner not detected yet — scan any barcode to check'}
-          </span>
-        </p>
+        {/* The same live status as the till. */}
+        <ScannerStatus scanner={scanner} hint="scan the replacement's barcode" className="mt-0 text-[11px]" />
         {debounced && (
           <ul className="scrollbar-thin max-h-48 divide-y overflow-y-auto rounded-md border">
             {isFetching && results.length === 0 && <li className="px-3 py-2 text-xs text-muted-foreground">Searching…</li>}
