@@ -43,6 +43,34 @@ async function api(path, { method = 'GET', token, body, storeId, headers: extraH
   return { status: res.status, ok: res.ok, ...json };
 }
 
+/**
+ * Requests a file download (data export). Returns the raw bytes, so the tests
+ * can check real file signatures rather than a JSON stand-in.
+ */
+async function download(path, { token, storeId, body } = {}) {
+  const res = await fetch(`${BASE}${path}`, {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+      ...(token ? { authorization: `Bearer ${token}` } : {}),
+      ...(storeId ? { 'x-store-id': storeId } : {}),
+    },
+    body: JSON.stringify(body ?? {}),
+  });
+  const buffer = Buffer.from(await res.arrayBuffer());
+  const contentType = res.headers.get('content-type') ?? '';
+  const json = contentType.includes('application/json') ? JSON.parse(buffer.toString('utf8') || '{}') : null;
+  return {
+    status: res.status,
+    contentType,
+    disposition: res.headers.get('content-disposition') ?? '',
+    cacheControl: res.headers.get('cache-control') ?? '',
+    buffer,
+    text: buffer.toString('utf8'),
+    error: json?.error,
+  };
+}
+
 /** Uploads an in-memory file. Used to prove the storage quota actually counts. */
 async function upload(path, { token, storeId, bytes, filename = 'pixel.png' } = {}) {
   const form = new FormData();
@@ -8291,6 +8319,138 @@ async function main() {
     check('No endpoint accepts raw print jobs', (await api('/printing/print', { method: 'POST', token: prCashier.token, body: { data: '1b40' } })).status === 404);
   }
 
+  // --- Clothing POS data export ---------------------------------------------
+  section('Clothing POS: data export (CSV, Excel, JSON, PDF)');
+  {
+    const exStamp = String(Date.now()).slice(-7);
+    const exPlatform = await login('platform@pos.dev', 'Platform@123');
+    const exPlans = (await api('/plans', {})).data ?? [];
+    const exSetPlan = (tenantId, code) =>
+      api('/platform/subscriptions', { method: 'POST', token: exPlatform.token, body: { tenantId, planId: exPlans.find((p) => p.code === code)._id, periods: 1, status: 'active', autoRenew: false } });
+    const exReg = await api('/auth/register', { method: 'POST', body: { businessName: `Export Wear ${exStamp}`, name: 'Export Owner', email: `exp${exStamp}@example.com`, password: 'Password@123', vertical: 'clothing' } });
+    const exOwner = exReg.data?.tokens?.accessToken;
+    const exTenantId = exReg.data?.tenant?.id ?? exReg.data?.tenant?._id;
+    const exStoreA = (await api('/stores', { method: 'POST', token: exOwner, body: { name: 'Export Main', code: `EX${exStamp}`, currency: 'BDT' } })).data;
+    const A = { storeId: exStoreA?._id };
+    check('A fresh Clothing workspace is set up for export tests', Boolean(exOwner && exStoreA?._id), exReg.error);
+
+    // ---- Starter: no access at all ----
+    await exSetPlan(exTenantId, 'starter-store-monthly');
+    const exStarterList = await api('/exports/datasets', { token: exOwner, ...A });
+    check('Starter: the dataset registry is refused with ENTITLEMENT_REQUIRED', exStarterList.status === 403 && exStarterList.error?.code === 'ENTITLEMENT_REQUIRED', exStarterList.error);
+    const exStarterRun = await download('/exports', { token: exOwner, ...A, body: { type: 'customers', format: 'csv' } });
+    check('Starter: running an export is refused and no file is produced', exStarterRun.status === 403 && !exStarterRun.disposition, exStarterRun.error);
+    check('Starter: the export history is refused', (await api('/exports', { token: exOwner, ...A })).status === 403);
+    check('An export needs a signed-in user', (await download('/exports', { ...A, body: { type: 'customers', format: 'csv' } })).status === 401);
+
+    // ---- Professional: the registry ----
+    await exSetPlan(exTenantId, 'showroom-monthly');
+    const exCatalog = await api('/exports/datasets', { token: exOwner, ...A });
+    const exKeys = (exCatalog.data?.datasets ?? []).map((d) => d.key);
+    check('Professional: the registry lists the datasets, formats and limits', exCatalog.status === 200 && exKeys.includes('sales') && exKeys.includes('customers') && exCatalog.data.formats.length === 4 && exCatalog.data.limits.rows > 0, exCatalog.error ?? exCatalog.data);
+    check('The registry never offers users, roles or settings', !exKeys.some((k) => /user|staff|role|setting|password|token/i.test(k)), exKeys);
+    check('An unknown dataset is refused (no arbitrary collection export)', (await download('/exports', { token: exOwner, ...A, body: { type: 'users', format: 'csv' } })).status === 422);
+    check('...and so is a raw collection name', (await download('/exports', { token: exOwner, ...A, body: { collection: 'users', format: 'csv' } })).status === 422);
+    check('An unknown format is refused', (await download('/exports', { token: exOwner, ...A, body: { type: 'customers', format: 'sql' } })).status === 422);
+    check('A custom range without both dates is refused', (await download('/exports', { token: exOwner, ...A, body: { type: 'sales', format: 'csv', preset: 'custom' } })).status === 422);
+    check('A backwards custom range is refused', (await download('/exports', { token: exOwner, ...A, body: { type: 'sales', format: 'csv', preset: 'custom', from: '2026-02-01', to: '2026-01-01' } })).status === 422);
+
+    // ---- data worth exporting: a formula-injection name, Bengali text, money ----
+    const exEvil = (await api('/customers', { method: 'POST', token: exOwner, ...A, body: { name: `=1+1 Evil ${exStamp}`, phone: `0151${exStamp}` } })).data;
+    const exBangla = (await api('/customers', { method: 'POST', token: exOwner, ...A, body: { name: `রহিম উদ্দিন ${exStamp}`, phone: `0152${exStamp}` } })).data;
+    const exVariant = (await api('/products', { method: 'POST', token: exOwner, ...A, body: { name: `শার্ট ${exStamp}`, variants: [{ attributes: [], sellingPriceMinor: 129900, costPriceMinor: 80000, stock: 50 }] } })).data?.variants?.[0]?._id;
+    const exSale = await api('/sales', { method: 'POST', token: exOwner, ...A, body: { paymentMethod: 'cash', customerId: exEvil?._id, items: [{ variantId: exVariant, quantity: 2 }] } });
+    check('Test data is in place (customers, a Bengali product and a ৳2,598 sale)', Boolean(exEvil?._id && exBangla?._id && exVariant) && exSale.data?.totalMinor === 259800, exSale.error ?? exSale.data?.totalMinor);
+
+    // ---- CSV ----
+    const exCsv = await download('/exports', { token: exOwner, ...A, body: { type: 'customers', format: 'csv' } });
+    check('CSV: served as a download with the right type and never cached', exCsv.status === 200 && exCsv.contentType.includes('text/csv') && /attachment; filename="customers-\d{4}-\d{2}-\d{2}\.csv"/.test(exCsv.disposition) && exCsv.cacheControl.includes('no-store'), { t: exCsv.contentType, d: exCsv.disposition, c: exCsv.cacheControl });
+    check('CSV: starts with a UTF-8 BOM so Excel reads Bengali correctly', exCsv.buffer[0] === 0xef && exCsv.buffer[1] === 0xbb && exCsv.buffer[2] === 0xbf);
+    check('CSV: Bengali survives the round trip', exCsv.text.includes(`রহিম উদ্দিন ${exStamp}`));
+    check('CSV: a name that looks like a formula is neutralised with an apostrophe', exCsv.text.includes(`'=1+1 Evil ${exStamp}`) && !exCsv.text.includes(`"=1+1 Evil ${exStamp}`), exCsv.text.split('\r\n').find((l) => l.includes('Evil')));
+    check('CSV: quotes are escaped and every row is CRLF terminated', exCsv.text.split('\r\n').filter(Boolean).length > 3 && !/[^\r]\n/.test(exCsv.text));
+    const exCsvSales = await download('/exports', { token: exOwner, ...A, body: { type: 'sales', format: 'csv', preset: 'today' } });
+    check('CSV: money is written as a plain 2-decimal number, not minor units', exCsvSales.text.includes('"2598.00"') && !exCsvSales.text.includes('259800'), exCsvSales.text.split('\r\n').find((l) => l.includes('2598')));
+    check('CSV: no password, hash, token or secret column ever appears', !/password|passwordHash|token|secret|apiKey/i.test(exCsv.text) && !/password|token|secret/i.test(exCsvSales.text));
+
+    // ---- XLSX ----
+    const exXlsx = await download('/exports', { token: exOwner, ...A, body: { type: 'products', format: 'xlsx' } });
+    // A truncated workbook still starts with "PK", so the ZIP is checked end to
+    // end: the central directory must be there, with the workbook part in it.
+    const exZipComplete = exXlsx.buffer.includes(Buffer.from('PK\u0005\u0006', 'latin1')) && exXlsx.buffer.includes(Buffer.from('xl/workbook.xml')) && exXlsx.buffer.includes(Buffer.from('xl/worksheets/sheet1.xml'));
+    check('XLSX: a complete, readable workbook with the spreadsheet content type', exXlsx.status === 200 && exXlsx.buffer.subarray(0, 2).toString() === 'PK' && exZipComplete && exXlsx.contentType.includes('spreadsheetml') && exXlsx.buffer.length > 2000, { t: exXlsx.contentType, n: exXlsx.buffer.length, zip: exZipComplete });
+    check('XLSX: the history records the export as completed, with its real size', (await api('/exports?limit=1', { token: exOwner, ...A })).data?.[0]?.status === 'completed');
+    check('XLSX: the file is named .xlsx', exXlsx.disposition.includes('.xlsx'));
+
+    // ---- JSON ----
+    const exJson = await download('/exports', { token: exOwner, ...A, body: { type: 'customers', format: 'json' } });
+    let exParsed = null;
+    try { exParsed = JSON.parse(exJson.text); } catch { exParsed = null; }
+    check('JSON: valid, structured and describes what it contains', exJson.status === 200 && exParsed?.exportType === 'customers' && Array.isArray(exParsed.sections?.[0]?.records) && exParsed.timezone && exParsed.workspace, exJson.text.slice(0, 200));
+    check('JSON: the records carry the exported customers', (exParsed?.sections?.[0]?.records ?? []).some((r) => String(r.name ?? '').includes('রহিম')));
+    check('JSON: money is a number in major units', (exParsed?.sections?.[0]?.records ?? []).every((r) => r.totalSpent === undefined || typeof r.totalSpent === 'number'));
+
+    // ---- PDF ----
+    const exPdf = await download('/exports', { token: exOwner, ...A, body: { type: 'sales', format: 'pdf', preset: 'today' } });
+    check('PDF: a real PDF document', exPdf.status === 200 && exPdf.text.startsWith('%PDF-') && exPdf.contentType.includes('application/pdf') && exPdf.buffer.length > 1000, { t: exPdf.contentType, head: exPdf.text.slice(0, 8) });
+
+    // ---- empty dataset ----
+    const exEmpty = await download('/exports', { token: exOwner, ...A, body: { type: 'returns', format: 'csv', preset: 'today' } });
+    check('An empty dataset still produces a valid file with its header row', exEmpty.status === 200 && exEmpty.text.includes('Export Main') && exEmpty.text.split('\r\n').some((l) => l.startsWith('"Return')), exEmpty.text.slice(0, 200));
+
+    // ---- permissions ----
+    const exRoles = (await api('/roles', { token: exOwner, ...A })).data ?? [];
+    check('Store Manager exports by default; Cashier does not', exRoles.find((r) => r.name === 'Store Manager')?.permissions.includes('reports.export') === true && exRoles.find((r) => r.name === 'Cashier')?.permissions.includes('reports.export') !== true, exRoles.map((r) => r.name));
+    await api('/staff', { method: 'POST', token: exOwner, ...A, body: { name: 'Export Cashier', email: `expc${exStamp}@example.com`, password: 'Password@123', storeId: exStoreA._id, roleId: exRoles.find((r) => r.name === 'Cashier')?._id } });
+    await api('/staff', { method: 'POST', token: exOwner, ...A, body: { name: 'Export Manager', email: `expm${exStamp}@example.com`, password: 'Password@123', storeId: exStoreA._id, roleId: exRoles.find((r) => r.name === 'Store Manager')?._id } });
+    const exCashier = (await login(`expc${exStamp}@example.com`, 'Password@123')).token;
+    const exManager = (await login(`expm${exStamp}@example.com`, 'Password@123')).token;
+    const exCashierRun = await download('/exports', { token: exCashier, ...A, body: { type: 'customers', format: 'csv' } });
+    check('A cashier cannot export, even on Professional', exCashierRun.status === 403 && !exCashierRun.disposition, exCashierRun.error);
+    check('...and cannot see the history', (await api('/exports', { token: exCashier, ...A })).status === 403);
+    check('A store manager can export', (await download('/exports', { token: exManager, ...A, body: { type: 'customers', format: 'csv' } })).status === 200);
+
+    // ---- branch isolation ----
+    const exStoreB = (await api('/stores', { method: 'POST', token: exOwner, body: { name: 'Export Two', code: `EZ${exStamp}`, currency: 'BDT' } })).data;
+    const B = { storeId: exStoreB?._id };
+    await api('/customers', { method: 'POST', token: exOwner, ...B, body: { name: `Branch Two Only ${exStamp}`, phone: `0153${exStamp}` } });
+    const exBranchA = await download('/exports', { token: exOwner, ...A, body: { type: 'customers', format: 'csv' } });
+    check("A branch export contains only that branch's customers", !exBranchA.text.includes(`Branch Two Only ${exStamp}`) && exBranchA.text.includes(`রহিম উদ্দিন ${exStamp}`));
+    const exAllBranches = await download('/exports', { token: exOwner, ...A, body: { type: 'customers', format: 'csv', branch: 'all' } });
+    check('The owner may export all branches at once', exAllBranches.status === 200 && exAllBranches.text.includes(`Branch Two Only ${exStamp}`) && exAllBranches.text.includes('All branches'));
+    const exManagerAll = await download('/exports', { token: exManager, ...A, body: { type: 'customers', format: 'csv', branch: 'all' } });
+    check('A branch manager asking for "all branches" still only gets their own', exManagerAll.status === 200 && !exManagerAll.text.includes(`Branch Two Only ${exStamp}`), exManagerAll.text.slice(0, 120));
+    const exManagerOther = await download('/exports', { token: exManager, ...B, body: { type: 'customers', format: 'csv' } });
+    check('A branch manager cannot export another branch at all', exManagerOther.status === 403, exManagerOther.error);
+
+    // ---- tenant isolation ----
+    const exOther = await api('/auth/register', { method: 'POST', body: { businessName: `Other Wear ${exStamp}`, name: 'Other Owner', email: `exo${exStamp}@example.com`, password: 'Password@123', vertical: 'clothing' } });
+    const exOtherToken = exOther.data?.tokens?.accessToken;
+    const exOtherStore = (await api('/stores', { method: 'POST', token: exOtherToken, body: { name: 'Other Main', code: `EO${exStamp}`, currency: 'BDT' } })).data;
+    await exSetPlan(exOther.data?.tenant?.id ?? exOther.data?.tenant?._id, 'showroom-monthly');
+    await api('/customers', { method: 'POST', token: exOtherToken, ...{ storeId: exOtherStore?._id }, body: { name: `Foreign Customer ${exStamp}`, phone: `0154${exStamp}` } });
+    const exForeign = await download('/exports', { token: exOtherToken, storeId: exOtherStore?._id, body: { type: 'customers', format: 'csv', branch: 'all' } });
+    check("Another workspace's export contains none of this workspace's data", exForeign.status === 200 && !exForeign.text.includes(`রহিম উদ্দিন ${exStamp}`) && exForeign.text.includes(`Foreign Customer ${exStamp}`));
+    check("...and it cannot name this workspace's branch", (await download('/exports', { token: exOtherToken, storeId: exStoreA._id, body: { type: 'customers', format: 'csv' } })).status === 403);
+    check("...nor smuggle a workspace id through the body", (await download('/exports', { token: exOtherToken, storeId: exOtherStore?._id, body: { type: 'customers', format: 'csv', tenantId: exTenantId, workspaceId: exTenantId } })).status === 422);
+
+    // ---- history and audit ----
+    const exHistory = await api('/exports', { token: exOwner, ...A });
+    const exRecent = exHistory.data?.[0];
+    check('The history records what was exported: type, format, filters, rows, size and who', exHistory.status === 200 && (exHistory.data ?? []).length > 0 && exRecent?.type && exRecent?.format && exRecent?.rowCount >= 0 && exRecent?.byteSize > 0 && exRecent?.requestedByNameSnapshot, exRecent);
+    check('The history stores metadata only - never the exported rows or a file link', !/name|phone|email|url|downloadUrl|filePath/i.test(Object.keys(exRecent ?? {}).join(',')) || !JSON.stringify(exRecent ?? {}).includes(`রহিম উদ্দিন ${exStamp}`), Object.keys(exRecent ?? {}));
+    check("A workspace's history shows only its own exports", (exHistory.data ?? []).every((row) => row.storeId === exStoreA._id));
+    const exAudit = await api('/platform/audit-log?action=data.exported&limit=50', { token: exPlatform.token });
+    check('Every export is written to the audit log with counts only', exAudit.status === 200 && (exAudit.data ?? []).length > 0 && !JSON.stringify(exAudit.data ?? []).includes(`রহিম উদ্দিন ${exStamp}`), exAudit.error);
+
+    // ---- downgrade and Enterprise ----
+    await exSetPlan(exTenantId, 'starter-store-monthly');
+    check('After a downgrade to Starter the export API is refused again', (await download('/exports', { token: exOwner, ...A, body: { type: 'customers', format: 'csv' } })).status === 403);
+    await exSetPlan(exTenantId, 'brand-monthly');
+    const exEnterprise = await download('/exports', { token: exOwner, ...A, body: { type: 'customers', format: 'csv' } });
+    check('Enterprise keeps everything Professional has: export works again', exEnterprise.status === 200 && exEnterprise.text.includes(`রহিম উদ্দিন ${exStamp}`), exEnterprise.error);
+  }
+
   // --- the new workspace, from inside ---------------------------------------
   const wcSwitch = await api('/auth/switch-workspace', { method: 'POST', token: wcHomeToken, body: { workspaceId: wcSecondId } });
   const wcToken = wcSwitch.data?.tokens?.accessToken;
@@ -8710,6 +8870,7 @@ async function main() {
     'server/src/modules/roles/roles.routes.ts',
     'server/src/modules/uploads/uploads.routes.ts',
     'server/src/modules/loyalty/loyalty.routes.ts',
+    'server/src/modules/exports/export.routes.ts',
   ]
     .map((file) => readFileSync(new URL(`../${file}`, import.meta.url), 'utf8'))
     .join('\n');

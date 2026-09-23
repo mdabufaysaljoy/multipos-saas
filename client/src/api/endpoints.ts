@@ -1,4 +1,4 @@
-import { del, get, getPaginated, patch, post } from './client';
+import { del, get, getPaginated, patch, post, postDownload } from './client';
 import type { PaymentInstruction } from '@/features/billing/UpgradeDialog';
 import type {
   BranchReport,
@@ -14,6 +14,8 @@ import type {
   StaffReportRow,
   InventoryRow,
   InventorySummary,
+  ExportCatalog,
+  ExportJob,
   LabelSettings,
   LedgerEntry,
   LoyaltyLookup,
@@ -171,6 +173,14 @@ export const customerApi = {
   create: (body: Record<string, unknown>) => post<Customer>('/customers', body),
   update: (id: string, body: Record<string, unknown>) => patch<Customer>(`/customers/${id}`, body),
   remove: (id: string) => del<{ id: string }>(`/customers/${id}`),
+};
+
+export const exportApi = {
+  /** The server-side registry of exportable datasets and formats. */
+  datasets: () => get<ExportCatalog>('/exports/datasets'),
+  history: (params?: Query) => getPaginated<ExportJob>('/exports', params),
+  /** Streams the generated file; the server assigns the filename. */
+  run: (body: Record<string, unknown>) => postDownload('/exports', body),
 };
 
 export const loyaltyApi = {

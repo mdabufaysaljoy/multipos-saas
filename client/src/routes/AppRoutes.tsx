@@ -58,6 +58,7 @@ const ShopSalesPage = lazyPage(() => import('@/pages/supershop/ShopSalesPage'), 
 // Shared workspace screens
 const CustomersPage = lazyPage(() => import('@/pages/CustomersPage'), 'CustomersPage');
 const LoyaltyPage = lazyPage(() => import('@/pages/LoyaltyPage'), 'LoyaltyPage');
+const DataExportPage = lazyPage(() => import('@/pages/DataExportPage'), 'DataExportPage');
 const MarketingPage = lazyPage(() => import('@/pages/MarketingPage'), 'MarketingPage');
 const StaffPage = lazyPage(() => import('@/pages/StaffPage'), 'StaffPage');
 const RolesPage = lazyPage(() => import('@/pages/RolesPage'), 'RolesPage');
@@ -351,6 +352,15 @@ export function AppRoutes() {
           }
         />
         <Route path="/reports" element={<Navigate to="/analytics" replace />} />
+        {/* Shows its own locked state on plans without data export. */}
+        <Route
+          path="/data-export"
+          element={
+            <ProtectedRoute anyOf={['reports.export']}>
+              <DataExportPage />
+            </ProtectedRoute>
+          }
+        />
         <Route
           path="/wallet"
           element={

@@ -140,6 +140,7 @@ export const PLAN_SECTIONS: PlanSection[] = [
       { kind: 'flag', key: 'advancedReports', label: 'Product and variant performance' },
       { kind: 'flag', key: 'advancedReports', label: 'Payment, return and staff analysis' },
       { kind: 'flag', key: 'advancedReports', label: 'Inventory valuation' },
+      { kind: 'flag', key: 'exportData', label: 'Data export (CSV, Excel, JSON, PDF)', hint: 'Download customers, products, sales, inventory, returns and loyalty data.', upsell: true },
       { kind: 'flag', key: 'multiStore', label: 'Branch performance comparison' },
     ],
   },

@@ -39,6 +39,8 @@ export const PERMISSIONS = {
   CUSTOMERS_DELETE: 'customers.delete',
 
   REPORTS_VIEW: 'reports.view',
+  /** Data export (needs the plan's data-export entitlement as well). */
+  REPORTS_EXPORT: 'reports.export',
 
   MARKETING_VIEW: 'marketing.view',
   MARKETING_CREATE_CAMPAIGN: 'marketing.createCampaign',
@@ -169,6 +171,7 @@ export const PERMISSION_CATALOG: PermissionGroup[] = [
     label: 'Reports',
     permissions: [
       { key: PERMISSIONS.REPORTS_VIEW, label: 'View reports', description: 'Access the dashboard and analytics' },
+      { key: PERMISSIONS.REPORTS_EXPORT, label: 'Export data', description: 'Download customers, products, sales and other business data' },
     ],
   },
   {

@@ -52,6 +52,7 @@ export const SYSTEM_ROLES: SystemRoleSeed[] = [
       PERMISSIONS.LOYALTY_MANAGE,
       PERMISSIONS.CUSTOMERS_EDIT,
       PERMISSIONS.REPORTS_VIEW,
+      PERMISSIONS.REPORTS_EXPORT,
       PERMISSIONS.STAFF_VIEW,
       PERMISSIONS.SETTINGS_VIEW,
       // A manager may look at marketing, but spending the wallet stays with
@@ -64,6 +65,7 @@ export const SYSTEM_ROLES: SystemRoleSeed[] = [
 
 /** Every permission a default-grant migration has ever added; new roles already have today's defaults. */
 export const APPLIED_DEFAULT_KEYS = [
+  PERMISSIONS.REPORTS_EXPORT,
   PERMISSIONS.SALES_SELL_OUT_OF_STOCK,
   PERMISSIONS.LOYALTY_VIEW,
   PERMISSIONS.LOYALTY_REDEEM,

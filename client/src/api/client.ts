@@ -135,6 +135,17 @@ export async function getPaginated<T>(url: string, params?: Record<string, unkno
   };
 }
 
+/**
+ * Downloads a generated file (data export). The browser saves it; nothing is
+ * stored on the server, so this is a normal authenticated POST that streams.
+ */
+export async function postDownload(url: string, body?: unknown): Promise<{ blob: Blob; filename: string }> {
+  const res = await http.post<Blob>(url, body, { responseType: 'blob' });
+  const disposition = String(res.headers['content-disposition'] ?? '');
+  const match = /filename="?([^"]+)"?/.exec(disposition);
+  return { blob: res.data, filename: match?.[1] ?? 'export' };
+}
+
 export async function post<T>(url: string, body?: unknown): Promise<T> {
   const res = await http.post<ApiEnvelope<T>>(url, body);
   return res.data.data;

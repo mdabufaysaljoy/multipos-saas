@@ -185,6 +185,26 @@ export interface SaleLoyalty {
   pointsRedeemedRestored: number;
 }
 
+/** The datasets and formats the server allows for data export. */
+export interface ExportCatalog {
+  datasets: { key: string; label: string; description: string; dated: boolean }[];
+  formats: { key: 'csv' | 'xlsx' | 'json' | 'pdf'; label: string; description: string }[];
+  limits: { rows: number; pdfRows: number };
+}
+
+export interface ExportJob {
+  _id: string;
+  type: string;
+  format: string;
+  filterSummary: string;
+  status: 'completed' | 'failed';
+  rowCount: number;
+  byteSize: number;
+  error: string;
+  requestedByNameSnapshot: string;
+  createdAt: string;
+}
+
 /** Barcode label printing sizes (store settings). */
 export interface LabelSettings {
   productWidthMm: 38 | 48 | 58;

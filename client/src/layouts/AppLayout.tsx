@@ -27,6 +27,7 @@ import {
   Store,
   Tags,
   Users,
+  FileDown,
   Gift,
   UsersRound,
   Wallet,
@@ -111,6 +112,7 @@ const NAV_SECTIONS: { heading: string; items: NavItem[] }[] = [
     items: [
       { to: '/dashboard', label: 'Dashboard', icon: LayoutDashboard, anyOf: ['reports.view'] },
       { to: '/analytics', label: 'Advanced Analytics', icon: BarChart3, anyOf: ['reports.view'], feature: 'advancedReports' },
+      { to: '/data-export', label: 'Data export', icon: FileDown, anyOf: ['reports.export'], feature: 'exportData', verticals: ['clothing'] },
       { to: '/account', label: 'My POS', icon: LayoutGrid, ownerOnly: true },
       { to: '/billing', label: 'Billing', icon: Layers, ownerOnly: true },
       { to: '/subscription', label: 'Subscription', icon: CreditCard, anyOf: ['subscription.view'] },
