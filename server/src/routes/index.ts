@@ -4,6 +4,7 @@ import authRoutes from '../modules/auth/auth.routes';
 import storeRoutes from '../modules/stores/stores.routes';
 import categoryRoutes from '../modules/categories/categories.routes';
 import productRoutes from '../modules/products/products.routes';
+import productImportRoutes from '../modules/productImports/import.routes';
 import inventoryRoutes from '../modules/inventory/inventory.routes';
 import customerRoutes from '../modules/customers/customers.routes';
 import loyaltyRoutes from '../modules/loyalty/loyalty.routes';
@@ -56,6 +57,8 @@ router.use('/account', accountRoutes);
 router.use('/workspaces', workspaceRoutes);
 router.use('/stores', storeRoutes);
 router.use('/categories', categoryRoutes);
+// Before the product routes: "import" must not be parsed as a product id.
+router.use('/products/import', productImportRoutes);
 router.use('/products', productRoutes);
 router.use('/inventory', inventoryRoutes);
 router.use('/customers', customerRoutes);

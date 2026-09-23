@@ -1,4 +1,4 @@
-import { del, get, getPaginated, patch, post, postDownload } from './client';
+import { del, get, getPaginated, http, patch, post, postDownload } from './client';
 import type { PaymentInstruction } from '@/features/billing/UpgradeDialog';
 import type {
   BranchReport,
@@ -16,6 +16,10 @@ import type {
   InventorySummary,
   ExportCatalog,
   ExportJob,
+  ImportCatalog,
+  ImportPreview,
+  ImportResult,
+  ProductImportJob,
   LabelSettings,
   LedgerEntry,
   LoyaltyLookup,
@@ -181,6 +185,24 @@ export const exportApi = {
   history: (params?: Query) => getPaginated<ExportJob>('/exports', params),
   /** Streams the generated file; the server assigns the filename. */
   run: (body: Record<string, unknown>) => postDownload('/exports', body),
+};
+
+/**
+ * Bulk product import. Two steps on purpose: the file is validated and
+ * previewed first, and nothing is created until the preview is confirmed.
+ */
+export const productImportApi = {
+  columns: () => get<ImportCatalog>('/products/import/columns'),
+  history: (params?: Query) => getPaginated<ProductImportJob>('/products/import', params),
+  preview: async (file: File, options: { createMissingCategories: boolean }) => {
+    const form = new FormData();
+    form.append('file', file);
+    form.append('createMissingCategories', String(options.createMissingCategories));
+    const res = await http.post<{ success: true; data: ImportPreview }>('/products/import/preview', form);
+    return res.data.data;
+  },
+  commit: (importId: string, body: { skipInvalidRows: boolean }) => post<ImportResult>(`/products/import/${importId}/commit`, body),
+  cancel: (importId: string) => post<{ importId: string; status: string }>(`/products/import/${importId}/cancel`, {}),
 };
 
 export const loyaltyApi = {

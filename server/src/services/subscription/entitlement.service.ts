@@ -61,6 +61,7 @@ const NO_PLAN_FEATURES: PlanFeatures = {
   emailMarketing: false,
   imageOptimization: false,
   loyaltyProgram: false,
+  productImport: false,
 };
 
 const NO_PLAN_LIMITS: PlanLimits = {
@@ -107,6 +108,11 @@ const normalizeFeatures = (features: Partial<PlanFeatures> | null | undefined): 
   emailMarketing: features?.emailMarketing ?? false,
   imageOptimization: features?.imageOptimization ?? false,
   loyaltyProgram: features?.loyaltyProgram ?? false,
+  // The one feature that defaults to ON when a snapshot predates it: bulk
+  // product import is part of every plan, so "missing means off" would lock
+  // existing customers out of something nobody ever sold separately. A plan
+  // that explicitly stores `false` is still refused.
+  productImport: features?.productImport ?? true,
 });
 
 /**

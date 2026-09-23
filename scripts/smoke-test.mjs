@@ -87,6 +87,35 @@ async function upload(path, { token, storeId, bytes, filename = 'pixel.png' } = 
   return { status: res.status, ok: res.ok, ...json };
 }
 
+/** Uploads a spreadsheet to the product import API, with its multipart fields. */
+async function uploadSheet(path, { token, storeId, bytes, filename = 'products.csv', type = 'text/csv', fields = {} } = {}) {
+  const form = new FormData();
+  form.append('file', new Blob([bytes], { type }), filename);
+  for (const [key, value] of Object.entries(fields)) form.append(key, String(value));
+  const res = await fetch(`${BASE}${path}`, {
+    method: 'POST',
+    headers: {
+      ...(token ? { authorization: `Bearer ${token}` } : {}),
+      ...(storeId ? { 'x-store-id': storeId } : {}),
+    },
+    body: form,
+  });
+  const json = await res.json().catch(() => ({}));
+  return { status: res.status, ok: res.ok, ...json };
+}
+
+/** A CSV in the product export's own shape: title block, blank line, headers, rows. */
+function productCsv(rows, { headers = ['Product', 'Variant', 'Selling price', 'Cost price', 'SKU', 'Barcode', 'Category', 'Brand', 'Attributes', 'Stock', 'Active'], title = true } = {}) {
+  const cell = (value) => `"${String(value ?? '').replace(/"/g, '""')}"`;
+  const lines = [];
+  if (title) {
+    lines.push(cell('Demo Wear - Main'), cell('Products & variants - Last 30 days'), cell('Generated 2026-09-23 10:00 (Asia/Dhaka) by Owner'), cell('All records'), '');
+  }
+  lines.push(headers.map(cell).join(','));
+  for (const row of rows) lines.push(headers.map((_, index) => cell(row[index])).join(','));
+  return Buffer.from('\uFEFF' + lines.join('\r\n') + '\r\n', 'utf8');
+}
+
 /**
  * A real, decodable JPEG of the given pixel size.
  *
@@ -8449,6 +8478,271 @@ async function main() {
     await exSetPlan(exTenantId, 'brand-monthly');
     const exEnterprise = await download('/exports', { token: exOwner, ...A, body: { type: 'customers', format: 'csv' } });
     check('Enterprise keeps everything Professional has: export works again', exEnterprise.status === 200 && exEnterprise.text.includes(`রহিম উদ্দিন ${exStamp}`), exEnterprise.error);
+  }
+
+  // --- Clothing POS bulk product import ---------------------------------------
+  section('Clothing POS: bulk product import (Excel / CSV, every plan)');
+  {
+    const imStamp = String(Date.now()).slice(-7);
+    const imPlatform = await login('platform@pos.dev', 'Platform@123');
+    const imPlans = (await api('/plans', {})).data ?? [];
+    const imSetPlan = (tenantId, code) =>
+      api('/platform/subscriptions', { method: 'POST', token: imPlatform.token, body: { tenantId, planId: imPlans.find((p) => p.code === code)._id, periods: 1, status: 'active', autoRenew: false } });
+    const imReg = await api('/auth/register', { method: 'POST', body: { businessName: `Import Wear ${imStamp}`, name: 'Import Owner', email: `imp${imStamp}@example.com`, password: 'Password@123', vertical: 'clothing' } });
+    const imOwner = imReg.data?.tokens?.accessToken;
+    const imTenantId = imReg.data?.tenant?.id ?? imReg.data?.tenant?._id;
+    const imStoreA = (await api('/stores', { method: 'POST', token: imOwner, body: { name: 'Import Main', code: `IM${imStamp}`, currency: 'BDT' } })).data;
+    const A = { storeId: imStoreA?._id };
+    check('A fresh Clothing workspace is set up for import tests', Boolean(imOwner && imStoreA?._id), imReg.error);
+
+    const preview = (bytes, extra = {}) => uploadSheet('/products/import/preview', { token: imOwner, ...A, bytes, ...extra });
+    const commitImport = (importId, body = {}, token = imOwner, store = A) =>
+      api(`/products/import/${importId}/commit`, { method: 'POST', token, ...store, body: { skipInvalidRows: false, ...body } });
+    const productCount = async (token = imOwner, store = A) => (await api('/products?limit=1&includeInactive=true', { token, ...store })).meta?.total ?? 0;
+    const findProduct = async (name, token = imOwner, store = A) =>
+      ((await api(`/products?search=${encodeURIComponent(name)}&includeInactive=true&limit=50`, { token, ...store })).data ?? []).find((p) => p.name === name);
+
+    // ---- every plan, starting with Starter ----
+    await imSetPlan(imTenantId, 'starter-store-monthly');
+    const imStarterColumns = await api('/products/import/columns', { token: imOwner, ...A });
+    check('STARTER: the import API is available (import is not a paid upgrade)', imStarterColumns.status === 200 && imStarterColumns.data?.columns?.length > 0, imStarterColumns.error);
+    const imStarterPreview = await preview(productCsv([['Starter Tee', 'Default', '500', '', '', '', '', '', '', '3', 'Yes']]));
+    check('STARTER: a file validates', imStarterPreview.status === 200 && imStarterPreview.data?.summary?.validRows === 1, imStarterPreview.error);
+    const imStarterRun = await commitImport(imStarterPreview.data?.importId);
+    check('STARTER: the products are created', imStarterRun.status === 200 && imStarterRun.data?.summary?.productsCreated === 1, imStarterRun.error);
+    check('Data export stays Professional-only: Starter still cannot export', (await api('/exports/datasets', { token: imOwner, ...A })).status === 403);
+
+    await imSetPlan(imTenantId, 'showroom-monthly');
+    check('PROFESSIONAL: import is available', (await api('/products/import/columns', { token: imOwner, ...A })).status === 200);
+    await imSetPlan(imTenantId, 'brand-monthly');
+    check('ENTERPRISE: import is available', (await api('/products/import/columns', { token: imOwner, ...A })).status === 200);
+    check('An import needs a signed-in user', (await uploadSheet('/products/import/preview', { ...A, bytes: productCsv([['X', 'Default', '1']]) })).status === 401);
+
+    // ---- file types ----
+    check('A .txt file is refused', (await preview(Buffer.from('Product,Variant,Price\nA,B,1'), { filename: 'products.txt', type: 'text/plain' })).status === 400);
+    check('An .xlsm (macro) workbook is refused', (await preview(productCsv([['A', 'B', '1']]), { filename: 'products.xlsm', type: 'application/vnd.ms-excel.sheet.macroEnabled.12' })).status === 400);
+    check('An executable is refused', (await preview(Buffer.from('MZ binary'), { filename: 'evil.exe', type: 'application/octet-stream' })).status === 400);
+    const imNotCsv = await preview(Buffer.from('this is not a spreadsheet at all'), { filename: 'notes.csv' });
+    check('A .csv that is not a spreadsheet is refused with a readable message', imNotCsv.status === 400 && /header|column/i.test(imNotCsv.error?.message ?? ''), imNotCsv.error);
+
+    // ---- headers ----
+    const imNoPrice = await preview(productCsv([['A', 'Default']], { headers: ['Product', 'Variant'] }));
+    check('Missing required columns stop the import and are named', imNoPrice.status === 400 && /Selling price/.test(imNoPrice.error?.message ?? ''), imNoPrice.error);
+    const imLoose = await preview(productCsv([['Loose Tee', 'Default', '700']], { headers: [' product name ', 'VARIANT', 'Price'], title: false }));
+    check('Harmless header differences (case, spacing, "Price") still map', imLoose.status === 200 && imLoose.data?.summary?.validRows === 1, imLoose.error);
+    const imTwoPrice = await preview(productCsv([['A', 'Default', '1', '2']], { headers: ['Product', 'Variant', 'Price', 'Selling price'], title: false }));
+    check('Two columns for the same field are refused rather than guessed', imTwoPrice.status === 400, imTwoPrice.error);
+
+    // ---- mandatory fields ----
+    const imBad = await preview(
+      productCsv([
+        ['', 'Black / M', '990'],
+        ['No Variant Tee', '', '990'],
+        ['No Price Tee', 'Default', ''],
+        ['Bad Price Tee', 'Default', 'abc'],
+        ['Negative Tee', 'Default', '-100'],
+        ['Good Tee', 'Default', '990'],
+      ]),
+    );
+    const imBadErrors = imBad.data?.errors ?? [];
+    const errorFor = (row) => imBadErrors.find((e) => e.rowNumber === row)?.message ?? '';
+    check(
+      'Missing name, missing variant, missing price, "abc" and a negative price are all rejected - with the file row numbers',
+      imBad.status === 200 &&
+        imBad.data?.summary?.invalidRows === 5 &&
+        imBad.data?.summary?.validRows === 1 &&
+        /Product name is required/.test(errorFor(7)) &&
+        /Variant is required/.test(errorFor(8)) &&
+        /Selling price is required/.test(errorFor(9)) &&
+        /not a valid price/.test(errorFor(10)) &&
+        /not a valid price|negative/.test(errorFor(11)),
+      imBadErrors,
+    );
+    const imBefore = await productCount();
+    check('Validating creates nothing', (await productCount()) === imBefore);
+    const imRefused = await commitImport(imBad.data?.importId);
+    check('Importing a file with invalid rows is refused until the user confirms', imRefused.status === 400 && imRefused.error?.details?.reason === 'INVALID_ROWS', imRefused.error);
+    const imSkipped = await commitImport(imBad.data?.importId, { skipInvalidRows: true });
+    check('Confirming "valid rows only" imports exactly those rows', imSkipped.status === 200 && imSkipped.data?.summary?.productsCreated === 1 && imSkipped.data?.summary?.rowsSkipped === 5, imSkipped.error);
+    check('A previewed import cannot be committed twice', (await commitImport(imBad.data?.importId, { skipInvalidRows: true })).status === 400);
+
+    // ---- grouping, optional fields, Bengali ----
+    const imGroup = await preview(
+      productCsv([
+        ['Oversized T-Shirt', 'Black / M', '990', '600', '', '', '', 'Urban Thread', 'Color: Black; Size: M', '10', 'Yes'],
+        ['Oversized T-Shirt', 'Black / L', '990', '600', '', '', '', 'Urban Thread', 'Color: Black; Size: L', '7', 'Yes'],
+        ['Oversized T-Shirt', 'White / M', '1050.50', '', '', '', '', 'Urban Thread', 'Color: White; Size: M', '', 'Yes'],
+        [`Bangla Shirt ${imStamp}`, 'Default', '1299', '', '', '', '', '', '', '2', 'Yes'],
+      ]),
+    );
+    check(
+      'Four rows become two products: one with three variants, one with a single default variant',
+      imGroup.status === 200 && imGroup.data?.summary?.productsToCreate === 2 && imGroup.data?.summary?.variantsToCreate === 4,
+      imGroup.data?.summary,
+    );
+    const imGroupRun = await commitImport(imGroup.data?.importId);
+    check('...and they are created as such', imGroupRun.status === 200 && imGroupRun.data?.summary?.productsCreated === 2 && imGroupRun.data?.summary?.variantsCreated === 4, imGroupRun.error);
+    const imTee = await findProduct('Oversized T-Shirt');
+    const imTeeFull = (await api(`/products/${imTee?._id}`, { token: imOwner, ...A })).data;
+    const imTeeVariants = imTeeFull?.variants ?? [];
+    check(
+      'One product with Black / M, Black / L and White / M - not three unrelated products',
+      imTeeVariants.length === 3 && ['Black / M', 'Black / L', 'White / M'].every((name) => imTeeVariants.some((v) => v.name === name)),
+      imTeeVariants.map((v) => v.name),
+    );
+    check('Attributes are parsed into real options, so the product has Color and Size', (imTeeFull?.options ?? []).map((o) => o.name).join(',') === 'Color,Size' && imTeeFull?.hasVariants === true, imTeeFull?.options);
+    check('Prices are exact minor units, never floating point (1050.50 -> 105050)', imTeeVariants.find((v) => v.name === 'White / M')?.sellingPriceMinor === 105050 && imTeeVariants.find((v) => v.name === 'Black / M')?.costPriceMinor === 60000);
+    check('Blank optional fields fall back to the same defaults as the New product form', imTeeVariants.find((v) => v.name === 'White / M')?.costPriceMinor === 0 && imTeeVariants.find((v) => v.name === 'White / M')?.stock === 0 && imTeeVariants.every((v) => v.isActive === true));
+    check('Every imported variant gets a generated SKU', imTeeVariants.every((v) => typeof v.sku === 'string' && v.sku.length > 0) && new Set(imTeeVariants.map((v) => v.sku)).size === 3, imTeeVariants.map((v) => v.sku));
+    check('A blank barcode stays blank rather than being invented', imTeeVariants.every((v) => !v.barcode));
+
+    // ---- stock goes through the inventory ledger ----
+    const imLedger = (await api('/inventory/ledger?limit=50', { token: imOwner, ...A })).data ?? [];
+    const imBlackM = imTeeVariants.find((v) => v.name === 'Black / M');
+    check('Opening stock is recorded as an inventory movement, not a silent field write', imBlackM?.stock === 10 && imLedger.some((t) => String(t.variantId) === String(imBlackM?._id) && t.type === 'INITIAL_STOCK' && t.quantityChange === 10), imLedger.slice(0, 2));
+
+    // ---- the imported product works at the till ----
+    const imGenerated = await api(`/products/${imTee?._id}/variants/${imBlackM?._id}`, { method: 'PATCH', token: imOwner, ...A, body: { barcode: `299${imStamp}0001` } });
+    check('An imported variant can be given a barcode afterwards', imGenerated.status === 200, imGenerated.error);
+    const imScan = await api(`/products/pos-search?q=299${imStamp}0001`, { token: imOwner, ...A });
+    check('...and the POS finds it by scanning that barcode', (imScan.data ?? []).some((v) => String(v.variantId) === String(imBlackM?._id)), imScan.data);
+    const imSale = await api('/sales', { method: 'POST', token: imOwner, ...A, body: { paymentMethod: 'cash', items: [{ variantId: imBlackM?._id, quantity: 2 }] } });
+    check('...and it sells, at the imported price, taking stock with it', imSale.status === 201 && imSale.data?.totalMinor === 198000, imSale.error);
+    check('...leaving the ledger consistent (10 - 2 = 8)', (await api(`/products/${imTee?._id}`, { token: imOwner, ...A })).data?.variants?.find((v) => v.name === 'Black / M')?.stock === 8);
+
+    // ---- duplicates ----
+    const imDup = await preview(
+      productCsv([
+        ['Oversized T-Shirt', 'Black / XL', '990', '', '', '', '', '', '', '1', 'Yes'],
+        ['Dup Sku One', 'Default', '100', '', `DUP${imStamp}`, '', '', '', '', '1', 'Yes'],
+        ['Dup Sku Two', 'Default', '100', '', `DUP${imStamp}`, '', '', '', '', '1', 'Yes'],
+        ['Dup Barcode One', 'Default', '100', '', '', `299${imStamp}0002`, '', '', '', '1', 'Yes'],
+        ['Dup Barcode Two', 'Default', '100', '', '', `299${imStamp}0002`, '', '', '', '1', 'Yes'],
+        ['Existing Barcode', 'Default', '100', '', '', `299${imStamp}0001`, '', '', '', '1', 'Yes'],
+        ['Same Product', 'Default', '100', '', '', '', '', '', '', '1', 'Yes'],
+        ['Same Product', 'Default', '150', '', '', '', '', '', '', '1', 'Yes'],
+      ]),
+    );
+    const imDupErrors = imDup.data?.errors ?? [];
+    const dupError = (row) => imDupErrors.find((e) => e.rowNumber === row)?.message ?? '';
+    check('An existing product name is never silently overwritten or duplicated', /already exists/.test(dupError(7)), dupError(7));
+    check('A SKU repeated in the file is refused', /appears more than once/.test(dupError(9)), dupError(9));
+    check('A barcode repeated in the file is refused', /appears more than once/.test(dupError(11)), dupError(11));
+    check('A barcode that already exists in the branch is refused', /already exists/.test(dupError(12)), dupError(12));
+    check('The same variant twice in one product is refused', /already has a variant/.test(dupError(14)), dupError(14));
+    check('The valid rows of that file are still importable', imDup.data?.summary?.validRows === 3, imDup.data?.summary);
+
+    // ---- categories ----
+    const imCatCsv = productCsv([[`Cat Tee ${imStamp}`, 'Default', '400', '', '', '', `Imported Cat ${imStamp}`, '', '', '1', 'Yes']]);
+    const imCatOff = await preview(imCatCsv);
+    check("An unknown category is reported, not created behind the user's back", imCatOff.data?.summary?.invalidRows === 1 && /does not exist/.test(imCatOff.data?.errors?.[0]?.message ?? ''), imCatOff.data?.errors);
+    const imCatOn = await preview(imCatCsv, { fields: { createMissingCategories: 'true' } });
+    check('Ticking "create missing categories" plans it instead', imCatOn.data?.summary?.validRows === 1 && imCatOn.data?.missingCategories?.length === 1, imCatOn.data?.missingCategories);
+    const imCatRun = await commitImport(imCatOn.data?.importId);
+    check('...and the category is created in THIS branch and attached', imCatRun.data?.summary?.categoriesCreated === 1 && (await findProduct(`Cat Tee ${imStamp}`))?.categoryNameSnapshot === `Imported Cat ${imStamp}`, imCatRun.error);
+    const imExistingCat = (await api('/categories?limit=100', { token: imOwner, ...A })).data ?? [];
+    check('An existing category is matched by name, not duplicated', imExistingCat.filter((c) => c.name === `Imported Cat ${imStamp}`).length === 1);
+
+    // ---- ids in the file are never trusted ----
+    const imForeign = await api('/auth/register', { method: 'POST', body: { businessName: `Other Import ${imStamp}`, name: 'Other Owner', email: `impo${imStamp}@example.com`, password: 'Password@123', vertical: 'clothing' } });
+    const imForeignToken = imForeign.data?.tokens?.accessToken;
+    const imForeignTenant = imForeign.data?.tenant?.id ?? imForeign.data?.tenant?._id;
+    const imForeignStore = (await api('/stores', { method: 'POST', token: imForeignToken, body: { name: 'Other Main', code: `IO${imStamp}`, currency: 'BDT' } })).data;
+    await imSetPlan(imForeignTenant, 'starter-store-monthly');
+    const F = { storeId: imForeignStore?._id };
+    const imIdBytes = productCsv(
+      [[`Forged ${imStamp}`, 'Default', '100', imTenantId, imStoreA._id, imTee?._id, '', '', '', '1', 'Yes']],
+      { headers: ['Product', 'Variant', 'Selling price', 'Tenant ID', 'Store ID', 'Product ID', 'Category ID', 'Brand', 'Attributes', 'Stock', 'Active'] },
+    );
+    const imIdPreview = await uploadSheet('/products/import/preview', { token: imForeignToken, ...F, bytes: imIdBytes });
+    check(
+      'Id columns are ignored entirely - they are not even offered as unmapped columns',
+      imIdPreview.status === 200 && (imIdPreview.data?.unmappedHeaders ?? []).length === 0 && imIdPreview.data?.summary?.validRows === 1,
+      imIdPreview.error ?? imIdPreview.data?.unmappedHeaders,
+    );
+    const imIdRun = await api(`/products/import/${imIdPreview.data?.importId}/commit`, { method: 'POST', token: imForeignToken, ...F, body: { skipInvalidRows: false } });
+    const imForeignProduct = await findProduct(`Forged ${imStamp}`, imForeignToken, F);
+    check(
+      'A product imported with foreign ids in the file belongs to the importing workspace and branch, with new ids',
+      imIdRun.status === 200 && String(imForeignProduct?.storeId) === String(imForeignStore._id) && String(imForeignProduct?._id) !== String(imTee?._id),
+      imIdRun.error,
+    );
+    check("...and the other workspace's catalogue is untouched", !(await findProduct(`Forged ${imStamp}`)), 'leaked');
+    check('A workspace cannot import into a branch it does not own', (await uploadSheet('/products/import/preview', { token: imForeignToken, storeId: imStoreA._id, bytes: productCsv([['X', 'Default', '1']]) })).status === 403);
+
+    // ---- export -> import, the round trip ----
+    await imSetPlan(imForeignTenant, 'showroom-monthly');
+    const imExport = await download('/exports', { token: imOwner, ...A, body: { type: 'products', format: 'csv' } });
+    const imRoundTrip = await uploadSheet('/products/import/preview', { token: imForeignToken, ...F, bytes: imExport.buffer, filename: 'products-export.csv', fields: { createMissingCategories: 'true' } });
+    check(
+      'A file straight from Data export imports with no renaming: the export columns are the import columns',
+      imRoundTrip.status === 200 && imRoundTrip.data?.summary?.validRows > 0 && imRoundTrip.data?.summary?.invalidRows === 0,
+      imRoundTrip.error ?? imRoundTrip.data?.summary,
+    );
+    const imRoundRun = await api(`/products/import/${imRoundTrip.data?.importId}/commit`, { method: 'POST', token: imForeignToken, ...F, body: { skipInvalidRows: false } });
+    check('...and the round trip recreates the same products and variants in the new workspace', imRoundRun.status === 200 && imRoundRun.data?.summary?.variantsCreated === imRoundTrip.data?.summary?.validRows, imRoundRun.error);
+    const imRoundTee = await findProduct('Oversized T-Shirt', imForeignToken, F);
+    const imRoundVariants = (await api(`/products/${imRoundTee?._id}`, { token: imForeignToken, ...F })).data?.variants ?? [];
+    check('...with the variants grouped and the prices intact', imRoundVariants.length === 3 && imRoundVariants.find((v) => v.name === 'White / M')?.sellingPriceMinor === 105050, imRoundVariants.map((v) => [v.name, v.sellingPriceMinor]));
+    check('...and barcodes carried over only where the file had them', imRoundVariants.filter((v) => v.barcode).length === 1);
+
+    // ---- Excel ----
+    const ExcelJS = (await import('exceljs')).default;
+    const imBook = new ExcelJS.Workbook();
+    const imSheet = imBook.addWorksheet('Products');
+    imSheet.addRow(['Demo Wear - Main']);
+    imSheet.addRow([]);
+    imSheet.addRow(['Product', 'Variant', 'Selling price', 'Stock', 'Attributes']);
+    imSheet.addRow([`Excel Shirt ${imStamp}`, 'Red / S', 1234.5, 4, 'Color: Red; Size: S']);
+    imSheet.addRow([`Excel Shirt ${imStamp}`, 'Red / M', 1234.5, 6, 'Color: Red; Size: M']);
+    const imXlsxBytes = Buffer.from(await imBook.xlsx.writeBuffer());
+    const imXlsx = await preview(imXlsxBytes, { filename: 'products.xlsx', type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+    check('XLSX: a real workbook imports, with its own title block skipped', imXlsx.status === 200 && imXlsx.data?.summary?.validRows === 2 && imXlsx.data?.summary?.productsToCreate === 1, imXlsx.error ?? imXlsx.data?.summary);
+    const imXlsxRun = await commitImport(imXlsx.data?.importId);
+    const imXlsxProduct = await findProduct(`Excel Shirt ${imStamp}`);
+    const imXlsxVariants = (await api(`/products/${imXlsxProduct?._id}`, { token: imOwner, ...A })).data?.variants ?? [];
+    check('XLSX: 1234.5 becomes exactly 123450 minor units', imXlsxRun.status === 200 && imXlsxVariants.length === 2 && imXlsxVariants.every((v) => v.sellingPriceMinor === 123450), imXlsxVariants.map((v) => v.sellingPriceMinor));
+
+    // ---- spreadsheet formula text is data, never a formula ----
+    const imFormula = await preview(productCsv([[`'=1+1 Tee ${imStamp}`, 'Default', '100', '', '', '', '', '', '', '1', 'Yes']]));
+    await commitImport(imFormula.data?.importId);
+    const imFormulaProduct = await findProduct(`=1+1 Tee ${imStamp}`);
+    check('An exported "\'=1+1" name comes back as the plain text "=1+1", stored as data', Boolean(imFormulaProduct) && imFormulaProduct.name === `=1+1 Tee ${imStamp}`, imFormulaProduct?.name);
+    const imReExport = await download('/exports', { token: imOwner, ...A, body: { type: 'products', format: 'csv' } });
+    check('...and exporting it again neutralises it again', imReExport.text.includes(`"'=1+1 Tee ${imStamp}"`));
+
+    // ---- size ----
+    const imHuge = await preview(productCsv(Array.from({ length: 2_001 }, (_, i) => [`Bulk ${imStamp} ${i}`, 'Default', '100'])));
+    check('A file with more rows than the documented limit is refused, with the limit', imHuge.status === 400 && imHuge.error?.details?.maxRows === 2000, imHuge.error);
+
+    // ---- permissions ----
+    const imRoles = (await api('/roles', { token: imOwner, ...A })).data ?? [];
+    check('Store Manager imports by default; Cashier does not', imRoles.find((r) => r.name === 'Store Manager')?.permissions.includes('products.import') === true && imRoles.find((r) => r.name === 'Cashier')?.permissions.includes('products.import') !== true);
+    await api('/staff', { method: 'POST', token: imOwner, ...A, body: { name: 'Import Cashier', email: `impc${imStamp}@example.com`, password: 'Password@123', storeId: imStoreA._id, roleId: imRoles.find((r) => r.name === 'Cashier')?._id } });
+    await api('/staff', { method: 'POST', token: imOwner, ...A, body: { name: 'Import Maker', email: `impm${imStamp}@example.com`, password: 'Password@123', storeId: imStoreA._id, extraPermissions: ['products.view', 'products.create'] } });
+    const imCashier = (await login(`impc${imStamp}@example.com`, 'Password@123')).token;
+    const imMaker = (await login(`impm${imStamp}@example.com`, 'Password@123')).token;
+    check('A cashier cannot import', (await uploadSheet('/products/import/preview', { token: imCashier, ...A, bytes: productCsv([['X', 'Default', '1']]) })).status === 403);
+    check('Being able to CREATE a product is not being able to IMPORT products', (await uploadSheet('/products/import/preview', { token: imMaker, ...A, bytes: productCsv([['X', 'Default', '1']]) })).status === 403);
+    check('...and neither of them can see the import history', (await api('/products/import', { token: imCashier, ...A })).status === 403);
+
+    // ---- history and audit ----
+    const imHistory = await api('/products/import?limit=20', { token: imOwner, ...A });
+    const imRecent = (imHistory.data ?? [])[0];
+    check('The history records filename, counts, who and when - and never the file', imHistory.status === 200 && imRecent?.filename && imRecent?.productsCreated >= 0 && imRecent?.requestedByNameSnapshot && !('plan' in imRecent) && !('rowErrors' in imRecent), Object.keys(imRecent ?? {}));
+    check('Unconfirmed previews are not shown as imports', (imHistory.data ?? []).every((row) => row.status !== 'pending'));
+    const imAudit = await api('/platform/audit-log?action=products.imported&limit=20', { token: imPlatform.token });
+    check('Every import is written to the audit log with counts only', imAudit.status === 200 && (imAudit.data ?? []).length > 0 && !JSON.stringify(imAudit.data ?? []).includes('Oversized T-Shirt'), imAudit.error);
+
+    // ---- the plan's product limit still applies ----
+    await imSetPlan(imTenantId, 'starter-store-monthly');
+    const imLimitPreview = await preview(productCsv(Array.from({ length: 400 }, (_, i) => [`Limit ${imStamp} ${i}`, 'Default', '100'])));
+    const imLimitRun = await commitImport(imLimitPreview.data?.importId, { skipInvalidRows: true });
+    check(
+      "An import cannot exceed the plan's product limit: it stops and says why",
+      imLimitRun.status === 200 && imLimitRun.data?.summary?.productsCreated < 400 && /limit|upgrade|plan/i.test(imLimitRun.data?.stopped ?? ''),
+      imLimitRun.data?.stopped,
+    );
   }
 
   // --- the new workspace, from inside ---------------------------------------

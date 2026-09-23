@@ -47,6 +47,7 @@ export const PLAN_SEEDS = [
       emailMarketing: false,
       imageOptimization: false,
       loyaltyProgram: false,
+      productImport: true,
     },
     // Starter is a single-shop plan.
     limits: {
@@ -83,6 +84,7 @@ export const PLAN_SEEDS = [
       emailMarketing: true,
       imageOptimization: false,
       loyaltyProgram: true,
+      productImport: true,
     },
     limits: {
       maxStaff: 6,
@@ -118,6 +120,7 @@ export const PLAN_SEEDS = [
       // Brand only: uploads are resized and stored as WebP.
       imageOptimization: true,
       loyaltyProgram: true,
+      productImport: true,
     },
     limits: {
       maxStaff: -1,

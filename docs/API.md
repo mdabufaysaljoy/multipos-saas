@@ -347,6 +347,35 @@ admins outright, keeping the two surfaces separate.
 
 ---
 
+## Data export — `/api/exports`
+
+Professional and Enterprise (`dataExport` entitlement) + `reports.export`. Files
+stream to the caller and are never stored. See `docs/DATA_EXPORT.md`.
+
+| Method | Path | Purpose |
+|---|---|---|
+| GET | `/datasets` | The server-side registry: what may be exported, and in which formats |
+| POST | `/` | `{ type, format, preset/from/to, branch }` → streams CSV / XLSX / JSON / PDF |
+| GET | `/` | Export history (metadata only) |
+
+---
+
+## Product import — `/api/products/import`
+
+**Every plan** (`productImport` entitlement — deliberately not `dataExport`) +
+`products.import`, Clothing only. Two steps: nothing is created until a preview
+is confirmed. See `docs/PRODUCT_IMPORT.md`.
+
+| Method | Path | Purpose |
+|---|---|---|
+| GET | `/columns` | The column contract and limits (2,000 rows, 5 MB, .xlsx/.csv) |
+| POST | `/preview` | multipart `file` + `createMissingCategories` → validation, mapping, row errors, plan |
+| POST | `/:id/commit` | `{ skipInvalidRows }` → creates the products through the ordinary product service |
+| POST | `/:id/cancel` | Discards an unconfirmed preview |
+| GET | `/` | Import history (filename, counts, status, who, when) |
+
+---
+
 ## Uploads — `/api/uploads`
 
 `POST /image` (multipart `file`) — `products.create`. JPEG/PNG/WebP/AVIF, 4 MB

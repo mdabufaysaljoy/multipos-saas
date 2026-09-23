@@ -8,6 +8,8 @@ export const PERMISSIONS = {
   PRODUCTS_CREATE: 'products.create',
   PRODUCTS_EDIT: 'products.edit',
   PRODUCTS_DELETE: 'products.delete',
+  /** Bulk product import from a spreadsheet. Creating one product at a time is `products.create`. */
+  PRODUCTS_IMPORT: 'products.import',
 
   CATEGORIES_VIEW: 'categories.view',
   CATEGORIES_CREATE: 'categories.create',
@@ -87,6 +89,7 @@ export const PERMISSION_CATALOG: PermissionGroup[] = [
       { key: PERMISSIONS.PRODUCTS_CREATE, label: 'Create products', description: 'Add new products and variants' },
       { key: PERMISSIONS.PRODUCTS_EDIT, label: 'Edit products', description: 'Change product details and prices' },
       { key: PERMISSIONS.PRODUCTS_DELETE, label: 'Delete products', description: 'Deactivate or soft-delete products' },
+      { key: PERMISSIONS.PRODUCTS_IMPORT, label: 'Import products', description: 'Create many products at once from an Excel or CSV file' },
     ],
   },
   {

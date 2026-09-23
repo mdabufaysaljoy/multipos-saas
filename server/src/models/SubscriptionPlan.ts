@@ -39,6 +39,13 @@ export interface PlanFeatures {
   imageOptimization: boolean;
   /** Loyalty points and membership cards (Clothing POS). Professional and Enterprise. */
   loyaltyProgram: boolean;
+  /**
+   * Bulk product import from Excel/CSV (Clothing POS). Included on EVERY plan -
+   * it is how a new shop gets its catalogue in, not a tier differentiator. The
+   * flag exists so it stays independently enforceable (and separately from
+   * `exportData`), never so a plan can be sold without it.
+   */
+  productImport: boolean;
 }
 
 /**
@@ -120,6 +127,7 @@ const planSchema = new Schema<SubscriptionPlanDoc>(
       emailMarketing: { type: Boolean, default: false },
       imageOptimization: { type: Boolean, default: false },
       loyaltyProgram: { type: Boolean, default: false },
+      productImport: { type: Boolean, default: true },
     },
     limits: {
       maxStaff: { type: Number, default: 2 },

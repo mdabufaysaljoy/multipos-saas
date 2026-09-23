@@ -56,6 +56,8 @@ export const ENTITLEMENT_FEATURES = {
   imageOptimization: { label: 'Image optimisation', planFeature: 'imageOptimization' },
   // Clothing only for now; other POS types never receive it.
   loyalty: { label: 'Loyalty program', planFeature: 'loyaltyProgram', verticals: ['clothing'] },
+  // Separate from `dataExport` on purpose: import is on every plan, export is not.
+  productImport: { label: 'Bulk product import', planFeature: 'productImport', verticals: ['clothing'] },
 } as const satisfies Record<string, FeatureDefinition>;
 
 export const ENTITLEMENT_LIMITS = {

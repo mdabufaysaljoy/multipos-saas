@@ -205,6 +205,92 @@ export interface ExportJob {
   createdAt: string;
 }
 
+/** Bulk product import (Excel/CSV) - available on every plan. */
+export interface ImportColumnSpec {
+  field: string;
+  label: string;
+  required: boolean;
+  aliases: string[];
+  hint: string;
+}
+
+export interface ImportCatalog {
+  columns: ImportColumnSpec[];
+  limits: { maxRows: number; maxBytes: number };
+  formats: string[];
+}
+
+export interface ImportRowError {
+  rowNumber: number;
+  productName: string;
+  variantName: string;
+  field: string;
+  message: string;
+}
+
+export interface ImportPreview {
+  importId: string;
+  filename: string;
+  format: 'xlsx' | 'csv';
+  headerRow: number;
+  mapping: { header: string; field: string | null; ignored: boolean }[];
+  unmappedHeaders: string[];
+  summary: {
+    totalRows: number;
+    validRows: number;
+    invalidRows: number;
+    blankRows: number;
+    productsToCreate: number;
+    variantsToCreate: number;
+    categoriesToCreate: number;
+  };
+  missingCategories: string[];
+  preview: {
+    name: string;
+    brand: string;
+    category: string;
+    variantCount: number;
+    variants: { name: string; sku: string; barcode: string; sellingPriceMinor: number; stock: number }[];
+  }[];
+  errors: ImportRowError[];
+  errorsTruncated: boolean;
+  expiresAt: string | null;
+}
+
+export interface ImportResult {
+  importId: string;
+  status: 'completed' | 'failed';
+  summary: {
+    rowsProcessed: number;
+    rowsImported: number;
+    rowsFailed: number;
+    rowsSkipped: number;
+    productsCreated: number;
+    variantsCreated: number;
+    categoriesCreated: number;
+  };
+  failures: { productName: string; rowNumbers: number[]; message: string }[];
+  stopped: string | null;
+}
+
+export interface ProductImportJob {
+  _id: string;
+  filename: string;
+  format: 'xlsx' | 'csv';
+  status: 'pending' | 'completed' | 'failed' | 'cancelled';
+  totalRows: number;
+  validRows: number;
+  invalidRows: number;
+  productsCreated: number;
+  variantsCreated: number;
+  rowsImported: number;
+  rowsFailed: number;
+  categoriesCreated: number;
+  error: string;
+  requestedByNameSnapshot: string;
+  createdAt: string;
+}
+
 /** Barcode label printing sizes (store settings). */
 export interface LabelSettings {
   productWidthMm: 38 | 48 | 58;

@@ -59,6 +59,7 @@ const ShopSalesPage = lazyPage(() => import('@/pages/supershop/ShopSalesPage'), 
 const CustomersPage = lazyPage(() => import('@/pages/CustomersPage'), 'CustomersPage');
 const LoyaltyPage = lazyPage(() => import('@/pages/LoyaltyPage'), 'LoyaltyPage');
 const DataExportPage = lazyPage(() => import('@/pages/DataExportPage'), 'DataExportPage');
+const ProductImportPage = lazyPage(() => import('@/pages/ProductImportPage'), 'ProductImportPage');
 const MarketingPage = lazyPage(() => import('@/pages/MarketingPage'), 'MarketingPage');
 const StaffPage = lazyPage(() => import('@/pages/StaffPage'), 'StaffPage');
 const RolesPage = lazyPage(() => import('@/pages/RolesPage'), 'RolesPage');
@@ -271,6 +272,14 @@ export function AppRoutes() {
           element={
             <ProtectedRoute anyOf={['products.view']}>
               <ProductsPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/catalogue/import"
+          element={
+            <ProtectedRoute anyOf={['products.import']}>
+              <ProductImportPage />
             </ProtectedRoute>
           }
         />

@@ -18,6 +18,7 @@ export * from './Sale';
 export * from './Return';
 export * from './InventoryTransaction';
 export * from './ExportJob';
+export * from './ProductImportJob';
 export * from './LoyaltyMembership';
 export * from './LoyaltyTransaction';
 export * from './SubscriptionPlan';

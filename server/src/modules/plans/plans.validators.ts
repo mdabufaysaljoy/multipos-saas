@@ -23,6 +23,7 @@ export const planFeaturesSchema = z.object({
   emailMarketing: z.boolean().default(false),
   imageOptimization: z.boolean().default(false),
   loyaltyProgram: z.boolean().default(false),
+  productImport: z.boolean().default(true),
 });
 
 export const planLimitsSchema = z.object({

@@ -87,6 +87,9 @@ export const PLAN_SECTIONS: PlanSection[] = [
       { kind: 'always', label: 'Barcode generation' },
       { kind: 'always', label: 'Categories' },
       { kind: 'always', label: 'Product photos' },
+      // Its own plan flag, on for every plan (Starter included) - deliberately
+      // NOT the Data export flag, which is Professional and above.
+      { kind: 'flag', key: 'productImport', label: 'Bulk product import (Excel, CSV)', hint: 'Create many products and variants at once from a spreadsheet.' },
       { kind: 'always', label: 'Stock levels per branch' },
       { kind: 'always', label: 'Low-stock alerts' },
       { kind: 'flag', key: 'inventoryLedger', label: 'Full inventory ledger', hint: 'Every movement, with who and why.' },
@@ -177,6 +180,7 @@ export const FEATURE_LABELS: Record<string, string> = {
   multiStore: 'Multiple branches',
   customRoles: 'Custom roles',
   exportData: 'Data export',
+  productImport: 'Bulk product import',
   prioritySupport: 'Priority support',
   smsMarketing: 'SMS marketing',
   emailMarketing: 'Email marketing',
