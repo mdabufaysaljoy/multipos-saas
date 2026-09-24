@@ -8,8 +8,8 @@ import { useQuery } from '@tanstack/react-query';
 import { productApi } from '@/api/endpoints';
 import { formatMoney } from '@/lib/money';
 import { cn } from '@/lib/utils';
-import { PaymentPanel } from '@/features/pos/PaymentPanel';
-import { usePayments } from '@/features/pos/usePayments';
+import { PaymentPanel } from '@/features/payments/PaymentPanel';
+import { usePayments } from '@/features/payments/usePayments';
 import { useBarcodeScanner } from '@/features/pos/useBarcodeScanner';
 import type { PaymentMethod, PosVariant } from '@/types/domain';
 

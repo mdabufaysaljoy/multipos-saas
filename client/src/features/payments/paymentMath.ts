@@ -71,3 +71,22 @@ export function computePayments(totalMinor: number, rows: PaymentRowInput[]): Pa
   const applied = rows.map((row) => ({ method: row.method, amountMinor: row.method === 'cash' ? cashAppliedMinor : (row.amountMinor ?? 0) }));
   return { remainingPayableMinor, cashTenderedMinor, cashAppliedMinor, changeMinor, dueMinor, applied, hasCash, issues };
 }
+
+/**
+ * The payment rows a Super Shop, Pharmacy or Restaurant sale is sent with.
+ *
+ * Those three have no separate "cash received" field: their rows are what was
+ * TENDERED, and whatever exceeds the total is the change. So the cash row
+ * carries the cash handed over, and every other row carries what it paid. The
+ * server works out the change from the same numbers, and refuses any tender
+ * where the excess did not come from cash.
+ *
+ * Clothing sends `applied` plus `cashTenderedMinor` instead, because its sale
+ * records what was applied and the cash handed over separately. Same maths,
+ * two shapes - task 03 is where they converge.
+ */
+export function tenderedRows(breakdown: PaymentBreakdown): { method: PaymentMethod; amountMinor: number }[] {
+  return breakdown.applied.map((row) =>
+    row.method === 'cash' ? { method: row.method, amountMinor: breakdown.cashTenderedMinor ?? row.amountMinor } : row,
+  );
+}

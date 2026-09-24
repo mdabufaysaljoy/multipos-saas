@@ -40,12 +40,15 @@ export function usePayments(totalMinor: number) {
 
   // Untouched cash follows what is due, so an exact cash sale needs no typing.
   const dueForCash = breakdown.remainingPayableMinor;
+  const cashAmountMinor = rows.find((row) => row.method === 'cash')?.amountMinor ?? null;
+  const exactCashMinor = totalMinor > 0 && dueForCash > 0 ? dueForCash : null;
   React.useEffect(() => {
-    if (cashTyped) return;
-    setRows((prev) =>
-      prev.map((row) => (row.method === 'cash' ? { ...row, amountMinor: totalMinor > 0 && dueForCash > 0 ? dueForCash : null } : row)),
-    );
-  }, [cashTyped, dueForCash, totalMinor]);
+    if (cashTyped || cashAmountMinor === exactCashMinor) return;
+    setRows((prev) => prev.map((row) => (row.method === 'cash' ? { ...row, amountMinor: exactCashMinor } : row)));
+    // Comparing against what is there keeps this idempotent, so it can also
+    // refill after `reset()` - a dialog that opens a second time on the same
+    // total starts at exact cash, exactly as it did the first time.
+  }, [cashTyped, cashAmountMinor, exactCashMinor]);
 
   const setAmount = (id: string, amountMinor: number | null) => {
     if (rows.find((row) => row.id === id)?.method === 'cash') setCashTyped(true);

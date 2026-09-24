@@ -16,17 +16,21 @@ import {
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { EmptyState, LoadingState } from '@/components/states';
 import { MoneyInput } from '@/components/MoneyInput';
 import { LimitAlert } from '@/components/LimitAlert';
 import { KitchenTicketDialog, RestaurantReceiptDialog } from '@/features/restaurant/RestaurantPrints';
 import { ApiError } from '@/api/client';
 import { CustomerPicker, saleCustomerFields, type SelectedCustomer } from '@/features/customers/CustomerPicker';
+import { PaymentPanel } from '@/features/payments/PaymentPanel';
+import { tenderedRows } from '@/features/payments/paymentMath';
+import { usePayments } from '@/features/payments/usePayments';
+import { storeApi } from '@/api/endpoints';
 import { restaurantApi } from '@/api/restaurant';
 import { formatMoney } from '@/lib/money';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/hooks/useAuth';
+import type { PaymentMethod } from '@/types/domain';
 import type { MenuItem, RestaurantOrder } from '@/types/restaurant';
 
 /** An order not yet sent: prices shown are previews; the server prices on send. */
@@ -509,25 +513,29 @@ function PayDialog({
   onOpenChange: (open: boolean) => void;
   onPaid: (order: RestaurantOrder) => void;
 }) {
-  const [method, setMethod] = React.useState('cash');
-  const [amountMinor, setAmountMinor] = React.useState<number | null>(order.totalMinor);
   const [discountMinor, setDiscountMinor] = React.useState<number | null>(0);
+  const total = Math.max(0, order.subtotalMinor - (discountMinor ?? 0));
+
+  // The branch decides which tenders it takes; the till only offers those.
+  const { data: posConfig } = useQuery({ queryKey: ['store', 'pos-config'], queryFn: storeApi.posConfig });
+  const availableMethods = (posConfig?.paymentMethods ?? ['cash']) as PaymentMethod[];
+  // The same payment maths as every other till: cash is what the guest hands
+  // over, and change comes out of it.
+  const payments = usePayments(total);
+  const { reset: resetPayments } = payments;
 
   React.useEffect(() => {
     if (open) {
-      setMethod('cash');
-      setAmountMinor(order.totalMinor);
       setDiscountMinor(0);
+      resetPayments();
     }
-  }, [open, order.totalMinor]);
-
-  const total = Math.max(0, order.subtotalMinor - (discountMinor ?? 0));
-  const change = (amountMinor ?? 0) - total;
+  }, [open, order.totalMinor, resetPayments]);
 
   const pay = useMutation({
     mutationFn: () =>
       restaurantApi.pay(order._id, {
-        payments: [{ method, amountMinor: amountMinor ?? 0 }],
+        // Cash carries what was handed over; the excess is the change.
+        payments: tenderedRows(payments),
         discountMinor: discountMinor ?? 0,
         rev: order.rev,
       }),
@@ -538,7 +546,7 @@ function PayDialog({
     onError: (err) => toast.error(errorMessage(err, 'Payment failed')),
   });
 
-  const valid = (amountMinor ?? 0) >= total && (method === 'cash' || change === 0) && (discountMinor ?? 0) <= order.subtotalMinor;
+  const valid = payments.isSettled && (discountMinor ?? 0) <= order.subtotalMinor;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -558,32 +566,22 @@ function PayDialog({
               <MoneyInput value={discountMinor} onChange={setDiscountMinor} ariaLabel="Discount" />
             </div>
           )}
-          <div className="grid grid-cols-2 gap-3">
-            <div className="space-y-1.5">
-              <Label>Method</Label>
-              <Select value={method} onValueChange={setMethod}>
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="cash">Cash</SelectItem>
-                  <SelectItem value="card">Card</SelectItem>
-                  <SelectItem value="bkash">bKash</SelectItem>
-                  <SelectItem value="nagad">Nagad</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-1.5">
-              <Label>Received</Label>
-              <MoneyInput value={amountMinor} onChange={setAmountMinor} ariaLabel="Amount received" />
-            </div>
-          </div>
-          {change > 0 && method === 'cash' && (
-            <p className="text-sm">
-              Change: <span className="tabular font-semibold">{formatMoney(change, currency)}</span>
-            </p>
-          )}
-          {change > 0 && method !== 'cash' && <p className="text-sm text-destructive">Only cash can be more than the total.</p>}
+          <PaymentPanel
+            rows={payments.rows}
+            availableMethods={availableMethods}
+            totalMinor={total}
+            hasCash={payments.hasCash}
+            remainingPayableMinor={payments.remainingPayableMinor}
+            changeMinor={payments.changeMinor}
+            dueMinor={payments.dueMinor}
+            cashTyped={payments.cashTyped}
+            issues={payments.issues}
+            currency={currency}
+            onAmountChange={payments.setAmount}
+            onMethodChange={payments.setMethod}
+            onAddRow={payments.addRow}
+            onRemoveRow={payments.removeRow}
+          />
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)}>

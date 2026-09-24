@@ -6,30 +6,24 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { EmptyState, LoadingState } from '@/components/states';
 import { MoneyInput } from '@/components/MoneyInput';
 import { LimitAlert } from '@/components/LimitAlert';
 import { useDebounced } from '@/components/SearchInput';
 import { CustomerPicker, saleCustomerFields, type SelectedCustomer } from '@/features/customers/CustomerPicker';
+import { PaymentPanel } from '@/features/payments/PaymentPanel';
+import { tenderedRows } from '@/features/payments/paymentMath';
+import { usePayments } from '@/features/payments/usePayments';
 import { PharmacyReceiptDialog } from '@/features/pharmacy/PharmacyReceiptDialog';
 import { ApiError } from '@/api/client';
+import { storeApi } from '@/api/endpoints';
 import { pharmacyApi } from '@/api/pharmacy';
 import { formatMoney } from '@/lib/money';
 import { DOSAGE_FORM_LABELS, formatExpiry } from '@/lib/pharmacy';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/hooks/useAuth';
+import type { PaymentMethod } from '@/types/domain';
 import type { Medicine } from '@/types/pharmacy';
-
-const PAYMENT_METHODS = [
-  { value: 'cash', label: 'Cash' },
-  { value: 'bkash', label: 'bKash' },
-  { value: 'nagad', label: 'Nagad' },
-  { value: 'card', label: 'Card' },
-  { value: 'bank', label: 'Bank' },
-  { value: 'other', label: 'Other' },
-];
 
 interface CartLine {
   medicine: Medicine;
@@ -52,8 +46,6 @@ export function PharmacyPosPage() {
   const search = useDebounced(term);
   const [cart, setCart] = React.useState<CartLine[]>([]);
   const [discount, setDiscount] = React.useState<number | null>(0);
-  const [method, setMethod] = React.useState('cash');
-  const [tendered, setTendered] = React.useState<number | null>(null);
   const [rx, setRx] = React.useState(EMPTY_RX);
   const [customer, setCustomer] = React.useState<SelectedCustomer | null>(null);
   const [receiptFor, setReceiptFor] = React.useState<string | null>(null);
@@ -66,7 +58,13 @@ export function PharmacyPosPage() {
   const subtotal = cart.reduce((sum, line) => sum + line.medicine.sellingPriceMinor * line.quantity, 0);
   const discountMinor = Math.min(discount ?? 0, subtotal);
   const total = subtotal - discountMinor;
-  const paid = tendered ?? total;
+
+  // The branch decides which tenders it takes; the till only offers those.
+  const { data: posConfig } = useQuery({ queryKey: ['store', 'pos-config'], queryFn: storeApi.posConfig });
+  const availableMethods = (posConfig?.paymentMethods ?? ['cash']) as PaymentMethod[];
+  // The same payment maths as every other till: cash is what the customer
+  // hands over, and change comes out of it.
+  const payments = usePayments(cart.length > 0 ? total : 0);
   const needsRx = cart.some((line) => line.medicine.requiresPrescription);
   const rxComplete = rx.patientName.trim().length >= 2 && rx.prescriberName.trim().length >= 2;
 
@@ -90,17 +88,17 @@ export function PharmacyPosPage() {
   const reset = () => {
     setCart([]);
     setDiscount(0);
-    setTendered(null);
     setRx(EMPTY_RX);
-    setMethod('cash');
     setCustomer(null);
+    payments.reset();
   };
 
   const complete = useMutation({
     mutationFn: () =>
       pharmacyApi.createSale({
         items: cart.map((line) => ({ medicineId: line.medicine._id, quantity: line.quantity })),
-        payments: [{ method, amountMinor: paid }],
+        // Cash carries what was handed over; the excess is the change.
+        payments: tenderedRows(payments),
         discountMinor,
         ...saleCustomerFields(customer),
         ...(needsRx
@@ -121,7 +119,7 @@ export function PharmacyPosPage() {
     },
   });
 
-  const canComplete = cart.length > 0 && (!needsRx || rxComplete) && paid >= total && !complete.isPending;
+  const canComplete = cart.length > 0 && (!needsRx || rxComplete) && payments.isSettled && !complete.isPending;
 
   return (
     <div className="grid h-full gap-4 p-4 lg:grid-cols-[1fr_24rem] lg:p-6">
@@ -253,29 +251,22 @@ export function PharmacyPosPage() {
 
           <CustomerPicker value={customer} onChange={setCustomer} canCreate={can('customers.create')} />
 
-          <div className="grid grid-cols-2 gap-2">
-            <div className="space-y-1.5">
-              <Label>Paid by</Label>
-              <Select value={method} onValueChange={setMethod}>
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {PAYMENT_METHODS.map((option) => (
-                    <SelectItem key={option.value} value={option.value}>
-                      {option.label}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-1.5">
-              <Label>Amount received</Label>
-              <MoneyInput value={tendered} onChange={setTendered} placeholder={(total / 100).toFixed(2)} ariaLabel="Amount received" />
-            </div>
-          </div>
-          {paid > total && method === 'cash' && <p className="text-sm">Change: {formatMoney(paid - total, currency)}</p>}
-          {paid < total && cart.length > 0 && <p className="text-sm text-destructive">{formatMoney(total - paid, currency)} still due</p>}
+          <PaymentPanel
+            rows={payments.rows}
+            availableMethods={availableMethods}
+            totalMinor={total}
+            hasCash={payments.hasCash}
+            remainingPayableMinor={payments.remainingPayableMinor}
+            changeMinor={payments.changeMinor}
+            dueMinor={payments.dueMinor}
+            cashTyped={payments.cashTyped}
+            issues={cart.length > 0 ? payments.issues : []}
+            currency={currency}
+            onAmountChange={payments.setAmount}
+            onMethodChange={payments.setMethod}
+            onAddRow={payments.addRow}
+            onRemoveRow={payments.removeRow}
+          />
         </CardContent>
         <div className="flex gap-2 border-t p-3">
           <Button variant="outline" onClick={reset} disabled={cart.length === 0}>

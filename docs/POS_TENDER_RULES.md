@@ -52,7 +52,29 @@ Task 03 (custom payment methods) rewrites this surface anyway, and is where they
 A third, smaller difference: a Clothing payment row carries a `reference` (a bKash transaction id,
 say) and the other three do not. Task 03 again.
 
-## 3. Tests
+## 3. The till, in every vertical
+
+Task 04 put the same payment UI in all four POS pages: `client/src/features/payments/` holds
+`usePayments` (the state), `paymentMath` (the arithmetic) and `PaymentPanel` (the control). Before
+that, only the Clothing till could split a payment; the other three offered one method and one
+"amount received" box.
+
+**Cash is what the customer hands over.** The panel works out how much of it settles the sale and how
+much is change, live, and refuses to complete until the sale is covered. An untouched cash row
+follows what is still due, so an exact-cash sale needs no typing at all. Adding a second method
+lowers the cash due rather than overwriting what the cashier typed.
+
+**The methods offered are the branch's.** All four tills read `paymentMethods` from
+`/stores/pos-config`, so a branch that has turned card off no longer shows Card at the till. The
+three newer tills used to show a hard-coded list of six and only find out at the server.
+
+**Two shapes, one maths.** Clothing posts `payments` (what was *applied*, adding up to the total)
+plus `cashTenderedMinor`. The other three have no such field: their rows are what was *tendered*, so
+`tenderedRows()` puts the cash handed over in the cash row and the server derives the change. Same
+numbers either way - a ৳45 sale paid with ৳30 cash and ৳20 bKash records ৳50 paid and ৳5 change in
+both.
+
+## 4. Tests
 
 `scripts/smoke-test.mjs`, section **"POS tender rules (all verticals)"**, runs the same four tenders
 — a disabled method, a short payment, an exact payment, a two-method split, cash over the total, and

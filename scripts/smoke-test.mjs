@@ -7993,6 +7993,18 @@ async function main() {
       change: v.changeOf(overCash),
       error: overCash.error,
     });
+
+    // What the till actually sends once it can split: the cash row carries what
+    // was handed over, every other row what it paid.
+    const splitWithChange = await v.sell([
+      { method: 'cash', amountMinor: total - 100 + 5000 },
+      { method: 'bkash', amountMinor: 100 },
+    ]);
+    check(`${v.name}: a split where the cash is over-tendered gives change`, splitWithChange.status < 300 && v.changeOf(splitWithChange) === 5000, {
+      status: splitWithChange.status,
+      change: v.changeOf(splitWithChange),
+      error: splitWithChange.error,
+    });
   }
 
   // Rule 3, where the four still differ. An over-tendered card cannot be handed
