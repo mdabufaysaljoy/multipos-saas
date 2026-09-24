@@ -16,6 +16,12 @@ export const PERMISSIONS = {
   CATEGORIES_EDIT: 'categories.edit',
   CATEGORIES_DELETE: 'categories.delete',
 
+  /** Supplier management (Clothing POS, plans with the supplier entitlement). */
+  SUPPLIERS_VIEW: 'suppliers.view',
+  SUPPLIERS_CREATE: 'suppliers.create',
+  SUPPLIERS_EDIT: 'suppliers.edit',
+  SUPPLIERS_DELETE: 'suppliers.delete',
+
   INVENTORY_VIEW: 'inventory.view',
   INVENTORY_ADJUST: 'inventory.adjust',
 
@@ -108,6 +114,16 @@ export const PERMISSION_CATALOG: PermissionGroup[] = [
     permissions: [
       { key: PERMISSIONS.INVENTORY_VIEW, label: 'View inventory', description: 'See stock levels and the ledger' },
       { key: PERMISSIONS.INVENTORY_ADJUST, label: 'Adjust stock', description: 'Manually add or remove stock' },
+    ],
+  },
+  {
+    group: 'suppliers',
+    label: 'Suppliers',
+    permissions: [
+      { key: PERMISSIONS.SUPPLIERS_VIEW, label: 'View suppliers', description: 'Browse supplier contacts and their details' },
+      { key: PERMISSIONS.SUPPLIERS_CREATE, label: 'Add suppliers', description: 'Save a new supplier' },
+      { key: PERMISSIONS.SUPPLIERS_EDIT, label: 'Edit suppliers', description: 'Change supplier details, including banking and tax information' },
+      { key: PERMISSIONS.SUPPLIERS_DELETE, label: 'Remove suppliers', description: 'Deactivate or delete a supplier' },
     ],
   },
   {

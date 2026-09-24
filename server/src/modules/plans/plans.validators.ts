@@ -24,6 +24,7 @@ export const planFeaturesSchema = z.object({
   imageOptimization: z.boolean().default(false),
   loyaltyProgram: z.boolean().default(false),
   productImport: z.boolean().default(true),
+  supplierManagement: z.boolean().default(false),
 });
 
 export const planLimitsSchema = z.object({
@@ -34,6 +35,7 @@ export const planLimitsSchema = z.object({
   maxCustomers: limitValue.default(-1),
   /** Bytes, not megabytes - the unit the storage layer actually measures. */
   maxStorageBytes: limitValue.default(-1),
+  maxSuppliers: limitValue.default(-1),
 });
 
 /**

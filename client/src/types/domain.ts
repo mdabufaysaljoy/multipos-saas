@@ -205,6 +205,79 @@ export interface ExportJob {
   createdAt: string;
 }
 
+/** Supplier management (Clothing POS, Professional and Enterprise). */
+export const SUPPLIER_TYPES = ['manufacturer', 'wholesaler', 'distributor', 'importer', 'local', 'other'] as const;
+export type SupplierType = (typeof SUPPLIER_TYPES)[number];
+
+export const PAYMENT_TERMS = ['cash', 'on_delivery', 'net_7', 'net_15', 'net_30', 'net_60', 'other'] as const;
+export type PaymentTerm = (typeof PAYMENT_TERMS)[number];
+
+export interface SupplierContact {
+  name: string;
+  designation: string;
+  phone: string;
+  altPhone: string;
+  email: string;
+}
+
+export interface SupplierAddress {
+  line1: string;
+  line2: string;
+  area: string;
+  city: string;
+  district: string;
+  division: string;
+  postalCode: string;
+  country: string;
+}
+
+/** Only ever present on the detail view, and only for users who may edit suppliers. */
+export interface SupplierBanking {
+  accountName: string;
+  accountNumber: string;
+  bankName: string;
+  branchName: string;
+}
+
+export interface Supplier {
+  _id: string;
+  code: string;
+  name: string;
+  type: SupplierType;
+  contact: SupplierContact;
+  phone: string;
+  email: string;
+  website: string;
+  address: SupplierAddress;
+  taxNumber: string;
+  tradeLicense: string;
+  banking?: SupplierBanking;
+  paymentTerms: PaymentTerm;
+  paymentTermsNote: string;
+  notes: string;
+  isActive: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** The list row: no banking, no tax, no notes. */
+export type SupplierListItem = Pick<Supplier, '_id' | 'code' | 'name' | 'type' | 'phone' | 'email' | 'isActive' | 'createdAt' | 'updatedAt'> & {
+  contact: Pick<SupplierContact, 'name' | 'phone' | 'email'>;
+};
+
+export interface SupplierSummary {
+  active: number;
+  inactive: number;
+  total: number;
+  /** null when the plan sets no ceiling. */
+  max: number | null;
+  unlimited: boolean;
+  remaining: number | null;
+  /** True after a downgrade left more suppliers than the new plan allows. */
+  overLimit: boolean;
+  planName: string | null;
+}
+
 /** Bulk product import (Excel/CSV) - available on every plan. */
 export interface ImportColumnSpec {
   field: string;

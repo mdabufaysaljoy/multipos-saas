@@ -13,6 +13,8 @@ export interface PlanLimits {
   maxCustomers: number;
   /** Total bytes of uploaded files the workspace may hold. */
   maxStorageBytes: number;
+  /** Supplier records (Clothing POS). -1 = unlimited. */
+  maxSuppliers: number;
 }
 
 export interface PlanFeatures {
@@ -46,6 +48,8 @@ export interface PlanFeatures {
    * `exportData`), never so a plan can be sold without it.
    */
   productImport: boolean;
+  /** Supplier management (Clothing POS). Professional and Enterprise. */
+  supplierManagement: boolean;
 }
 
 /**
@@ -128,6 +132,7 @@ const planSchema = new Schema<SubscriptionPlanDoc>(
       imageOptimization: { type: Boolean, default: false },
       loyaltyProgram: { type: Boolean, default: false },
       productImport: { type: Boolean, default: true },
+      supplierManagement: { type: Boolean, default: false },
     },
     limits: {
       maxStaff: { type: Number, default: 2 },
@@ -136,6 +141,7 @@ const planSchema = new Schema<SubscriptionPlanDoc>(
       maxMonthlySales: { type: Number, default: -1 },
       maxCustomers: { type: Number, default: -1 },
       maxStorageBytes: { type: Number, default: -1 },
+      maxSuppliers: { type: Number, default: -1 },
     },
     verticalOverrides: { type: [verticalOverrideSchema], default: [] },
     // Checked against the POS catalog on the way in (planScope.service).

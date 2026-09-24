@@ -360,6 +360,24 @@ stream to the caller and are never stored. See `docs/DATA_EXPORT.md`.
 
 ---
 
+## Suppliers — `/api/suppliers`
+
+Professional and Enterprise (`supplierManagement` entitlement) + the matching
+`suppliers.*` permission, Clothing only. Workspace-level: every branch sees the
+same list. See `docs/SUPPLIER_MANAGEMENT.md`.
+
+| Method | Path | Purpose |
+|---|---|---|
+| GET | `/summary` | Counts, the plan ceiling, and whether the workspace is over it |
+| GET | `/` `?search&status&type&sort&order&page&limit` | Paginated list (no banking, tax or notes) |
+| GET | `/:id` | One supplier in full (banking only for `suppliers.edit`) |
+| POST | `/` | Create — the server assigns `SUP-0001` |
+| PATCH | `/:id` | Edit in place |
+| POST | `/:id/status` | `{ isActive }` — deactivate or reactivate |
+| DELETE | `/:id` | Soft delete |
+
+---
+
 ## Product import — `/api/products/import`
 
 **Every plan** (`productImport` entitlement — deliberately not `dataExport`) +

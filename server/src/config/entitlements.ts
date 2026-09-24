@@ -58,6 +58,7 @@ export const ENTITLEMENT_FEATURES = {
   loyalty: { label: 'Loyalty program', planFeature: 'loyaltyProgram', verticals: ['clothing'] },
   // Separate from `dataExport` on purpose: import is on every plan, export is not.
   productImport: { label: 'Bulk product import', planFeature: 'productImport', verticals: ['clothing'] },
+  supplierManagement: { label: 'Supplier management', planFeature: 'supplierManagement', verticals: ['clothing'] },
 } as const satisfies Record<string, FeatureDefinition>;
 
 export const ENTITLEMENT_LIMITS = {
@@ -67,6 +68,7 @@ export const ENTITLEMENT_LIMITS = {
   customers: { label: 'Customer profiles', noun: 'customer profiles', planLimit: 'maxCustomers', unit: 'count' },
   monthlySales: { label: 'Sales this month', noun: 'sales per month', planLimit: 'maxMonthlySales', unit: 'count' },
   storage: { label: 'File storage', noun: 'bytes of storage', planLimit: 'maxStorageBytes', unit: 'bytes' },
+  suppliers: { label: 'Suppliers', noun: 'suppliers', planLimit: 'maxSuppliers', unit: 'count', verticals: ['clothing'] },
 } as const satisfies Record<string, LimitDefinition>;
 
 export type FeatureEntitlementKey = keyof typeof ENTITLEMENT_FEATURES;

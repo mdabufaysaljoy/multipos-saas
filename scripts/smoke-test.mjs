@@ -8745,6 +8745,205 @@ async function main() {
     );
   }
 
+  // --- Clothing POS supplier management ---------------------------------------
+  section('Clothing POS: supplier management (Professional and Enterprise)');
+  {
+    const spStamp = String(Date.now()).slice(-7);
+    const spPlatform = await login('platform@pos.dev', 'Platform@123');
+    const spPlans = (await api('/plans', {})).data ?? [];
+    const spSetPlan = (tenantId, code) =>
+      api('/platform/subscriptions', { method: 'POST', token: spPlatform.token, body: { tenantId, planId: spPlans.find((p) => p.code === code)._id, periods: 1, status: 'active', autoRenew: false } });
+    const spReg = await api('/auth/register', { method: 'POST', body: { businessName: `Supply Wear ${spStamp}`, name: 'Supply Owner', email: `sup${spStamp}@example.com`, password: 'Password@123', vertical: 'clothing' } });
+    const spOwner = spReg.data?.tokens?.accessToken;
+    const spTenantId = spReg.data?.tenant?.id ?? spReg.data?.tenant?._id;
+    const spStoreA = (await api('/stores', { method: 'POST', token: spOwner, body: { name: 'Supply Main', code: `SP${spStamp}`, currency: 'BDT' } })).data;
+    const A = { storeId: spStoreA?._id };
+    check('A fresh Clothing workspace is set up for supplier tests', Boolean(spOwner && spStoreA?._id), spReg.error);
+
+    const addSupplier = (body, token = spOwner, store = A) => api('/suppliers', { method: 'POST', token, ...store, body });
+    const supplierCount = async (token = spOwner, store = A) => (await api('/suppliers?limit=1', { token, ...store })).meta?.total ?? 0;
+
+    // ---- Starter: nothing at all ----
+    await spSetPlan(spTenantId, 'starter-store-monthly');
+    const spStarterList = await api('/suppliers', { token: spOwner, ...A });
+    check('STARTER: listing suppliers is refused with ENTITLEMENT_REQUIRED', spStarterList.status === 403 && spStarterList.error?.code === 'ENTITLEMENT_REQUIRED', spStarterList.error);
+    check('STARTER: creating a supplier is refused', (await addSupplier({ name: 'Denim Mills' })).status === 403);
+    check('STARTER: the summary is refused', (await api('/suppliers/summary', { token: spOwner, ...A })).status === 403);
+    check('STARTER: a supplier id cannot be read, edited or deleted', (await api('/suppliers/6a8f07351aab4b3f4b21306e', { token: spOwner, ...A })).status === 403 && (await api('/suppliers/6a8f07351aab4b3f4b21306e', { method: 'PATCH', token: spOwner, ...A, body: { name: 'X' } })).status === 403 && (await api('/suppliers/6a8f07351aab4b3f4b21306e', { method: 'DELETE', token: spOwner, ...A })).status === 403);
+    check('Suppliers need a signed-in user', (await api('/suppliers', { ...A })).status === 401);
+
+    // ---- Professional ----
+    await spSetPlan(spTenantId, 'showroom-monthly');
+    const spSummary0 = await api('/suppliers/summary', { token: spOwner, ...A });
+    check('PROFESSIONAL: supplier management is available, with a 100 ceiling', spSummary0.status === 200 && spSummary0.data?.max === 100 && spSummary0.data?.active === 0 && spSummary0.data?.unlimited === false, spSummary0.error ?? spSummary0.data);
+
+    const spFirst = await addSupplier({
+      name: `Denim Mills ${spStamp}`,
+      type: 'manufacturer',
+      contact: { name: 'Rahim Ahmed', designation: 'Sales Representative', phone: '01711111111', altPhone: '01811111111', email: 'rahim@example.com' },
+      phone: '029999999',
+      email: 'sales@denimmills.example',
+      website: 'denimmills.example',
+      address: { line1: 'House 12, Road 5', area: 'New Market', city: 'Dhaka', district: 'Dhaka', division: 'Dhaka', postalCode: '1205', country: 'Bangladesh' },
+      taxNumber: 'VAT-123456',
+      tradeLicense: 'TL-99887',
+      banking: { accountName: 'Denim Mills Ltd', accountNumber: '1234 5678 9012', bankName: 'City Bank', branchName: 'Dhanmondi' },
+      paymentTerms: 'net_30',
+      notes: 'Usually supplies premium denim.',
+    });
+    check('A supplier is created with everything the form collects', spFirst.status === 201 && spFirst.data?.name === `Denim Mills ${spStamp}` && spFirst.data?.contact?.designation === 'Sales Representative' && spFirst.data?.address?.postalCode === '1205' && spFirst.data?.paymentTerms === 'net_30', spFirst.error ?? spFirst.data);
+    check('...with a server-assigned code, never a database id', /^SUP-\d{4}$/.test(spFirst.data?.code ?? '') && !String(spFirst.data?.code).includes(String(spFirst.data?._id)), spFirst.data?.code);
+    check('...and it is active by default', spFirst.data?.isActive === true);
+    const spSecond = await addSupplier({ name: `Cotton House ${spStamp}`, type: 'wholesaler', phone: '01722222222' });
+    check('Only the name is really required', spSecond.status === 201 && spSecond.data?.code === 'SUP-0002', spSecond.error ?? spSecond.data?.code);
+    check('Codes run in sequence per workspace', spFirst.data?.code === 'SUP-0001');
+
+    // ---- ownership can never come from the client ----
+    const spForged = await addSupplier({ name: `Forged ${spStamp}`, tenantId: '6a8f07351aab4b3f4b21306e', storeId: '6a8f07351aab4b3f4b21306e', code: 'SUP-9999' });
+    check('A body carrying tenantId, storeId or a code is refused outright', spForged.status === 422, spForged.error);
+
+    // ---- validation ----
+    check('An empty name is refused', (await addSupplier({ name: '   ' })).status === 422);
+    check('An invalid email is refused', (await addSupplier({ name: `Bad Email ${spStamp}`, email: 'not-an-email' })).status === 422);
+    check('An invalid website is refused', (await addSupplier({ name: `Bad Site ${spStamp}`, website: 'http://' })).status === 422);
+    check('An invalid phone is refused', (await addSupplier({ name: `Bad Phone ${spStamp}`, phone: 'call me' })).status === 422);
+    check('An unknown supplier type is refused', (await addSupplier({ name: `Bad Type ${spStamp}`, type: 'smuggler' })).status === 422);
+    check('An unknown payment term is refused', (await addSupplier({ name: `Bad Terms ${spStamp}`, paymentTerms: 'whenever' })).status === 422);
+    check('An oversized note is refused', (await addSupplier({ name: `Long Note ${spStamp}`, notes: 'x'.repeat(2_001) })).status === 422);
+    check('A Bangladeshi address imports exactly as typed', (await api(`/suppliers/${spFirst.data?._id}`, { token: spOwner, ...A })).data?.address?.line1 === 'House 12, Road 5');
+
+    // ---- duplicates ----
+    const spDupe = await addSupplier({ name: `Denim Mills ${spStamp}`, phone: '029999999' });
+    check('The same name with the same phone is caught as a duplicate', spDupe.status === 409, spDupe.error);
+    check('...but a similar name is still allowed (ABC Garments vs ABC Garments Ltd.)', (await addSupplier({ name: `Denim Mills ${spStamp} Ltd.`, phone: '029999999' })).status === 201);
+    check('A different supplier with the same name but no shared contact is allowed', (await addSupplier({ name: `Denim Mills ${spStamp}`, phone: '028888888' })).status === 201);
+
+    // ---- sensitive fields ----
+    const spList = await api('/suppliers?limit=50', { token: spOwner, ...A });
+    const spListed = (spList.data ?? []).find((row) => row._id === spFirst.data?._id);
+    check('The list never carries banking, tax or notes', spList.status === 200 && spListed && !('banking' in spListed) && !('taxNumber' in spListed) && !('notes' in spListed) && !('tradeLicense' in spListed), Object.keys(spListed ?? {}));
+    check('The detail view carries banking for someone who may edit suppliers', (await api(`/suppliers/${spFirst.data?._id}`, { token: spOwner, ...A })).data?.banking?.accountNumber === '1234 5678 9012');
+
+    // ---- search, filters, sorting, pagination ----
+    check('Search by name', ((await api(`/suppliers?search=${encodeURIComponent(`Cotton House ${spStamp}`)}`, { token: spOwner, ...A })).data ?? []).length === 1);
+    check('Search by code', ((await api('/suppliers?search=SUP-0001', { token: spOwner, ...A })).data ?? []).some((row) => row.code === 'SUP-0001'));
+    check('Search by contact person', ((await api('/suppliers?search=Rahim', { token: spOwner, ...A })).data ?? []).some((row) => row._id === spFirst.data?._id));
+    check('Search by phone', ((await api('/suppliers?search=01722222222', { token: spOwner, ...A })).data ?? []).some((row) => row._id === spSecond.data?._id));
+    check('Search by email', ((await api('/suppliers?search=sales@denimmills.example', { token: spOwner, ...A })).data ?? []).some((row) => row._id === spFirst.data?._id));
+    check('Filter by type', ((await api('/suppliers?type=wholesaler&limit=50', { token: spOwner, ...A })).data ?? []).every((row) => row.type === 'wholesaler'));
+    const spSorted = (await api('/suppliers?sort=name&order=asc&limit=50', { token: spOwner, ...A })).data ?? [];
+    check('Sorting by name puts the list in name order', spSorted.map((row) => row.name).join('|') === [...spSorted].sort((a, b) => a.name.localeCompare(b.name)).map((row) => row.name).join('|'));
+    const spPaged = await api('/suppliers?limit=2&page=2', { token: spOwner, ...A });
+    check('Pagination returns a real slice with its meta', spPaged.status === 200 && (spPaged.data ?? []).length <= 2 && spPaged.meta?.page === 2 && spPaged.meta?.total >= 4, spPaged.meta);
+
+    // ---- edit, deactivate, delete ----
+    const spEdit = await api(`/suppliers/${spSecond.data?._id}`, { method: 'PATCH', token: spOwner, ...A, body: { contact: { name: 'Karim Uddin' }, paymentTerms: 'net_15' } });
+    check('Editing updates the record in place, without creating another one', spEdit.status === 200 && spEdit.data?._id === spSecond.data?._id && spEdit.data?.contact?.name === 'Karim Uddin' && spEdit.data?.paymentTerms === 'net_15', spEdit.error);
+    check('...and a partial edit never wipes the other blocks', spEdit.data?.name === `Cotton House ${spStamp}` && spEdit.data?.phone === '01722222222');
+    const spDeactivate = await api(`/suppliers/${spSecond.data?._id}/status`, { method: 'POST', token: spOwner, ...A, body: { isActive: false } });
+    check('Deactivating keeps the record and its details', spDeactivate.status === 200 && spDeactivate.data?.isActive === false);
+    check('...and an inactive supplier is still searchable', ((await api(`/suppliers?search=${encodeURIComponent(`Cotton House ${spStamp}`)}&status=inactive`, { token: spOwner, ...A })).data ?? []).length === 1);
+    check('...and no longer counts against the plan', (await api('/suppliers/summary', { token: spOwner, ...A })).data?.inactive === 1);
+    check('Reactivating works', (await api(`/suppliers/${spSecond.data?._id}/status`, { method: 'POST', token: spOwner, ...A, body: { isActive: true } })).data?.isActive === true);
+    const spThrowaway = await addSupplier({ name: `Throwaway ${spStamp}` });
+    const spDelete = await api(`/suppliers/${spThrowaway.data?._id}`, { method: 'DELETE', token: spOwner, ...A });
+    check('Removing a supplier soft-deletes it', spDelete.status === 200 && spDelete.data?.softDeleted === true);
+    check('...and it is gone from the list and from the detail view', !((await api('/suppliers?limit=50', { token: spOwner, ...A })).data ?? []).some((row) => row._id === spThrowaway.data?._id) && (await api(`/suppliers/${spThrowaway.data?._id}`, { token: spOwner, ...A })).status === 404);
+
+    // ---- permissions ----
+    const spRoles = (await api('/roles', { token: spOwner, ...A })).data ?? [];
+    check('Store Manager manages suppliers by default; Cashier does not', ['suppliers.view', 'suppliers.create', 'suppliers.edit', 'suppliers.delete'].every((p) => spRoles.find((r) => r.name === 'Store Manager')?.permissions.includes(p)) && !spRoles.find((r) => r.name === 'Cashier')?.permissions.some((p) => p.startsWith('suppliers.')));
+    await api('/staff', { method: 'POST', token: spOwner, ...A, body: { name: 'Supply Cashier', email: `supc${spStamp}@example.com`, password: 'Password@123', storeId: spStoreA._id, roleId: spRoles.find((r) => r.name === 'Cashier')?._id } });
+    await api('/staff', { method: 'POST', token: spOwner, ...A, body: { name: 'Supply Viewer', email: `supv${spStamp}@example.com`, password: 'Password@123', storeId: spStoreA._id, extraPermissions: ['products.view', 'suppliers.view'] } });
+    const spCashier = (await login(`supc${spStamp}@example.com`, 'Password@123')).token;
+    const spViewer = (await login(`supv${spStamp}@example.com`, 'Password@123')).token;
+    check('A cashier cannot even list suppliers', (await api('/suppliers', { token: spCashier, ...A })).status === 403);
+    check('A viewer can list them', (await api('/suppliers', { token: spViewer, ...A })).status === 200);
+    check('...but cannot create, edit, deactivate or delete', (await addSupplier({ name: `Viewer Co ${spStamp}` }, spViewer)).status === 403 && (await api(`/suppliers/${spFirst.data?._id}`, { method: 'PATCH', token: spViewer, ...A, body: { name: 'Changed' } })).status === 403 && (await api(`/suppliers/${spFirst.data?._id}/status`, { method: 'POST', token: spViewer, ...A, body: { isActive: false } })).status === 403 && (await api(`/suppliers/${spFirst.data?._id}`, { method: 'DELETE', token: spViewer, ...A })).status === 403);
+    check('...and a viewer is not shown the banking details', !(await api(`/suppliers/${spFirst.data?._id}`, { token: spViewer, ...A })).data?.banking);
+
+    // ---- workspace isolation ----
+    const spOther = await api('/auth/register', { method: 'POST', body: { businessName: `Other Supply ${spStamp}`, name: 'Other Owner', email: `supo${spStamp}@example.com`, password: 'Password@123', vertical: 'clothing' } });
+    const spOtherToken = spOther.data?.tokens?.accessToken;
+    const spOtherTenant = spOther.data?.tenant?.id ?? spOther.data?.tenant?._id;
+    const spOtherStore = (await api('/stores', { method: 'POST', token: spOtherToken, body: { name: 'Other Main', code: `SO${spStamp}`, currency: 'BDT' } })).data;
+    await spSetPlan(spOtherTenant, 'showroom-monthly');
+    const O = { storeId: spOtherStore?._id };
+    check("Another workspace sees none of this workspace's suppliers", ((await api('/suppliers?limit=50', { token: spOtherToken, ...O })).data ?? []).length === 0);
+    check("...cannot read one by id", (await api(`/suppliers/${spFirst.data?._id}`, { token: spOtherToken, ...O })).status === 404);
+    check('...cannot edit one', (await api(`/suppliers/${spFirst.data?._id}`, { method: 'PATCH', token: spOtherToken, ...O, body: { name: 'Stolen' } })).status === 404);
+    check('...cannot deactivate one', (await api(`/suppliers/${spFirst.data?._id}/status`, { method: 'POST', token: spOtherToken, ...O, body: { isActive: false } })).status === 404);
+    check('...cannot delete one', (await api(`/suppliers/${spFirst.data?._id}`, { method: 'DELETE', token: spOtherToken, ...O })).status === 404);
+    check("...and its own codes start at SUP-0001 again", (await api('/suppliers', { method: 'POST', token: spOtherToken, ...O, body: { name: `Other Supplier ${spStamp}` } })).data?.code === 'SUP-0001');
+
+    // ---- shared across the branches of one workspace ----
+    const spStoreB = (await api('/stores', { method: 'POST', token: spOwner, body: { name: 'Supply Two', code: `SQ${spStamp}`, currency: 'BDT' } })).data;
+    const B = { storeId: spStoreB?._id };
+    check('Suppliers are workspace-level: the second branch sees the same list', ((await api('/suppliers?limit=50', { token: spOwner, ...B })).data ?? []).some((row) => row._id === spFirst.data?._id));
+    check('...and a supplier added from one branch is one record, not two', (await supplierCount(spOwner, B)) === (await supplierCount(spOwner, A)));
+    check('A cashier of this workspace still cannot reach another branch', (await api('/suppliers', { token: spCashier, ...B })).status === 403);
+
+    // ---- the Professional ceiling ----
+    const spBulk = [];
+    for (let i = (await supplierCount()); i < 99; i += 1) spBulk.push(addSupplier({ name: `Bulk ${spStamp} ${i}` }));
+    await Promise.all(spBulk);
+    check('Ninety-nine suppliers is fine on Professional', (await supplierCount()) === 99, await supplierCount());
+    check('The summary counts down to the ceiling', (await api('/suppliers/summary', { token: spOwner, ...A })).data?.remaining === 1);
+    check('The hundredth is allowed', (await addSupplier({ name: `Hundredth ${spStamp}` })).status === 201);
+    const spOver = await addSupplier({ name: `One Too Many ${spStamp}` });
+    check('The hundred-and-first is refused, in words a merchant can act on', spOver.status === 402 && /100 suppliers/.test(spOver.error?.message ?? '') && /upgrade/i.test(spOver.error?.message ?? ''), spOver.error);
+    check('...and nothing was created', (await supplierCount()) === 100);
+    check('...and the message does not leak the entitlement internals', !/entitlement|planSnapshot|maxSuppliers.*true/i.test(JSON.stringify(spOver.error ?? {})));
+
+    // ---- concurrency: the ceiling holds when two tills create at once ----
+    await api(`/suppliers/${spFirst.data?._id}/status`, { method: 'POST', token: spOwner, ...A, body: { isActive: false } });
+    check('Deactivating one frees exactly one slot (99 active)', (await api('/suppliers/summary', { token: spOwner, ...A })).data?.active === 99);
+    const spRace = await Promise.all([
+      addSupplier({ name: `Race A ${spStamp}` }),
+      addSupplier({ name: `Race B ${spStamp}` }),
+      addSupplier({ name: `Race C ${spStamp}` }),
+      addSupplier({ name: `Race D ${spStamp}` }),
+    ]);
+    const spRaceCreated = spRace.filter((result) => result.status === 201).length;
+    const spActiveAfterRace = (await api('/suppliers/summary', { token: spOwner, ...A })).data?.active;
+    check('Four simultaneous creates on a 99/100 plan add exactly one, and the rest are refused', spRaceCreated === 1 && spActiveAfterRace === 100 && spRace.filter((r) => r.status === 402).length === 3, { created: spRaceCreated, active: spActiveAfterRace, statuses: spRace.map((r) => r.status) });
+    const spRaceRows = ((await api(`/suppliers?search=${encodeURIComponent(spStamp)}&limit=100`, { token: spOwner, ...A })).data ?? []).filter((row) => row.name.startsWith('Race '));
+    check('...and the refused ones left no half-made records behind', spRaceRows.length === 1 && (await supplierCount()) === 101, { rows: spRaceRows.length });
+
+    // ---- Enterprise: unlimited ----
+    await spSetPlan(spTenantId, 'brand-monthly');
+    const spEntSummary = await api('/suppliers/summary', { token: spOwner, ...A });
+    check('ENTERPRISE: the ceiling is lifted and nothing had to be migrated', spEntSummary.data?.unlimited === true && spEntSummary.data?.max === null && spEntSummary.data?.active === 100, spEntSummary.data);
+    const spBeyond = await Promise.all(Array.from({ length: 5 }, (_, i) => addSupplier({ name: `Beyond ${spStamp} ${i}` })));
+    check('...and suppliers past the old limit are created normally', spBeyond.every((result) => result.status === 201) && (await api('/suppliers/summary', { token: spOwner, ...A })).data?.active === 105);
+    check('Enterprise still pages rather than returning everything', (await api('/suppliers?limit=20', { token: spOwner, ...A })).data?.length === 20);
+
+    // ---- downgrade and re-upgrade ----
+    await spSetPlan(spTenantId, 'showroom-monthly');
+    const spDownSummary = await api('/suppliers/summary', { token: spOwner, ...A });
+    check('Enterprise -> Professional keeps every supplier and reports being over the limit', spDownSummary.data?.active === 105 && spDownSummary.data?.max === 100 && spDownSummary.data?.overLimit === true, spDownSummary.data);
+    check('...existing suppliers are still readable and editable', (await api(`/suppliers/${spSecond.data?._id}`, { token: spOwner, ...A })).status === 200 && (await api(`/suppliers/${spSecond.data?._id}`, { method: 'PATCH', token: spOwner, ...A, body: { notes: 'Still ours' } })).status === 200);
+    check('...but no more can be added while over the ceiling', (await addSupplier({ name: `Over Limit ${spStamp}` })).status === 402);
+    await spSetPlan(spTenantId, 'starter-store-monthly');
+    check('Professional -> Starter locks the feature', (await api('/suppliers', { token: spOwner, ...A })).status === 403);
+    check('...and the data is NOT deleted (the platform still sees the records)', (await api(`/platform/tenants/${spTenantId}`, { token: spPlatform.token })).status === 200);
+    await spSetPlan(spTenantId, 'brand-monthly');
+    const spBack = await api('/suppliers?limit=1', { token: spOwner, ...A });
+    check('Upgrading again brings every supplier back, untouched', spBack.status === 200 && spBack.meta?.total === 106 && (await api(`/suppliers/${spFirst.data?._id}`, { token: spOwner, ...A })).data?.taxNumber === 'VAT-123456', spBack.meta);
+
+    // ---- audit ----
+    const spAudit = await api('/platform/audit-log?action=supplier.created&limit=20', { token: spPlatform.token });
+    check('Supplier creation is written to the audit log, without the banking or tax values', spAudit.status === 200 && (spAudit.data ?? []).length > 0 && !JSON.stringify(spAudit.data ?? []).includes('1234 5678 9012') && !JSON.stringify(spAudit.data ?? []).includes('VAT-123456'), spAudit.error);
+    check('Deactivation is audited too', ((await api('/platform/audit-log?action=supplier.deactivated&limit=5', { token: spPlatform.token })).data ?? []).length > 0);
+
+    // ---- other verticals are untouched ----
+    const spRest = await api('/auth/register', { method: 'POST', body: { businessName: `Resto Supply ${spStamp}`, name: 'Resto Owner', email: `supr${spStamp}@example.com`, password: 'Password@123', vertical: 'restaurant' } });
+    const spRestToken = spRest.data?.tokens?.accessToken;
+    const spRestStore = (await api('/stores', { method: 'POST', token: spRestToken, body: { name: 'Resto Main', code: `SR${spStamp}`, currency: 'BDT' } })).data;
+    await spSetPlan(spRest.data?.tenant?.id ?? spRest.data?.tenant?._id, 'brand-monthly');
+    check('A Restaurant workspace has no supplier module at all', (await api('/suppliers', { token: spRestToken, storeId: spRestStore?._id })).status === 403);
+  }
+
   // --- the new workspace, from inside ---------------------------------------
   const wcSwitch = await api('/auth/switch-workspace', { method: 'POST', token: wcHomeToken, body: { workspaceId: wcSecondId } });
   const wcToken = wcSwitch.data?.tokens?.accessToken;
@@ -9165,6 +9364,7 @@ async function main() {
     'server/src/modules/uploads/uploads.routes.ts',
     'server/src/modules/loyalty/loyalty.routes.ts',
     'server/src/modules/exports/export.routes.ts',
+    'server/src/modules/suppliers/suppliers.routes.ts',
   ]
     .map((file) => readFileSync(new URL(`../${file}`, import.meta.url), 'utf8'))
     .join('\n');

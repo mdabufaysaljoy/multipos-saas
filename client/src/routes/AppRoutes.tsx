@@ -60,6 +60,7 @@ const CustomersPage = lazyPage(() => import('@/pages/CustomersPage'), 'Customers
 const LoyaltyPage = lazyPage(() => import('@/pages/LoyaltyPage'), 'LoyaltyPage');
 const DataExportPage = lazyPage(() => import('@/pages/DataExportPage'), 'DataExportPage');
 const ProductImportPage = lazyPage(() => import('@/pages/ProductImportPage'), 'ProductImportPage');
+const SuppliersPage = lazyPage(() => import('@/pages/SuppliersPage'), 'SuppliersPage');
 const MarketingPage = lazyPage(() => import('@/pages/MarketingPage'), 'MarketingPage');
 const StaffPage = lazyPage(() => import('@/pages/StaffPage'), 'StaffPage');
 const RolesPage = lazyPage(() => import('@/pages/RolesPage'), 'RolesPage');
@@ -280,6 +281,15 @@ export function AppRoutes() {
           element={
             <ProtectedRoute anyOf={['products.import']}>
               <ProductImportPage />
+            </ProtectedRoute>
+          }
+        />
+        {/* Shows its own locked state on plans without supplier management. */}
+        <Route
+          path="/suppliers"
+          element={
+            <ProtectedRoute anyOf={['suppliers.view']}>
+              <SuppliersPage />
             </ProtectedRoute>
           }
         />

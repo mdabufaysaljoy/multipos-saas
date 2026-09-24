@@ -141,6 +141,8 @@ async function countUsage(workspaceId: Types.ObjectId, key: LimitEntitlementKey,
       return entitlementService.countMonthlySales(workspaceId, vertical);
     case 'storage':
       return entitlementService.storageBytes(workspaceId);
+    case 'suppliers':
+      return entitlementService.countSuppliers(workspaceId);
   }
 }
 

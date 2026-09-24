@@ -35,6 +35,7 @@ export const FEATURE_KEYS = [
   'imageOptimization',
   'loyaltyProgram',
   'productImport',
+  'supplierManagement',
 ] as const satisfies readonly (keyof PlanFeatures)[];
 
 export const LIMIT_KEYS = [
@@ -44,6 +45,7 @@ export const LIMIT_KEYS = [
   'maxMonthlySales',
   'maxCustomers',
   'maxStorageBytes',
+  'maxSuppliers',
 ] as const satisfies readonly (keyof PlanLimits)[];
 
 export interface PlanEntitlementSource {

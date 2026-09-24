@@ -11,6 +11,7 @@ import { SaleModel } from '../../models/Sale';
 import { MenuItemModel } from '../../models/MenuItem';
 import { WorkspaceMemberModel } from '../../models/WorkspaceMember';
 import { RestaurantOrderModel } from '../../models/RestaurantOrder';
+import { SupplierModel } from '../../models/Supplier';
 import { StorageObjectModel } from '../../models/StorageObject';
 import { SALE_STATUS } from '../../config/constants';
 import { DEFAULT_POS_VERTICAL, type PosVertical } from '../../config/verticals';
@@ -62,6 +63,7 @@ const NO_PLAN_FEATURES: PlanFeatures = {
   imageOptimization: false,
   loyaltyProgram: false,
   productImport: false,
+  supplierManagement: false,
 };
 
 const NO_PLAN_LIMITS: PlanLimits = {
@@ -71,6 +73,7 @@ const NO_PLAN_LIMITS: PlanLimits = {
   maxMonthlySales: 0,
   maxCustomers: 0,
   maxStorageBytes: 0,
+  maxSuppliers: 0,
 };
 
 /**
@@ -93,6 +96,7 @@ const normalizeLimits = (limits: Partial<PlanLimits> | null | undefined): PlanLi
   maxMonthlySales: limits?.maxMonthlySales ?? -1,
   maxCustomers: limits?.maxCustomers ?? -1,
   maxStorageBytes: limits?.maxStorageBytes ?? -1,
+  maxSuppliers: limits?.maxSuppliers ?? -1,
 });
 
 const normalizeFeatures = (features: Partial<PlanFeatures> | null | undefined): PlanFeatures => ({
@@ -113,6 +117,7 @@ const normalizeFeatures = (features: Partial<PlanFeatures> | null | undefined): 
   // existing customers out of something nobody ever sold separately. A plan
   // that explicitly stores `false` is still refused.
   productImport: features?.productImport ?? true,
+  supplierManagement: features?.supplierManagement ?? false,
 });
 
 /**
@@ -294,6 +299,15 @@ class EntitlementService {
     return StoreModel.countDocuments({ tenantId, isActive: true, deletedAt: null });
   }
 
+  /**
+   * Suppliers are workspace-level (not per branch), so the meter is a plain
+   * tenant count of live, active records - the same rule the create path and
+   * the downgrade view use.
+   */
+  countSuppliers(tenantId: Types.ObjectId) {
+    return SupplierModel.countDocuments({ tenantId, deletedAt: null, isActive: true });
+  }
+
   countCustomers(tenantId: Types.ObjectId) {
     return CustomerModel.countDocuments({ tenantId, deletedAt: null, isActive: true });
   }
@@ -385,6 +399,10 @@ class EntitlementService {
     this.assertWithinLimit(entitlement, 'maxCustomers', await this.countCustomers(tenantId), 'customer profiles');
   }
 
+  async assertCanAddSupplier(tenantId: Types.ObjectId, entitlement: Entitlement): Promise<void> {
+    this.assertWithinLimit(entitlement, 'maxSuppliers', await this.countSuppliers(tenantId), 'suppliers');
+  }
+
   async assertCanRecordSale(tenantId: Types.ObjectId, entitlement: Entitlement, vertical?: PosVertical): Promise<void> {
     this.assertWithinLimit(
       entitlement,
@@ -441,15 +459,16 @@ class EntitlementService {
   async usage(tenantId: Types.ObjectId) {
     // Resolved once so both vertical-specific meters agree on what they measure.
     const vertical = await verticalOfTenant(tenantId);
-    const [products, staff, stores, customers, monthlySales, storageBytes] = await Promise.all([
+    const [products, staff, stores, customers, monthlySales, storageBytes, suppliers] = await Promise.all([
       this.countProducts(tenantId, vertical),
       this.countStaff(tenantId),
       this.countStores(tenantId),
       this.countCustomers(tenantId),
       this.countMonthlySales(tenantId, vertical),
       this.storageBytes(tenantId),
+      this.countSuppliers(tenantId),
     ]);
-    return { vertical, products, staff, stores, customers, monthlySales, storageBytes };
+    return { vertical, products, staff, stores, customers, monthlySales, storageBytes, suppliers };
   }
 }
 

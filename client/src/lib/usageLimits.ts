@@ -35,6 +35,7 @@ export const USAGE_LIMITS: UsageLimitKey[] = [
   { limit: 'maxCustomers', usage: 'customers', label: 'Customer profiles', noun: 'customer profiles', href: '/customers' },
   { limit: 'maxMonthlySales', usage: 'monthlySales', label: 'Sales this month', noun: 'sales this month' },
   { limit: 'maxStorageBytes', usage: 'storageBytes', label: 'File storage', noun: 'storage', format: 'bytes' },
+  { limit: 'maxSuppliers', usage: 'suppliers', label: 'Suppliers', noun: 'suppliers', href: '/suppliers' },
 ];
 
 /**

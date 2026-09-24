@@ -93,6 +93,8 @@ export const PLAN_SECTIONS: PlanSection[] = [
       { kind: 'always', label: 'Stock levels per branch' },
       { kind: 'always', label: 'Low-stock alerts' },
       { kind: 'flag', key: 'inventoryLedger', label: 'Full inventory ledger', hint: 'Every movement, with who and why.' },
+      { kind: 'flag', key: 'supplierManagement', label: 'Supplier management', hint: 'Keep your sourcing contacts, their people, terms and tax details in one place.', upsell: true },
+      { kind: 'limit', key: 'maxSuppliers', label: 'Suppliers' },
     ],
   },
   {
@@ -181,6 +183,7 @@ export const FEATURE_LABELS: Record<string, string> = {
   customRoles: 'Custom roles',
   exportData: 'Data export',
   productImport: 'Bulk product import',
+  supplierManagement: 'Supplier management',
   prioritySupport: 'Priority support',
   smsMarketing: 'SMS marketing',
   emailMarketing: 'Email marketing',

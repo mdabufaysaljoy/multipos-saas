@@ -22,6 +22,21 @@ export async function nextSequence(
   return doc!.seq;
 }
 
+/**
+ * The workspace-wide equivalent: one sequence for the whole tenant, whatever
+ * branch the caller is signed into. Used where the records themselves are
+ * shared across branches, such as supplier codes.
+ */
+export async function nextTenantSequence(tenantId: Types.ObjectId, key: string, session?: ClientSession): Promise<number> {
+  const doc = await CounterModel.findOneAndUpdate(
+    { tenantId, storeId: null, key },
+    { $inc: { seq: 1 } },
+    { new: true, upsert: true, setDefaultsOnInsert: true, ...sessionOpt(session) },
+  ).lean();
+
+  return doc!.seq;
+}
+
 /** Formats a document number such as INV-000012. */
 export const formatDocumentNumber = (prefix: string, seq: number, pad = 6): string =>
   `${prefix}${String(seq).padStart(pad, '0')}`;

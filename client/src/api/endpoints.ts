@@ -17,6 +17,9 @@ import type {
   ExportCatalog,
   ExportJob,
   ImportCatalog,
+  Supplier,
+  SupplierListItem,
+  SupplierSummary,
   ImportPreview,
   ImportResult,
   ProductImportJob,
@@ -177,6 +180,16 @@ export const customerApi = {
   create: (body: Record<string, unknown>) => post<Customer>('/customers', body),
   update: (id: string, body: Record<string, unknown>) => patch<Customer>(`/customers/${id}`, body),
   remove: (id: string) => del<{ id: string }>(`/customers/${id}`),
+};
+
+export const supplierApi = {
+  summary: () => get<SupplierSummary>('/suppliers/summary'),
+  list: (params?: Query) => getPaginated<SupplierListItem>('/suppliers', params),
+  get: (id: string) => get<Supplier>(`/suppliers/${id}`),
+  create: (body: Record<string, unknown>) => post<Supplier>('/suppliers', body),
+  update: (id: string, body: Record<string, unknown>) => patch<Supplier>(`/suppliers/${id}`, body),
+  setStatus: (id: string, isActive: boolean) => post<Supplier>(`/suppliers/${id}/status`, { isActive }),
+  remove: (id: string) => del<{ id: string }>(`/suppliers/${id}`),
 };
 
 export const exportApi = {

@@ -1,6 +1,6 @@
 # Database schema
 
-MongoDB + Mongoose. 18 collections. Every tenant-owned document carries
+MongoDB + Mongoose. Every tenant-owned document carries
 `tenantId`, and everything a store owns also carries `storeId`.
 
 ## Conventions
@@ -78,8 +78,9 @@ plan-limit change rather than a migration.
 **Indexes** `{ tenantId }` · `{ tenantId, code } unique`
 
 ### `Counter`
-Atomic per-store sequences. `findOneAndUpdate` + `$inc` + `upsert` is a
-single-document operation, so an invoice number is never handed out twice.
+Atomic sequences. `findOneAndUpdate` + `$inc` + `upsert` is a single-document
+operation, so an invoice number is never handed out twice. `storeId` is **null**
+for a workspace-wide sequence, such as supplier codes.
 
 **Indexes** `{ tenantId, storeId, key } unique`
 
@@ -194,6 +195,34 @@ orderCount, lastPurchaseAt, isActive, deletedAt }`
 
 **Indexes** `{ tenantId, storeId, phone } unique` *(partial)* ·
 `{ tenantId, storeId, name }`
+
+### `Supplier`
+Who the shop buys from (Clothing POS, Professional and Enterprise).
+**WORKSPACE-level: no `storeId`** — the same wholesalers supply every branch.
+
+| Field | Type | Notes |
+|---|---|---|
+| `tenantId` | ObjectId | The only ownership field; never taken from the client |
+| `code` | String | `SUP-0001`, server-assigned from a tenant-level `Counter` |
+| `name` | String | The only required field |
+| `type` | Enum | manufacturer / wholesaler / distributor / importer / local / other |
+| `contact` | `{ name, designation, phone, altPhone, email }` | One primary contact person |
+| `phone` `email` `website` | String | Business contacts; the website is never fetched |
+| `address` | `{ line1, line2, area, city, district, division, postalCode, country }` | |
+| `taxNumber` `tradeLicense` | String | |
+| `banking` | `{ accountName, accountNumber, bankName, branchName }` | Never in list responses; detail only, for `suppliers.edit` |
+| `paymentTerms` `paymentTermsNote` | Enum + String | Informational; no payables logic yet |
+| `notes` | String | Internal, ≤2000 |
+| `isActive` `deletedAt` | | Deactivating frees a plan slot; delete is soft |
+| `createdBy` `updatedBy` | ObjectId → User | |
+
+**Indexes** `{ tenantId, code } unique` *(partial: `deletedAt: null`)* ·
+`{ tenantId, deletedAt, isActive, name }` · `{ tenantId, deletedAt, createdAt }` ·
+`{ tenantId, name }` · `{ tenantId, phone }` · `{ tenantId, email }` ·
+`{ tenantId, contact.name }` · `{ tenantId, contact.phone }` — the search paths
+
+No product ↔ supplier link by design: a garment may be bought from several
+suppliers over time, so that belongs on a future purchase record.
 
 ---
 

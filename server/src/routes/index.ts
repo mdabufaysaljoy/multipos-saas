@@ -5,6 +5,7 @@ import storeRoutes from '../modules/stores/stores.routes';
 import categoryRoutes from '../modules/categories/categories.routes';
 import productRoutes from '../modules/products/products.routes';
 import productImportRoutes from '../modules/productImports/import.routes';
+import supplierRoutes from '../modules/suppliers/suppliers.routes';
 import inventoryRoutes from '../modules/inventory/inventory.routes';
 import customerRoutes from '../modules/customers/customers.routes';
 import loyaltyRoutes from '../modules/loyalty/loyalty.routes';
@@ -60,6 +61,7 @@ router.use('/categories', categoryRoutes);
 // Before the product routes: "import" must not be parsed as a product id.
 router.use('/products/import', productImportRoutes);
 router.use('/products', productRoutes);
+router.use('/suppliers', supplierRoutes);
 router.use('/inventory', inventoryRoutes);
 router.use('/customers', customerRoutes);
 router.use('/loyalty', loyaltyRoutes);

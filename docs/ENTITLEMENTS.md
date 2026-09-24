@@ -25,6 +25,7 @@ request from the database (`config/entitlements.ts` → `services/entitlements/e
 | `imageOptimization` | `imageOptimization` | ❌ | ❌ | ✅ | `uploads.routes.ts` |
 | `loyalty` (Clothing) | `loyaltyProgram` | ❌ | ✅ | ✅ | `loyalty.routes.ts`, sales |
 | `productImport` (Clothing) | `productImport` | ✅ | ✅ | ✅ | `productImports/import.routes.ts` |
+| `supplierManagement` (Clothing) | `supplierManagement` | ❌ | ✅ | ✅ | `suppliers/suppliers.routes.ts` |
 | `prioritySupport` | `prioritySupport` | ❌ | ❌ | ✅ | a support commitment, not a code gate |
 
 **Data export and product import are independent.** Export moves data out and is a paid tier feature;
@@ -32,7 +33,8 @@ import brings a catalogue in and is part of every plan. Neither flag can turn th
 
 ## Limit entitlements
 
-`products`, `staff`, `branches`, `customers`, `monthlySales`, `storage` — see `ENTITLEMENT_LIMITS`.
+`products`, `staff`, `branches`, `customers`, `monthlySales`, `storage`, `suppliers` (Clothing: Starter 0,
+Professional 100, Enterprise unlimited) — see `ENTITLEMENT_LIMITS`.
 `-1` means unlimited and is reported as `{ limit: null, unlimited: true }`.
 
 ## Missing keys in an old snapshot
@@ -47,7 +49,8 @@ value for it (`entitlement.service.ts`):
   take away something that was never sold separately. A stored `false` is still respected.
 
 Backfill migrations exist so none of this is load-bearing in practice:
-`npm run migrate` (or `migrate:loyalty`, `migrate:export-permission`, `migrate:product-import`).
+`npm run migrate` (or `migrate:loyalty`, `migrate:export-permission`, `migrate:product-import`,
+`migrate:suppliers`).
 
 ## Adding an entitlement
 
