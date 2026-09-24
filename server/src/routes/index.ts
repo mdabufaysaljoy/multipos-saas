@@ -2,6 +2,7 @@ import paymentProviderRoutes from '../modules/paymentProviders/paymentProviders.
 import { Router } from 'express';
 import authRoutes from '../modules/auth/auth.routes';
 import storeRoutes from '../modules/stores/stores.routes';
+import paymentMethodRoutes from '../modules/paymentMethods/paymentMethods.routes';
 import categoryRoutes from '../modules/categories/categories.routes';
 import productRoutes from '../modules/products/products.routes';
 import productImportRoutes from '../modules/productImports/import.routes';
@@ -57,6 +58,8 @@ router.use('/auth', authRoutes);
 router.use('/account', accountRoutes);
 router.use('/workspaces', workspaceRoutes);
 router.use('/stores', storeRoutes);
+// The tenders a workspace takes, in every vertical.
+router.use('/payment-methods', paymentMethodRoutes);
 router.use('/categories', categoryRoutes);
 // Before the product routes: "import" must not be parsed as a product id.
 router.use('/products/import', productImportRoutes);

@@ -1,6 +1,5 @@
 import { z } from 'zod';
-import { PAYMENT_METHODS } from '../../config/constants';
-import { minorAmount, objectId, positiveIntegerQuantity, positiveMinorAmount, searchSchema, calendarDate } from '../common/common.validators';
+import { minorAmount, objectId, positiveIntegerQuantity, positiveMinorAmount, searchSchema, calendarDate, paymentMethodKey } from '../common/common.validators';
 import { posCustomerSchema } from '../customers/customers.validators';
 
 /**
@@ -36,7 +35,7 @@ export const createSaleSchema = z
     discountValue: z.number().int().min(0).default(0),
 
     /** The primary tender. For a split payment this is the largest row. */
-    paymentMethod: z.enum(PAYMENT_METHODS),
+    paymentMethod: paymentMethodKey,
     /**
      * Split-payment breakdown. When present this is AUTHORITATIVE: the amount
      * paid is the sum of these rows, not the client's `paidMinor`. Every row
@@ -46,7 +45,7 @@ export const createSaleSchema = z
     payments: z
       .array(
         z.object({
-          method: z.enum(PAYMENT_METHODS),
+          method: paymentMethodKey,
           amountMinor: positiveMinorAmount,
           reference: z.string().trim().max(80).optional().default(''),
         }),
@@ -123,7 +122,7 @@ export const listSalesSchema = searchSchema.extend({
   to: calendarDate.optional(),
   cashierId: objectId.optional(),
   customerId: objectId.optional(),
-  paymentMethod: z.enum(PAYMENT_METHODS).optional(),
+  paymentMethod: paymentMethodKey.optional(),
   status: z.enum(['completed', 'cancelled']).optional(),
 });
 

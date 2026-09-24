@@ -1,8 +1,7 @@
 import { z } from 'zod';
-import { PAYMENT_METHODS } from '../../config/constants';
 import { RESTAURANT_ORDER_STATUSES, RESTAURANT_ORDER_TYPES } from '../../models/RestaurantOrder';
 import { CASH_MOVEMENT_TYPES, SHIFT_STATUSES } from '../../models/RestaurantShift';
-import { calendarDate, objectId, paginationSchema, searchSchema } from '../common/common.validators';
+import { calendarDate, objectId, paginationSchema, searchSchema, paymentMethodKey } from '../common/common.validators';
 import { posCustomerSchema } from '../customers/customers.validators';
 import { dashboardRangeSchema } from '../reports/reports.validators';
 
@@ -104,7 +103,7 @@ export const payOrderSchema = z
       .array(
         z
           .object({
-            method: z.enum(PAYMENT_METHODS),
+            method: paymentMethodKey,
             amountMinor: z.number().int().min(1).max(100_000_000),
           })
           .strict(),

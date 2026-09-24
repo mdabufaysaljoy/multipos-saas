@@ -145,3 +145,17 @@ export const dateRangeSchema = z
     preset: z.enum(['today', 'yesterday', 'last7', 'last30', 'thisMonth', 'lastMonth', 'thisYear', 'custom']).optional(),
   })
   .superRefine(assertOrderedRange);
+
+/**
+ * A POS tender key: one of the six built-ins, or one a workspace defined.
+ *
+ * The shape is checked here; whether the branch actually takes it is checked by
+ * the tender service, which is also what refuses a key nobody has defined.
+ */
+export const paymentMethodKey = z
+  .string()
+  .trim()
+  .toLowerCase()
+  .min(2, 'Choose a payment method')
+  .max(24)
+  .regex(/^[a-z0-9][a-z0-9_-]*$/, 'A payment method key uses letters, numbers, - and _');

@@ -24,8 +24,8 @@ import { formatMoney } from '@/lib/money';
 import { formatQuantity, gramsToKgText, lineAmount, parseKgToGrams } from '@/lib/supershop';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/hooks/useAuth';
-import type { PaymentMethod } from '@/types/domain';
 import type { ShopProduct } from '@/types/supershop';
+import { tendersFromConfig } from '@/types/domain';
 
 interface CartLine {
   product: ShopProduct;
@@ -67,7 +67,7 @@ export function SupershopPosPage() {
 
   // The branch decides which tenders it takes; the till only offers those.
   const { data: posConfig } = useQuery({ queryKey: ['store', 'pos-config'], queryFn: storeApi.posConfig });
-  const availableMethods = (posConfig?.paymentMethods ?? ['cash']) as PaymentMethod[];
+  const availableMethods = tendersFromConfig(posConfig);
   // The same payment maths as every other till: cash is what the customer
   // hands over, and change comes out of it.
   const payments = usePayments(cart.length > 0 ? total : 0);

@@ -11,8 +11,9 @@ import { PaymentPanel } from '@/features/payments/PaymentPanel';
 import { usePayments } from '@/features/payments/usePayments';
 import { formatMoney } from '@/lib/money';
 import { cn } from '@/lib/utils';
-import type { Customer, LoyaltyMember, PaymentMethod } from '@/types/domain';
+import type {Customer, LoyaltyMember} from '@/types/domain';
 import { newRequestKey } from './useLoyaltyAccess';
+import { tendersFromConfig } from '@/types/domain';
 
 interface IssueMembershipDialogProps {
   open: boolean;
@@ -136,7 +137,7 @@ export function IssueMembershipDialog({ open, onOpenChange, customer: preset, on
           {feeMinor > 0 && (
             <PaymentPanel
               rows={payments.rows}
-              availableMethods={(config?.paymentMethods ?? ['cash']) as PaymentMethod[]}
+              availableMethods={tendersFromConfig(config)}
               totalMinor={feeMinor}
               hasCash={payments.hasCash}
               remainingPayableMinor={payments.remainingPayableMinor}

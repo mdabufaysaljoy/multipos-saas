@@ -13,7 +13,7 @@ import { resolvePage, searchRegex } from '../../utils/pagination';
 import { entitlementService } from '../../services/subscription/entitlement.service';
 import { customerService } from '../customers/customers.service';
 import { pharmacyInventoryAdapter, pharmacyMovementRow, todayUtc, type PharmacyReservation } from '../../services/inventory/adapters/pharmacy.adapter';
-import { POS_TENDER_DIALECT, settleTender } from '../../services/pos/paymentMethods.service';
+import { POS_TENDER_DIALECT, settleTender, stampTenderLabels, tenderLabels } from '../../services/pos/paymentMethods.service';
 import { resolveDashboardWindow } from '../reports/reports.service';
 import type { DashboardRangeInput } from '../reports/reports.validators';
 import type { TenantContext } from '../../types/express';
@@ -316,6 +316,8 @@ class PharmacyService {
       accepted: store.paymentMethods ?? [],
       dialect: POS_TENDER_DIALECT,
     });
+    // Each row keeps the name the workspace uses for that method today.
+    const paidWith = stampTenderLabels(input.payments, await tenderLabels(ctx.tenantId));
 
     // Optional, and resolved the same way in every vertical: an existing
     // customer, or one created at the till from a name and phone. This is who
@@ -381,7 +383,7 @@ class PharmacyService {
         ),
         paidMinor,
         changeMinor,
-        payments: input.payments,
+        payments: paidWith,
         prescription: input.prescription ?? null,
         customerId: customer?._id ?? null,
         customerNameSnapshot: customer?.name ?? '',

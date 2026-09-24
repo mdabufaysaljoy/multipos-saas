@@ -7,6 +7,7 @@ import type { TenantContext } from '../../types/express';
 import { ProductVariantModel } from '../../models/ProductVariant';
 import { StoreModel } from '../../models/Store';
 import { ApiError } from '../../utils/ApiError';
+import { tenderLabels } from '../../services/pos/paymentMethods.service';
 import type { BreakdownInput, DashboardRangeInput, ReportRangeInput } from './reports.validators';
 
 export interface ResolvedRange {
@@ -591,7 +592,13 @@ class ReportService {
       { $project: { _id: 0, method: '$_id', amountMinor: 1, count: 1 } },
     ]);
 
-    return { range: { from: range.from, to: range.to, label: range.label }, rows };
+    // Grouped by the key the sale recorded; named with what the workspace calls
+    // it today. A key it no longer has keeps its own name rather than vanishing.
+    const names = await tenderLabels(ctx.tenantId);
+    return {
+      range: { from: range.from, to: range.to, label: range.label },
+      rows: rows.map((row) => ({ ...row, methodLabel: names.get(row.method) ?? row.method })),
+    };
   }
 
   /** Returns analysis: what came back, how much and why. */

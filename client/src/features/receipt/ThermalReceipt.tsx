@@ -2,6 +2,7 @@ import { format } from 'date-fns';
 import { ReceiptPaper } from './ReceiptPaper';
 import { formatMoney } from '@/lib/money';
 import type { ReceiptPayload } from '@/types/domain';
+import { tenderLabel } from '@/types/domain';
 
 /** Thermal paper widths the receipt layout is built for, in millimetres. */
 export const SUPPORTED_WIDTHS = [48, 57, 58, 78, 80, 88] as const;
@@ -197,7 +198,7 @@ export function ThermalReceipt({ payload }: { payload: ReceiptPayload }) {
               sale.payments.map((payment, index) => (
                 <tr key={`${payment.method}-${index}`}>
                   <td className="r-sm" style={index === 0 ? { paddingTop: '1mm' } : undefined}>
-                    Paid ({payment.method})
+                    Paid ({tenderLabel(payment)})
                   </td>
                   <td className="r-sm r-right" style={index === 0 ? { paddingTop: '1mm' } : undefined}>
                     {formatMoney(payment.amountMinor, currency)}

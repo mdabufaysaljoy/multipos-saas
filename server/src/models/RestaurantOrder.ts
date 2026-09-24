@@ -1,5 +1,5 @@
 import { Schema, model, type Types } from 'mongoose';
-import { PAYMENT_METHODS, type PaymentMethod } from '../config/constants';
+import type { PaymentMethod } from '../config/constants';
 import type { BaseDoc } from './types';
 
 export const RESTAURANT_ORDER_TYPES = ['dine_in', 'takeaway'] as const;
@@ -54,8 +54,11 @@ export interface KitchenTicket {
 }
 
 export interface RestaurantOrderPayment {
-  method: PaymentMethod;
+  /** A key, built-in or one this workspace defined. */
+  method: PaymentMethod | string;
   amountMinor: number;
+  /** What the till called it, kept so a rename cannot rewrite history. */
+  methodLabel?: string;
 }
 
 /**
@@ -146,7 +149,8 @@ const ticketSchema = new Schema<KitchenTicket>({
 
 const paymentSchema = new Schema<RestaurantOrderPayment>(
   {
-    method: { type: String, enum: [...PAYMENT_METHODS], required: true },
+    method: { type: String, required: true, trim: true, maxlength: 24 },
+    methodLabel: { type: String, default: '' },
     amountMinor: { ...money, min: 1, required: true },
   },
   { _id: false },

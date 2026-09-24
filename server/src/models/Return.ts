@@ -38,6 +38,8 @@ export interface ReturnDoc extends BaseDoc {
   totalMinor: number;
   reason: string;
   refundMethod: string;
+  /** What the workspace called that method when the refund was made. */
+  refundMethodLabel?: string;
   processedBy: Types.ObjectId;
   processedByNameSnapshot: string;
   returnedAt: Date;
@@ -113,6 +115,7 @@ const returnSchema = new Schema<ReturnDoc>(
     totalMinor: { type: Number, required: true, min: 0 },
     reason: { type: String, default: '', maxlength: 500 },
     refundMethod: { type: String, default: 'cash' },
+    refundMethodLabel: { type: String, default: '' },
     processedBy: { type: Schema.Types.ObjectId, ref: 'User', required: true },
     processedByNameSnapshot: { type: String, default: '' },
     returnedAt: { type: Date, default: Date.now, index: true },

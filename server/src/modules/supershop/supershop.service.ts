@@ -13,7 +13,7 @@ import { resolvePage, searchRegex } from '../../utils/pagination';
 import { entitlementService } from '../../services/subscription/entitlement.service';
 import { customerService } from '../customers/customers.service';
 import { shopMovementRow, supershopInventoryAdapter, type ShopReservation } from '../../services/inventory/adapters/supershop.adapter';
-import { POS_TENDER_DIALECT, settleTender } from '../../services/pos/paymentMethods.service';
+import { POS_TENDER_DIALECT, settleTender, stampTenderLabels, tenderLabels } from '../../services/pos/paymentMethods.service';
 import { resolveDashboardWindow } from '../reports/reports.service';
 import type { DashboardRangeInput } from '../reports/reports.validators';
 import type { TenantContext } from '../../types/express';
@@ -254,6 +254,8 @@ class SupershopService {
       accepted: store.paymentMethods ?? [],
       dialect: POS_TENDER_DIALECT,
     });
+    // Each row keeps the name the workspace uses for that method today.
+    const paidWith = stampTenderLabels(input.payments, await tenderLabels(ctx.tenantId));
 
     // VAT in what was actually charged: a sale discount reduces it proportionally.
     const lineVatMinor = priced.reduce((sum, line) => sum + line.vatMinor, 0);
@@ -325,7 +327,7 @@ class SupershopService {
         costMinor: items.reduce((sum, line) => sum + line.costMinor, 0),
         paidMinor,
         changeMinor,
-        payments: input.payments,
+        payments: paidWith,
         customerId: customer?._id ?? null,
         customerNameSnapshot: customer?.name ?? '',
         note: input.note,

@@ -22,8 +22,8 @@ import { formatMoney } from '@/lib/money';
 import { DOSAGE_FORM_LABELS, formatExpiry } from '@/lib/pharmacy';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/hooks/useAuth';
-import type { PaymentMethod } from '@/types/domain';
 import type { Medicine } from '@/types/pharmacy';
+import { tendersFromConfig } from '@/types/domain';
 
 interface CartLine {
   medicine: Medicine;
@@ -65,7 +65,7 @@ export function PharmacyPosPage() {
 
   // The branch decides which tenders it takes; the till only offers those.
   const { data: posConfig } = useQuery({ queryKey: ['store', 'pos-config'], queryFn: storeApi.posConfig });
-  const availableMethods = (posConfig?.paymentMethods ?? ['cash']) as PaymentMethod[];
+  const availableMethods = tendersFromConfig(posConfig);
   // The same payment maths as every other till: cash is what the customer
   // hands over, and change comes out of it.
   const payments = usePayments(cart.length > 0 ? total : 0);

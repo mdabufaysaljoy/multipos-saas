@@ -1,10 +1,10 @@
 # Universal POS features — audit, architecture and migration plan
 
 **Audit and plan.** It records what the four verticals do today, what "universal" should mean for each
-capability, and the order the work should be done in. Tasks are marked ✅ as they land - **tasks 01
-(printing), 12 (dashboard ranges), 05 (customer selection), 02 (payment-method service), 04 (split
-payment UI), 06 (inventory adapter + ledger read) and 07 (out-of-stock override) are done**;
-everything else below is still a plan.
+capability, and the order the work should be done in. Tasks are marked ✅ as they land - **tasks 01,
+02, 03, 04, 05, 06, 07 and 12 are done** (printing, payment-method service, custom payment methods,
+split payment UI, customer selection, inventory adapter + ledger read, out-of-stock override,
+dashboard ranges); tasks 08, 09, 10, 11, 13 and 14 are still a plan.
 
 Date: 2026-09-24 · Commit audited: `18bc974` (main, with the Clothing work merged in)
 Method: reading the code and the models, plus the checks the end-to-end suite already makes.
@@ -51,7 +51,7 @@ Legend: **mature** = reference implementation · **partial** = works but narrowe
 |---|---|---|---|---|---|---|---|---|
 | 1 | QZ Tray direct printing | **mature** | **done** (task 01) | **done** (task 01) | **done** (task 01) | `features/printing/*` plus the shared `ReceiptPaper` / `useReceiptPrint` / `ReceiptPrintBar` | receipt *content* per vertical; kitchen tickets are Restaurant-only | ✅ complete | — |
 | 2 | Split payment | **mature** (UI + server) | **done** (task 04) | **done** (task 04) | **done** (task 04) | one `paymentMethods.service.ts` (task 02) and one `features/payments/` panel (task 04) | refusal status (Clothing 422, the rest 400) and the card over-tender gap - task 03 | ✅ complete | — |
-| 3 | Custom payment methods | **missing** | missing | missing | missing | `PAYMENT_METHODS` is a hard-coded enum in `config/constants.ts`; `Store.paymentMethods` selects a subset | none | New `PaymentMethod` collection + snapshots on every sale model | **High** |
+| 3 | Custom payment methods | **done** (task 03) | **done** | **done** | **done** | `PaymentMethod` collection (custom only), `listTenders`, `stampTenderLabels`; built-ins stay implicit | none | ✅ complete | — |
 | 4 | Customer selection | **mature** (`CustomerPicker`) | **done** (task 05) | **done** (task 05) | **done** (task 05) | `/api/customers`, the shared `CustomerPicker` and one `resolveForPosSale` | Restaurant selects per *order*, not per payment; Pharmacy keeps buyer and patient apart | ✅ complete | — |
 | 4b | Loyalty (card, points, scan) | **mature** (membership, EAN-13 card, ledger, earn/redeem, returns/exchange reversal) | missing | missing | missing | `loyaltyService` is model-agnostic except for its sale hooks | earn base differs (order total vs sale subtotal); Pharmacy may exclude prescription items | Generalise the four sale hooks; widen the entitlement's `verticals` | **Medium** |
 | 5 | Return / exchange / refund / cancel | **mature** | cancel only | void only | void only | nothing shared | Restaurant has no stock to return; Pharmacy must return to the *batch* it came from; Super Shop returns to `ShopStock` | New shared return engine with per-vertical inventory adapters | **High** |
@@ -188,7 +188,7 @@ Each is independently executable, independently testable, and leaves the tree gr
 |---|---|---|---|---|
 | **01** Universal QZ printing ✅ **done** | Shared `ReceiptPaper` + `useReceiptPrint` + `ReceiptPrintBar`; all four verticals print direct, auto-print after a sale; widths 48/57/58/78/80/88; one shared `receiptStore` projection | — | S | Low |
 | **02** Shared payment-method service ✅ **done** | `services/pos/paymentMethods.service.ts` settles every vertical's tender (enabled / covered / change-from-cash) plus the loyalty fee; no behaviour change, 25 cross-vertical checks prove identical outcomes and pin the two remaining differences | — | S | Low |
-| **03** Custom payment methods | `PaymentMethod` collection (tenant+store, active flag, unique active name), snapshot `{key,label}` on every sale's payment lines, settings UI, reports/receipts read the snapshot | 02 | **L** | High |
+| **03** Custom payment methods ✅ **done** | Workspace-wide `PaymentMethod` collection for custom tenders only (built-ins implicit, no migration); `methodLabel` snapshot on every payment row and `refundMethodLabel` on returns; settings card; reports carry the label | 02 | **L** | High |
 | **04** Split payment UI everywhere ✅ **done** | `features/payments/` (`usePayments`, `paymentMath`, `PaymentPanel`) in all four tills; every till now offers only the branch's enabled methods, and `tenderedRows()` maps one breakdown onto both API shapes | 02 | S | Low |
 | **05** POS customer selection ✅ **done** | Shared `CustomerPicker` + `saleCustomerFields` + `posCustomerSchema` + `customerService.resolveForPosSale`; all four verticals take an id or create at the till, and move lifetime value | — | S | Low |
 | **06** Inventory adapter + ledger read API ✅ **done** | `services/inventory/adapter.ts` + four adapters, used by all four sale paths; `release` (no row) vs `restore` (row) settled; one `GET /stock-ledger` in every vertical, storage untouched | — | M | Medium |
@@ -201,7 +201,7 @@ Each is independently executable, independently testable, and leaves the tree gr
 | **13** Analytics parity | Shared metric contract; fill the gaps per vertical | 12 | M | Medium |
 | **14** PDF/print of reports | Serialise the current report view through `export.formats.ts` (already writes PDF) | 13 | M | Medium |
 
-Recommended sequencing: **01 ✅ → 12 ✅ → 05 ✅ → 02 ✅ → 04 ✅ → 06 ✅ → 07 ✅ → 03 → 08 → 09 → 10 → 11 → 13 → 14.**
+Recommended sequencing: **01 ✅ → 12 ✅ → 05 ✅ → 02 ✅ → 04 ✅ → 06 ✅ → 07 ✅ → 03 ✅ → 08 → 09 → 10 → 11 → 13 → 14.**
 That front-loads the visible wins that carry almost no risk, and defers the two schema-wide changes
 (payment methods, returns) until the adapter seam exists to absorb them.
 
@@ -209,11 +209,11 @@ That front-loads the visible wins that carry almost no risk, and defers the two 
 
 ## 7. Risks
 
-1. **Payment-method enum is load-bearing.** `PaymentMethod` appears in four sale models, `Return`,
-   `Payment`, wallet top-ups, receipts, every report's payment breakdown and the smoke suite. Task 03
-   must snapshot `{key,label}` on historical rows and keep the six built-ins working unchanged. Task
-   02 narrowed the blast radius: every till's *validation* now goes through one service, so task 03
-   changes the rules in one file rather than four.
+1. ~~**Payment-method enum is load-bearing.**~~ **Handled in task 03.** The enum became a validated
+   key; the six built-ins stayed implicit, so no row was migrated and no historical sale changed. The
+   label is snapshotted forward on new rows only - an old row falls back to the built-in name. The
+   one contract change: an undefined key is now refused with 400 by the branch's enabled list rather
+   than 422 by schema validation.
 2. **Tenant-scoped vs store-scoped catalogues.** Sharing code across them without an adapter will
    silently cross branches. Non-negotiable: shared code takes ids and quantities, never models.
 3. ~~**Pharmacy expiry.**~~ **Held in task 07.** The override reaches only unexpired batches - both
@@ -276,15 +276,14 @@ and are the reference material for the tasks above.
 
 ## 10. Recommended next task
 
-**Task 03 — Custom payment methods**, or the lighter task 10/13.
+**Task 08 — Universal return / exchange / refund.**
 
-Seven are done (01, 12, 05, 02, 04, 06, 07). What remains: task 08 (universal return/exchange/refund)
-is the biggest item in the plan and wants task 03 first, because a refund has to be paid back by some
-tender. Task 03 is itself the highest-risk item - `PaymentMethod` is an enum in four sale models,
-returns, payments, receipts and every report's breakdown - but task 02 narrowed it: the validation
-now lives in one service.
+Its two dependencies are done: task 06 gave it `restore` on the inventory adapter, and task 03 gave
+it a tender to pay a refund back on. It is the biggest item left - a shared engine plus per-vertical
+adapters, turning Restaurant's cancel and Pharmacy's and Super Shop's voids into refund-capable
+returns - and the one that most needs its own session.
 
-Tasks 10 (category management) and 13 (analytics parity) block nothing and are the lighter choices;
-task 09 (universal loyalty) is unblocked by task 05 and is medium-sized.
+Lighter alternatives, neither of which blocks anything: task 09 (universal loyalty, medium), task 10
+(category management) or task 13 (analytics parity).
 
 Waiting for an explicit instruction before starting any of them.

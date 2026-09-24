@@ -1,6 +1,8 @@
 import { del, get, getPaginated, http, patch, post, postDownload } from './client';
 import type { PaymentInstruction } from '@/features/billing/UpgradeDialog';
 import type {
+  TenderOption,
+  CustomPaymentMethod,
   BranchReport,
   BreakdownReport,
   Category,
@@ -121,6 +123,14 @@ export const workspaceApi = {
   create: (body: { businessName: string; vertical: string; contactPhone?: string; contactEmail?: string }) => post<CreateWorkspaceResult>('/workspaces', body),
 };
 
+/** The tenders a workspace takes: the six built-ins plus its own. */
+export const paymentMethodApi = {
+  list: () => get<TenderOption[]>('/payment-methods'),
+  create: (body: { label: string; key?: string; sortOrder?: number }) => post<CustomPaymentMethod>('/payment-methods', body),
+  update: (id: string, body: { label?: string; isActive?: boolean; sortOrder?: number }) => patch<CustomPaymentMethod>(`/payment-methods/${id}`, body),
+  remove: (id: string) => del<{ removed: boolean }>(`/payment-methods/${id}`),
+};
+
 export const storeApi = {
   list: () => get<StoreSettings[]>('/stores'),
   create: (body: Record<string, unknown>) => post<StoreSettings>('/stores', body),
@@ -129,6 +139,8 @@ export const storeApi = {
   posConfig: () =>
     get<
       Pick<StoreSettings, '_id' | 'name' | 'currency' | 'paymentMethods' | 'tax' | 'receipt' | 'lowStockThreshold' | 'logoUrl' | 'receiptLogoUrl'> & {
+        /** The enabled tenders with the workspace's own names for them. */
+        tenders?: TenderOption[];
         loyalty?: { available: boolean; pointValueMinor: number; earnSpendMinor: number; membershipFeeMinor: number };
         labels?: LabelSettings;
       }

@@ -1,6 +1,5 @@
 import { z } from 'zod';
-import { PAYMENT_METHODS } from '../../config/constants';
-import { minorAmount, objectId, positiveIntegerQuantity, positiveMinorAmount, searchSchema, calendarDate } from '../common/common.validators';
+import { minorAmount, objectId, positiveIntegerQuantity, positiveMinorAmount, searchSchema, calendarDate, paymentMethodKey } from '../common/common.validators';
 
 /** The refund method that turns a return into a replacement sale instead of a payout. */
 export const EXCHANGE_REFUND_METHOD = 'exchange' as const;
@@ -22,7 +21,7 @@ export const createReturnSchema = z
       .min(1, 'Select at least one item to return'),
     reason: z.string().trim().max(500).optional().default(''),
     /** A payment method, or "exchange": the refund value goes into replacement goods instead. */
-    refundMethod: z.enum([...PAYMENT_METHODS, EXCHANGE_REFUND_METHOD]).default('cash'),
+    refundMethod: z.union([paymentMethodKey, z.literal(EXCHANGE_REFUND_METHOD)]).default('cash'),
     /**
      * Required for an exchange, refused otherwise. Only WHAT is taken and how
      * the extra is paid - never a price, a refund value or an amount due; the
@@ -39,7 +38,7 @@ export const createReturnSchema = z
           .array(
             z
               .object({
-                method: z.enum(PAYMENT_METHODS),
+                method: paymentMethodKey,
                 amountMinor: positiveMinorAmount,
                 reference: z.string().trim().max(80).optional().default(''),
               })

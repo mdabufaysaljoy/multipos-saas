@@ -12,6 +12,7 @@ import { resolveReceiptWidth } from '@/features/receipt/ThermalReceipt';
 import { restaurantApi } from '@/api/restaurant';
 import { formatMoney } from '@/lib/money';
 import type { KitchenTicketPayload, PrintStore, RestaurantReceiptPayload, ShiftPayload } from '@/types/restaurant';
+import { tenderLabel } from '@/types/domain';
 
 /**
  * Restaurant bills, receipts and kitchen tickets.
@@ -103,7 +104,7 @@ export function RestaurantReceipt({ payload }: { payload: RestaurantReceiptPaylo
           </tr>
           {kind === 'receipt' &&
             order.payments.map((payment, index) => (
-              <Row key={`${payment.method}-${index}`} label={`Paid (${payment.method})`} value={formatMoney(payment.amountMinor, currency)} />
+              <Row key={`${payment.method}-${index}`} label={`Paid (${tenderLabel(payment)})`} value={formatMoney(payment.amountMinor, currency)} />
             ))}
           {kind === 'receipt' && order.changeMinor > 0 && <Row label="Change" value={formatMoney(order.changeMinor, currency)} />}
         </tbody>

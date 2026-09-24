@@ -1,7 +1,6 @@
 import { RECEIPT_WIDTHS_MM } from '../../models/Store';
 import { z } from 'zod';
-import { PAYMENT_METHODS } from '../../config/constants';
-import { optionalEmailAddress, optionalPhoneNumber, optionalHttpUrl } from '../common/common.validators';
+import { optionalEmailAddress, optionalPhoneNumber, optionalHttpUrl, paymentMethodKey } from '../common/common.validators';
 
 const receiptSchema = z.object({
   headerText: z.string().trim().max(200).optional(),
@@ -66,7 +65,9 @@ export const createStoreSchema = z.object({
   logoUrl: optionalHttpUrl,
   receiptLogoUrl: optionalHttpUrl,
   lowStockThreshold: z.number().int().min(0).max(10_000).default(5),
-  paymentMethods: z.array(z.enum(PAYMENT_METHODS)).min(1).optional(),
+  // Which tenders this branch takes. The keys must exist for the workspace,
+  // which the store service checks - a typo here would be a dead method.
+  paymentMethods: z.array(paymentMethodKey).min(1).optional(),
   receipt: receiptSchema.optional(),
   tax: taxSchema.optional(),
   labels: labelsSchema.optional(),

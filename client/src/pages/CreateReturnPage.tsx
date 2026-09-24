@@ -23,7 +23,7 @@ import { cn } from '@/lib/utils';
 import { ExchangePanel, type ExchangeState } from '@/features/returns/ExchangePanel';
 import { ReceiptDialog } from '@/features/receipt/ReceiptDialog';
 import { previewReturn } from '@/features/loyalty/loyaltyMath';
-import { PAYMENT_METHOD_LABELS, type PaymentMethod } from '@/types/domain';
+import { PAYMENT_METHOD_LABELS, type PaymentMethod, tendersFromConfig } from '@/types/domain';
 
 interface LineState {
   selected: boolean;
@@ -376,7 +376,7 @@ export function CreateReturnPage() {
                   refundMinor={refundTotal}
                   currency={currency}
                   tax={store?.tax}
-                  availableMethods={(store?.paymentMethods ?? ['cash']) as PaymentMethod[]}
+                  availableMethods={tendersFromConfig(store)}
                   onChange={setExchange}
                 />
               ) : (

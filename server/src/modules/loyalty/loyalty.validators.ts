@@ -1,6 +1,5 @@
 import { z } from 'zod';
-import { PAYMENT_METHODS } from '../../config/constants';
-import { minorAmount, objectId, paginationSchema, positiveMinorAmount } from '../common/common.validators';
+import { minorAmount, objectId, paginationSchema, positiveMinorAmount, paymentMethodKey } from '../common/common.validators';
 
 const idempotencyKey = z.string().trim().min(8).max(100).regex(/^[A-Za-z0-9_-]+$/, 'Invalid request key');
 
@@ -30,7 +29,7 @@ export const issueMembershipSchema = z
     payments: z
       .array(
         z.object({
-          method: z.enum(PAYMENT_METHODS),
+          method: paymentMethodKey,
           amountMinor: positiveMinorAmount,
           reference: z.string().trim().max(80).optional().default(''),
         }),

@@ -1,4 +1,6 @@
-import type { PaymentMethod } from '../../config/constants';
+import type { Types } from 'mongoose';
+import { PAYMENT_METHODS, type PaymentMethod } from '../../config/constants';
+import { PaymentMethodModel } from '../../models/PaymentMethod';
 import { ApiError } from '../../utils/ApiError';
 
 /**
@@ -8,8 +10,67 @@ import { ApiError } from '../../utils/ApiError';
  * row - so the rules below can be applied to all of them.
  */
 export interface TenderRow {
-  method: PaymentMethod;
+  /** A built-in key, or one the workspace added itself. */
+  method: PaymentMethod | string;
   amountMinor: number;
+  /** What the till called it, kept with the sale so a rename cannot rewrite history. */
+  methodLabel?: string;
+}
+
+/** A tender as the till offers it. */
+export interface TenderOption {
+  key: string;
+  label: string;
+  isBuiltIn: boolean;
+  isActive: boolean;
+}
+
+/**
+ * The six every workspace has, in the order a till shows them.
+ *
+ * These are not rows in a collection: they exist for every workspace that has
+ * ever been created, so nothing has to be seeded or migrated for them, and a
+ * sale from 2024 that says `cash` still means cash.
+ */
+export const BUILT_IN_TENDERS: Record<PaymentMethod, string> = {
+  cash: 'Cash',
+  bkash: 'bKash',
+  nagad: 'Nagad',
+  bank: 'Bank',
+  card: 'Card',
+  other: 'Other',
+};
+
+/** Reserved: a workspace cannot define its own "cash". */
+export const isBuiltInTender = (key: string): key is PaymentMethod => (PAYMENT_METHODS as readonly string[]).includes(key);
+
+/**
+ * Every tender this workspace knows about: the six built-ins, then whatever it
+ * added itself. Inactive custom methods are included so history and settings
+ * can still name them; the till filters by the branch's enabled list.
+ */
+export async function listTenders(tenantId: Types.ObjectId): Promise<TenderOption[]> {
+  const custom = await PaymentMethodModel.find({ tenantId }).sort({ sortOrder: 1, label: 1 }).lean();
+  return [
+    ...PAYMENT_METHODS.map((key) => ({ key, label: BUILT_IN_TENDERS[key], isBuiltIn: true, isActive: true })),
+    ...custom.map((row) => ({ key: row.key, label: row.label, isBuiltIn: false, isActive: row.isActive })),
+  ];
+}
+
+/**
+ * key -> label for this workspace, used to stamp a sale's payment lines.
+ *
+ * A key nobody recognises keeps its own name rather than disappearing: a sale
+ * is a record of what happened, and a method removed from the database years
+ * later must not turn a receipt into a blank.
+ */
+export async function tenderLabels(tenantId: Types.ObjectId): Promise<Map<string, string>> {
+  return new Map((await listTenders(tenantId)).map((tender) => [tender.key, tender.label]));
+}
+
+/** Stamps each row with the label the workspace uses for it today. */
+export function stampTenderLabels<T extends TenderRow>(rows: readonly T[], labels: Map<string, string>): T[] {
+  return rows.map((row) => ({ ...row, methodLabel: row.methodLabel ?? labels.get(row.method) ?? row.method }));
 }
 
 /** What a settled sale took: the money in, the change out, and the cash part. */

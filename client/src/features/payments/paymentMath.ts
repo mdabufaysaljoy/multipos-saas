@@ -1,7 +1,6 @@
-import type { PaymentMethod } from '@/types/domain';
 
 export interface PaymentRowInput {
-  method: PaymentMethod;
+  method: string;
   /** Cash row: cash RECEIVED from the customer. Other rows: amount applied to the sale. */
   amountMinor: number | null;
 }
@@ -17,7 +16,7 @@ export interface PaymentBreakdown {
   /** Still unpaid after everything entered. */
   dueMinor: number;
   /** One row per method, with the amount APPLIED to the sale (what is recorded). */
-  applied: { method: PaymentMethod; amountMinor: number }[];
+  applied: { method: string; amountMinor: number }[];
   hasCash: boolean;
   issues: string[];
 }
@@ -85,7 +84,7 @@ export function computePayments(totalMinor: number, rows: PaymentRowInput[]): Pa
  * records what was applied and the cash handed over separately. Same maths,
  * two shapes - task 03 is where they converge.
  */
-export function tenderedRows(breakdown: PaymentBreakdown): { method: PaymentMethod; amountMinor: number }[] {
+export function tenderedRows(breakdown: PaymentBreakdown): { method: string; amountMinor: number }[] {
   return breakdown.applied.map((row) =>
     row.method === 'cash' ? { method: row.method, amountMinor: breakdown.cashTenderedMinor ?? row.amountMinor } : row,
   );

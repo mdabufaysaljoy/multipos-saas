@@ -14,7 +14,7 @@ import { resolvePage, searchRegex } from '../../utils/pagination';
 import { inventoryService } from '../../services/inventory/inventory.service';
 import { entitlementService } from '../../services/subscription/entitlement.service';
 import { customerService } from '../customers/customers.service';
-import { assertCovered, assertMethodsEnabled, CLOTHING_TENDER_DIALECT } from '../../services/pos/paymentMethods.service';
+import { assertCovered, assertMethodsEnabled, CLOTHING_TENDER_DIALECT, stampTenderLabels, tenderLabels } from '../../services/pos/paymentMethods.service';
 import { clothingInventoryAdapter, type ClothingReservation } from '../../services/inventory/adapters/clothing.adapter';
 import { pointsForSpend } from '../loyalty/loyalty.math';
 import { loyaltyService } from '../loyalty/loyalty.service';
@@ -106,6 +106,7 @@ class SaleService {
         ? []
         : [input.paymentMethod];
     assertMethodsEnabled(store.paymentMethods, methodsUsed, CLOTHING_TENDER_DIALECT);
+    const tenderNames = await tenderLabels(ctx.tenantId);
 
     const customer = loyalty
       ? await customerService.resolveForSale(ctx, loyalty.membership.customerId)
@@ -183,10 +184,14 @@ class SaleService {
         paidMinor: totals.paidMinor,
         changeMinor: totals.changeMinor,
         paymentMethod: input.paymentMethod,
-        payments:
+        // Each row keeps the name the workspace used for that method today, so
+        // renaming or retiring one never changes what an old receipt says.
+        payments: stampTenderLabels(
           creditMinor > 0 || takesNoMoney
             ? (input.payments ?? [])
             : (input.payments ?? [{ method: input.paymentMethod, amountMinor: totals.totalMinor, reference: '' }]),
+          tenderNames,
+        ),
         exchange: options.exchange ? { returnId: null, returnNumber: '', creditMinor, returnedItems: options.exchange.returnedItems } : null,
         loyalty: loyalty
           ? {

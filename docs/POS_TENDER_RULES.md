@@ -74,7 +74,41 @@ plus `cashTenderedMinor`. The other three have no such field: their rows are wha
 numbers either way - a ৳45 sale paid with ৳30 cash and ৳20 bKash records ৳50 paid and ৳5 change in
 both.
 
-## 4. Tests
+## 4. Tenders a workspace defines itself
+
+*Task 03.* The six built-ins — cash, bKash, Nagad, bank, card, other — exist for **every** workspace,
+always. They are not rows in a collection, nothing was seeded or migrated for them, and a sale from
+last year that says `cash` still means cash. Anything else a shop takes it defines itself:
+
+```
+GET    /api/payment-methods        every till may read it
+POST   /api/payment-methods        settings.edit
+PATCH  /api/payment-methods/:id    settings.edit
+DELETE /api/payment-methods/:id    settings.edit
+```
+
+A method has a **key** and a **label**. The key (`meal-voucher`, derived from the label) is what every
+payment line stores and never changes. The label is what the till and the receipt show, and it can be
+changed freely — because **every sale keeps the label it was taken under**, in `methodLabel` on the
+payment row (and `refundMethodLabel` on a return). Rename "Meal Voucher" to "Lunch Voucher" and last
+month's receipt still says Meal Voucher, which is what actually happened.
+
+Methods are **workspace-wide**; which branch offers which is still the branch's own `paymentMethods`
+list, exactly as before. A branch cannot enable a key the workspace has not defined, and switching a
+method off removes it from every branch in the same step. Built-in keys are reserved: a workspace
+cannot define its own "cash".
+
+**What changed for clients.** A payment method key is no longer a fixed enum, so a key the workspace
+has never defined is refused by the branch's enabled list (**400**, "This branch does not accept X
+payments") rather than by schema validation (422). A *malformed* key — wrong characters, too long —
+is still 422. The platform's own payment methods (wallet top-ups, subscription purchases) are a
+different thing entirely and were not touched.
+
+**Reports** still group by the key, which is what makes history comparable; each row now also carries
+`methodLabel`, resolved to what the workspace calls that key today, falling back to the key itself so
+a method deleted years later still prints as something.
+
+## 5. Tests
 
 `scripts/smoke-test.mjs`, section **"POS tender rules (all verticals)"**, runs the same four tenders
 — a disabled method, a short payment, an exact payment, a two-method split, cash over the total, and

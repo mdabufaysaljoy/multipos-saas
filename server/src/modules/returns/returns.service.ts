@@ -7,6 +7,7 @@ import { ApiError } from '../../utils/ApiError';
 import { formatDocumentNumber, nextSequence } from '../../utils/counters';
 import { resolvePage, searchRegex } from '../../utils/pagination';
 import { inventoryService, type StockMovementResult } from '../../services/inventory/inventory.service';
+import { tenderLabels } from '../../services/pos/paymentMethods.service';
 import { entitlementService } from '../../services/subscription/entitlement.service';
 import { customerService } from '../customers/customers.service';
 import type { TenantContext } from '../../types/express';
@@ -377,6 +378,10 @@ class ReturnService {
 
       const seq = await nextSequence(ctx.tenantId, ctx.storeId, 'return');
       const returnNumber = formatDocumentNumber(store.returnPrefix, seq);
+      // An exchange pays nothing back; anything else names the tender it went
+      // back on, as the workspace calls it today.
+      const refundTenderName =
+        input.refundMethod === EXCHANGE_REFUND_METHOD ? '' : ((await tenderLabels(ctx.tenantId)).get(input.refundMethod) ?? input.refundMethod);
       // Money refunded = the goods at their sale prices, less the value of any
       // loyalty points that paid for them (those are given back as points).
       const totalMinor = Math.max(0, lines.reduce((sum, line) => sum + line.lineTotalMinor, 0) - (loyaltyClaim?.valueMinor ?? 0));
@@ -395,6 +400,9 @@ class ReturnService {
         totalMinor,
         reason: input.reason,
         refundMethod: input.refundMethod,
+        // The name that method had when the money went back, so renaming it
+        // later cannot change what the return document says.
+        refundMethodLabel: refundTenderName,
         processedBy: ctx.userId,
         processedByNameSnapshot: ctx.userName,
         returnedAt: new Date(),

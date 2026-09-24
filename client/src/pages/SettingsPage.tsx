@@ -21,6 +21,7 @@ import { PermissionGate } from '@/components/PermissionGate';
 import { ThermalReceipt } from '@/features/receipt/ThermalReceipt';
 import { LoyaltySettingsCard } from '@/features/loyalty/LoyaltySettingsCard';
 import { LabelSettingsCard } from '@/features/barcode/LabelSettingsCard';
+import { TenderSettingsCard } from '@/features/payments/TenderSettingsCard';
 import { PrinterSettingsCard } from '@/features/printing/PrinterSettingsCard';
 import { useSearchParams } from 'react-router-dom';
 import { ApiError } from '@/api/client';
@@ -430,33 +431,11 @@ export function SettingsPage() {
               </CardContent>
             </Card>
 
-            <Card>
-              <CardHeader className="pb-3">
-                <CardTitle className="text-base">Payment methods</CardTitle>
-                <CardDescription>Which tenders the POS offers at checkout.</CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-2">
-                {['cash', 'bkash', 'nagad', 'bank', 'card', 'other'].map((method) => {
-                  const enabled = draft.paymentMethods.includes(method);
-                  return (
-                    <Toggle
-                      key={method}
-                      label={method}
-                      className="capitalize"
-                      checked={enabled}
-                      disabled={readOnly || (enabled && draft.paymentMethods.length === 1)}
-                      onChange={(checked) =>
-                        patch({
-                          paymentMethods: checked
-                            ? [...draft.paymentMethods, method]
-                            : draft.paymentMethods.filter((m) => m !== method),
-                        })
-                      }
-                    />
-                  );
-                })}
-              </CardContent>
-            </Card>
+            <TenderSettingsCard
+              enabled={draft.paymentMethods}
+              readOnly={readOnly}
+              onChange={(paymentMethods) => patch({ paymentMethods })}
+            />
           </div>
         </TabsContent>
 

@@ -4,6 +4,7 @@ import { ReceiptPaper } from '@/features/receipt/ReceiptPaper';
 import { formatMoney } from '@/lib/money';
 import { formatQuantity } from '@/lib/supershop';
 import type { ShopReceipt } from '@/types/supershop';
+import { tenderLabel } from '@/types/domain';
 
 /** Printed at the foot of every receipt. Platform branding, not a setting. */
 const PLATFORM_RECEIPT_BRANDING = 'https://retailersuites.com';
@@ -113,7 +114,7 @@ export function ShopThermalReceipt({ payload }: { payload: ShopReceipt }) {
           )}
           {sale.payments.map((payment, index) => (
             <tr key={`${payment.method}-${index}`}>
-              <td className="r-sm">Paid ({payment.method})</td>
+              <td className="r-sm">Paid ({tenderLabel(payment)})</td>
               <td className="r-sm r-right">{money(payment.amountMinor)}</td>
             </tr>
           ))}

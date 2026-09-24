@@ -5,6 +5,8 @@ import { DEFAULT_LABEL_SETTINGS, StoreModel } from '../../models/Store';
 import { SaleModel } from '../../models/Sale';
 import { UserModel } from '../../models/User';
 import { ApiError } from '../../utils/ApiError';
+import { listTenders } from '../../services/pos/paymentMethods.service';
+import { paymentMethodService } from '../paymentMethods/paymentMethods.service';
 import { codeFromName } from '../../utils/slug';
 import { entitlementService } from '../../services/subscription/entitlement.service';
 import { droppedKeys, releaseStorageUrls } from '../../services/storage/cleanup.service';
@@ -30,11 +32,19 @@ class StoreService {
       .lean();
     if (!store) throw ApiError.notFound('Store not found');
 
+    // What each enabled tender is called here, so the till shows the shop's own
+    // names. `paymentMethods` stays a list of keys: it is what every existing
+    // client reads, and what a sale records.
+    const tenders = (await listTenders(tenantId))
+      .filter((tender) => tender.isActive && store.paymentMethods.includes(tender.key))
+      .map(({ key, label }) => ({ key, label }));
+
     return {
       _id: store._id,
       name: store.name,
       currency: store.currency,
       paymentMethods: store.paymentMethods,
+      tenders,
       tax: store.tax,
       receipt: store.receipt,
       lowStockThreshold: store.lowStockThreshold,
@@ -156,6 +166,10 @@ class StoreService {
       'name', 'phone', 'email', 'address', 'currency',
       'invoicePrefix', 'returnPrefix', 'logoUrl', 'receiptLogoUrl', 'lowStockThreshold', 'paymentMethods',
     ] as const;
+
+    // A branch can only enable tenders this workspace actually has; a typo here
+    // would otherwise be a method no till could ever use.
+    if (input.paymentMethods) await paymentMethodService.assertKeysExist(ctx, input.paymentMethods);
 
     for (const key of scalarKeys) {
       if (input[key] !== undefined) {

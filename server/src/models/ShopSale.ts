@@ -1,5 +1,5 @@
 import { Schema, model, type Types } from 'mongoose';
-import { PAYMENT_METHODS, type PaymentMethod } from '../config/constants';
+import type { PaymentMethod } from '../config/constants';
 import { SHOP_UNIT_TYPES, type ShopUnitType } from './ShopProduct';
 import type { BaseDoc } from './types';
 
@@ -45,7 +45,7 @@ export interface ShopSaleDoc extends BaseDoc {
   costMinor: number;
   paidMinor: number;
   changeMinor: number;
-  payments: { method: PaymentMethod; amountMinor: number }[];
+  payments: { method: PaymentMethod | string; amountMinor: number; methodLabel?: string }[];
   customerId: Types.ObjectId | null;
   customerNameSnapshot: string;
   note: string;
@@ -91,7 +91,18 @@ const shopSaleSchema = new Schema<ShopSaleDoc>(
     paidMinor: minor,
     changeMinor: minor,
     payments: {
-      type: [new Schema({ method: { type: String, enum: [...PAYMENT_METHODS], required: true }, amountMinor: minor }, { _id: false })],
+      type: [
+        new Schema(
+          {
+            // A key, built-in or one this workspace defined; the label is kept
+            // with the sale so renaming a method cannot rewrite history.
+            method: { type: String, required: true, trim: true, maxlength: 24 },
+            amountMinor: minor,
+            methodLabel: { type: String, default: '' },
+          },
+          { _id: false },
+        ),
+      ],
       default: [],
     },
     customerId: { type: Schema.Types.ObjectId, ref: 'Customer', default: null },

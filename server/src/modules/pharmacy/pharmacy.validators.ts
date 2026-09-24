@@ -1,8 +1,7 @@
 import { z } from 'zod';
-import { PAYMENT_METHODS } from '../../config/constants';
 import { DOSAGE_FORMS } from '../../models/Medicine';
 import { PHARMACY_SALE_STATUSES } from '../../models/PharmacySale';
-import { objectId, paginationSchema, searchSchema } from '../common/common.validators';
+import { objectId, paginationSchema, searchSchema, paymentMethodKey } from '../common/common.validators';
 import { posCustomerSchema } from '../customers/customers.validators';
 
 const amount = z.number().int().min(0).max(100_000_000);
@@ -125,7 +124,7 @@ export const createSaleSchema = z
       .max(100)
       .refine((items) => new Set(items.map((item) => String(item.medicineId))).size === items.length, 'List each medicine once'),
     payments: z
-      .array(z.object({ method: z.enum(PAYMENT_METHODS), amountMinor: amount }).strict())
+      .array(z.object({ method: paymentMethodKey, amountMinor: amount }).strict())
       .min(1, 'Record how the customer paid')
       .max(5),
     discountMinor: amount.default(0),

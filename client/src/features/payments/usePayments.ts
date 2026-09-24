@@ -1,10 +1,9 @@
 import * as React from 'react';
-import type { PaymentMethod } from '@/types/domain';
 import { computePayments, type PaymentBreakdown } from './paymentMath';
 
 export interface PaymentRow {
   id: string;
-  method: PaymentMethod;
+  method: string;
   /**
    * Cash row: the cash RECEIVED from the customer (may exceed what is due).
    * Other rows: the amount paid by that method. null while being edited.
@@ -16,7 +15,7 @@ let rowSeq = 0;
 const nextId = () => `pay-${(rowSeq += 1)}`;
 
 /** Cash first: it is the default method. */
-const PRIMARY_METHOD: PaymentMethod = 'cash';
+const PRIMARY_METHOD = 'cash';
 
 export interface PaymentsState extends PaymentBreakdown {
   rows: PaymentRow[];
@@ -55,13 +54,13 @@ export function usePayments(totalMinor: number) {
     setRows((prev) => prev.map((row) => (row.id === id ? { ...row, amountMinor } : row)));
   };
 
-  const setMethod = (id: string, method: PaymentMethod) => {
+  const setMethod = (id: string, method: string) => {
     setRows((prev) => prev.map((row) => (row.id === id ? { ...row, method, amountMinor: method === 'cash' || row.method === 'cash' ? null : row.amountMinor } : row)));
     // A row becoming (or leaving) cash starts again from "exact cash".
     setCashTyped(false);
   };
 
-  const addRow = (method: PaymentMethod) => {
+  const addRow = (method: string) => {
     setRows((prev) => (prev.some((row) => row.method === method) ? prev : [...prev, { id: nextId(), method, amountMinor: null }]));
   };
 

@@ -1,5 +1,5 @@
 import { Schema, model, type Types } from 'mongoose';
-import { PAYMENT_METHODS, SALE_PAYMENT_STATUS, SALE_STATUS } from '../config/constants';
+import { SALE_PAYMENT_STATUS, SALE_STATUS } from '../config/constants';
 import type { BaseDoc } from './types';
 
 /**
@@ -39,6 +39,8 @@ export interface SalePaymentEntry {
   method: string;
   amountMinor: number;
   reference: string;
+  /** What the workspace called the method when the sale was taken. */
+  methodLabel?: string;
 }
 
 export interface SaleDoc extends BaseDoc {
@@ -172,7 +174,7 @@ const saleSchema = new Schema<SaleDoc>(
     totalMinor: { type: Number, required: true, min: 0 },
     paidMinor: { type: Number, default: 0, min: 0 },
     changeMinor: { type: Number, default: 0, min: 0 },
-    paymentMethod: { type: String, enum: [...PAYMENT_METHODS], required: true },
+    paymentMethod: { type: String, required: true, trim: true, maxlength: 24 },
     payments: {
       type: [
         new Schema<SalePaymentEntry>(
@@ -180,6 +182,7 @@ const saleSchema = new Schema<SaleDoc>(
             method: { type: String, required: true },
             amountMinor: { type: Number, required: true, min: 0 },
             reference: { type: String, default: '' },
+            methodLabel: { type: String, default: '' },
           },
           { _id: false },
         ),

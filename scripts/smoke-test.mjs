@@ -4080,7 +4080,11 @@ async function main() {
   const rev = trimmed.data?.rev;
   check('A short payment is refused', (await rvPay(o1.data._id, { payments: [{ method: 'cash', amountMinor: 1000 }], rev })).status === 400);
   check('Payment against a stale revision is refused', (await rvPay(o1.data._id, { payments: [{ method: 'cash', amountMinor: 94000 }], rev: 0 })).status === 409);
-  check('An unknown payment method is rejected', (await rvPay(o1.data._id, { payments: [{ method: 'crypto', amountMinor: 94000 }], rev })).status === 422);
+  // A workspace can define its own tenders now, so a key it has never defined is
+  // refused by the branch's enabled list (400) rather than by an enum (422).
+  const rvUnknownMethod = await rvPay(o1.data._id, { payments: [{ method: 'crypto', amountMinor: 94000 }], rev });
+  check('A payment method this branch does not take is rejected', rvUnknownMethod.status === 400 && /crypto/.test(rvUnknownMethod.error?.message ?? ''), rvUnknownMethod.error);
+  check('A malformed payment method key is still rejected outright', (await rvPay(o1.data._id, { payments: [{ method: '!!', amountMinor: 94000 }], rev })).status === 422);
   check('Only cash can be over-tendered', (await rvPay(o1.data._id, { payments: [{ method: 'card', amountMinor: 100000 }], rev })).status === 400);
   check('A discount larger than the subtotal is refused', (await rvPay(o1.data._id, { payments: [{ method: 'cash', amountMinor: 1 }], discountMinor: 999999, rev })).status === 400);
   const paid = await rvPay(o1.data._id, { payments: [{ method: 'cash', amountMinor: 100000 }], discountMinor: 4000, rev });
@@ -5441,7 +5445,9 @@ async function main() {
   check('A refused sale leaves stock untouched', (await napaBatches())['NP-NEW'] === 110);
   check('A short payment is refused', (await phSale({ items: [{ medicineId: napa.data._id, quantity: 1 }], payments: [{ method: 'cash', amountMinor: 100 }] })).status === 400);
   check('Only cash can be over-tendered', (await phSale({ items: [{ medicineId: napa.data._id, quantity: 1 }], payments: [{ method: 'card', amountMinor: 500 }] })).status === 400);
-  check('An unknown payment method is rejected', (await phSale({ items: [{ medicineId: napa.data._id, quantity: 1 }], payments: [{ method: 'crypto', amountMinor: 120 }] })).status === 422);
+  const phUnknownMethod = await phSale({ items: [{ medicineId: napa.data._id, quantity: 1 }], payments: [{ method: 'crypto', amountMinor: 120 }] });
+  check('A payment method this branch does not take is rejected', phUnknownMethod.status === 400 && /crypto/.test(phUnknownMethod.error?.message ?? ''), phUnknownMethod.error);
+  check('A malformed payment method key is still rejected outright', (await phSale({ items: [{ medicineId: napa.data._id, quantity: 1 }], payments: [{ method: '!!', amountMinor: 120 }] })).status === 422);
 
   const noRx = await phSale({ items: [{ medicineId: zimax.data._id, quantity: 1 }], payments: [{ method: 'cash', amountMinor: 3500 }] });
   check('A prescription-only medicine needs a prescription', noRx.status === 400 && noRx.error?.details?.reason === 'PRESCRIPTION_REQUIRED', noRx.error);
@@ -8200,6 +8206,61 @@ async function main() {
   const phNeverSold = await phSellAs(phTill.session.token, phNever.data._id);
   check('Pharmacy: with no batch at all there is nothing to dispense against, permission or not', phNeverSold.status === 400, phNeverSold.error?.message);
   check('Pharmacy: and the refusal explains what is actually in stock', /unexpired unit/.test(phNeverSold.error?.message ?? ''), phNeverSold.error?.message);
+
+
+  // --- Tenders a workspace defines itself --------------------------------------
+  // The six built-ins exist everywhere and cannot be edited away. Anything else
+  // a shop takes - a local wallet, a meal voucher - it defines here, and every
+  // sale keeps the name it was taken under.
+  section('Custom payment methods');
+
+  const pmList = (token) => api('/payment-methods', { token });
+  const pmCreate = (token, body) => api('/payment-methods', { method: 'POST', token, body });
+
+  const pmBuiltIns = await pmList(ssToken);
+  check('The six built-ins are listed for every workspace', pmBuiltIns.status === 200 && ['cash', 'bkash', 'nagad', 'bank', 'card', 'other'].every((key) => (pmBuiltIns.data ?? []).some((t) => t.key === key && t.isBuiltIn)), pmBuiltIns.data);
+  check('Nothing had to be created for them', (pmBuiltIns.data ?? []).filter((t) => t.isBuiltIn).every((t) => t.isActive && t.label));
+
+  const pmVoucher = await pmCreate(ssToken, { label: 'Meal Voucher' });
+  check('A workspace defines its own tender', pmVoucher.status === 201 && pmVoucher.data?.key === 'meal-voucher' && pmVoucher.data?.label === 'Meal Voucher', pmVoucher.data ?? pmVoucher.error);
+  check('It is listed alongside the built-ins', ((await pmList(ssToken)).data ?? []).some((t) => t.key === 'meal-voucher' && t.isBuiltIn === false));
+  check('A built-in key cannot be redefined', (await pmCreate(ssToken, { label: 'Cash', key: 'cash' })).status === 409);
+  check('The same key cannot be defined twice', (await pmCreate(ssToken, { label: 'Meal Voucher' })).status === 409);
+  check('A nameless method is rejected', (await pmCreate(ssToken, { label: 'x' })).status === 422);
+  check('Another workspace does not see it', !((await pmList(phToken)).data ?? []).some((t) => t.key === 'meal-voucher'));
+
+  // Until the branch enables it, no till may take it.
+  const pmBeforeEnabling = await ssSale({ items: [{ productId: soap.data._id, quantity: 1 }], payments: [{ method: 'meal-voucher', amountMinor: 4800 }] });
+  check('A method the branch has not enabled is refused', pmBeforeEnabling.status === 400, pmBeforeEnabling.error?.message);
+
+  const ssAllMethods = ['cash', 'bkash', 'nagad', 'bank', 'card', 'other', 'meal-voucher'];
+  const pmEnable = await api('/stores/current', { method: 'PATCH', token: ssToken, body: { paymentMethods: ssAllMethods } });
+  check('The branch enables it like any other tender', pmEnable.status === 200, pmEnable.error);
+  check('A branch cannot enable a method the workspace never defined', (await api('/stores/current', { method: 'PATCH', token: ssToken, body: { paymentMethods: [...ssAllMethods, 'moon-credits'] } })).status === 400);
+
+  const pmSale = await ssSale({ items: [{ productId: soap.data._id, quantity: 1 }], payments: [{ method: 'meal-voucher', amountMinor: 4800 }] });
+  check('A sale can now be taken with it', pmSale.status === 201, pmSale.error);
+  check('The sale records the key AND what it was called', pmSale.data?.payments?.[0]?.method === 'meal-voucher' && pmSale.data?.payments?.[0]?.methodLabel === 'Meal Voucher', pmSale.data?.payments);
+  check('The till offers it with the shop’s own name', ((await api('/stores/pos-config', { token: ssToken })).data?.tenders ?? []).some((t) => t.key === 'meal-voucher' && t.label === 'Meal Voucher'));
+
+  // Renaming must not rewrite history.
+  const pmId = pmVoucher.data._id;
+  check('The method can be renamed', (await api(`/payment-methods/${pmId}`, { method: 'PATCH', token: ssToken, body: { label: 'Lunch Voucher' } })).status === 200);
+  const pmAfterRename = await ssApi(`/sales/${pmSale.data._id}`);
+  check('A sale taken before the rename still says what it said', pmAfterRename.data?.payments?.[0]?.methodLabel === 'Meal Voucher', pmAfterRename.data?.payments);
+  check('New sales use the new name', (await ssSale({ items: [{ productId: soap.data._id, quantity: 1 }], payments: [{ method: 'meal-voucher', amountMinor: 4800 }] })).data?.payments?.[0]?.methodLabel === 'Lunch Voucher');
+
+  // Switching it off takes it off every till at once.
+  check('The method can be switched off', (await api(`/payment-methods/${pmId}`, { method: 'PATCH', token: ssToken, body: { isActive: false } })).status === 200);
+  check('...which takes it out of the branch’s list', !((await api('/stores/pos-config', { token: ssToken })).data?.paymentMethods ?? []).includes('meal-voucher'));
+  const pmAfterOff = await ssSale({ items: [{ productId: soap.data._id, quantity: 1 }], payments: [{ method: 'meal-voucher', amountMinor: 4800 }] });
+  check('...and no further sale can use it', pmAfterOff.status === 400, pmAfterOff.error?.message);
+  check('...while the sales that used it are untouched', (await ssApi(`/sales/${pmSale.data._id}`)).data?.payments?.[0]?.methodLabel === 'Meal Voucher');
+
+  // Permissions: reading is for every till, changing is a settings action.
+  check('A till can read the methods it may take', (await pmList(ssTill.session.token)).status === 200);
+  check('A till cannot define one', (await pmCreate(ssTill.session.token, { label: 'Sneaky Tender' })).status === 403);
+  check('Defining a tender needs a session', (await pmCreate(undefined, { label: 'Anonymous' })).status === 401);
 
   // ------------------------------------------------ cash received, change and receipt
   section('Clothing POS: cash received, change and receipt');

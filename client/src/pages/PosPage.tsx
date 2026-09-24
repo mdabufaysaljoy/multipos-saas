@@ -30,7 +30,8 @@ import { newRequestKey, useLoyaltyAccess } from '@/features/loyalty/useLoyaltyAc
 import { useAuth } from '@/hooks/useAuth';
 import { formatMoney } from '@/lib/money';
 import { cn } from '@/lib/utils';
-import type { LoyaltyLookup, PaymentMethod, PosVariant, Sale } from '@/types/domain';
+import type {LoyaltyLookup, PosVariant, Sale} from '@/types/domain';
+import { tendersFromConfig } from '@/types/domain';
 
 export function PosPage() {
   const { can, activeStore } = useAuth();
@@ -87,7 +88,7 @@ export function PosPage() {
   const vatEnabled = Boolean(store?.tax.enabled);
   const cartReady = cart.state.lines.length > 0 && issues.length === 0;
 
-  const availableMethods = (store?.paymentMethods ?? ['cash']) as PaymentMethod[];
+  const availableMethods = tendersFromConfig(store);
   const payments = usePayments(cartReady ? totals.totalMinor : 0);
 
   // Both halves must be satisfied: a valid cart AND a payment allocation that covers the total.

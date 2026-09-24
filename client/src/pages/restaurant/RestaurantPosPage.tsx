@@ -30,8 +30,8 @@ import { restaurantApi } from '@/api/restaurant';
 import { formatMoney } from '@/lib/money';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/hooks/useAuth';
-import type { PaymentMethod } from '@/types/domain';
 import type { MenuItem, RestaurantOrder } from '@/types/restaurant';
+import { tendersFromConfig } from '@/types/domain';
 
 /** An order not yet sent: prices shown are previews; the server prices on send. */
 interface Draft {
@@ -518,7 +518,7 @@ function PayDialog({
 
   // The branch decides which tenders it takes; the till only offers those.
   const { data: posConfig } = useQuery({ queryKey: ['store', 'pos-config'], queryFn: storeApi.posConfig });
-  const availableMethods = (posConfig?.paymentMethods ?? ['cash']) as PaymentMethod[];
+  const availableMethods = tendersFromConfig(posConfig);
   // The same payment maths as every other till: cash is what the guest hands
   // over, and change comes out of it.
   const payments = usePayments(total);

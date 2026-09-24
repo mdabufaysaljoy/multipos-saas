@@ -4,6 +4,7 @@ import { ReceiptPaper } from '@/features/receipt/ReceiptPaper';
 import { formatMoney } from '@/lib/money';
 import { formatExpiry } from '@/lib/pharmacy';
 import type { PharmacyReceipt } from '@/types/pharmacy';
+import { tenderLabel } from '@/types/domain';
 
 /** Printed at the foot of every receipt. Platform branding, not a setting. */
 const PLATFORM_RECEIPT_BRANDING = 'https://retailersuites.com';
@@ -116,7 +117,7 @@ export function PharmacyThermalReceipt({ payload }: { payload: PharmacyReceipt }
           </tr>
           {sale.payments.map((payment, index) => (
             <tr key={`${payment.method}-${index}`}>
-              <td className="r-sm">Paid ({payment.method})</td>
+              <td className="r-sm">Paid ({tenderLabel(payment)})</td>
               <td className="r-sm r-right">{money(payment.amountMinor)}</td>
             </tr>
           ))}

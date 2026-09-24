@@ -11,7 +11,7 @@ import { cn } from '@/lib/utils';
 import { PaymentPanel } from '@/features/payments/PaymentPanel';
 import { usePayments } from '@/features/payments/usePayments';
 import { useBarcodeScanner } from '@/features/pos/useBarcodeScanner';
-import type { PaymentMethod, PosVariant } from '@/types/domain';
+import type { TenderOption, PosVariant } from '@/types/domain';
 
 export interface ReplacementLine {
   variant: PosVariant;
@@ -31,7 +31,7 @@ interface ExchangePanelProps {
   refundMinor: number;
   currency: string;
   tax: { enabled: boolean; inclusive: boolean; rateBasisPoints: number } | undefined;
-  availableMethods: PaymentMethod[];
+  availableMethods: TenderOption[];
   onChange: (state: ExchangeState) => void;
 }
 

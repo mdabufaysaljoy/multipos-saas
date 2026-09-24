@@ -1,6 +1,38 @@
 export const PAYMENT_METHODS = ['cash', 'bkash', 'nagad', 'bank', 'card', 'other'] as const;
 export type PaymentMethod = (typeof PAYMENT_METHODS)[number];
 
+/** A tender a workspace defined itself, as the settings screen edits it. */
+export interface CustomPaymentMethod {
+  _id: string;
+  key: string;
+  label: string;
+  isActive: boolean;
+  sortOrder: number;
+}
+
+/** A tender as the workspace offers it: the six built-ins plus its own. */
+export interface TenderOption {
+  key: string;
+  label: string;
+  isBuiltIn?: boolean;
+  isActive?: boolean;
+}
+
+/**
+ * What to call a tender on a receipt or a report row.
+ *
+ * The name the sale was taken under wins: renaming a method must not rewrite
+ * what an old receipt says. Then the workspace's built-in names, then the key
+ * itself - a method deleted years later still has to print as something.
+ */
+export const tendersFromConfig = (config?: { tenders?: TenderOption[]; paymentMethods?: string[] }): TenderOption[] =>
+  config?.tenders?.length
+    ? config.tenders
+    : (config?.paymentMethods ?? ['cash']).map((key) => ({ key, label: PAYMENT_METHOD_LABELS[key as PaymentMethod] ?? key }));
+
+export const tenderLabel = (payment: { method: string; methodLabel?: string }): string =>
+  payment.methodLabel || PAYMENT_METHOD_LABELS[payment.method as PaymentMethod] || payment.method;
+
 export const PAYMENT_METHOD_LABELS: Record<PaymentMethod, string> = {
   cash: 'Cash',
   bkash: 'bKash',

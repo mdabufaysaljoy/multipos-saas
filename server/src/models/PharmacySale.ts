@@ -1,5 +1,5 @@
 import { Schema, model, type Types } from 'mongoose';
-import { PAYMENT_METHODS, type PaymentMethod } from '../config/constants';
+import type { PaymentMethod } from '../config/constants';
 import type { BaseDoc } from './types';
 
 export const PHARMACY_SALE_STATUSES = ['completed', 'voided'] as const;
@@ -55,7 +55,7 @@ export interface PharmacySaleDoc extends BaseDoc {
   costMinor: number;
   paidMinor: number;
   changeMinor: number;
-  payments: { method: PaymentMethod; amountMinor: number }[];
+  payments: { method: PaymentMethod | string; amountMinor: number; methodLabel?: string }[];
   prescription: PrescriptionRecord | null;
   customerId: Types.ObjectId | null;
   customerNameSnapshot: string;
@@ -120,7 +120,18 @@ const pharmacySaleSchema = new Schema<PharmacySaleDoc>(
     paidMinor: minor,
     changeMinor: minor,
     payments: {
-      type: [new Schema({ method: { type: String, enum: [...PAYMENT_METHODS], required: true }, amountMinor: minor }, { _id: false })],
+      type: [
+        new Schema(
+          {
+            // A key, built-in or one this workspace defined; the label is kept
+            // with the sale so renaming a method cannot rewrite history.
+            method: { type: String, required: true, trim: true, maxlength: 24 },
+            amountMinor: minor,
+            methodLabel: { type: String, default: '' },
+          },
+          { _id: false },
+        ),
+      ],
       default: [],
     },
     prescription: { type: prescriptionSchema, default: null },
