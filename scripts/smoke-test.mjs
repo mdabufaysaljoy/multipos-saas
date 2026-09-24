@@ -8343,6 +8343,58 @@ async function main() {
   check('A voided sale cannot be returned against', (await ssReturn2(basket.data._id, { items: [{ saleItemId: basket.data.items[0]._id, quantity: 1 }], reason: 'Already voided' })).status === 404);
   check('Returning needs the returns.create permission', (await api(`/supershop/sales/${retBrokenSale.data._id}/return`, { method: 'POST', token: ssTill.session.token, body: { items: [{ saleItemId: retBrokenSale.data.items[0]._id, quantity: 1 }], reason: 'No permission' } })).status === 403);
 
+
+  // --- Refunding a paid restaurant order ---------------------------------------
+  // A kitchen has no shelf, so a restaurant return is money and a record. An
+  // open order is changed or cancelled instead - a different thing, which is
+  // why only a PAID order can be refunded here.
+  section('Restaurant refunds');
+
+  const rvRefStamp = String(Date.now()).slice(-6);
+  const rvRefItem = await rvMenu({ name: `Refund Curry ${rvRefStamp}`, category: 'Mains', priceMinor: 20_000 });
+  const rvRefOrder = await rvOrder({ type: 'takeaway', items: [{ menuItemId: rvRefItem.data._id, quantity: 3 }] });
+  check('Restaurant: an order is opened for the refund checks', rvRefOrder.status === 201, rvRefOrder.error);
+
+  const rvReturn = (orderId, body) => api(`/restaurant/orders/${orderId}/return`, { method: 'POST', token: rvToken, body });
+  const rvRefLineId = rvRefOrder.data.items[0]._id;
+
+  const rvOpenRefund = await rvReturn(rvRefOrder.data._id, { items: [{ saleItemId: rvRefLineId, quantity: 1 }], reason: 'Not paid yet' });
+  check('Restaurant: an unpaid order cannot be refunded', rvOpenRefund.status === 404, rvOpenRefund.error?.message);
+
+  // Pay it, with a discount, so the refund has to share the discount out.
+  const rvRefPaid = await api(`/restaurant/orders/${rvRefOrder.data._id}/pay`, {
+    method: 'POST',
+    token: rvToken,
+    body: { rev: rvRefOrder.data.rev, discountMinor: 6000, payments: [{ method: 'cash', amountMinor: 54_000 }] },
+  });
+  check('Restaurant: the order is paid with a discount', rvRefPaid.status === 200 && rvRefPaid.data?.totalMinor === 54_000, rvRefPaid.error);
+
+  check('Restaurant: more than was ordered cannot be refunded', (await rvReturn(rvRefOrder.data._id, { items: [{ saleItemId: rvRefLineId, quantity: 4 }], reason: 'Too many' })).status === 400);
+  check('Restaurant: a refund needs a reason', (await rvReturn(rvRefOrder.data._id, { items: [{ saleItemId: rvRefLineId, quantity: 1 }], reason: 'x' })).status === 422);
+  check('Restaurant: a tender this branch does not take is refused', (await rvReturn(rvRefOrder.data._id, { items: [{ saleItemId: rvRefLineId, quantity: 1 }], reason: 'Wrong tender', refundMethod: 'moon-credits' })).status === 400);
+
+  const rvRefunded = await rvReturn(rvRefOrder.data._id, { items: [{ saleItemId: rvRefLineId, quantity: 1 }], reason: 'Dish sent back to the kitchen' });
+  check('Restaurant: one of three dishes is refunded', rvRefunded.status === 201, rvRefunded.error);
+  check(
+    'Restaurant: the refund is what was paid for it, not the menu price',
+    rvRefunded.data?.totalMinor === 18_000,
+    { refunded: rvRefunded.data?.totalMinor, note: 'a 10% order discount means 180.00 back on a 200.00 dish' },
+  );
+  check('Restaurant: the refund names the tender it went back on', rvRefunded.data?.refundMethodLabel === 'Cash', rvRefunded.data?.refundMethodLabel);
+  const rvRefAfter = await api(`/restaurant/orders/${rvRefOrder.data._id}`, { token: rvToken });
+  check('Restaurant: the order tracks what has been refunded', rvRefAfter.data?.items?.[0]?.returnedQuantity === 1 && rvRefAfter.data?.returnedTotalMinor === 18_000 && rvRefAfter.data?.fullyReturned === false, {
+    line: rvRefAfter.data?.items?.[0]?.returnedQuantity,
+    total: rvRefAfter.data?.returnedTotalMinor,
+  });
+  check('Restaurant: the order is still paid, not reopened', rvRefAfter.data?.status === 'paid');
+
+  const rvRefRest = await rvReturn(rvRefOrder.data._id, { items: [{ saleItemId: rvRefLineId, quantity: 2 }], reason: 'The rest went back too' });
+  check('Restaurant: the rest can be refunded later', rvRefRest.status === 201, rvRefRest.error);
+  check('Restaurant: the order is fully refunded', (await api(`/restaurant/orders/${rvRefOrder.data._id}`, { token: rvToken })).data?.fullyReturned === true);
+  check('Restaurant: nothing more can be refunded', (await rvReturn(rvRefOrder.data._id, { items: [{ saleItemId: rvRefLineId, quantity: 1 }], reason: 'Again please' })).status === 400);
+  check('Restaurant: the refunds are listed', ((await api('/restaurant/returns', { token: rvToken })).data ?? []).length >= 2);
+  check('Restaurant: another workspace cannot refund this order', (await api(`/restaurant/orders/${rvRefOrder.data._id}/return`, { method: 'POST', token: admin.token, body: { items: [{ saleItemId: rvRefLineId, quantity: 1 }], reason: 'Not mine' } })).status === 403);
+
   // ------------------------------------------------ cash received, change and receipt
   section('Clothing POS: cash received, change and receipt');
   const ctnStamp = Date.now();

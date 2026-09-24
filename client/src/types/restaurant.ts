@@ -34,6 +34,8 @@ export interface RestaurantOrderLine {
   lineTotalMinor: number;
   /** How many of this line the kitchen already has. */
   sentQuantity?: number;
+  /** How much of this line has been refunded. */
+  returnedQuantity?: number;
   /** Set when a line the kitchen had was removed; it stays at quantity 0. */
   voidedAt?: string | null;
 }
@@ -101,6 +103,9 @@ export interface RestaurantOrder {
   payments: { method: string; amountMinor: number }[];
   tickets?: KitchenTicket[];
   status: RestaurantOrderStatus;
+  /** Money refunded against this order, and whether nothing is left to refund. */
+  returnedTotalMinor?: number;
+  fullyReturned?: boolean;
   note: string;
   rev: number;
   openedByNameSnapshot: string;

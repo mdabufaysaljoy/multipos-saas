@@ -1,6 +1,6 @@
 # Taking goods back
 
-*Task 08 of `docs/UNIVERSAL_POS_PLAN.md` — first part.*
+*Task 08 of `docs/UNIVERSAL_POS_PLAN.md`.*
 
 Super Shop and Pharmacy could only **void a whole sale**. They take a real return now: chosen lines,
 chosen quantities, money back on a tender the branch takes, goods back where that vertical keeps
@@ -36,7 +36,7 @@ down, so a refund can never come to more than was taken.
 | Super Shop | back on the branch's stock row | pieces or grams |
 | Pharmacy | back to **the batch they were dispensed from** | a pharmacy may not mix batches; the return names them |
 | Clothing | its own engine, unchanged | exchanges, loyalty reversal, partial returns |
-| Restaurant | — | not yet; see below |
+| Restaurant | **nowhere** | the kitchen cooked it and it is gone: a refund is money and a record |
 
 **"Put the goods back in stock" is a switch on the dialog.** Damaged, opened or expired goods are
 refunded without being restocked, and the ledger shows nothing coming back because nothing did.
@@ -51,12 +51,24 @@ Clothing keeps writing exactly what it always wrote.
 Each vertical lists its own at `GET /:module/returns`, and takes one at
 `POST /:module/sales/:id/return` with `returns.create`.
 
-## 5. Not done yet
+## 5. A restaurant refunds money, not goods
 
-**Restaurant.** A restaurant has no stock, so its return is money-only — a refund against a paid
-order. The engine has nothing vertical-specific left to learn for it, but the order model has no
-per-line returned quantity yet and the till has no screen for it.
+Only a **paid** order can be refunded. An open one is changed or cancelled instead, which already
+exists and is a different thing. Voided lines cannot be refunded either — they were never charged
+for.
+
+Nothing restocks, and that falls out of the no-op inventory adapter rather than a special case in
+the engine: `restore` on a restaurant does nothing, so the refund is money and a record. The dialog
+drops the "put the goods back in stock" switch, because it would be a question with one answer. A
+refunded order stays `paid` and carries `returnedTotalMinor`; it is not reopened.
+
+## 6. Not done yet
 
 **Clothing has not moved onto this engine.** It has exchanges, loyalty reversal and an idempotency
 key that this one does not; folding them together is worth doing only once the simpler engine has
 been in use.
+
+**Analytics still report gross takings.** A refund is recorded on the sale and in the returns list,
+but the Super Shop, Pharmacy and Restaurant dashboards and analytics still sum what was charged, not
+what was kept. Clothing's reports do subtract returns. Bringing the other three into line belongs
+with task 13 (analytics parity), and is the first thing to do there.

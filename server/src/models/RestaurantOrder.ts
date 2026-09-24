@@ -27,6 +27,8 @@ export interface RestaurantOrderLine {
    * quantity 0 (so the next ticket can say VOID) instead of being deleted.
    */
   voidedAt: Date | null;
+  /** How much of this line has been refunded. Absent on orders paid before returns existed. */
+  returnedQuantity?: number;
 }
 
 export const KITCHEN_TICKET_STATUSES = ['pending', 'ready', 'void'] as const;
@@ -87,6 +89,9 @@ export interface RestaurantOrderDoc extends BaseDoc {
   /** Kitchen tickets, in the order they were sent. */
   tickets: KitchenTicket[];
   status: RestaurantOrderStatus;
+  /** Money refunded against this order, and whether nothing is left to refund. */
+  returnedTotalMinor?: number;
+  fullyReturned?: boolean;
   note: string;
   /**
    * Bumped on every change to the lines. Payment only succeeds against the
@@ -124,6 +129,7 @@ const lineSchema = new Schema<RestaurantOrderLine>({
   addedAt: { type: Date, default: () => new Date() },
   sentQuantity: { type: Number, default: 0, min: 0 },
   voidedAt: { type: Date, default: null },
+  returnedQuantity: { type: Number, default: 0, min: 0 },
 });
 
 const ticketLineSchema = new Schema<KitchenTicketLine>(
@@ -175,6 +181,8 @@ const restaurantOrderSchema = new Schema<RestaurantOrderDoc>(
     payments: { type: [paymentSchema], default: [] },
     tickets: { type: [ticketSchema], default: [] },
     status: { type: String, enum: [...RESTAURANT_ORDER_STATUSES], default: 'open' },
+    returnedTotalMinor: { type: Number, default: 0, min: 0 },
+    fullyReturned: { type: Boolean, default: false },
     note: { type: String, default: '', maxlength: 300 },
     rev: { type: Number, default: 0 },
     openedBy: { type: Schema.Types.ObjectId, ref: 'User', default: null },

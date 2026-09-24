@@ -2,9 +2,9 @@
 
 **Audit and plan.** It records what the four verticals do today, what "universal" should mean for each
 capability, and the order the work should be done in. Tasks are marked ✅ as they land - **tasks 01,
-02, 03, 04, 05, 06, 07 and 12 are done** (printing, payment-method service, custom payment methods,
-split payment UI, customer selection, inventory adapter + ledger read, out-of-stock override,
-dashboard ranges); tasks 08, 09, 10, 11, 13 and 14 are still a plan.
+02, 03, 04, 05, 06, 07, 08 and 12 are done** (printing, payment-method service, custom payment
+methods, split payment UI, customer selection, inventory adapter + ledger read, out-of-stock
+override, returns/refunds, dashboard ranges); tasks 09, 10, 11, 13 and 14 are still a plan.
 
 Date: 2026-09-24 · Commit audited: `18bc974` (main, with the Clothing work merged in)
 Method: reading the code and the models, plus the checks the end-to-end suite already makes.
@@ -54,7 +54,7 @@ Legend: **mature** = reference implementation · **partial** = works but narrowe
 | 3 | Custom payment methods | **done** (task 03) | **done** | **done** | **done** | `PaymentMethod` collection (custom only), `listTenders`, `stampTenderLabels`; built-ins stay implicit | none | ✅ complete | — |
 | 4 | Customer selection | **mature** (`CustomerPicker`) | **done** (task 05) | **done** (task 05) | **done** (task 05) | `/api/customers`, the shared `CustomerPicker` and one `resolveForPosSale` | Restaurant selects per *order*, not per payment; Pharmacy keeps buyer and patient apart | ✅ complete | — |
 | 4b | Loyalty (card, points, scan) | **mature** (membership, EAN-13 card, ledger, earn/redeem, returns/exchange reversal) | missing | missing | missing | `loyaltyService` is model-agnostic except for its sale hooks | earn base differs (order total vs sale subtotal); Pharmacy may exclude prescription items | Generalise the four sale hooks; widen the entitlement's `verticals` | **Medium** |
-| 5 | Return / exchange / refund / cancel | **mature** | cancel only (**task 08 part 2**) | **done** (task 08) | **done** (task 08) | `services/returns/` engine + sale adapters, on top of the inventory adapter | Restaurant has no stock to return; Pharmacy returns to the *batch* it came from; Clothing keeps its exchange/loyalty engine | Restaurant refund + folding Clothing in | **High** |
+| 5 | Return / exchange / refund / cancel | **mature** | **done** (task 08) | **done** (task 08) | **done** (task 08) | `services/returns/` engine + a sale adapter per vertical, on top of the inventory adapter | a restaurant refunds money only; Pharmacy returns to the *batch* it came from; Clothing keeps its exchange/loyalty engine | folding Clothing in, one day | **High** |
 | 6 | Bulk product import | **mature** (registry, preview, row errors, streamed) | missing | missing | missing | `import.parse.ts` (xlsx/csv, header detection) is already generic | mandatory columns differ per model: Clothing needs Product+Variant+Price; Super Shop barcode+price+qty; Pharmacy name+price(+batch); Restaurant name+price | Extract a column registry per vertical behind one engine | **Medium** |
 | 7 | Category management + POS filter | **mature** (`Category` model, page, POS filter) | string field + client-side chip filter | string field, no filter | string field, no filter | none | a real category entity is only worth it where products are managed in bulk | Either promote the string to `Category` per vertical, or keep strings and add a shared filter API | **Medium** |
 | 8 | Authorized out-of-stock sale | **mature** (`sales.sellOutOfStock`, ledger flag, negative stock allowed) | n/a (no stock) | **missing** (batch quantity is hard-blocked) | **missing** (`ShopStock.quantityOnHand` has `min: 0`) | the permission exists platform-wide | Pharmacy must never sell *expired* stock, override or not; negative batch quantity is meaningless | Per-vertical override path + ledger flag | **High** |
@@ -193,7 +193,7 @@ Each is independently executable, independently testable, and leaves the tree gr
 | **05** POS customer selection ✅ **done** | Shared `CustomerPicker` + `saleCustomerFields` + `posCustomerSchema` + `customerService.resolveForPosSale`; all four verticals take an id or create at the till, and move lifetime value | — | S | Low |
 | **06** Inventory adapter + ledger read API ✅ **done** | `services/inventory/adapter.ts` + four adapters, used by all four sale paths; `release` (no row) vs `restore` (row) settled; one `GET /stock-ledger` in every vertical, storage untouched | — | M | Medium |
 | **07** Out-of-stock override ✅ **done** | `allowOutOfStock` honoured by Super Shop (stock row below zero) and Pharmacy (latest unexpired batch below zero; never expired, never without a batch); narrow rule - covers "none", not "not enough"; ledger + sale-line flags | 06 | M | High |
-| **08** Universal return/exchange/refund ◐ **part 1 done** | `services/returns/` engine + Super Shop and Pharmacy sale adapters, partial returns, discount-aware refunds, restock switch, shared till dialog. Left: Restaurant money-only refunds, and folding Clothing's exchange/loyalty engine in | 03, 06 | **L** | High |
+| **08** Universal return/exchange/refund ✅ **done** | `services/returns/` engine + a sale adapter for all three new verticals, partial returns, discount-aware refunds, restock switch, shared till dialog; a restaurant refunds money only. Left as a separate decision: folding Clothing's exchange/loyalty engine in | 03, 06 | **L** | High |
 | **09** Universal loyalty | Generalise the sale hooks; widen the entitlement's verticals; card scan selects the customer in every POS | 05 | M | Medium |
 | **10** Category management | Decide per vertical: promote to `Category` (Super Shop, Pharmacy) or keep strings (Restaurant); shared POS filter API | — | M | Medium |
 | **11** Universal import | Column registry per vertical behind the existing engine | 10 | M | Medium |
@@ -201,7 +201,7 @@ Each is independently executable, independently testable, and leaves the tree gr
 | **13** Analytics parity | Shared metric contract; fill the gaps per vertical | 12 | M | Medium |
 | **14** PDF/print of reports | Serialise the current report view through `export.formats.ts` (already writes PDF) | 13 | M | Medium |
 
-Recommended sequencing: **01 ✅ → 12 ✅ → 05 ✅ → 02 ✅ → 04 ✅ → 06 ✅ → 07 ✅ → 03 ✅ → 08 → 09 → 10 → 11 → 13 → 14.**
+Recommended sequencing: **01 ✅ → 12 ✅ → 05 ✅ → 02 ✅ → 04 ✅ → 06 ✅ → 07 ✅ → 03 ✅ → 08 ✅ → 09 → 10 → 11 → 13 → 14.**
 That front-loads the visible wins that carry almost no risk, and defers the two schema-wide changes
 (payment methods, returns) until the adapter seam exists to absorb them.
 
@@ -277,16 +277,15 @@ and are the reference material for the tasks above.
 
 ## 10. Recommended next task
 
-**Task 08 part 2 — Restaurant refunds**, or one of the lighter tasks.
+**Task 13 — Analytics parity**, and start with what task 08 left.
 
-Part 1 gave Super Shop and Pharmacy real returns on a shared engine. What is left of task 08 is
-smaller than what is done: a restaurant has no stock, so its return is money-only against a paid
-order - the engine needs nothing new, but `RestaurantOrder` has no per-line returned quantity yet and
-the till has no screen for it. Folding Clothing's own engine (exchanges, loyalty, idempotency) into
-the shared one is a separate decision, and worth leaving until the simpler engine has been used in
-anger.
+Nine of the fourteen are done. Task 13 is now the one with a concrete debt behind it: Super Shop,
+Pharmacy and Restaurant record refunds but their dashboards and analytics still sum what was
+charged, not what was kept. Clothing's reports already subtract returns; bringing the other three
+into line is the first piece of analytics parity and the only place the platform currently reports a
+number that a shop would argue with.
 
-Still untouched and blocking nothing: task 09 (universal loyalty), task 10 (categories), task 11
-(universal import), task 13 (analytics parity), task 14 (PDF/print of reports).
+Also open, blocking nothing: task 09 (universal loyalty, medium), task 10 (category management),
+task 11 (universal import), task 14 (PDF/print of reports, which wants 13 first).
 
 Waiting for an explicit instruction before starting any of them.

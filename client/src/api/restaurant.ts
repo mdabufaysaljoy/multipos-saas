@@ -13,6 +13,7 @@ import type {
   ShiftPayload,
 } from '@/types/restaurant';
 import type { SaleCustomerFields } from '@/features/customers/CustomerPicker';
+import type { PosReturn } from '@/types/domain';
 
 type Query = Record<string, unknown>;
 
@@ -48,6 +49,11 @@ export const restaurantApi = {
   removeLine: (id: string, lineId: string) => del<RestaurantOrder>(`/restaurant/orders/${id}/items/${lineId}`),
   pay: (id: string, body: { payments: { method: string; amountMinor: number }[]; discountMinor: number; rev: number }) =>
     post<RestaurantOrder>(`/restaurant/orders/${id}/pay`, body),
+  /** A refund against a paid order: money back, nothing restocked. */
+  createReturn: (id: string, body: { items: { saleItemId: string; quantity: number }[]; reason: string; refundMethod: string }) =>
+    post<PosReturn>(`/restaurant/orders/${id}/return`, body),
+  returns: (params?: Query) => getPaginated<PosReturn>('/restaurant/returns', params),
+
   cancel: (id: string, reason: string) => post<RestaurantOrder>(`/restaurant/orders/${id}/cancel`, { reason }),
 
   /** Sends what the kitchen has not seen; the server works out the changes. */

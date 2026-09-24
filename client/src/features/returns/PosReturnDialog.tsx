@@ -31,6 +31,11 @@ interface PosReturnDialogProps {
   onClose: () => void;
   /** Query keys to refresh once the return is recorded. */
   invalidate: string[];
+  /**
+   * Whether the goods can go back into stock. False for a restaurant, which
+   * keeps none: the switch would be a question with only one answer.
+   */
+  restockable?: boolean;
 }
 
 /**
@@ -41,10 +46,10 @@ interface PosReturnDialogProps {
  * the sale's own prices - the server works out what was actually paid, sharing
  * out any discount the whole sale had, and that is what goes back.
  */
-export function PosReturnDialog({ saleNumber, lines, currency, posConfig, onSubmit, onClose, invalidate }: PosReturnDialogProps) {
+export function PosReturnDialog({ saleNumber, lines, currency, posConfig, onSubmit, onClose, invalidate, restockable = true }: PosReturnDialogProps) {
   const queryClient = useQueryClient();
   const [quantities, setQuantities] = React.useState<Record<string, number>>({});
-  const [restock, setRestock] = React.useState(true);
+  const [restock, setRestock] = React.useState(restockable);
   const [reason, setReason] = React.useState('');
   const tenders = tendersFromConfig(posConfig);
   const [refundMethod, setRefundMethod] = React.useState(tenders[0]?.key ?? 'cash');
@@ -63,7 +68,9 @@ export function PosReturnDialog({ saleNumber, lines, currency, posConfig, onSubm
         refundMethod,
       }),
     onSuccess: () => {
-      toast.success('Return recorded', { description: restock ? 'The goods are back in stock.' : 'The goods were not put back in stock.' });
+      toast.success(restockable ? 'Return recorded' : 'Refund recorded', {
+        description: restockable ? (restock ? 'The goods are back in stock.' : 'The goods were not put back in stock.') : 'The money goes back; a kitchen keeps no stock.',
+      });
       invalidate.forEach((key) => void queryClient.invalidateQueries({ queryKey: [key] }));
       onClose();
     },
@@ -113,13 +120,15 @@ export function PosReturnDialog({ saleNumber, lines, currency, posConfig, onSubm
         </ul>
 
         <div className="space-y-3">
-          <div className="flex items-center justify-between rounded-md border p-3">
-            <div>
-              <Label>Put the goods back in stock</Label>
-              <p className="text-xs text-muted-foreground">Switch off for damaged, opened or expired goods.</p>
+          {restockable && (
+            <div className="flex items-center justify-between rounded-md border p-3">
+              <div>
+                <Label>Put the goods back in stock</Label>
+                <p className="text-xs text-muted-foreground">Switch off for damaged, opened or expired goods.</p>
+              </div>
+              <Switch checked={restock} onCheckedChange={setRestock} />
             </div>
-            <Switch checked={restock} onCheckedChange={setRestock} />
-          </div>
+          )}
 
           <div className="space-y-1.5">
             <Label htmlFor="refund-method">Refund on</Label>

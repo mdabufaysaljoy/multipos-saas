@@ -4,6 +4,9 @@ import { asyncHandler } from '../../utils/asyncHandler';
 import { buildPageMeta, created, ok, paginated } from '../../utils/apiResponse';
 import { body, params, query } from '../../middleware/validate';
 import { getContext } from '../../middleware/tenant';
+import { posReturnService } from '../../services/returns/posReturns.service';
+import { listPosReturns } from '../../services/returns/posReturns.list';
+import { restaurantSaleReturnAdapter } from '../../services/returns/adapters/restaurant.saleAdapter';
 import { recordAudit } from '../../services/audit/audit.service';
 import { restaurantService } from './restaurant.service';
 import { restaurantReportsService } from './restaurantReports.service';
@@ -25,6 +28,7 @@ import type {
   SummaryInput,
   UpdateMenuItemInput,
   UpdateTableInput,
+  CreateOrderReturnInput,
 } from './restaurant.validators';
 
 type IdParams = { id: Types.ObjectId };
@@ -127,6 +131,37 @@ export const receipt = asyncHandler(async (req: Request, res: Response) => {
 
 export const dashboard = asyncHandler(async (req: Request, res: Response) => {
   ok(res, await restaurantService.dashboard(getContext(req), query<DashboardInput>(req)));
+});
+
+/**
+ * A refund against a paid order. The money goes back on a tender the branch
+ * takes; nothing goes back on a shelf, because a restaurant keeps no stock.
+ */
+export const createOrderReturn = asyncHandler(async (req: Request, res: Response) => {
+  const ctx = getContext(req);
+  const { id } = params<{ id: Types.ObjectId }>(req);
+  const input = body<CreateOrderReturnInput>(req);
+  const result = await posReturnService.create(ctx, restaurantSaleReturnAdapter, {
+    saleId: id,
+    reason: input.reason,
+    refundMethod: input.refundMethod,
+    // Nothing to restock, so every line is recorded as not restocked.
+    items: input.items.map((line) => ({ ...line, restock: false })),
+  });
+  await recordAudit(req, {
+    action: 'restaurant.order_refunded',
+    targetTenantId: ctx.tenantId,
+    targetStoreId: ctx.storeId,
+    targetLabel: result.returnNumber,
+    newValue: { orderNumber: result.saleNumberSnapshot, totalMinor: result.totalMinor, reason: result.reason },
+  });
+  created(res, result);
+});
+
+export const listOrderReturns = asyncHandler(async (req: Request, res: Response) => {
+  const ctx = getContext(req);
+  const result = await listPosReturns(ctx, 'restaurant', query<{ page?: number; limit?: number; search?: string }>(req));
+  paginated(res, result.items, buildPageMeta(result.page, result.limit, result.total));
 });
 
 // --------------------------------------------------------------- shifts
