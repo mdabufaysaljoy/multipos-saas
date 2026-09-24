@@ -32,7 +32,10 @@ const medicineBatchSchema = new Schema<MedicineBatchDoc>(
     batchNumber: { type: String, required: true, trim: true, uppercase: true, maxlength: 40 },
     expiryDate: { type: Date, required: true },
     quantityReceived: { type: Number, required: true, min: 0 },
-    quantityOnHand: { type: Number, required: true, min: 0 },
+    // No floor: a till with `sales.sellOutOfStock` may dispense from a batch
+    // the system thinks is empty, which takes it below zero. Never for an
+    // expired batch, and never without a batch to attribute the units to.
+    quantityOnHand: { type: Number, required: true },
     costPriceMinor: { type: Number, required: true, min: 0, validate: { validator: Number.isSafeInteger, message: 'Cost must be whole minor units' } },
     supplierName: { type: String, trim: true, maxlength: 120, default: '' },
     receivedAt: { type: Date, default: () => new Date() },

@@ -19,6 +19,8 @@ const MAX_ALLOCATION_STEPS = 200;
 export interface PharmacyStockDetail {
   medicineName: string;
   allocations: (BatchAllocation & { balanceAfter: number })[];
+  /** True when part of this line came out of a batch the system thought was empty. */
+  outOfStockOverride?: boolean;
 }
 
 export type PharmacyReservation = Reservation<PharmacyStockDetail>;
@@ -31,7 +33,7 @@ export function pharmacyMovementRow(
   type: StockMovementType,
   quantity: number,
   balanceAfter: number,
-  extra: { reason?: string; referenceId?: Types.ObjectId | null; referenceNumber?: string } = {},
+  extra: { reason?: string; referenceId?: Types.ObjectId | null; referenceNumber?: string; outOfStockOverride?: boolean } = {},
 ) {
   return {
     tenantId: ctx.tenantId,
@@ -48,6 +50,7 @@ export function pharmacyMovementRow(
     referenceNumber: extra.referenceNumber ?? '',
     createdBy: ctx.userId,
     createdByNameSnapshot: ctx.userName,
+    ...(extra.outOfStockOverride ? { outOfStockOverride: true } : {}),
   };
 }
 
@@ -99,6 +102,49 @@ class PharmacyInventoryAdapter implements InventoryAdapter<PharmacyStockDetail> 
       remaining -= take;
     }
 
+    // The override, where a pharmacy differs from the rest. A till that holds
+    // the permission may dispense units the system thinks are gone - but only
+    // against a real, UNEXPIRED batch, because the batch number and its expiry
+    // are the dispensing record, printed on the receipt and kept for audit.
+    // Expired stock is never dispensed, whatever the permission says, and where
+    // there is no unexpired batch at all there is nothing to record the units
+    // against, so the sale is refused exactly as before.
+    // Like Clothing and Super Shop, this covers "there is none", not "there is
+    // not enough": a partial shortfall is a counting error to fix, not a thing
+    // to sell through. So it applies only when nothing sellable was found.
+    let outOfStockOverride = false;
+    if (remaining === request.quantity && request.allowOutOfStock) {
+      const batch = await MedicineBatchModel.findOne({
+        tenantId: ctx.tenantId,
+        storeId: ctx.storeId,
+        medicineId: request.itemId,
+        expiryDate: { $gte: today },
+      })
+        .sort({ expiryDate: -1, _id: -1 })
+        .lean<BatchRecord>();
+
+      if (batch) {
+        // No guard on the quantity: this is the one path that may go below zero.
+        const updated = await MedicineBatchModel.findOneAndUpdate(
+          { _id: batch._id, tenantId: ctx.tenantId, storeId: ctx.storeId, expiryDate: { $gte: today } },
+          { $inc: { quantityOnHand: -remaining } },
+          { new: true },
+        ).lean<BatchRecord>();
+        if (updated) {
+          allocations.push({
+            batchId: batch._id,
+            batchNumber: batch.batchNumber,
+            expiryDate: batch.expiryDate,
+            quantity: remaining,
+            costPriceMinor: batch.costPriceMinor,
+            balanceAfter: updated.quantityOnHand,
+          });
+          remaining = 0;
+          outOfStockOverride = true;
+        }
+      }
+    }
+
     if (remaining > 0) {
       // Put back whatever this line already took before refusing it.
       await this.releaseAllocations(ctx, allocations);
@@ -114,7 +160,7 @@ class PharmacyInventoryAdapter implements InventoryAdapter<PharmacyStockDetail> 
       itemId: request.itemId,
       quantity: request.quantity,
       balanceAfter: allocations.at(-1)?.balanceAfter ?? 0,
-      detail: { medicineName: request.label, allocations },
+      detail: { medicineName: request.label, allocations, ...(outOfStockOverride ? { outOfStockOverride: true } : {}) },
     };
   }
 
@@ -134,7 +180,12 @@ class PharmacyInventoryAdapter implements InventoryAdapter<PharmacyStockDetail> 
           'sale',
           -allocation.quantity,
           allocation.balanceAfter,
-          { reason: ref.reason, referenceId: ref.referenceId, referenceNumber: ref.referenceNumber },
+          {
+            reason: reservation.detail.outOfStockOverride && allocation.balanceAfter < 0 ? `${ref.reason ?? 'Sale'} (out-of-stock sale)` : ref.reason,
+            referenceId: ref.referenceId,
+            referenceNumber: ref.referenceNumber,
+            outOfStockOverride: reservation.detail.outOfStockOverride && allocation.balanceAfter < 0,
+          },
         ),
       ),
     );

@@ -325,6 +325,8 @@ class PharmacyService {
     // ---- take stock, earliest expiry first --------------------------------
     // Through the adapter, so shared code can do this without knowing that a
     // pharmacy fills a line from batches and never from an expired one.
+    // From the permissions resolved for THIS request, never from the client.
+    const allowOutOfStock = ctx.can(PERMISSIONS.SALES_SELL_OUT_OF_STOCK);
     const taken: PharmacyReservation[] = [];
     try {
       for (const line of priced) {
@@ -332,6 +334,7 @@ class PharmacyService {
           itemId: line.medicine._id,
           quantity: line.quantity,
           label: line.medicine.name,
+          allowOutOfStock,
         }));
       }
     } catch (error) {
@@ -367,6 +370,7 @@ class PharmacyService {
             .filter((entry) => entry.itemId.equals(line.medicine._id))
             .flatMap((entry) => entry.detail.allocations)
             .map(({ batchId, batchNumber, expiryDate, quantity, costPriceMinor }) => ({ batchId, batchNumber, expiryDate, quantity, costPriceMinor })),
+          ...(taken.find((entry) => entry.itemId.equals(line.medicine._id))?.detail.outOfStockOverride ? { outOfStockOverride: true } : {}),
         })),
         subtotalMinor,
         discountMinor: input.discountMinor,
@@ -589,13 +593,21 @@ class PharmacyService {
     if (medicineIds.length === 0) return new Map<string, MedicineStock>();
     const today = todayUtc();
     const rows = await MedicineBatchModel.aggregate<{ _id: Types.ObjectId; onHand: number; sellable: number; nearestExpiry: Date | null }>([
-      { $match: { tenantId: ctx.tenantId, storeId: ctx.storeId, medicineId: { $in: medicineIds }, quantityOnHand: { $gt: 0 } } },
+      // Empty and negative batches are counted too: a batch taken below zero by
+      // an out-of-stock sale is a debt the branch owes, and hiding it would let
+      // the shelf look right while the record is wrong. Only the expiry date
+      // still comes from batches that actually hold something.
+      { $match: { tenantId: ctx.tenantId, storeId: ctx.storeId, medicineId: { $in: medicineIds } } },
       {
         $group: {
           _id: '$medicineId',
           onHand: { $sum: '$quantityOnHand' },
           sellable: { $sum: { $cond: [{ $gte: ['$expiryDate', today] }, '$quantityOnHand', 0] } },
-          nearestExpiry: { $min: { $cond: [{ $gte: ['$expiryDate', today] }, '$expiryDate', null] } },
+          nearestExpiry: {
+            $min: {
+              $cond: [{ $and: [{ $gte: ['$expiryDate', today] }, { $gt: ['$quantityOnHand', 0] }] }, '$expiryDate', null],
+            },
+          },
         },
       },
     ]);

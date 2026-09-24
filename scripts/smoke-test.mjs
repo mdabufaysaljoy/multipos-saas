@@ -5447,8 +5447,27 @@ async function main() {
   check('A prescription-only medicine needs a prescription', noRx.status === 400 && noRx.error?.details?.reason === 'PRESCRIPTION_REQUIRED', noRx.error);
   const rxBody = { patientName: 'Rahim Uddin', prescriberName: 'Dr. Karim', prescriptionNumber: 'RX-7781' };
   check('A prescription needs a real patient and prescriber', (await phSale({ items: [{ medicineId: zimax.data._id, quantity: 1 }], payments: [{ method: 'cash', amountMinor: 3500 }], prescription: { patientName: 'R', prescriberName: '' } })).status === 422);
+  // Five tills with no override between them: this is the concurrency guarantee
+  // on its own, with nothing allowed to sell past zero. (A till that DOES hold
+  // `sales.sellOutOfStock` may take a batch negative - that is the override,
+  // and it has its own section.)
+  const phRacerEmail = `phrace${String(Date.now()).slice(-6)}@example.com`;
+  const phRacerStore = (await api('/stores', { token: phToken })).data?.[0]?._id;
+  await api('/staff', {
+    method: 'POST',
+    token: phToken,
+    body: { name: 'PH Racer', email: phRacerEmail, password: 'Password@123', storeId: phRacerStore, extraPermissions: ['sales.create', 'sales.view', 'products.view'] },
+  });
+  const phRacer = await login(phRacerEmail, 'Password@123');
+  check('The racing till holds no out-of-stock override', !phRacer.session.user.permissions.includes('sales.sellOutOfStock'));
   const zimaxRace = await Promise.all(
-    Array.from({ length: 5 }, () => phSale({ items: [{ medicineId: zimax.data._id, quantity: 3 }], payments: [{ method: 'cash', amountMinor: 10_500 }], prescription: rxBody })),
+    Array.from({ length: 5 }, () =>
+      api('/pharmacy/sales', {
+        method: 'POST',
+        token: phRacer.token,
+        body: { items: [{ medicineId: zimax.data._id, quantity: 3 }], payments: [{ method: 'cash', amountMinor: 10_500 }], prescription: rxBody },
+      }),
+    ),
   );
   const zimaxLeft = ((await phApi(`/medicines/${zimax.data._id}`)).data?.batches ?? [])[0]?.quantityOnHand;
   check(
@@ -8088,6 +8107,99 @@ async function main() {
   check('The ledger is paginated', (await ledgerOf('/supershop', ssToken, '?limit=1')).data?.length === 1);
   check('Reading the ledger needs a session', (await api('/supershop/stock-ledger')).status === 401);
   check('Another workspace cannot read this one’s ledger', (await ledgerOf('/supershop', phToken)).status === 403);
+
+
+  // --- Selling what the system says is gone, in every vertical -----------------
+  // The same permission, the same narrow rule as Clothing: it covers "there is
+  // none of this", never "there is not enough". A pharmacy adds one of its own -
+  // units must still be attributable to a real, unexpired batch.
+  section('Out-of-stock override (Super Shop and Pharmacy)');
+
+  const oosStaff = async (token, storeId, email, permissions) => {
+    const created = await api('/staff', {
+      method: 'POST',
+      token,
+      body: { name: 'OOS Till', email, password: 'Password@123', storeId, extraPermissions: permissions },
+    });
+    return { id: created.data?.id, created, session: await login(email, 'Password@123') };
+  };
+  const TILL_PERMISSIONS = ['sales.create', 'sales.view', 'products.view', 'inventory.view'];
+  const oosStamp = String(Date.now()).slice(-6);
+
+  // --- Super Shop --------------------------------------------------------------
+  const ssStoreId = (await api('/stores', { token: ssToken })).data?.[0]?._id;
+  const ssTill = await oosStaff(ssToken, ssStoreId, `ssoos${oosStamp}@example.com`, TILL_PERMISSIONS);
+  check('Super Shop: a till can be created without the override', ssTill.created.status === 201, ssTill.created.error);
+  check('Super Shop: and does not hold it', !ssTill.session.session.user.permissions.includes('sales.sellOutOfStock'));
+
+  // Empty one product completely, and leave another with some but not enough.
+  const oosSoapOnHand = (await ssApi(`/products/${soap.data._id}`)).data?.product?.stock?.quantityOnHand ?? 0;
+  await ssApi(`/products/${soap.data._id}/adjust`, { method: 'POST', body: { type: 'adjust', quantityDelta: -oosSoapOnHand, reason: 'Emptied for the override test' } });
+  check('Super Shop: the product is now at zero', (await ssApi(`/products/${soap.data._id}`)).data?.product?.stock?.quantityOnHand === 0);
+
+  const ssSellAs = (token, quantity = 1) =>
+    api('/supershop/sales', { method: 'POST', token, body: { items: [{ productId: soap.data._id, quantity }], payments: [{ method: 'cash', amountMinor: 50_000 }] } });
+
+  const ssRefused = await ssSellAs(ssTill.session.token);
+  check('Super Shop: a till without the permission cannot sell what is not there', ssRefused.status === 400, ssRefused.error?.message);
+  check('Super Shop: and nothing moved', (await ssApi(`/products/${soap.data._id}`)).data?.product?.stock?.quantityOnHand === 0);
+
+  await api(`/staff/${ssTill.id}`, { method: 'PATCH', token: ssToken, body: { extraPermissions: [...TILL_PERMISSIONS, 'sales.sellOutOfStock'] } });
+  const ssOverride = await ssSellAs(ssTill.session.token, 2);
+  check('Super Shop: with the permission the sale goes through', ssOverride.status === 201, ssOverride.error);
+  check('Super Shop: the line says it was sold out of stock', ssOverride.data?.items?.[0]?.outOfStockOverride === true, ssOverride.data?.items?.[0]);
+  check('Super Shop: stock is now negative by what was sold', (await ssApi(`/products/${soap.data._id}`)).data?.product?.stock?.quantityOnHand === -2);
+  const ssOosLedger = (await api(`/supershop/stock-ledger?itemId=${soap.data._id}&limit=5`, { token: ssToken })).data ?? [];
+  check('Super Shop: the ledger row is flagged and shows the negative balance', ssOosLedger[0]?.balanceAfter === -2 && ssOosLedger[0]?.quantityChange === -2, ssOosLedger[0]);
+
+  // The narrow rule: "some but not enough" is refused for everyone.
+  await ssApi(`/products/${soap.data._id}/stock`, { method: 'POST', body: { quantity: 5, costPriceMinor: 3000 } });
+  check('Super Shop: receiving pays off the negative first', (await ssApi(`/products/${soap.data._id}`)).data?.product?.stock?.quantityOnHand === 3);
+  const ssNotEnough = await ssSellAs(ssTill.session.token, 4);
+  check('Super Shop: the override does not cover "not enough", even with the permission', ssNotEnough.status === 400, ssNotEnough.error?.message);
+
+  // A product never received into this branch has no stock row and no cost basis.
+  const ssNever = await ssProduct({ name: `Never Received ${oosStamp}`, priceMinor: 1000 });
+  const ssNeverSold = await api('/supershop/sales', {
+    method: 'POST',
+    token: ssTill.session.token,
+    body: { items: [{ productId: ssNever.data._id, quantity: 1 }], payments: [{ method: 'cash', amountMinor: 1000 }] },
+  });
+  check('Super Shop: a product never received here is still refused', ssNeverSold.status === 400, ssNeverSold.error?.message);
+
+  // --- Pharmacy ----------------------------------------------------------------
+  const phStoreId = (await api('/stores', { token: phToken })).data?.[0]?._id;
+  const phTill = await oosStaff(phToken, phStoreId, `phoos${oosStamp}@example.com`, TILL_PERMISSIONS);
+  check('Pharmacy: a till can be created without the override', phTill.created.status === 201, phTill.created.error);
+
+  // A medicine whose only unexpired batch has been emptied.
+  const phOos = await phMedicine({ name: `Oosmed ${oosStamp}`, strength: '10 mg', dosageForm: 'tablet', sellingPriceMinor: 500 });
+  await phReceive(phOos.data._id, { batchNumber: `OOS-${oosStamp}`, expiryDate: phDay(200), quantity: 4, costPriceMinor: 300 });
+  const phSellAs = (token, medicineId, quantity = 1) =>
+    api('/pharmacy/sales', { method: 'POST', token, body: { items: [{ medicineId, quantity }], payments: [{ method: 'cash', amountMinor: 50_000 }] } });
+  await phSellAs(phToken, phOos.data._id, 4);
+  check('Pharmacy: the batch is now empty', ((await phApi(`/medicines/${phOos.data._id}`)).data?.medicine?.stock?.sellable ?? -1) === 0);
+
+  const phRefused = await phSellAs(phTill.session.token, phOos.data._id);
+  check('Pharmacy: a till without the permission cannot dispense what is not there', phRefused.status === 400, phRefused.error?.message);
+
+  await api(`/staff/${phTill.id}`, { method: 'PATCH', token: phToken, body: { extraPermissions: [...TILL_PERMISSIONS, 'sales.sellOutOfStock'] } });
+  const phOverride = await phSellAs(phTill.session.token, phOos.data._id, 3);
+  check('Pharmacy: with the permission the sale goes through', phOverride.status === 201, phOverride.error);
+  check('Pharmacy: the line says so and still names the batch it came from', phOverride.data?.items?.[0]?.outOfStockOverride === true && phOverride.data?.items?.[0]?.allocations?.[0]?.batchNumber === `OOS-${oosStamp}`, phOverride.data?.items?.[0]);
+  check('Pharmacy: the batch is negative by what was dispensed', ((await phApi(`/medicines/${phOos.data._id}`)).data?.medicine?.stock?.sellable ?? 0) === -3);
+
+  // The rule that does not bend: expired stock is never dispensed. Both the
+  // batch lookup and the update that takes the units are filtered on
+  // `expiryDate >= today`, so the override cannot reach an expired batch. An
+  // expired batch cannot be built through the API (receiving one is refused),
+  // so what is checked here is the other half of the same rule: with no
+  // unexpired batch there is nothing to dispense against.
+  // A medicine that has never been received has no batch to dispense against.
+  const phNever = await phMedicine({ name: `Nevermed ${oosStamp}`, strength: '1 mg', dosageForm: 'tablet', sellingPriceMinor: 100 });
+  const phNeverSold = await phSellAs(phTill.session.token, phNever.data._id);
+  check('Pharmacy: with no batch at all there is nothing to dispense against, permission or not', phNeverSold.status === 400, phNeverSold.error?.message);
+  check('Pharmacy: and the refusal explains what is actually in stock', /unexpired unit/.test(phNeverSold.error?.message ?? ''), phNeverSold.error?.message);
 
   // ------------------------------------------------ cash received, change and receipt
   section('Clothing POS: cash received, change and receipt');

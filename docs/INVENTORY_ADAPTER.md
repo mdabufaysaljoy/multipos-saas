@@ -71,9 +71,38 @@ answer there. Storage is untouched — three ledgers, three schemas, read throug
 `/pharmacy/movements` still return exactly what they did, because their screens read those fields.
 The universal route is additive; the client screen that would use it does not exist yet.
 
-## 4. What is still to come
+## 4. Selling what the system says is gone
 
-Task 07 gives the other three verticals an out-of-stock override (the `allowOutOfStock` flag on a
-request is already there, honoured by Clothing alone today; a pharmacy will still refuse expired
-stock whatever it says). Task 08 builds the return engine on `restore` — Clothing's return path still
-calls `inventoryService.increase` directly, and moving it is that task's job, not this one's.
+*Task 07.* `sales.sellOutOfStock` used to mean something in Clothing only. It now means the same
+thing in Super Shop and Pharmacy, through the `allowOutOfStock` flag on a stock request — decided by
+the caller from the permissions resolved for that request, never from anything the client sends, so a
+revoked grant stops working on the very next sale.
+
+**The rule is deliberately narrow, and the same everywhere: it covers "there is none of this", never
+"there is not enough".** A product with 3 on hand cannot be sold 5 by anyone; a product at zero can
+be sold by a till that holds the permission. A partial shortfall is a counting error to fix, not
+something to sell through.
+
+| Vertical | What the override does | What it will not do |
+|---|---|---|
+| Clothing | variant goes below zero | cover a partial shortfall |
+| Super Shop | the branch's stock row goes below zero | cover a partial shortfall; sell a product **never received into this branch** (no stock row, no cost basis — a different problem from running out) |
+| Pharmacy | the latest-expiring **unexpired** batch goes below zero | touch an **expired** batch, ever; sell where there is **no unexpired batch at all**, because the batch number and expiry are the dispensing record and there would be nothing truthful to print |
+| Restaurant | nothing — there is no stock to override | — |
+
+Both the sale line and the ledger row are flagged (`outOfStockOverride`), and the ledger reason reads
+`… (out-of-stock sale)`, exactly as Clothing has always recorded it. Negative stock is a debt the
+branch owes: it shows in the till, in low-stock lists and in the ledger, and the next delivery pays
+it off before anything is sellable again. Stock valuations exclude it — a negative row must never
+cancel out another product's value.
+
+**What this deliberately weakened:** before, no Super Shop or Pharmacy stock could go below zero
+under any circumstances, and their concurrency tests said so. A till with the permission can now take
+the last unit twice. That is the same trade Clothing has always made, and the suite now proves both
+halves: unprivileged tills still race safely to exactly zero, and privileged ones go negative on
+purpose.
+
+## 5. What is still to come
+
+Task 08 builds the return engine on `restore` — Clothing's return path still calls
+`inventoryService.increase` directly, and moving it is that task's job, not this one's.

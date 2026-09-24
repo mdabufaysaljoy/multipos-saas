@@ -24,6 +24,8 @@ export interface ShopSaleLine {
   vatMinor: number;
   /** Cost of the goods sold, from the branch's average cost at the time. */
   costMinor: number;
+  /** True when this line was sold with stock the branch did not have. */
+  outOfStockOverride?: boolean;
 }
 
 /**
@@ -72,6 +74,7 @@ const lineSchema = new Schema<ShopSaleLine>({
   vatRateBps: { type: Number, default: 0, min: 0 },
   vatMinor: minor,
   costMinor: minor,
+  outOfStockOverride: { type: Boolean },
 });
 
 const shopSaleSchema = new Schema<ShopSaleDoc>(

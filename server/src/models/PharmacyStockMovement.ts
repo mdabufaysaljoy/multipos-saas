@@ -25,6 +25,8 @@ export interface PharmacyStockMovementDoc {
   referenceNumber: string;
   createdBy: Types.ObjectId | null;
   createdByNameSnapshot: string;
+  /** True when this movement sold stock the branch did not have (`sales.sellOutOfStock`). */
+  outOfStockOverride?: boolean;
   createdAt: Date;
 }
 
@@ -38,12 +40,13 @@ const movementSchema = new Schema<PharmacyStockMovementDoc>(
     medicineNameSnapshot: { type: String, default: '' },
     type: { type: String, enum: [...STOCK_MOVEMENT_TYPES], required: true },
     quantity: { type: Number, required: true },
-    balanceAfter: { type: Number, required: true, min: 0 },
+    balanceAfter: { type: Number, required: true },
     reason: { type: String, trim: true, maxlength: 200, default: '' },
     referenceId: { type: Schema.Types.ObjectId, default: null },
     referenceNumber: { type: String, default: '' },
     createdBy: { type: Schema.Types.ObjectId, ref: 'User', default: null },
     createdByNameSnapshot: { type: String, default: '' },
+    outOfStockOverride: { type: Boolean },
   },
   { timestamps: { createdAt: true, updatedAt: false } },
 );

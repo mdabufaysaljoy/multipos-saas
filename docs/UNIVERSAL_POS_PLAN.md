@@ -3,8 +3,8 @@
 **Audit and plan.** It records what the four verticals do today, what "universal" should mean for each
 capability, and the order the work should be done in. Tasks are marked ✅ as they land - **tasks 01
 (printing), 12 (dashboard ranges), 05 (customer selection), 02 (payment-method service), 04 (split
-payment UI) and 06 (inventory adapter + ledger read) are done**; everything else below is still a
-plan.
+payment UI), 06 (inventory adapter + ledger read) and 07 (out-of-stock override) are done**;
+everything else below is still a plan.
 
 Date: 2026-09-24 · Commit audited: `18bc974` (main, with the Clothing work merged in)
 Method: reading the code and the models, plus the checks the end-to-end suite already makes.
@@ -192,7 +192,7 @@ Each is independently executable, independently testable, and leaves the tree gr
 | **04** Split payment UI everywhere ✅ **done** | `features/payments/` (`usePayments`, `paymentMath`, `PaymentPanel`) in all four tills; every till now offers only the branch's enabled methods, and `tenderedRows()` maps one breakdown onto both API shapes | 02 | S | Low |
 | **05** POS customer selection ✅ **done** | Shared `CustomerPicker` + `saleCustomerFields` + `posCustomerSchema` + `customerService.resolveForPosSale`; all four verticals take an id or create at the till, and move lifetime value | — | S | Low |
 | **06** Inventory adapter + ledger read API ✅ **done** | `services/inventory/adapter.ts` + four adapters, used by all four sale paths; `release` (no row) vs `restore` (row) settled; one `GET /stock-ledger` in every vertical, storage untouched | — | M | Medium |
-| **07** Out-of-stock override | Per-vertical override honouring `sales.sellOutOfStock`; Pharmacy still refuses expired; ledger + sale-line flags | 06 | M | High |
+| **07** Out-of-stock override ✅ **done** | `allowOutOfStock` honoured by Super Shop (stock row below zero) and Pharmacy (latest unexpired batch below zero; never expired, never without a batch); narrow rule - covers "none", not "not enough"; ledger + sale-line flags | 06 | M | High |
 | **08** Universal return/exchange/refund | Shared engine + adapters; Restaurant cancel and Pharmacy/Super Shop void become refund-capable returns | 03, 06 | **L** | High |
 | **09** Universal loyalty | Generalise the sale hooks; widen the entitlement's verticals; card scan selects the customer in every POS | 05 | M | Medium |
 | **10** Category management | Decide per vertical: promote to `Category` (Super Shop, Pharmacy) or keep strings (Restaurant); shared POS filter API | — | M | Medium |
@@ -201,7 +201,7 @@ Each is independently executable, independently testable, and leaves the tree gr
 | **13** Analytics parity | Shared metric contract; fill the gaps per vertical | 12 | M | Medium |
 | **14** PDF/print of reports | Serialise the current report view through `export.formats.ts` (already writes PDF) | 13 | M | Medium |
 
-Recommended sequencing: **01 ✅ → 12 ✅ → 05 ✅ → 02 ✅ → 04 ✅ → 06 ✅ → 07 → 03 → 08 → 09 → 10 → 11 → 13 → 14.**
+Recommended sequencing: **01 ✅ → 12 ✅ → 05 ✅ → 02 ✅ → 04 ✅ → 06 ✅ → 07 ✅ → 03 → 08 → 09 → 10 → 11 → 13 → 14.**
 That front-loads the visible wins that carry almost no risk, and defers the two schema-wide changes
 (payment methods, returns) until the adapter seam exists to absorb them.
 
@@ -216,7 +216,11 @@ That front-loads the visible wins that carry almost no risk, and defers the two 
    changes the rules in one file rather than four.
 2. **Tenant-scoped vs store-scoped catalogues.** Sharing code across them without an adapter will
    silently cross branches. Non-negotiable: shared code takes ids and quantities, never models.
-3. **Pharmacy expiry.** An out-of-stock override must never become an "sell expired stock" override.
+3. ~~**Pharmacy expiry.**~~ **Held in task 07.** The override reaches only unexpired batches - both
+   the batch lookup and the update that takes the units filter on `expiryDate >= today` - and where
+   no unexpired batch exists the sale is refused outright, because the batch number and its expiry
+   are the dispensing record. An expired batch cannot be created through the API, so that exact case
+   is guarded in code rather than proven by test.
 4. **Loyalty double-award.** The dedupe key is what stops it; generalising the hooks must keep one key
    per (sale, action), not per vertical.
 5. ~~**Timezone inconsistency (existing).**~~ **Settled in task 12.** `resolveRange` computes its
@@ -272,16 +276,15 @@ and are the reference material for the tasks above.
 
 ## 10. Recommended next task
 
-**Task 07 — Out-of-stock override, or task 10/13 for something lighter.**
+**Task 03 — Custom payment methods**, or the lighter task 10/13.
 
-Six are done (01, 12, 05, 02, 04, 06). Task 07 is now unblocked and small in code: `StockRequest`
-already carries `allowOutOfStock`, honoured by Clothing alone; giving Super Shop and Pharmacy the
-same override means deciding what "below zero" means for a stock row and for a batch - and a pharmacy
-must still refuse expired stock however the permission reads. That decision is the work, not the
-typing.
+Seven are done (01, 12, 05, 02, 04, 06, 07). What remains: task 08 (universal return/exchange/refund)
+is the biggest item in the plan and wants task 03 first, because a refund has to be paid back by some
+tender. Task 03 is itself the highest-risk item - `PaymentMethod` is an enum in four sale models,
+returns, payments, receipts and every report's breakdown - but task 02 narrowed it: the validation
+now lives in one service.
 
-Task 08 (universal return/exchange/refund) is the biggest item left and now has its seam
-(`restore`), but it also wants task 03 (custom payment methods) for refund tender. Tasks 10
-(categories) and 13 (analytics parity) block nothing and are the lighter choices.
+Tasks 10 (category management) and 13 (analytics parity) block nothing and are the lighter choices;
+task 09 (universal loyalty) is unblocked by task 05 and is medium-sized.
 
 Waiting for an explicit instruction before starting any of them.

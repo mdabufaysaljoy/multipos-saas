@@ -266,6 +266,8 @@ class SupershopService {
     // ---- take stock ----------------------------------------------------------
     // Through the adapter, so shared code can do this without knowing that a
     // Super Shop keeps one stock row per product per branch.
+    // From the permissions resolved for THIS request, never from the client.
+    const allowOutOfStock = ctx.can(PERMISSIONS.SALES_SELL_OUT_OF_STOCK);
     const taken: ShopReservation[] = [];
     try {
       for (const line of priced) {
@@ -273,6 +275,7 @@ class SupershopService {
           itemId: line.product._id,
           quantity: line.quantity,
           label: line.product.name,
+          allowOutOfStock,
         });
         reservation.detail.unitType = line.product.unitType;
         taken.push(reservation);
@@ -305,6 +308,7 @@ class SupershopService {
           vatRateBps: line.product.vatRateBps,
           vatMinor: line.vatMinor,
           costMinor: lineAmount(stockTaken.detail.costPriceMinor, line.quantity, line.product.unitType),
+          ...(stockTaken.detail.outOfStockOverride ? { outOfStockOverride: true } : {}),
         };
       });
 

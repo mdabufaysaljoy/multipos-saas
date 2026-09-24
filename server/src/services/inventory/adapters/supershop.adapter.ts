@@ -15,6 +15,8 @@ export interface ShopStockDetail {
   unitType: string;
   /** Weighted average cost, per piece or per kilogram, at the moment it was taken. */
   costPriceMinor: number;
+  /** True when the branch had none of this and sold it anyway. */
+  outOfStockOverride?: boolean;
 }
 
 export type ShopReservation = Reservation<ShopStockDetail>;
@@ -26,7 +28,7 @@ export function shopMovementRow(
   type: ShopMovementType,
   quantity: number,
   balanceAfter: number,
-  extra: { reason?: string; referenceId?: Types.ObjectId | null; referenceNumber?: string; unitCostMinor?: number } = {},
+  extra: { reason?: string; referenceId?: Types.ObjectId | null; referenceNumber?: string; unitCostMinor?: number; outOfStockOverride?: boolean } = {},
 ) {
   return {
     tenantId: ctx.tenantId,
@@ -43,6 +45,7 @@ export function shopMovementRow(
     referenceNumber: extra.referenceNumber ?? '',
     createdBy: ctx.userId,
     createdByNameSnapshot: ctx.userName,
+    ...(extra.outOfStockOverride ? { outOfStockOverride: true } : {}),
   };
 }
 
@@ -63,22 +66,44 @@ class SupershopInventoryAdapter implements InventoryAdapter<ShopStockDetail> {
       { $inc: { quantityOnHand: -request.quantity } },
       { new: true },
     ).lean<StockRecord>();
-
-    if (!updated) {
-      const product = await ShopProductModel.findOne({ _id: request.itemId, tenantId: ctx.tenantId }).select('unitType').lean();
-      const stock = await ShopStockModel.findOne({ tenantId: ctx.tenantId, storeId: ctx.storeId, productId: request.itemId }).select('quantityOnHand').lean();
-      throw ApiError.badRequest(
-        `Only ${describeQuantity(stock?.quantityOnHand ?? 0, product?.unitType ?? 'each')} of ${request.label} is in stock in this branch.`,
-        { productId: request.itemId, available: stock?.quantityOnHand ?? 0 },
-      );
+    if (updated) {
+      return {
+        itemId: request.itemId,
+        quantity: request.quantity,
+        balanceAfter: updated.quantityOnHand,
+        detail: { productName: request.label, unitType: '', costPriceMinor: updated.costPriceMinor },
+      };
     }
 
-    return {
-      itemId: request.itemId,
-      quantity: request.quantity,
-      balanceAfter: updated.quantityOnHand,
-      detail: { productName: request.label, unitType: '', costPriceMinor: updated.costPriceMinor },
-    };
+    // The same override Clothing has always had: a till that holds the
+    // permission may sell goods the system thinks are gone, and only then. A
+    // product that still has SOME stock but not enough is refused as before -
+    // this overrides "out of stock", not "not enough stock".
+    if (request.allowOutOfStock) {
+      const sold = await ShopStockModel.findOneAndUpdate(
+        { tenantId: ctx.tenantId, storeId: ctx.storeId, productId: request.itemId, quantityOnHand: { $lte: 0 } },
+        { $inc: { quantityOnHand: -request.quantity } },
+        { new: true },
+      ).lean<StockRecord>();
+      if (sold) {
+        return {
+          itemId: request.itemId,
+          quantity: request.quantity,
+          balanceAfter: sold.quantityOnHand,
+          detail: { productName: request.label, unitType: '', costPriceMinor: sold.costPriceMinor, outOfStockOverride: true },
+        };
+      }
+    }
+
+    const product = await ShopProductModel.findOne({ _id: request.itemId, tenantId: ctx.tenantId }).select('unitType').lean();
+    const stock = await ShopStockModel.findOne({ tenantId: ctx.tenantId, storeId: ctx.storeId, productId: request.itemId }).select('quantityOnHand').lean();
+    // A product never received into this branch has no stock row and no cost
+    // basis, which is a different problem from having run out; the override
+    // does not cover it.
+    throw ApiError.badRequest(
+      `Only ${describeQuantity(stock?.quantityOnHand ?? 0, product?.unitType ?? 'each')} of ${request.label} is in stock in this branch.`,
+      { productId: request.itemId, available: stock?.quantityOnHand ?? 0 },
+    );
   }
 
   /** A sale that never happened leaves no trace: stock back, no ledger row. */
@@ -101,7 +126,12 @@ class SupershopInventoryAdapter implements InventoryAdapter<ShopStockDetail> {
           'sale',
           -entry.quantity,
           entry.balanceAfter,
-          { reason: ref.reason, referenceId: ref.referenceId, referenceNumber: ref.referenceNumber },
+          {
+            reason: entry.detail.outOfStockOverride ? `${ref.reason ?? 'Sale'} (out-of-stock sale)` : ref.reason,
+            referenceId: ref.referenceId,
+            referenceNumber: ref.referenceNumber,
+            outOfStockOverride: entry.detail.outOfStockOverride,
+          },
         ),
       ),
     );

@@ -48,6 +48,10 @@ export function PharmacyPosPage() {
   const [discount, setDiscount] = React.useState<number | null>(0);
   const [rx, setRx] = React.useState(EMPTY_RX);
   const [customer, setCustomer] = React.useState<SelectedCustomer | null>(null);
+  // A till with this permission may dispense units the system thinks are gone.
+  // The server still refuses expired stock, and refuses entirely when there is
+  // no unexpired batch to record the units against.
+  const canSellOutOfStock = can('sales.sellOutOfStock');
   const [receiptFor, setReceiptFor] = React.useState<string | null>(null);
 
   const { data: results, isLoading } = useQuery({
@@ -71,8 +75,10 @@ export function PharmacyPosPage() {
   const add = (medicine: Medicine) => {
     const sellable = medicine.stock?.sellable ?? 0;
     const existing = cart.find((line) => line.medicine._id === medicine._id);
-    if ((existing?.quantity ?? 0) >= sellable) {
-      toast.error(sellable === 0 ? `${medicine.name} is out of stock` : `Only ${sellable} of ${medicine.name} in stock`);
+    // Out of stock entirely is what the permission covers; having SOME but not
+    // enough is refused for everyone, here and on the server.
+    if ((existing?.quantity ?? 0) >= sellable && !(sellable <= 0 && canSellOutOfStock)) {
+      toast.error(sellable <= 0 ? `${medicine.name} is out of stock` : `Only ${sellable} of ${medicine.name} in stock`);
       return;
     }
     setCart(
@@ -149,15 +155,16 @@ export function PharmacyPosPage() {
             <ul className="divide-y">
               {(results?.items ?? []).map((medicine) => {
                 const sellable = medicine.stock?.sellable ?? 0;
+                const blocked = sellable <= 0 && !canSellOutOfStock;
                 return (
                   <li key={medicine._id}>
                     <button
                       type="button"
-                      disabled={sellable === 0}
+                      disabled={blocked}
                       onClick={() => add(medicine)}
                       className={cn(
                         'flex w-full items-center justify-between gap-3 px-1 py-2.5 text-left transition-colors hover:bg-muted/50',
-                        sellable === 0 && 'cursor-not-allowed opacity-50',
+                        blocked && 'cursor-not-allowed opacity-50',
                       )}
                     >
                       <div className="min-w-0">
@@ -172,8 +179,8 @@ export function PharmacyPosPage() {
                       </div>
                       <div className="shrink-0 text-right">
                         <p className="tabular font-semibold">{formatMoney(medicine.sellingPriceMinor, currency)}</p>
-                        <p className={cn('text-xs', sellable === 0 ? 'text-destructive' : 'text-muted-foreground')}>
-                          {sellable === 0 ? 'Out of stock' : `${sellable} in stock`}
+                        <p className={cn('text-xs', sellable <= 0 ? 'text-destructive' : 'text-muted-foreground')}>
+                          {sellable > 0 ? `${sellable} in stock` : canSellOutOfStock ? 'Out of stock · sell anyway' : 'Out of stock'}
                         </p>
                       </div>
                     </button>

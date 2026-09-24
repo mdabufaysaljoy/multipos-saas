@@ -21,7 +21,10 @@ const shopStockSchema = new Schema<ShopStockDoc>(
     tenantId: { type: Schema.Types.ObjectId, ref: 'Tenant', required: true },
     storeId: { type: Schema.Types.ObjectId, ref: 'Store', required: true },
     productId: { type: Schema.Types.ObjectId, ref: 'ShopProduct', required: true },
-    quantityOnHand: { type: Number, required: true, min: 0, default: 0 },
+    // No floor: a till with `sales.sellOutOfStock` may sell goods the system
+    // thinks are gone, which takes the row below zero. Every other path guards
+    // the decrement, so that is the only way it can happen.
+    quantityOnHand: { type: Number, required: true, default: 0 },
     costPriceMinor: { type: Number, required: true, min: 0, default: 0 },
     lastReceivedAt: { type: Date, default: null },
   },

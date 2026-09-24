@@ -50,6 +50,9 @@ export function SupershopPosPage() {
   const [weighing, setWeighing] = React.useState<CartLine | { product: ShopProduct; quantity: 0 } | null>(null);
   const [discount, setDiscount] = React.useState<number | null>(0);
   const [customer, setCustomer] = React.useState<SelectedCustomer | null>(null);
+  // A till with this permission may sell goods the system thinks are gone -
+  // the shelf is right and the record is wrong. The server checks it again.
+  const canSellOutOfStock = can('sales.sellOutOfStock');
   const [receiptFor, setReceiptFor] = React.useState<string | null>(null);
 
   const { data: results, isLoading } = useQuery({
@@ -88,8 +91,12 @@ export function SupershopPosPage() {
       return;
     }
     const current = cart.find((line) => line.product._id === product._id)?.quantity ?? 0;
-    if (current + 1 > (product.stock?.quantityOnHand ?? 0)) {
-      toast.error(`Only ${product.stock?.quantityOnHand ?? 0} of ${product.name} in stock`);
+    const onHand = product.stock?.quantityOnHand ?? 0;
+    // Out of stock entirely is what the permission covers; having SOME but not
+    // enough is refused for everyone, here and on the server.
+    const sellable = onHand <= 0 && canSellOutOfStock ? current + 1 : onHand;
+    if (current + 1 > sellable) {
+      toast.error(`Only ${onHand} of ${product.name} in stock`);
       return;
     }
     setLine(product, current + 1);
@@ -171,13 +178,14 @@ export function SupershopPosPage() {
             <ul className="divide-y">
               {(results?.items ?? []).map((product) => {
                 const onHand = product.stock?.quantityOnHand ?? 0;
+                const blocked = onHand <= 0 && !canSellOutOfStock;
                 return (
                   <li key={product._id}>
                     <button
                       type="button"
-                      disabled={onHand === 0}
+                      disabled={blocked}
                       onClick={() => add(product)}
-                      className={cn('flex w-full items-center justify-between gap-3 px-1 py-2.5 text-left hover:bg-muted/50', onHand === 0 && 'cursor-not-allowed opacity-50')}
+                      className={cn('flex w-full items-center justify-between gap-3 px-1 py-2.5 text-left hover:bg-muted/50', blocked && 'cursor-not-allowed opacity-50')}
                     >
                       <div className="min-w-0">
                         <p className="font-medium">
@@ -190,8 +198,8 @@ export function SupershopPosPage() {
                           {formatMoney(product.priceMinor, currency)}
                           {product.unitType === 'weight' ? '/kg' : ''}
                         </p>
-                        <p className={cn('text-xs', onHand === 0 ? 'text-destructive' : 'text-muted-foreground')}>
-                          {onHand === 0 ? 'Out of stock' : `${formatQuantity(onHand, product.unitType)} in stock`}
+                        <p className={cn('text-xs', onHand <= 0 ? 'text-destructive' : 'text-muted-foreground')}>
+                          {onHand > 0 ? `${formatQuantity(onHand, product.unitType)} in stock` : canSellOutOfStock ? 'Out of stock · sell anyway' : 'Out of stock'}
                         </p>
                       </div>
                     </button>
@@ -297,6 +305,7 @@ export function SupershopPosPage() {
           key={weighing.product._id}
           line={weighing}
           currency={currency}
+          canSellOutOfStock={canSellOutOfStock}
           onClose={() => {
             setWeighing(null);
             scanRef.current?.focus();
@@ -319,18 +328,21 @@ export function SupershopPosPage() {
 function WeighDialog({
   line,
   currency,
+  canSellOutOfStock,
   onClose,
   onConfirm,
 }: {
   line: { product: ShopProduct; quantity: number };
   currency: string;
+  canSellOutOfStock: boolean;
   onClose: () => void;
   onConfirm: (grams: number) => void;
 }) {
   const [kg, setKg] = React.useState(line.quantity > 0 ? gramsToKgText(line.quantity) : '');
   const grams = parseKgToGrams(kg);
   const onHand = line.product.stock?.quantityOnHand ?? 0;
-  const tooMuch = grams !== null && grams > onHand;
+  // Out of stock entirely is what the permission covers, not "not enough".
+  const tooMuch = grams !== null && grams > onHand && !(onHand <= 0 && canSellOutOfStock);
 
   return (
     <Dialog open onOpenChange={(open) => !open && onClose()}>

@@ -26,6 +26,8 @@ export interface PharmacySaleLine {
   quantity: number;
   lineTotalMinor: number;
   allocations: BatchAllocation[];
+  /** True when this line dispensed stock the branch did not have on record. */
+  outOfStockOverride?: boolean;
 }
 
 export interface PrescriptionRecord {
@@ -92,6 +94,7 @@ const lineSchema = new Schema<PharmacySaleLine>({
   quantity: { type: Number, required: true, min: 1 },
   lineTotalMinor: minor,
   allocations: { type: [allocationSchema], default: [] },
+  outOfStockOverride: { type: Boolean },
 });
 
 const prescriptionSchema = new Schema<PrescriptionRecord>(
