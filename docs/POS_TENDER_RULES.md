@@ -1,0 +1,61 @@
+# How a POS sale is paid for
+
+*Task 02 of `docs/UNIVERSAL_POS_PLAN.md`.*
+
+Every till in the platform settles money by the same three rules, and they now live in one place:
+`server/src/services/pos/paymentMethods.service.ts`. Before this they were written out four times —
+once per vertical — which is not a problem until one of them is changed.
+
+## 1. The three rules
+
+| Rule | What it says | Why |
+|---|---|---|
+| 1. Enabled for the branch | Every method that takes money must be in the branch's `paymentMethods` | The enabled list is the branch's, not the client's. A branch that turned card off cannot be made to accept one by a till that asks. |
+| 2. The money covers the sale | `paid ≥ total` | A sale is never completed for less than it costs. The POS blocks it too, but this is what enforces it. |
+| 3. Only cash may exceed the total | `change ≤ the cash part of the tender` | Change comes out of the drawer. An over-tendered card is a mistake, not change: refunding it needs the provider, which no till can do. |
+
+```ts
+settleTender({ totalMinor, tendered, accepted, dialect })   // all three, for a till that settles in one step
+assertMethodsEnabled(accepted, methods, dialect)            // rule 1 on its own
+assertCovered(totalMinor, paidMinor, dialect)               // rule 2 on its own
+assertChangeIsCash(changeMinor, cashMinor, dialect)         // rule 3 on its own
+```
+
+Super Shop, Pharmacy and Restaurant settle in one step, so they call `settleTender`. Clothing's
+checkout has more to weigh first — exchange credit, loyalty points covering the whole sale, and cash
+handed over separately from what is applied — so it calls the individual rules from inside that
+arithmetic. The membership-fee path in `loyaltyService` takes money at the till too, and obeys rule 1
+through the same function; it may not exceed the fee, so it does not settle through `settleTender`.
+
+**What a caller gets back is what the sale took** — `paidMinor`, `changeMinor`, `cashMinor`. Those
+numbers are stored as returned. No vertical recomputes them, and none of them ever comes from the
+client.
+
+## 2. Where the four still differ
+
+This was a refactor: no behaviour changed. Two differences were found while doing it, and both are
+now pinned by tests rather than left to be discovered.
+
+**The answer to a refusal.** Clothing answers `422` for a tender that does not add up; the three
+newer verticals answer `400`. All four answer `400` for a method the branch has turned off. Both
+dialects live side by side in `TenderDialect`, so the difference is visible in one file instead of
+spread across four services.
+
+**An over-tendered card.** The three newer verticals refuse it (rule 3). Clothing accepts it and
+always has: its till sends the cash handed over separately as `cashTenderedMinor`, and *that* path
+already refuses change that did not come from cash — but the plain `payments` path does not check.
+So a Clothing sale paid ৳1,050 by card on a ৳1,000 total records ৳50 of change that no drawer gave.
+
+Neither was changed here, because a refactor that quietly changes an API contract is not a refactor.
+Task 03 (custom payment methods) rewrites this surface anyway, and is where they should converge.
+
+A third, smaller difference: a Clothing payment row carries a `reference` (a bKash transaction id,
+say) and the other three do not. Task 03 again.
+
+## 3. Tests
+
+`scripts/smoke-test.mjs`, section **"POS tender rules (all verticals)"**, runs the same four tenders
+— a disabled method, a short payment, an exact payment, a two-method split, cash over the total, and
+a card over the total — through all four verticals and checks they are answered the same way. That
+section is what makes "the rules are the same" a fact rather than a claim, and it is where the two
+differences above are written down.

@@ -12,6 +12,7 @@ import { formatDocumentNumber, nextSequence } from '../../utils/counters';
 import { resolvePage, searchRegex } from '../../utils/pagination';
 import { entitlementService } from '../../services/subscription/entitlement.service';
 import { customerService } from '../customers/customers.service';
+import { POS_TENDER_DIALECT, settleTender } from '../../services/pos/paymentMethods.service';
 import { resolveDashboardWindow } from '../reports/reports.service';
 import type { DashboardRangeInput } from '../reports/reports.validators';
 import type { TenantContext } from '../../types/express';
@@ -261,18 +262,15 @@ class SupershopService {
     if (input.discountMinor > 0 && !ctx.can(PERMISSIONS.SALES_DISCOUNT)) throw ApiError.forbidden('You do not have permission to give a discount');
     if (input.discountMinor > subtotalMinor) throw ApiError.badRequest('The discount cannot exceed the subtotal');
 
-    const accepted = store.paymentMethods ?? [];
-    const refused = input.payments.find((payment) => !accepted.includes(payment.method));
-    if (refused) throw ApiError.badRequest(`This branch does not accept ${refused.method} payments`);
-
     const totalMinor = subtotalMinor - input.discountMinor;
-    const paidMinor = input.payments.reduce((sum, payment) => sum + payment.amountMinor, 0);
-    if (paidMinor < totalMinor) {
-      throw ApiError.badRequest(`The payment is ${((totalMinor - paidMinor) / 100).toFixed(2)} short of the ${(totalMinor / 100).toFixed(2)} total.`, { totalMinor, paidMinor });
-    }
-    const changeMinor = paidMinor - totalMinor;
-    const cashMinor = input.payments.filter((payment) => payment.method === 'cash').reduce((sum, payment) => sum + payment.amountMinor, 0);
-    if (changeMinor > cashMinor) throw ApiError.badRequest('Only a cash payment can exceed the total');
+    // Enabled for the branch, covering the total, change only out of cash:
+    // the same three rules every POS settles by.
+    const { paidMinor, changeMinor } = settleTender({
+      totalMinor,
+      tendered: input.payments,
+      accepted: store.paymentMethods ?? [],
+      dialect: POS_TENDER_DIALECT,
+    });
 
     // VAT in what was actually charged: a sale discount reduces it proportionally.
     const lineVatMinor = priced.reduce((sum, line) => sum + line.vatMinor, 0);

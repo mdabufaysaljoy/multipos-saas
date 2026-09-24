@@ -7882,6 +7882,146 @@ async function main() {
   const ptnShort = await ptnSale([{ method: 'cash', amountMinor: 70_000, reference: '' }]);
   check('Paying less than the total is still refused by the server', ptnShort.status === 422, ptnShort.status);
 
+
+  // --- The same tender rules in every vertical ---------------------------------
+  // One service settles every POS sale: enabled for the branch, covering the
+  // total, change only out of cash. These run the same four tenders through all
+  // four verticals and check they are answered the same way.
+  section('POS tender rules (all verticals)');
+
+  const setMethods = (token, methods) => api('/stores/current', { method: 'PATCH', token, body: { paymentMethods: methods } });
+  const ALL_METHODS = ['cash', 'bkash', 'nagad', 'bank', 'card', 'other'];
+
+  // Each vertical: how it takes money, what it costs, and how it refuses.
+  const tenderVerticals = [
+    {
+      name: 'Clothing',
+      token: ptnToken,
+      totalMinor: 100_000,
+      // A method the branch has turned off is a bad request in every vertical;
+      // Clothing alone answers 422 for a tender that does not add up.
+      refusalMethod: 400,
+      refusalAmount: 422,
+      // A Clothing payment row also carries a reference (a bKash trx id, say),
+      // which the three newer verticals do not have. Task 03 territory.
+      sell: (payments) =>
+        api('/sales', {
+          method: 'POST',
+          token: ptnToken,
+          body: {
+            items: [{ variantId: ptnVariantId, quantity: 1 }],
+            paymentMethod: payments[0].method,
+            payments: payments.map((payment) => ({ ...payment, reference: '' })),
+          },
+        }),
+      paidOf: (r) => r.data?.paidMinor,
+      changeOf: (r) => r.data?.changeMinor,
+    },
+    {
+      name: 'Super Shop',
+      token: ssToken,
+      totalMinor: 4800,
+      refusalMethod: 400,
+      refusalAmount: 400,
+      sell: (payments) => ssSale({ items: [{ productId: soap.data._id, quantity: 1 }], payments }),
+      paidOf: (r) => r.data?.paidMinor,
+      changeOf: (r) => r.data?.changeMinor,
+    },
+    {
+      name: 'Pharmacy',
+      token: phToken,
+      totalMinor: 120,
+      refusalMethod: 400,
+      refusalAmount: 400,
+      sell: (payments) => phApi('/sales', { method: 'POST', body: { items: [{ medicineId: napa.data._id, quantity: 1 }], payments } }),
+      paidOf: (r) => r.data?.paidMinor,
+      changeOf: (r) => r.data?.changeMinor,
+    },
+    {
+      name: 'Restaurant',
+      token: rvToken,
+      totalMinor: 8000,
+      refusalMethod: 400,
+      refusalAmount: 400,
+      // A restaurant settles an ORDER, so open one and pay it.
+      sell: async (payments) => {
+        const order = await rvOrder({ type: 'takeaway', items: [{ menuItemId: borhani.data._id, quantity: 1 }] });
+        return api(`/restaurant/orders/${order.data._id}/pay`, { method: 'POST', token: rvToken, body: { rev: order.data.rev, payments } });
+      },
+      paidOf: (r) => r.data?.paidMinor,
+      changeOf: (r) => r.data?.changeMinor,
+    },
+  ];
+
+  for (const v of tenderVerticals) {
+    const total = v.totalMinor;
+
+    // Rule 1: the branch's enabled methods are the branch's, not the client's.
+    await setMethods(v.token, ['cash', 'bkash']);
+    const disabled = await v.sell([{ method: 'card', amountMinor: total }]);
+    check(`${v.name}: a method this branch has turned off is refused`, disabled.status === v.refusalMethod, { status: disabled.status, error: disabled.error?.message });
+    await setMethods(v.token, ALL_METHODS);
+
+    // Rule 2: the money has to cover the sale.
+    const short = await v.sell([{ method: 'cash', amountMinor: total - 1 }]);
+    check(`${v.name}: a payment short of the total is refused`, short.status === v.refusalAmount, { status: short.status, error: short.error?.message });
+
+    // Exactly the total: settled, nothing to give back.
+    const exact = await v.sell([{ method: 'cash', amountMinor: total }]);
+    check(`${v.name}: paying exactly the total settles it with no change`, exact.status < 300 && v.paidOf(exact) === total && v.changeOf(exact) === 0, {
+      status: exact.status,
+      paid: v.paidOf(exact),
+      change: v.changeOf(exact),
+      error: exact.error,
+    });
+
+    // A split that adds up, across two methods.
+    const split = await v.sell([
+      { method: 'cash', amountMinor: total - 100 },
+      { method: 'bkash', amountMinor: 100 },
+    ]);
+    check(`${v.name}: a split across two methods that adds up is accepted`, split.status < 300 && v.paidOf(split) === total && v.changeOf(split) === 0, {
+      status: split.status,
+      paid: v.paidOf(split),
+      error: split.error,
+    });
+
+    // Rule 3: change comes out of the drawer.
+    const overCash = await v.sell([{ method: 'cash', amountMinor: total + 5000 }]);
+    check(`${v.name}: cash over the total is change, not revenue`, overCash.status < 300 && v.changeOf(overCash) === 5000, {
+      status: overCash.status,
+      change: v.changeOf(overCash),
+      error: overCash.error,
+    });
+  }
+
+  // Rule 3, where the four still differ. An over-tendered card cannot be handed
+  // back out of the drawer, so the three newer verticals refuse it. Clothing
+  // takes it, and has since before this service existed: its till sends the cash
+  // handed over separately (`cashTenderedMinor`), and that path already refuses
+  // change that did not come from cash. Task 03 is where the two converge.
+  for (const v of tenderVerticals.filter((entry) => entry.name !== 'Clothing')) {
+    const overCard = await v.sell([{ method: 'card', amountMinor: v.totalMinor + 5000 }]);
+    check(`${v.name}: a card over the total is refused - only cash can exceed it`, overCard.status === v.refusalAmount, { status: overCard.status, error: overCard.error?.message });
+  }
+  const clothingOverCard = await tenderVerticals[0].sell([{ method: 'card', amountMinor: 105_000 }]);
+  check(
+    'Clothing: an over-tendered card is still accepted (the one rule it does not share yet)',
+    clothingOverCard.status === 201 && clothingOverCard.data?.changeMinor === 5000,
+    { status: clothingOverCard.status, change: clothingOverCard.data?.changeMinor },
+  );
+  const ctnCashPath = await api('/sales', {
+    method: 'POST',
+    token: ptnToken,
+    body: {
+      items: [{ variantId: ptnVariantId, quantity: 1 }],
+      paymentMethod: 'card',
+      payments: [{ method: 'card', amountMinor: 100_000, reference: '' }],
+      cashTenderedMinor: 5000,
+    },
+  });
+  check('Clothing: cash received with no cash payment is refused on the cash path', ctnCashPath.status === 422, ctnCashPath.status);
+
   // ------------------------------------------------ cash received, change and receipt
   section('Clothing POS: cash received, change and receipt');
   const ctnStamp = Date.now();

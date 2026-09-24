@@ -2,8 +2,8 @@
 
 **Audit and plan.** It records what the four verticals do today, what "universal" should mean for each
 capability, and the order the work should be done in. Tasks are marked ✅ as they land - **tasks 01
-(universal QZ Tray printing), 12 (universal dashboard date ranges) and 05 (POS customer selection)
-are done**; everything else below is still a plan.
+(universal QZ Tray printing), 12 (universal dashboard date ranges), 05 (POS customer selection) and
+02 (shared payment-method service) are done**; everything else below is still a plan.
 
 Date: 2026-09-24 · Commit audited: `18bc974` (main, with the Clothing work merged in)
 Method: reading the code and the models, plus the checks the end-to-end suite already makes.
@@ -49,7 +49,7 @@ Legend: **mature** = reference implementation · **partial** = works but narrowe
 | # | Feature | Clothing | Restaurant | Pharmacy | Super Shop | Shared logic today | Vertical difference that must survive | Migration | Risk |
 |---|---|---|---|---|---|---|---|---|
 | 1 | QZ Tray direct printing | **mature** | **done** (task 01) | **done** (task 01) | **done** (task 01) | `features/printing/*` plus the shared `ReceiptPaper` / `useReceiptPrint` / `ReceiptPrintBar` | receipt *content* per vertical; kitchen tickets are Restaurant-only | ✅ complete | — |
-| 2 | Split payment | **mature** (UI + server) | server ✅ / UI single-method | server ✅ / UI single-method | server ✅ / UI single-method | all four services validate `payments[]`, change and cash rules identically | none | Lift `PaymentPanel` + `usePayments` into a shared feature | **Low** |
+| 2 | Split payment | **mature** (UI + server) | server ✅ / UI single-method | server ✅ / UI single-method | server ✅ / UI single-method | **one** `paymentMethods.service.ts` settles every vertical's tender (task 02) | refusal status (Clothing 422, the rest 400) and the card over-tender gap - task 03 | Lift `PaymentPanel` + `usePayments` into a shared feature | **Low** |
 | 3 | Custom payment methods | **missing** | missing | missing | missing | `PAYMENT_METHODS` is a hard-coded enum in `config/constants.ts`; `Store.paymentMethods` selects a subset | none | New `PaymentMethod` collection + snapshots on every sale model | **High** |
 | 4 | Customer selection | **mature** (`CustomerPicker`) | **done** (task 05) | **done** (task 05) | **done** (task 05) | `/api/customers`, the shared `CustomerPicker` and one `resolveForPosSale` | Restaurant selects per *order*, not per payment; Pharmacy keeps buyer and patient apart | ✅ complete | — |
 | 4b | Loyalty (card, points, scan) | **mature** (membership, EAN-13 card, ledger, earn/redeem, returns/exchange reversal) | missing | missing | missing | `loyaltyService` is model-agnostic except for its sale hooks | earn base differs (order total vs sale subtotal); Pharmacy may exclude prescription items | Generalise the four sale hooks; widen the entitlement's `verticals` | **Medium** |
@@ -186,7 +186,7 @@ Each is independently executable, independently testable, and leaves the tree gr
 | Task | Scope | Depends on | Effort | Risk |
 |---|---|---|---|---|
 | **01** Universal QZ printing ✅ **done** | Shared `ReceiptPaper` + `useReceiptPrint` + `ReceiptPrintBar`; all four verticals print direct, auto-print after a sale; widths 48/57/58/78/80/88; one shared `receiptStore` projection | — | S | Low |
-| **02** Shared payment-method service | Move the three-rule validation into one service used by all four sale paths; no behaviour change, tests prove identical outcomes | — | S | Low |
+| **02** Shared payment-method service ✅ **done** | `services/pos/paymentMethods.service.ts` settles every vertical's tender (enabled / covered / change-from-cash) plus the loyalty fee; no behaviour change, 25 cross-vertical checks prove identical outcomes and pin the two remaining differences | — | S | Low |
 | **03** Custom payment methods | `PaymentMethod` collection (tenant+store, active flag, unique active name), snapshot `{key,label}` on every sale's payment lines, settings UI, reports/receipts read the snapshot | 02 | **L** | High |
 | **04** Split payment UI everywhere | `PaymentPanel` + `usePayments` in Restaurant/Pharmacy/Super Shop POS | 02 | S | Low |
 | **05** POS customer selection ✅ **done** | Shared `CustomerPicker` + `saleCustomerFields` + `posCustomerSchema` + `customerService.resolveForPosSale`; all four verticals take an id or create at the till, and move lifetime value | — | S | Low |
@@ -200,7 +200,7 @@ Each is independently executable, independently testable, and leaves the tree gr
 | **13** Analytics parity | Shared metric contract; fill the gaps per vertical | 12 | M | Medium |
 | **14** PDF/print of reports | Serialise the current report view through `export.formats.ts` (already writes PDF) | 13 | M | Medium |
 
-Recommended sequencing: **01 ✅ → 12 ✅ → 05 ✅ → 02 → 04 → 06 → 07 → 03 → 08 → 09 → 10 → 11 → 13 → 14.**
+Recommended sequencing: **01 ✅ → 12 ✅ → 05 ✅ → 02 ✅ → 04 → 06 → 07 → 03 → 08 → 09 → 10 → 11 → 13 → 14.**
 That front-loads the visible wins that carry almost no risk, and defers the two schema-wide changes
 (payment methods, returns) until the adapter seam exists to absorb them.
 
@@ -210,7 +210,9 @@ That front-loads the visible wins that carry almost no risk, and defers the two 
 
 1. **Payment-method enum is load-bearing.** `PaymentMethod` appears in four sale models, `Return`,
    `Payment`, wallet top-ups, receipts, every report's payment breakdown and the smoke suite. Task 03
-   must snapshot `{key,label}` on historical rows and keep the six built-ins working unchanged.
+   must snapshot `{key,label}` on historical rows and keep the six built-ins working unchanged. Task
+   02 narrowed the blast radius: every till's *validation* now goes through one service, so task 03
+   changes the rules in one file rather than four.
 2. **Tenant-scoped vs store-scoped catalogues.** Sharing code across them without an adapter will
    silently cross branches. Non-negotiable: shared code takes ids and quantities, never models.
 3. **Pharmacy expiry.** An out-of-stock override must never become an "sell expired stock" override.
@@ -258,6 +260,7 @@ must pass unchanged, and the Clothing sections must not be edited to accommodate
 - `docs/PRINTING_ARCHITECTURE.md` §2b — the universal printing architecture delivered by task 01.
 - `docs/DASHBOARD_RANGES.md` — the universal dashboard range delivered by task 12.
 - `docs/POS_CUSTOMERS.md` — the customer on a sale, delivered by task 05.
+- `docs/POS_TENDER_RULES.md` — how a POS sale is paid for, delivered by task 02.
 
 Feature docs (`PRINTING_ARCHITECTURE.md`, `PRODUCT_IMPORT.md`, `DATA_EXPORT.md`,
 `SUPPLIER_MANAGEMENT.md`, `CONTACT_VERIFICATION.md`, `ENTITLEMENTS.md`) remain accurate for Clothing
@@ -267,15 +270,14 @@ and are the reference material for the tasks above.
 
 ## 10. Recommended next task
 
-**Task 02 — Shared payment-method service.**
+**Task 04 — Split payment UI everywhere.**
 
-Tasks 01, 12 and 05 are done. Task 02 is the groundwork the payment work needs: all four sale
-services already validate payments by the same three rules (every method accepted by the branch, the
-total covered, change only out of cash), written out four times. Moving that into one service is a
-no-behaviour-change refactor whose tests prove the outcomes are identical - and it is what makes
-task 04 (split-payment UI everywhere) and task 03 (custom payment methods) safe to do.
+Tasks 01, 12, 05 and 02 are done. Task 04 is now the cheapest visible win: all four servers already
+accept and settle `payments[]` through one service, and Clothing already has `PaymentPanel` +
+`usePayments`; the three newer tills simply send a single method because that is all their UI can
+express. It is one shared component in three pages, with no server change at all.
 
-Task 09 (universal loyalty) is now unblocked by task 05, but it is a larger job and depends on 05
-plus the sale hooks; task 02 is the cheaper next step.
+After that, task 06 (inventory adapter + ledger read API) is the next structural piece, and it is
+what tasks 07 and 08 wait on.
 
 Waiting for an explicit instruction before starting either.

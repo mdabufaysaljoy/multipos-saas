@@ -9,6 +9,7 @@ import { StoreModel, type LoyaltySettings } from '../../models/Store';
 import { assertEntitlement, hasEntitlement } from '../../services/entitlements/entitlementEngine';
 import type { TenantContext } from '../../types/express';
 import { ApiError } from '../../utils/ApiError';
+import { assertMethodsEnabled, CLOTHING_TENDER_DIALECT } from '../../services/pos/paymentMethods.service';
 import { formatDocumentNumber, nextSequence } from '../../utils/counters';
 import { logger } from '../../utils/logger';
 import { resolvePage, searchRegex } from '../../utils/pagination';
@@ -264,11 +265,12 @@ class LoyaltyService {
       }
     } else {
       if (payments.length === 0) throw ApiError.validation('Take the membership fee before issuing the card.', { feeMinor: fee });
+      // The membership fee is money taken at the till, so it obeys the branch's
+      // enabled methods like any other tender. What it may NOT do is exceed the
+      // fee, which is why it does not settle through `settleTender`.
+      assertMethodsEnabled(store?.paymentMethods ?? [], payments.map((payment) => payment.method), CLOTHING_TENDER_DIALECT);
       const methods = new Set<string>();
       for (const payment of payments) {
-        if (!store?.paymentMethods.includes(payment.method)) {
-          throw ApiError.badRequest(`"${payment.method}" is not an enabled payment method for this store`);
-        }
         if (methods.has(payment.method)) throw ApiError.validation(`"${payment.method}" appears twice - combine it into a single row`);
         methods.add(payment.method);
       }

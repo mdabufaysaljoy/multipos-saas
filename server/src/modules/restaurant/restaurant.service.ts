@@ -13,6 +13,7 @@ import { resolvePage, searchRegex } from '../../utils/pagination';
 import { entitlementService } from '../../services/subscription/entitlement.service';
 import { resolveDashboardWindow } from '../reports/reports.service';
 import { customerService } from '../customers/customers.service';
+import { POS_TENDER_DIALECT, settleTender } from '../../services/pos/paymentMethods.service';
 import type { TenantContext } from '../../types/express';
 import type {
   DashboardInput,
@@ -507,22 +508,16 @@ class RestaurantService {
     if (input.discountMinor > order.subtotalMinor) throw ApiError.badRequest('The discount cannot exceed the order subtotal');
 
     const store = await StoreModel.findOne({ _id: ctx.storeId, tenantId: ctx.tenantId }).select('paymentMethods').lean();
-    const accepted = store?.paymentMethods ?? [];
-    const refused = input.payments.find((payment) => !accepted.includes(payment.method));
-    if (refused) throw ApiError.badRequest(`This branch does not accept ${refused.method} payments`);
 
     const totalMinor = order.subtotalMinor - input.discountMinor;
-    const paidMinor = input.payments.reduce((sum, payment) => sum + payment.amountMinor, 0);
-    if (paidMinor < totalMinor) {
-      throw ApiError.badRequest(
-        `The payment is ${((totalMinor - paidMinor) / 100).toFixed(2)} short of the ${(totalMinor / 100).toFixed(2)} total.`,
-        { totalMinor, paidMinor },
-      );
-    }
-    const changeMinor = paidMinor - totalMinor;
-    const cashMinor = input.payments.filter((p) => p.method === 'cash').reduce((sum, p) => sum + p.amountMinor, 0);
-    // Only cash can be over-tendered: change comes out of the drawer.
-    if (changeMinor > cashMinor) throw ApiError.badRequest('Only a cash payment can exceed the total');
+    // Enabled for the branch, covering the total, change only out of cash:
+    // the same three rules every POS settles by.
+    const { paidMinor, changeMinor } = settleTender({
+      totalMinor,
+      tendered: input.payments,
+      accepted: store?.paymentMethods ?? [],
+      dialect: POS_TENDER_DIALECT,
+    });
 
     // The drawer this money goes into. A branch not using shifts pays with none.
     const shift = await RestaurantShiftModel.findOne({ tenantId: ctx.tenantId, storeId: ctx.storeId, status: 'open' })

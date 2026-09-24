@@ -14,6 +14,7 @@ import { resolvePage, searchRegex } from '../../utils/pagination';
 import { inventoryService, type StockMovementResult } from '../../services/inventory/inventory.service';
 import { entitlementService } from '../../services/subscription/entitlement.service';
 import { customerService } from '../customers/customers.service';
+import { assertCovered, assertMethodsEnabled, CLOTHING_TENDER_DIALECT } from '../../services/pos/paymentMethods.service';
 import { pointsForSpend } from '../loyalty/loyalty.math';
 import { loyaltyService } from '../loyalty/loyalty.service';
 import { logger } from '../../utils/logger';
@@ -103,11 +104,7 @@ class SaleService {
       : creditMinor > 0 || takesNoMoney
         ? []
         : [input.paymentMethod];
-    for (const method of methodsUsed) {
-      if (!store.paymentMethods.includes(method)) {
-        throw ApiError.badRequest(`"${method}" is not an enabled payment method for this store`);
-      }
-    }
+    assertMethodsEnabled(store.paymentMethods, methodsUsed, CLOTHING_TENDER_DIALECT);
 
     const customer = loyalty
       ? await customerService.resolveForSale(ctx, loyalty.membership.customerId)
@@ -621,15 +618,9 @@ class SaleService {
     const splitTotal = input.payments?.reduce((sum, payment) => sum + payment.amountMinor, 0);
     const paidMinor = splitTotal ?? input.paidMinor ?? totalMinor;
 
-    // A sale cannot be completed for less than it costs. This is the backend
-    // half of the tendered-amount rule; the POS blocks it too, but the server
-    // is what actually enforces it.
-    if (paidMinor < totalMinor) {
-      throw ApiError.validation(
-        `The amount tendered (${paidMinor}) is less than the total (${totalMinor}). Collect the full amount to complete this sale.`,
-        { totalMinor, paidMinor, shortfallMinor: totalMinor - paidMinor },
-      );
-    }
+    // A sale cannot be completed for less than it costs - the same rule, and
+    // the same arithmetic, every other POS settles by.
+    assertCovered(totalMinor, paidMinor, CLOTHING_TENDER_DIALECT);
 
     const changeMinor = paidMinor - totalMinor;
 
