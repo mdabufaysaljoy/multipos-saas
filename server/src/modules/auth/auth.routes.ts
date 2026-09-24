@@ -3,6 +3,7 @@ import rateLimit from 'express-rate-limit';
 import { isProd } from '../../config/env';
 import { authenticate } from '../../middleware/auth';
 import { validate } from '../../middleware/validate';
+import { confirmCodeSchema, sendCodeSchema } from './verification.validators';
 import * as controller from './auth.controller';
 import { changePasswordSchema, loginSchema, registerSchema, selectLoginSchema, switchWorkspaceSchema } from './auth.validators';
 
@@ -48,5 +49,18 @@ const switchLimiter = rateLimit({
 router.get('/workspaces', authenticate, controller.workspaces);
 router.post('/switch-workspace', switchLimiter, authenticate, validate({ body: switchWorkspaceSchema }), controller.switchWorkspace);
 router.post('/change-password', authenticate, validate({ body: changePasswordSchema }), controller.changePassword);
+
+// Email / phone verification. Sending costs the platform a message, so it is
+// rate limited here as well as by the per-user cooldown in the service.
+const verificationLimiter = rateLimit({
+  windowMs: 60_000,
+  limit: isProd ? 6 : 10_000,
+  standardHeaders: 'draft-7',
+  legacyHeaders: false,
+  message: { success: false, error: { code: 'TOO_MANY_REQUESTS', message: 'Too many verification attempts. Wait a minute and try again.' } },
+});
+router.get('/verification', authenticate, controller.verificationStatus);
+router.post('/verification/send', authenticate, verificationLimiter, validate({ body: sendCodeSchema }), controller.sendVerificationCode);
+router.post('/verification/confirm', authenticate, verificationLimiter, validate({ body: confirmCodeSchema }), controller.confirmVerificationCode);
 
 export default router;

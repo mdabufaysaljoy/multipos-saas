@@ -122,6 +122,18 @@ cannot be deleted, though their permissions stay editable.
 Read-only mirror of `config/permissions.ts` — `{ key, group, label, description }`.
 Code remains the source of truth. **Indexes** `{ key } unique` · `{ group }`
 
+### `VerificationCode`
+A one-time code for proving an email address or a phone number. The code itself
+is never stored - only an HMAC of `userId:channel:code`.
+
+`{ userId, channel: 'email' | 'phone', destination, codeHash, expiresAt,
+attempts, consumedAt }`
+
+**Indexes** `{ userId, channel, createdAt }` · `{ expiresAt } expireAfterSeconds: 0`
+
+`User.emailVerifiedAt` / `User.phoneVerifiedAt` hold the result; one of them
+must be set before a subscription can be bought.
+
 ### `RefreshToken`
 One row per issued session, stored as a SHA-256 digest and rotated on use.
 

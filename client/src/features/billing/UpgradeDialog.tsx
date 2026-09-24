@@ -17,6 +17,7 @@ import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { ApiError } from '@/api/client';
 import { billingApi, walletApi, type PurchaseBody } from '@/api/endpoints';
+import { VerifyContactCard } from '@/features/verification/VerifyContactCard';
 import { useAuth } from '@/hooks/useAuth';
 import { formatMoney, formatPlanPrice } from '@/lib/money';
 import { cn } from '@/lib/utils';
@@ -97,7 +98,10 @@ export function UpgradeDialog({ plan, currentPlanName, instructions, onClose }: 
 
   // Same key the wallet panel and marketing page use, so this shares their cache entry.
   // The account wallet is only read (and paid from) with the wallet permission.
-  const { can: canUseWallet } = useAuth();
+  const { can: canUseWallet, session } = useAuth();
+  // Buying needs one proven contact; the server refuses otherwise, so the
+  // dialog asks for it here rather than letting the purchase fail.
+  const contactVerified = session?.user.verification?.anyVerified !== false;
   const wallet = useQuery({ queryKey: ['wallet'], queryFn: walletApi.balance, enabled: Boolean(plan) && canUseWallet('wallet.view') });
   const balanceMinor = wallet.data?.balanceMinor ?? 0;
   const walletFrozen = wallet.data?.isFrozen ?? false;
@@ -195,6 +199,22 @@ export function UpgradeDialog({ plan, currentPlanName, instructions, onClose }: 
             <DialogFooter>
               <Button className="w-full" onClick={onClose}>
                 Done
+              </Button>
+            </DialogFooter>
+          </>
+        ) : !contactVerified ? (
+          <>
+            <DialogHeader>
+              <DialogTitle>Verify your contact first</DialogTitle>
+              <DialogDescription>
+                Confirm your email address or phone number before buying a plan. Your invoice, receipts and renewal
+                reminders go there.
+              </DialogDescription>
+            </DialogHeader>
+            <VerifyContactCard />
+            <DialogFooter>
+              <Button variant="outline" className="w-full" onClick={onClose}>
+                Close
               </Button>
             </DialogFooter>
           </>

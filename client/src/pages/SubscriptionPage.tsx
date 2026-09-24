@@ -24,6 +24,7 @@ import { PlanComparisonTable } from '@/features/billing/PlanComparisonTable';
 import { upgradeGains } from '@/lib/planCatalog';
 import { FEATURE_LABELS } from '@/lib/planCatalog';
 import type { PlanOption, SubscriptionPlan } from '@/types/domain';
+import { VerifyContactCard } from '@/features/verification/VerifyContactCard';
 import { useAuth } from '@/hooks/useAuth';
 import { cn } from '@/lib/utils';
 
@@ -93,7 +94,7 @@ function BillingActivity() {
 
 export function SubscriptionPage() {
   const queryClient = useQueryClient();
-  const { refresh } = useAuth();
+  const { refresh, session } = useAuth();
   const [interval, setInterval] = React.useState<'monthly' | 'yearly'>('monthly');
   const [cancelOpen, setCancelOpen] = React.useState(false);
   const [upgradePlan, setUpgradePlan] = React.useState<SubscriptionPlan | null>(null);
@@ -194,6 +195,23 @@ export function SubscriptionPage() {
   return (
     <div className="space-y-5 p-4 lg:p-6">
       <PageHeader title="Subscription" description="Your plan, usage and billing history." />
+
+      {/* Buying needs one proven contact. Shown here so it can be done before
+          the purchase rather than in the middle of it. */}
+      {session?.user.verification && !session.user.verification.anyVerified && (
+        <Card>
+          <CardHeader className="pb-3">
+            <CardTitle className="text-base">Verify your contact</CardTitle>
+            <CardDescription>
+              Confirm your email address or phone number before buying a plan — that is where your invoices, receipts and
+              renewal reminders go.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <VerifyContactCard />
+          </CardContent>
+        </Card>
+      )}
 
       <Card>
         <CardHeader className="pb-3">

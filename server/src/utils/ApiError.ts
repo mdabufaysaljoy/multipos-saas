@@ -16,6 +16,8 @@ export type ErrorCode =
   | 'VERTICAL_NOT_SUPPORTED'
   | 'UNPROCESSABLE'
   | 'TOO_MANY_REQUESTS'
+  /** The buyer has not verified an email address or phone number yet. */
+  | 'VERIFICATION_REQUIRED'
   /** An external payment provider could not be reached or did not answer. */
   | 'PROVIDER_UNAVAILABLE'
   | 'INTERNAL';
@@ -35,6 +37,7 @@ const STATUS_BY_CODE: Record<ErrorCode, number> = {
   VERTICAL_NOT_SUPPORTED: 403,
   UNPROCESSABLE: 422,
   TOO_MANY_REQUESTS: 429,
+  VERIFICATION_REQUIRED: 403,
   PROVIDER_UNAVAILABLE: 503,
   INTERNAL: 500,
 };
@@ -64,5 +67,7 @@ export class ApiError extends Error {
   static insufficientStock(message: string, details?: unknown) { return new ApiError('INSUFFICIENT_STOCK', message, details); }
   static limitExceeded(message: string, details?: unknown) { return new ApiError('LIMIT_EXCEEDED', message, details); }
   static subscriptionInactive(message: string, details?: unknown) { return new ApiError('SUBSCRIPTION_INACTIVE', message, details); }
+  static tooManyRequests(message: string, details?: unknown) { return new ApiError('TOO_MANY_REQUESTS', message, details); }
+  static verificationRequired(message: string, details?: unknown) { return new ApiError('VERIFICATION_REQUIRED', message, details); }
   static internal(message = 'Something went wrong') { return new ApiError('INTERNAL', message); }
 }

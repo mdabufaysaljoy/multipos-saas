@@ -52,7 +52,7 @@ import type {
   WalletBreakdown,
   WalletTransaction,
 } from '@/types/domain';
-import type { AuthTokens, Session } from '@/types/api';
+import type { AuthTokens, Session, VerificationSendResult, VerificationStatus } from '@/types/api';
 
 type Query = Record<string, unknown>;
 
@@ -180,6 +180,13 @@ export const customerApi = {
   create: (body: Record<string, unknown>) => post<Customer>('/customers', body),
   update: (id: string, body: Record<string, unknown>) => patch<Customer>(`/customers/${id}`, body),
   remove: (id: string) => del<{ id: string }>(`/customers/${id}`),
+};
+
+/** Proving an email address or a phone number with a one-time code. */
+export const verificationApi = {
+  status: () => get<VerificationStatus>('/auth/verification'),
+  send: (channel: 'email' | 'phone') => post<VerificationSendResult>('/auth/verification/send', { channel }),
+  confirm: (channel: 'email' | 'phone', code: string) => post<VerificationStatus>('/auth/verification/confirm', { channel, code }),
 };
 
 export const supplierApi = {

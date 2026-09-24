@@ -33,6 +33,7 @@ Base URL: `/api` · All responses use one envelope.
 | `SUBSCRIPTION_INACTIVE` | 402 | Subscription expired or suspended |
 | `VALIDATION_ERROR` | 422 | Zod failure; `details[]` carries `{ path, message }` |
 | `TOO_MANY_REQUESTS` | 429 | Rate limited |
+| `VERIFICATION_REQUIRED` | 403 | No email address or phone number verified yet, and the request buys something |
 | `INTERNAL` | 500 | Unexpected server error (no stack in production) |
 
 ---
@@ -357,6 +358,24 @@ stream to the caller and are never stored. See `docs/DATA_EXPORT.md`.
 | GET | `/datasets` | The server-side registry: what may be exported, and in which formats |
 | POST | `/` | `{ type, format, preset/from/to, branch }` → streams CSV / XLSX / JSON / PDF |
 | GET | `/` | Export history (metadata only) |
+
+---
+
+## Contact verification — `/api/auth/verification`
+
+One proven contact (email **or** phone) is required before buying a
+subscription. See `docs/CONTACT_VERIFICATION.md`.
+
+| Method | Path | Purpose |
+|---|---|---|
+| GET | `/` | What is verified, destinations masked |
+| POST | `/send` | `{ channel: 'email' \| 'phone' }` → sends a 6-digit code (returns `devCode` outside production) |
+| POST | `/confirm` | `{ channel, code }` → verifies and returns the new status |
+
+Gated by it: `POST /subscriptions/purchase`, `/subscriptions/renew`,
+`/subscriptions/upgrade-request` and `/payments/checkout` → `403
+VERIFICATION_REQUIRED`. Automatic wallet renewal and platform-admin assignment
+are not.
 
 ---
 

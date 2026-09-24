@@ -87,6 +87,17 @@ async function upload(path, { token, storeId, bytes, filename = 'pixel.png' } = 
   return { status: res.status, ok: res.ok, ...json };
 }
 
+/**
+ * Proves a contact the way a real person does: ask for a code, read it, type it
+ * back. Outside production the server returns the code it sent, which is the
+ * only reason an automated run can complete the step at all.
+ */
+async function verifyContact(token, channel = 'email') {
+  const sent = await api('/auth/verification/send', { method: 'POST', token, body: { channel } });
+  if (!sent.data?.devCode) return sent;
+  return api('/auth/verification/confirm', { method: 'POST', token, body: { channel, code: sent.data.devCode } });
+}
+
 /** Uploads a spreadsheet to the product import API, with its multipart fields. */
 async function uploadSheet(path, { token, storeId, bytes, filename = 'products.csv', type = 'text/csv', fields = {} } = {}) {
   const form = new FormData();
@@ -964,6 +975,16 @@ async function main() {
   const brand = plans.data.find((p) => p.code === 'brand-monthly');
   check('Plans expose an upgrade tier', typeof brand?.tier === 'number');
 
+  // Buying needs a proven contact, so the refusal comes before anything else.
+  const unverifiedBuy = await api('/subscriptions/upgrade-request', {
+    method: 'POST',
+    token: admin.token,
+    body: { planId: brand._id, paymentMethod: 'bkash', amountMinor: brand.priceMinor, transactionId: `TXNUNV${runId}`, senderNumber: '01700000000' },
+  });
+  check('Buying is refused until an email address or phone number is verified', unverifiedBuy.status === 403 && unverifiedBuy.error?.code === 'VERIFICATION_REQUIRED', unverifiedBuy.error);
+  const verified = await verifyContact(admin.token);
+  check('Verifying the email address with the emailed code unlocks buying', verified.data?.anyVerified === true && verified.data?.email?.verified === true, verified.error ?? verified.data);
+
   // Tenant is on Showroom (tier 2); Starter is tier 1 -> a downgrade.
   const downgrade = await api('/subscriptions/upgrade-request', {
     method: 'POST',
@@ -1530,6 +1551,8 @@ async function main() {
     });
     const token = reg.data.tokens.accessToken;
     await api('/stores', { method: 'POST', token, body: { name: 'MX Store', code: `MX${label}${runId}`.slice(0, 16), currency: 'BDT' } });
+    // Every buyer proves a contact first, exactly as a person would.
+    await verifyContact(token);
     return { token, tenantId: reg.data.tenant.id ?? reg.data.tenant._id };
   };
 
@@ -3948,6 +3971,7 @@ async function main() {
     body: { businessName: `Rest Home ${rvStamp}`, name: 'Rest Owner', email: `rest${rvStamp}@example.com`, password: 'Password@123' },
   });
   const rvHomeToken = rvReg.data?.tokens?.accessToken;
+  await verifyContact(rvHomeToken);
   const rvHomeId = rvReg.data?.tenant?.id;
   await api('/stores', { method: 'POST', token: rvHomeToken, body: { name: 'Rest Home Main', currency: 'BDT' } });
 
@@ -4765,6 +4789,7 @@ async function main() {
     });
     const rt = reg.data?.tokens?.accessToken;
     await api('/stores', { method: 'POST', token: rt, body: { name: 'Race Main', code: `RACE${ms}`.slice(0, 16), currency: 'BDT' } });
+    await verifyContact(rt);
     const proPlan = ((await api('/plans')).data ?? []).find((p) => p.code === 'showroom-monthly');
     const request = await api('/subscriptions/upgrade-request', {
       method: 'POST',
@@ -4820,6 +4845,7 @@ async function main() {
     });
     const pt = reg.data?.tokens?.accessToken;
     await api('/stores', { method: 'POST', token: pt, body: { name: 'Pay Main', code: `PAY${ms}`.slice(0, 16), currency: 'BDT' } });
+    await verifyContact(pt);
     const allPlans = (await api('/plans')).data ?? [];
     const proPlan = allPlans.find((p) => p.code === 'showroom-monthly');
     const topPlan = allPlans.find((p) => p.code === 'brand-monthly');
@@ -5110,6 +5136,7 @@ async function main() {
     body: { businessName: `Create Home ${wcStamp}`, name: 'Create Owner', email: `create${wcStamp}@example.com`, password: 'Password@123' },
   });
   const wcHomeToken = wcReg.data?.tokens?.accessToken;
+  await verifyContact(wcHomeToken);
   const wcHomeId = wcReg.data?.tenant?.id;
   check('An owner signs up and uses the account trial', wcReg.status === 201 && wcReg.data?.entitlement?.status === 'trial', wcReg.data?.entitlement?.status);
   await api('/stores', { method: 'POST', token: wcHomeToken, body: { name: 'Create Home Main', currency: 'BDT' } });
@@ -5332,6 +5359,7 @@ async function main() {
     body: { businessName: `PH Home ${phStamp}`, name: 'PH Owner', email: `ph${phStamp}@example.com`, password: 'Password@123' },
   });
   const phHomeToken = phReg.data?.tokens?.accessToken;
+  await verifyContact(phHomeToken);
   const phHomeId = phReg.data?.tenant?.id;
   await api('/stores', { method: 'POST', token: phHomeToken, body: { name: 'PH Home Main', currency: 'BDT' } });
   const phCreated = await wcCreateAs(phHomeToken, { businessName: `Shefa Pharmacy ${phStamp}`, vertical: 'pharmacy' });
@@ -5503,6 +5531,7 @@ async function main() {
     body: { businessName: `SS Home ${ssStamp}`, name: 'SS Owner', email: `ss${ssStamp}@example.com`, password: 'Password@123' },
   });
   const ssHomeToken = ssReg.data?.tokens?.accessToken;
+  await verifyContact(ssHomeToken);
   const ssHomeId = ssReg.data?.tenant?.id;
   await api('/stores', { method: 'POST', token: ssHomeToken, body: { name: 'SS Home Main', currency: 'BDT' } });
   const ssCreated = await wcCreateAs(ssHomeToken, { businessName: `Meena Bazar ${ssStamp}`, vertical: 'supershop' });
@@ -5740,6 +5769,7 @@ async function main() {
   const puShop = await wcCreateAs(puHomeToken, { businessName: `PU Mart ${puStamp}`, vertical: 'supershop' });
   const puToken = (await api('/auth/switch-workspace', { method: 'POST', token: puHomeToken, body: { workspaceId: puShop.data?.workspace?.id } })).data?.tokens?.accessToken;
   await api('/stores', { method: 'POST', token: puToken, body: { name: 'PU Mart Main', currency: 'BDT' } });
+  await verifyContact(puToken);
   check('A Supershop workspace without a plan is ready to buy', puShop.status === 201 && Boolean(puToken), puShop.error);
 
   const puApi = (path, opts = {}) => api(path, { token: puToken, ...opts });
@@ -5854,6 +5884,7 @@ async function main() {
   const rnToken = rnReg.data?.tokens?.accessToken;
   const rnTenantId = rnReg.data?.tenant?.id;
   await api('/stores', { method: 'POST', token: rnToken, body: { name: 'RN Main', currency: 'BDT' } });
+  await verifyContact(rnToken);
   const rnApi = (path, opts = {}) => api(path, { token: rnToken, ...opts });
   const rnQuote = (body) => rnApi('/subscriptions/purchase/quote', { method: 'POST', body });
   const rnBuy = (body) => rnApi('/subscriptions/purchase', { method: 'POST', body });
@@ -6142,6 +6173,7 @@ async function main() {
     body: { businessName: `RG Shop ${rgrStamp}`, name: 'RG Owner', email: `rg${rgrStamp}@example.com`, password: 'Password@123' },
   });
   const rgrToken = rgrReg.data?.tokens?.accessToken;
+  await verifyContact(rgrToken);
   const rgrTenantId = rgrReg.data?.tenant?.id;
   await api('/stores', { method: 'POST', token: rgrToken, body: { name: 'RG Main', currency: 'BDT' } });
   const rgrApi = (path, opts = {}) => api(path, { token: rgrToken, ...opts });
@@ -6340,6 +6372,7 @@ async function main() {
     body: { businessName: `IV Clothing ${ivcStamp}`, name: 'IV Owner', email: `iv${ivcStamp}@example.com`, password: 'Password@123' },
   });
   const ivcToken = ivcReg.data?.tokens?.accessToken;
+  await verifyContact(ivcToken);
   const ivcClothingId = ivcReg.data?.tenant?.id;
   await api('/stores', { method: 'POST', token: ivcToken, body: { name: 'IV Main', currency: 'BDT' } });
   const ivcCredit = (amountMinor) =>
@@ -6435,6 +6468,7 @@ async function main() {
     body: { businessName: `WR Clothing ${wrcStamp}`, name: 'WR Owner', email: `wr${wrcStamp}@example.com`, password: 'Password@123' },
   });
   const wrcToken = wrcReg.data?.tokens?.accessToken;
+  await verifyContact(wrcToken);
   const wrcClothingId = wrcReg.data?.tenant?.id;
   await api('/stores', { method: 'POST', token: wrcToken, body: { name: 'WR Main', currency: 'BDT' } });
   const wrcTopUp = (amountMinor, transactionId) =>
@@ -6598,6 +6632,7 @@ async function main() {
     body: { businessName: `SV Clothing ${spvStamp}`, name: 'SV Owner', email: `sv${spvStamp}@example.com`, password: 'Password@123' },
   });
   const spvToken = spvReg.data?.tokens?.accessToken;
+  await verifyContact(spvToken);
   const spvAccountId = spvReg.data?.tenant?.accountId;
   await api('/stores', { method: 'POST', token: spvToken, body: { name: 'SV Main', currency: 'BDT' } });
   const spvTopUp = await api('/wallet/top-ups', { method: 'POST', token: spvToken, body: { amountMinor: 150_000, paymentMethod: 'bkash', senderNumber: '01799887766', transactionId: `SPV${spvStamp}` } });
@@ -6739,6 +6774,7 @@ async function main() {
   const rnwRegister = async (label) => {
     const reg = await api('/auth/register', { method: 'POST', body: { businessName: `${label} ${rnwStamp}`, name: `${label} Owner`, email: `${label.toLowerCase().replace(/\s+/g, '')}${rnwStamp}@example.com`, password: 'Password@123' } });
     const store = await api('/stores', { method: 'POST', token: reg.data?.tokens?.accessToken, body: { name: `${label} Main`, currency: 'BDT' } });
+    await verifyContact(reg.data?.tokens?.accessToken);
     return { token: reg.data?.tokens?.accessToken, homeId: reg.data?.tenant?.id, accountId: reg.data?.tenant?.accountId, storeId: store.data?._id, email: `${label.toLowerCase().replace(/\s+/g, '')}${rnwStamp}@example.com` };
   };
   const rnwAssign = (tenantId, planCode, startDate, endDate) =>
@@ -8971,6 +9007,90 @@ async function main() {
     check('A Restaurant workspace has no supplier module at all', (await api('/suppliers', { token: spRestToken, storeId: spRestStore?._id })).status === 403);
   }
 
+  // --- contact verification ---------------------------------------------------
+  section('Contact verification (email or phone, before buying)');
+  {
+    const vfStamp = String(Date.now()).slice(-7);
+    const vfPlatform = await login('platform@pos.dev', 'Platform@123');
+    const vfPlans = (await api('/plans', {})).data ?? [];
+    const vfPlan = vfPlans.find((p) => p.code === 'showroom-monthly');
+    const vfReg = await api('/auth/register', {
+      method: 'POST',
+      body: { businessName: `Verify Wear ${vfStamp}`, name: 'Verify Owner', email: `vf${vfStamp}@example.com`, phone: `0171${vfStamp}`, password: 'Password@123', vertical: 'clothing' },
+    });
+    const vfToken = vfReg.data?.tokens?.accessToken;
+    const vfTenantId = vfReg.data?.tenant?.id ?? vfReg.data?.tenant?._id;
+    await api('/stores', { method: 'POST', token: vfToken, body: { name: 'Verify Main', code: `VF${vfStamp}`, currency: 'BDT' } });
+    check('A new workspace is registered with an email address and a phone number', Boolean(vfToken && vfTenantId), vfReg.error);
+
+    // ---- what the session says before anything is proven ----
+    const vfStatus0 = await api('/auth/verification', { token: vfToken });
+    check('Nothing is verified to begin with', vfStatus0.status === 200 && vfStatus0.data?.anyVerified === false && vfStatus0.data?.email?.verified === false && vfStatus0.data?.phone?.verified === false, vfStatus0.error ?? vfStatus0.data);
+    check('The contact details come back masked, never in full', vfStatus0.data?.email?.masked?.includes('*') && !vfStatus0.data?.email?.masked?.startsWith(`vf${vfStamp}`) && vfStatus0.data?.phone?.masked?.includes('*'), { email: vfStatus0.data?.email?.masked, phone: vfStatus0.data?.phone?.masked });
+    check('The session carries the same status, so the app knows what to ask for', (await api('/auth/me', { token: vfToken })).data?.user?.verification?.anyVerified === false);
+    check('Verification needs a signed-in user', (await api('/auth/verification', {})).status === 401 && (await api('/auth/verification/send', { method: 'POST', body: { channel: 'email' } })).status === 401);
+
+    // ---- buying is refused until something is proven ----
+    await api(`/platform/tenants/${vfTenantId}/wallet/adjust`, { method: 'POST', token: vfPlatform.token, body: { direction: 'credit', amountMinor: 1_000_000, reason: 'Smoke test: verification' } });
+    const vfEarlyBuy = await api('/subscriptions/purchase', { method: 'POST', token: vfToken, body: { plan: 'professional', billingCycle: 'monthly', paymentMethod: 'wallet', idempotencyKey: `vf${vfStamp}a` } });
+    check('A wallet purchase is refused with VERIFICATION_REQUIRED', vfEarlyBuy.status === 403 && vfEarlyBuy.error?.code === 'VERIFICATION_REQUIRED' && /verify/i.test(vfEarlyBuy.error?.message ?? ''), vfEarlyBuy.error);
+    check('...and so is a manual payment claim', (await api('/subscriptions/upgrade-request', { method: 'POST', token: vfToken, body: { planId: vfPlan._id, paymentMethod: 'bkash', amountMinor: vfPlan.priceMinor, senderNumber: '01700000000', transactionId: `VFT${vfStamp}` } })).error?.code === 'VERIFICATION_REQUIRED');
+    check('...and an online checkout', (await api('/payments/checkout', { method: 'POST', token: vfToken, body: { planId: vfPlan._id, provider: 'bkash' } })).error?.code === 'VERIFICATION_REQUIRED');
+    check('...and renewing by hand', (await api('/subscriptions/renew', { method: 'POST', token: vfToken, body: {} })).error?.code === 'VERIFICATION_REQUIRED');
+    check('The wallet is untouched by a refused purchase', (await api('/wallet', { token: vfToken })).data?.balanceMinor === 1_000_000);
+    check('Everything else still works while unverified - this gates buying, not the POS', (await api('/products', { token: vfToken })).status === 200);
+
+    // ---- the code itself ----
+    const vfSend = await api('/auth/verification/send', { method: 'POST', token: vfToken, body: { channel: 'email' } });
+    check('A code is sent to the email address, and the response says where without saying what', vfSend.status === 200 && vfSend.data?.masked?.includes('*') && typeof vfSend.data?.expiresAt === 'string', vfSend.error ?? vfSend.data);
+    const vfCode = vfSend.data?.devCode;
+    check('Outside production the code is returned so an automated run can complete the step', /^\d{6}$/.test(vfCode ?? ''), typeof vfCode);
+    check('An unknown channel is refused', (await api('/auth/verification/send', { method: 'POST', token: vfToken, body: { channel: 'pigeon' } })).status === 422);
+    check('A code that is not six digits is refused before anything is checked', (await api('/auth/verification/confirm', { method: 'POST', token: vfToken, body: { channel: 'email', code: '12' } })).status === 422 && (await api('/auth/verification/confirm', { method: 'POST', token: vfToken, body: { channel: 'email', code: 'abcdef' } })).status === 422);
+    const vfWrong = await api('/auth/verification/confirm', { method: 'POST', token: vfToken, body: { channel: 'email', code: vfCode === '000000' ? '111111' : '000000' } });
+    check('A wrong code is refused, and says how many attempts are left', vfWrong.status === 400 && /attempt/i.test(vfWrong.error?.message ?? ''), vfWrong.error);
+    check('...and it does not verify anything', (await api('/auth/verification', { token: vfToken })).data?.anyVerified === false);
+    check('Asking for another code straight away is refused (a cooldown, not a free SMS tap)', (await api('/auth/verification/send', { method: 'POST', token: vfToken, body: { channel: 'email' } })).status === 429);
+
+    const vfConfirm = await api('/auth/verification/confirm', { method: 'POST', token: vfToken, body: { channel: 'email', code: vfCode } });
+    check('The right code verifies the email address', vfConfirm.status === 200 && vfConfirm.data?.email?.verified === true && vfConfirm.data?.anyVerified === true, vfConfirm.error);
+    check('The same code cannot be used twice', (await api('/auth/verification/confirm', { method: 'POST', token: vfToken, body: { channel: 'email', code: vfCode } })).status === 200 && (await api('/auth/verification', { token: vfToken })).data?.email?.verified === true);
+    check('Sending a code to an address that is already verified is refused', (await api('/auth/verification/send', { method: 'POST', token: vfToken, body: { channel: 'email' } })).status === 400);
+    check('The session now reports a verified contact', (await api('/auth/me', { token: vfToken })).data?.user?.verification?.anyVerified === true);
+
+    // ---- and now buying works ----
+    const vfBuy = await api('/subscriptions/purchase', { method: 'POST', token: vfToken, body: { plan: 'professional', billingCycle: 'monthly', paymentMethod: 'wallet', idempotencyKey: `vf${vfStamp}b` } });
+    check('With a verified email address the wallet purchase goes through', vfBuy.status === 201, vfBuy.error);
+    check('...and the workspace is on the plan it paid for', (await api('/subscriptions/current', { token: vfToken })).data?.subscription?.planSnapshot?.code === 'showroom-monthly');
+
+    // ---- the phone channel ----
+    const vfPhoneSend = await api('/auth/verification/send', { method: 'POST', token: vfToken, body: { channel: 'phone' } });
+    check('The phone number can be verified separately, with its own code', vfPhoneSend.status === 200 && /^\d{6}$/.test(vfPhoneSend.data?.devCode ?? ''), vfPhoneSend.error);
+    check('An email code does not work for the phone', (await api('/auth/verification/confirm', { method: 'POST', token: vfToken, body: { channel: 'phone', code: vfCode } })).status === 400);
+    const vfPhoneOk = await api('/auth/verification/confirm', { method: 'POST', token: vfToken, body: { channel: 'phone', code: vfPhoneSend.data?.devCode } });
+    check('...and its own code does', vfPhoneOk.status === 200 && vfPhoneOk.data?.phone?.verified === true);
+
+    // ---- a phone number that changes is no longer proven ----
+    const vfStaffRoles = (await api('/roles', { token: vfToken })).data ?? [];
+    await api('/staff', { method: 'POST', token: vfToken, body: { name: 'VF Manager', email: `vfm${vfStamp}@example.com`, password: 'Password@123', phone: `0181${vfStamp}`, roleId: vfStaffRoles.find((r) => r.name === 'Store Manager')?._id } });
+    const vfStaffList = (await api('/staff', { token: vfToken })).data ?? [];
+    const vfStaffId = vfStaffList.find((u) => u.email === `vfm${vfStamp}@example.com`)?.id;
+    const vfStaffToken = (await login(`vfm${vfStamp}@example.com`, 'Password@123')).token;
+    await verifyContact(vfStaffToken, 'phone');
+    check('A staff member can verify their own phone number', (await api('/auth/verification', { token: vfStaffToken })).data?.phone?.verified === true);
+    const vfPhoneChange = await api(`/staff/${vfStaffId}`, { method: 'PATCH', token: vfToken, body: { phone: `0191${vfStamp}` } });
+    check('Changing that number clears the verification - it was proven about the old one', vfPhoneChange.status === 200 && (await api('/auth/verification', { token: vfStaffToken })).data?.phone?.verified === false, vfPhoneChange.error);
+
+    // ---- one person, every workspace of their account ----
+    const vfSecond = await api('/workspaces', { method: 'POST', token: vfToken, body: { businessName: `Verify Two ${vfStamp}`, vertical: 'clothing' } });
+    const vfSecondToken = (await api('/auth/switch-workspace', { method: 'POST', token: vfToken, body: { workspaceId: vfSecond.data?.workspace?.id } })).data?.tokens?.accessToken;
+    check('Verification belongs to the person, so their next workspace does not ask again', (await api('/auth/verification', { token: vfSecondToken })).data?.anyVerified === true);
+
+    // ---- someone else's account is unaffected ----
+    const vfOther = await api('/auth/register', { method: 'POST', body: { businessName: `Verify Other ${vfStamp}`, name: 'Other Owner', email: `vfo${vfStamp}@example.com`, password: 'Password@123', vertical: 'clothing' } });
+    check('A different account starts unverified, whatever anyone else has done', (await api('/auth/verification', { token: vfOther.data?.tokens?.accessToken })).data?.anyVerified === false);
+  }
+
   // --- the new workspace, from inside ---------------------------------------
   const wcSwitch = await api('/auth/switch-workspace', { method: 'POST', token: wcHomeToken, body: { workspaceId: wcSecondId } });
   const wcToken = wcSwitch.data?.tokens?.accessToken;
@@ -9937,6 +10057,7 @@ async function main() {
   });
   check('Platform admin funds tenant B wallet', fundOther.status < 300, fundOther.error);
 
+  await verifyContact(otherToken);
   const balanceBefore = (await api('/wallet', { token: otherToken })).data?.balanceMinor ?? 0;
 
   const walletBuy = await api('/subscriptions/upgrade-request', {

@@ -39,6 +39,24 @@ export interface SessionUser {
   permissions: Permission[];
   /** Owns the customer account: sees billing across every workspace. */
   isAccountOwner?: boolean;
+  /** Which contact details this person has proven. Buying a plan needs one. */
+  verification?: VerificationStatus;
+}
+
+/** Email / phone verification, as the session reports it. */
+export interface VerificationStatus {
+  email: { destination: string; masked: string; verified: boolean };
+  phone: { destination: string; masked: string; verified: boolean };
+  anyVerified: boolean;
+}
+
+export interface VerificationSendResult {
+  channel: 'email' | 'phone';
+  masked: string;
+  expiresAt: string;
+  resendAfterSeconds: number;
+  /** Development and test only - never returned by a production server. */
+  devCode?: string;
 }
 
 export interface SessionStore {

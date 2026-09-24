@@ -8,6 +8,9 @@ import { body } from '../../middleware/validate';
 import { authService, type SessionMeta } from './auth.service';
 import type { ChangePasswordInput, LoginInput, RegisterInput, SelectLoginInput, SwitchWorkspaceInput } from './auth.validators';
 import { recordAudit } from '../../services/audit/audit.service';
+import { UserModel } from '../../models/User';
+import { verificationService } from '../../services/auth/verification.service';
+import type { ConfirmCodeInput, SendCodeInput } from './verification.validators';
 
 const REFRESH_COOKIE = 'refreshToken';
 
@@ -108,4 +111,21 @@ export const changePassword = asyncHandler(async (req: Request, res: Response) =
   await authService.changePassword(req.auth.id, body<ChangePasswordInput>(req));
   clearRefreshCookie(res);
   ok(res, { message: 'Password updated. Please sign in again.' });
+});
+
+/** Verification status for the signed-in user: what is proven, what is not. */
+export const verificationStatus = asyncHandler(async (req: Request, res: Response) => {
+  const user = await UserModel.findById(req.auth!.id).select('email phone emailVerifiedAt phoneVerifiedAt').lean();
+  if (!user) throw ApiError.unauthorized();
+  ok(res, verificationService.status(user));
+});
+
+export const sendVerificationCode = asyncHandler(async (req: Request, res: Response) => {
+  const { channel } = body<SendCodeInput>(req);
+  ok(res, await verificationService.send(req.auth!.id, channel));
+});
+
+export const confirmVerificationCode = asyncHandler(async (req: Request, res: Response) => {
+  const { channel, code } = body<ConfirmCodeInput>(req);
+  ok(res, await verificationService.confirm(req.auth!.id, channel, code));
 });

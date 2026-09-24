@@ -5,6 +5,7 @@ import { z } from 'zod';
 import { PERMISSIONS } from '../../config/permissions';
 import { authenticate } from '../../middleware/auth';
 import { requirePermission } from '../../middleware/rbac';
+import { requireVerifiedContact } from '../../middleware/verifiedContact';
 import { resolveTenant } from '../../middleware/tenant';
 import { validate } from '../../middleware/validate';
 import { objectId, paginationSchema } from '../common/common.validators';
@@ -46,6 +47,8 @@ router.post(
   '/checkout',
   checkoutLimiter,
   requirePermission(PERMISSIONS.SUBSCRIPTION_MANAGE),
+  // A payment is about to be started with a provider: prove a contact first.
+  requireVerifiedContact,
   validate({ body: checkoutSchema }),
   controller.checkout,
 );
