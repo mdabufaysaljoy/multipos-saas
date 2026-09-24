@@ -97,6 +97,8 @@ export interface PharmacySaleLine {
   quantity: number;
   lineTotalMinor: number;
   allocations: { batchId: string; batchNumber: string; expiryDate: string; quantity: number; costPriceMinor: number }[];
+  /** How much of this line has already come back. */
+  returnedQuantity?: number;
 }
 
 export interface PharmacySale {
@@ -114,6 +116,9 @@ export interface PharmacySale {
   customerNameSnapshot: string;
   note: string;
   status: 'completed' | 'voided';
+  /** Value returned against this sale, and whether nothing is left to return. */
+  returnedTotalMinor?: number;
+  fullyReturned?: boolean;
   soldAt: string;
   cashierNameSnapshot: string;
   voidedAt: string | null;

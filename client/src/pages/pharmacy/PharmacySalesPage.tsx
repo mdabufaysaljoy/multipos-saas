@@ -2,7 +2,7 @@ import * as React from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { format } from 'date-fns';
 import { toast } from 'sonner';
-import { Printer } from 'lucide-react';
+import { Printer, Undo2 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
@@ -15,6 +15,8 @@ import { PageHeader } from '@/components/PageHeader';
 import { PermissionGate } from '@/components/PermissionGate';
 import { SearchInput, useDebounced } from '@/components/SearchInput';
 import { PharmacyReceiptDialog } from '@/features/pharmacy/PharmacyReceiptDialog';
+import { PosReturnDialog } from '@/features/returns/PosReturnDialog';
+import { storeApi } from '@/api/endpoints';
 import { ApiError } from '@/api/client';
 import { pharmacyApi } from '@/api/pharmacy';
 import { formatMoney } from '@/lib/money';
@@ -154,7 +156,9 @@ export function PharmacySalesPage() {
 function SaleDialog({ sale, currency, onClose, onPrint }: { sale: PharmacySale; currency: string; onClose: () => void; onPrint: () => void }) {
   const queryClient = useQueryClient();
   const [voiding, setVoiding] = React.useState(false);
+  const [returning, setReturning] = React.useState(false);
   const [reason, setReason] = React.useState('');
+  const { data: posConfig } = useQuery({ queryKey: ['store', 'pos-config'], queryFn: storeApi.posConfig });
 
   const voidSale = useMutation({
     mutationFn: () => pharmacyApi.voidSale(sale._id, reason.trim()),
@@ -239,6 +243,14 @@ function SaleDialog({ sale, currency, onClose, onPrint }: { sale: PharmacySale; 
             <Printer />
             Receipt
           </Button>
+          {sale.status === 'completed' && !sale.fullyReturned && (
+            <PermissionGate anyOf={['returns.create']}>
+              <Button variant="outline" onClick={() => setReturning(true)}>
+                <Undo2 />
+                Return items
+              </Button>
+            </PermissionGate>
+          )}
           {sale.status === 'completed' && (
             <PermissionGate anyOf={['sales.cancel']}>
               {voiding ? (
@@ -254,6 +266,29 @@ function SaleDialog({ sale, currency, onClose, onPrint }: { sale: PharmacySale; 
           )}
         </DialogFooter>
       </DialogContent>
+
+      {returning && (
+        <PosReturnDialog
+          saleNumber={sale.saleNumber}
+          currency={currency}
+          posConfig={posConfig}
+          lines={sale.items.map((line) => ({
+            _id: line._id,
+            label: `${line.nameSnapshot} ${line.strengthSnapshot}`.trim(),
+            // The batch the units came from goes back to that same batch.
+            detail: line.allocations[0] ? `Batch ${line.allocations[0].batchNumber}` : undefined,
+            quantity: line.quantity,
+            returnedQuantity: line.returnedQuantity,
+            unitPriceMinor: line.unitPriceMinor,
+          }))}
+          onSubmit={(input) => pharmacyApi.createReturn(sale._id, input)}
+          onClose={() => {
+            setReturning(false);
+            onClose();
+          }}
+          invalidate={['pharmacy']}
+        />
+      )}
     </Dialog>
   );
 }

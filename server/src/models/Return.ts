@@ -6,7 +6,16 @@ export interface ReturnItemDoc {
   /** Points at the specific line of the original sale. */
   saleItemId: Types.ObjectId;
   productId: Types.ObjectId;
-  variantId: Types.ObjectId;
+  /**
+   * Clothing returns a variant. The other verticals return the item itself -
+   * a product, a medicine - so this is theirs to leave empty, and `itemId`
+   * below is what every vertical fills in.
+   */
+  variantId?: Types.ObjectId | null;
+  /** The variant, product or medicine that came back, whatever the vertical. */
+  itemId?: Types.ObjectId | null;
+  /** A pharmacy line goes back to the batches it was dispensed from. */
+  allocations?: { batchId: Types.ObjectId; batchNumber: string; quantity: number }[];
   productNameSnapshot: string;
   variantNameSnapshot: string;
   skuSnapshot: string;
@@ -29,6 +38,8 @@ export interface ReturnItemDoc {
 export interface ReturnDoc extends BaseDoc {
   tenantId: Types.ObjectId;
   storeId: Types.ObjectId;
+  /** Which POS this return belongs to. Absent on every Clothing return written before task 08. */
+  vertical?: string;
   returnNumber: string;
   saleId: Types.ObjectId;
   saleNumberSnapshot: string;
@@ -78,7 +89,22 @@ const returnItemSchema = new Schema<ReturnItemDoc>(
   {
     saleItemId: { type: Schema.Types.ObjectId, required: true },
     productId: { type: Schema.Types.ObjectId, ref: 'Product', required: true },
-    variantId: { type: Schema.Types.ObjectId, ref: 'ProductVariant', required: true },
+    // Clothing returns a variant; the other verticals return the item itself.
+    variantId: { type: Schema.Types.ObjectId, ref: 'ProductVariant', default: null },
+    itemId: { type: Schema.Types.ObjectId, default: null },
+    allocations: {
+      type: [
+        new Schema(
+          {
+            batchId: { type: Schema.Types.ObjectId, ref: 'MedicineBatch', required: true },
+            batchNumber: { type: String, default: '' },
+            quantity: { type: Number, required: true, min: 1 },
+          },
+          { _id: false },
+        ),
+      ],
+      default: undefined,
+    },
     productNameSnapshot: { type: String, required: true },
     variantNameSnapshot: { type: String, default: '' },
     skuSnapshot: { type: String, default: '' },
@@ -103,6 +129,9 @@ const returnSchema = new Schema<ReturnDoc>(
   {
     tenantId: { type: Schema.Types.ObjectId, ref: 'Tenant', required: true, index: true },
     storeId: { type: Schema.Types.ObjectId, ref: 'Store', required: true },
+    // Absent on every Clothing return written before this existed, which is why
+    // nothing reads it without defaulting to clothing.
+    vertical: { type: String },
     returnNumber: { type: String, required: true },
     saleId: { type: Schema.Types.ObjectId, ref: 'Sale', required: true, index: true },
     saleNumberSnapshot: { type: String, required: true },

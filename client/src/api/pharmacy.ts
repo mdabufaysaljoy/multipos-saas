@@ -11,6 +11,7 @@ import type {
   StockMovement,
 } from '@/types/pharmacy';
 import type { SaleCustomerFields } from '@/features/customers/CustomerPicker';
+import type { PosReturn, PosReturnInput } from '@/types/domain';
 
 type Query = Record<string, unknown>;
 
@@ -48,6 +49,9 @@ export const pharmacyApi = {
   sale: (id: string) => get<PharmacySale>(`/pharmacy/sales/${id}`),
   receipt: (id: string) => get<PharmacyReceipt>(`/pharmacy/sales/${id}/receipt`),
   voidSale: (id: string, reason: string) => post<PharmacySale>(`/pharmacy/sales/${id}/void`, { reason }),
+  /** A return against a completed sale: the units go back to their own batches. */
+  createReturn: (id: string, body: PosReturnInput) => post<PosReturn>(`/pharmacy/sales/${id}/return`, body),
+  returns: (params?: Query) => getPaginated<PosReturn>('/pharmacy/returns', params),
 
   dashboard: (params?: Query) => get<PharmacyDashboard>('/pharmacy/dashboard', params),
   /** Advanced Analytics; the server refuses it on plans without the feature. */

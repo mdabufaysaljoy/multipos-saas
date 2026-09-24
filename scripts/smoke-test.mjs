@@ -8262,6 +8262,87 @@ async function main() {
   check('A till cannot define one', (await pmCreate(ssTill.session.token, { label: 'Sneaky Tender' })).status === 403);
   check('Defining a tender needs a session', (await pmCreate(undefined, { label: 'Anonymous' })).status === 401);
 
+
+  // --- Returns beyond Clothing -------------------------------------------------
+  // Super Shop and Pharmacy could only void a whole sale. They take a real
+  // return now: chosen lines, chosen quantities, money back on a tender the
+  // branch takes, goods back where that vertical keeps them.
+  section('Returns (Super Shop and Pharmacy)');
+
+  // --- Super Shop: a discounted sale, partly returned ---------------------------
+  const retStamp = String(Date.now()).slice(-6);
+  const retSoap = await ssProduct({ name: `Return Soap ${retStamp}`, priceMinor: 10_000, reorderLevel: 2 });
+  await ssApi(`/products/${retSoap.data._id}/stock`, { method: 'POST', body: { quantity: 10, costPriceMinor: 6000 } });
+  // 3 x 100.00 = 300.00, less a 30.00 discount = 270.00 paid.
+  const retSale = await ssSale({ items: [{ productId: retSoap.data._id, quantity: 3 }], payments: [{ method: 'cash', amountMinor: 27_000 }], discountMinor: 3000 });
+  check('Super Shop: a discounted sale is recorded', retSale.status === 201 && retSale.data?.totalMinor === 27_000, retSale.data ?? retSale.error);
+
+  const retLineId = retSale.data.items[0]._id;
+  const ssReturn2 = (saleId, body) => ssApi(`/sales/${saleId}/return`, { method: 'POST', body });
+  const ssReturn = (body) => ssReturn2(retSale.data._id, body);
+
+  const retTooMany = await ssReturn({ items: [{ saleItemId: retLineId, quantity: 4 }], reason: 'Too many' });
+  check('Super Shop: more than was sold cannot come back', retTooMany.status === 400, retTooMany.error?.message);
+  check('Super Shop: an unknown line is refused', (await ssReturn({ items: [{ saleItemId: '64b000000000000000000000', quantity: 1 }], reason: 'Not mine' })).status === 400);
+  check('Super Shop: a return needs a reason', (await ssReturn({ items: [{ saleItemId: retLineId, quantity: 1 }], reason: 'x' })).status === 422);
+  check('Super Shop: a refund method the branch does not take is refused', (await ssReturn({ items: [{ saleItemId: retLineId, quantity: 1 }], reason: 'Wrong tender', refundMethod: 'moon-credits' })).status === 400);
+
+  const ssOnHandBefore = (await ssApi(`/products/${retSoap.data._id}`)).data?.product?.stock?.quantityOnHand;
+  const retOne = await ssReturn({ items: [{ saleItemId: retLineId, quantity: 1 }], reason: 'Customer changed their mind' });
+  check('Super Shop: one of three comes back', retOne.status === 201, retOne.error);
+  check(
+    'Super Shop: the refund is what was paid for it, not the list price',
+    retOne.data?.totalMinor === 9000,
+    { refunded: retOne.data?.totalMinor, note: 'a 10% sale discount means 90.00 back on a 100.00 item' },
+  );
+  check('Super Shop: the goods go back on the shelf', (await ssApi(`/products/${retSoap.data._id}`)).data?.product?.stock?.quantityOnHand === ssOnHandBefore + 1);
+  check('Super Shop: the movement is in the ledger as a return', ((await api(`/supershop/stock-ledger?itemId=${retSoap.data._id}&limit=3`, { token: ssToken })).data ?? []).some((row) => row.quantityChange === 1));
+  const retSaleAfter = await ssApi(`/sales/${retSale.data._id}`);
+  check('Super Shop: the sale tracks what has come back', retSaleAfter.data?.items?.[0]?.returnedQuantity === 1 && retSaleAfter.data?.returnedTotalMinor === 9000 && retSaleAfter.data?.fullyReturned === false, {
+    line: retSaleAfter.data?.items?.[0]?.returnedQuantity,
+    total: retSaleAfter.data?.returnedTotalMinor,
+  });
+
+  const retRest = await ssReturn({ items: [{ saleItemId: retLineId, quantity: 2, restock: false }], reason: 'Faulty batch' });
+  check('Super Shop: the rest can come back later', retRest.status === 201, retRest.error);
+  check('Super Shop: the sale is now fully returned', (await ssApi(`/sales/${retSale.data._id}`)).data?.fullyReturned === true);
+  check('Super Shop: nothing more can come back', (await ssReturn({ items: [{ saleItemId: retLineId, quantity: 1 }], reason: 'Again' })).status === 400);
+  check('Super Shop: the returns are listed', ((await ssApi('/returns')).data ?? []).length >= 2 && ((await ssApi('/returns')).data ?? [])[0]?.returnNumber);
+
+  // Goods that should not go back on the shelf.
+  const retNoRestock = await ssProduct({ name: `Broken Jar ${retStamp}`, priceMinor: 5000 });
+  await ssApi(`/products/${retNoRestock.data._id}/stock`, { method: 'POST', body: { quantity: 4, costPriceMinor: 2000 } });
+  const retBrokenSale = await ssSale({ items: [{ productId: retNoRestock.data._id, quantity: 2 }], payments: [{ method: 'cash', amountMinor: 10_000 }] });
+  const retBrokenBefore = (await ssApi(`/products/${retNoRestock.data._id}`)).data?.product?.stock?.quantityOnHand;
+  const retBroken = await ssReturn2(retBrokenSale.data._id, { items: [{ saleItemId: retBrokenSale.data.items[0]._id, quantity: 1, restock: false }], reason: 'Arrived broken' });
+  check('Super Shop: damaged goods are refunded without going back on the shelf', retBroken.status === 201 && (await ssApi(`/products/${retNoRestock.data._id}`)).data?.product?.stock?.quantityOnHand === retBrokenBefore, {
+    status: retBroken.status,
+    before: retBrokenBefore,
+  });
+
+  // --- Pharmacy: back to the batch it came from ---------------------------------
+  const retMed = await phMedicine({ name: `Retmed ${retStamp}`, strength: '20 mg', dosageForm: 'tablet', sellingPriceMinor: 900 });
+  await phReceive(retMed.data._id, { batchNumber: `RET-${retStamp}`, expiryDate: phDay(300), quantity: 20, costPriceMinor: 500 });
+  const retPhSale = await phApi('/sales', { method: 'POST', body: { items: [{ medicineId: retMed.data._id, quantity: 5 }], payments: [{ method: 'cash', amountMinor: 4500 }] } });
+  check('Pharmacy: a sale is dispensed from the batch', retPhSale.status === 201 && retPhSale.data?.items?.[0]?.allocations?.[0]?.batchNumber === `RET-${retStamp}`, retPhSale.error);
+
+  const phBatchBefore = ((await phApi(`/medicines/${retMed.data._id}`)).data?.batches ?? []).find((b) => b.batchNumber === `RET-${retStamp}`)?.quantityOnHand;
+  const phReturn = await phApi(`/sales/${retPhSale.data._id}/return`, {
+    method: 'POST',
+    body: { items: [{ saleItemId: retPhSale.data.items[0]._id, quantity: 2 }], reason: 'Wrong strength dispensed' },
+  });
+  check('Pharmacy: two of five come back', phReturn.status === 201 && phReturn.data?.totalMinor === 1800, phReturn.data ?? phReturn.error);
+  const phBatchAfter = ((await phApi(`/medicines/${retMed.data._id}`)).data?.batches ?? []).find((b) => b.batchNumber === `RET-${retStamp}`)?.quantityOnHand;
+  check('Pharmacy: the units go back to the batch they came from', phBatchAfter === phBatchBefore + 2, { before: phBatchBefore, after: phBatchAfter });
+  check('Pharmacy: the return names that batch', phReturn.data?.items?.[0]?.allocations?.[0]?.batchNumber === `RET-${retStamp}`, phReturn.data?.items?.[0]);
+  check('Pharmacy: the ledger shows the units coming back', ((await api(`/pharmacy/stock-ledger?itemId=${retMed.data._id}&limit=5`, { token: phToken })).data ?? []).some((row) => row.quantityChange === 2));
+  check('Pharmacy: the sale tracks what has come back', (await phApi(`/sales/${retPhSale.data._id}`)).data?.items?.[0]?.returnedQuantity === 2);
+
+  // Rules that hold in both verticals.
+  check('A return cannot be made against another workspace’s sale', (await phApi(`/sales/${retSale.data._id}/return`, { method: 'POST', body: { items: [{ saleItemId: retLineId, quantity: 1 }], reason: 'Not mine at all' } })).status === 404);
+  check('A voided sale cannot be returned against', (await ssReturn2(basket.data._id, { items: [{ saleItemId: basket.data.items[0]._id, quantity: 1 }], reason: 'Already voided' })).status === 404);
+  check('Returning needs the returns.create permission', (await api(`/supershop/sales/${retBrokenSale.data._id}/return`, { method: 'POST', token: ssTill.session.token, body: { items: [{ saleItemId: retBrokenSale.data.items[0]._id, quantity: 1 }], reason: 'No permission' } })).status === 403);
+
   // ------------------------------------------------ cash received, change and receipt
   section('Clothing POS: cash received, change and receipt');
   const ctnStamp = Date.now();

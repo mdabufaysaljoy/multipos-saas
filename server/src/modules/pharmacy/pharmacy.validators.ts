@@ -143,6 +143,30 @@ export const createSaleSchema = z
   })
   .strict();
 
+/**
+ * A return: which lines came back, how many of each, and whether the goods went
+ * back on the shelf. Prices are never sent - the server refunds what was paid.
+ */
+export const createReturnSchema = z
+  .object({
+    items: z
+      .array(
+        z
+          .object({
+            saleItemId: objectId,
+            quantity: z.number().int().min(1).max(1_000_000),
+            /** False leaves the goods out of stock: damaged, opened, expired. */
+            restock: z.boolean().default(true),
+          })
+          .strict(),
+      )
+      .min(1, 'Choose at least one line to return')
+      .max(100),
+    reason: z.string().trim().min(3, 'Give a reason for the return').max(300),
+    refundMethod: paymentMethodKey.default('cash'),
+  })
+  .strict();
+
 export const voidSaleSchema = z.object({ reason: z.string().trim().min(3, 'Give a reason').max(200) }).strict();
 
 export const listSalesSchema = searchSchema.extend({
@@ -161,3 +185,4 @@ export type AdjustBatchInput = z.infer<typeof adjustBatchSchema>;
 export type ListMovementsInput = z.infer<typeof listMovementsSchema>;
 export type CreateSaleInput = z.infer<typeof createSaleSchema>;
 export type ListSalesInput = z.infer<typeof listSalesSchema>;
+export type CreateReturnInput = z.infer<typeof createReturnSchema>;

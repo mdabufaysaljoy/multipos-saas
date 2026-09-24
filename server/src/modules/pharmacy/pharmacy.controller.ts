@@ -4,6 +4,9 @@ import { asyncHandler } from '../../utils/asyncHandler';
 import { buildPageMeta, created, ok, paginated } from '../../utils/apiResponse';
 import { body, params, query } from '../../middleware/validate';
 import { getContext } from '../../middleware/tenant';
+import { posReturnService } from '../../services/returns/posReturns.service';
+import { listPosReturns } from '../../services/returns/posReturns.list';
+import { pharmacySaleReturnAdapter } from '../../services/returns/adapters/pharmacy.saleAdapter';
 import { recordAudit } from '../../services/audit/audit.service';
 import { pharmacyService } from './pharmacy.service';
 import { pharmacyReportsService } from './pharmacyReports.service';
@@ -18,6 +21,7 @@ import type {
   ListSalesInput,
   ReceiveBatchInput,
   UpdateMedicineInput,
+  CreateReturnInput,
 } from './pharmacy.validators';
 
 type IdParams = { id: Types.ObjectId };
@@ -116,6 +120,31 @@ export const voidSale = asyncHandler(async (req: Request, res: Response) => {
     newValue: { status: 'voided', reason },
   });
   ok(res, sale);
+});
+
+/**
+ * A return against a completed sale: the money goes back on a tender the branch
+ * takes, and the goods go back where this vertical keeps them.
+ */
+export const createReturn = asyncHandler(async (req: Request, res: Response) => {
+  const ctx = getContext(req);
+  const { id } = params<{ id: Types.ObjectId }>(req);
+  const input = body<CreateReturnInput>(req);
+  const result = await posReturnService.create(ctx, pharmacySaleReturnAdapter, { saleId: id, ...input });
+  await recordAudit(req, {
+    action: 'pharmacy.sale_returned',
+    targetTenantId: ctx.tenantId,
+    targetStoreId: ctx.storeId,
+    targetLabel: result.returnNumber,
+    newValue: { saleNumber: result.saleNumberSnapshot, totalMinor: result.totalMinor, reason: result.reason },
+  });
+  created(res, result);
+});
+
+export const listReturns = asyncHandler(async (req: Request, res: Response) => {
+  const ctx = getContext(req);
+  const result = await listPosReturns(ctx, 'pharmacy', query<{ page?: number; limit?: number; search?: string }>(req));
+  paginated(res, result.items, buildPageMeta(result.page, result.limit, result.total));
 });
 
 export const dashboard = asyncHandler(async (req: Request, res: Response) => {

@@ -26,6 +26,8 @@ export interface ShopSaleLine {
   costMinor: number;
   /** True when this line was sold with stock the branch did not have. */
   outOfStockOverride?: boolean;
+  /** How much of this line has come back. Absent on sales taken before returns existed. */
+  returnedQuantity?: number;
 }
 
 /**
@@ -50,6 +52,9 @@ export interface ShopSaleDoc extends BaseDoc {
   customerNameSnapshot: string;
   note: string;
   status: ShopSaleStatus;
+  /** Value returned against this sale so far, and whether nothing is left. */
+  returnedTotalMinor?: number;
+  fullyReturned?: boolean;
   soldAt: Date;
   cashierId: Types.ObjectId;
   cashierNameSnapshot: string;
@@ -75,6 +80,7 @@ const lineSchema = new Schema<ShopSaleLine>({
   vatMinor: minor,
   costMinor: minor,
   outOfStockOverride: { type: Boolean },
+  returnedQuantity: { type: Number, default: 0, min: 0 },
 });
 
 const shopSaleSchema = new Schema<ShopSaleDoc>(
@@ -109,6 +115,8 @@ const shopSaleSchema = new Schema<ShopSaleDoc>(
     customerNameSnapshot: { type: String, default: '' },
     note: { type: String, trim: true, maxlength: 300, default: '' },
     status: { type: String, enum: [...SHOP_SALE_STATUSES], default: 'completed' },
+    returnedTotalMinor: { type: Number, default: 0, min: 0 },
+    fullyReturned: { type: Boolean, default: false },
     soldAt: { type: Date, required: true },
     cashierId: { type: Schema.Types.ObjectId, ref: 'User', required: true },
     cashierNameSnapshot: { type: String, required: true },

@@ -70,6 +70,8 @@ export interface ShopSaleLine {
   lineTotalMinor: number;
   vatRateBps: number;
   vatMinor: number;
+  /** How much of this line has already come back. */
+  returnedQuantity?: number;
 }
 
 export interface ShopSale {
@@ -85,6 +87,9 @@ export interface ShopSale {
   payments: { method: string; amountMinor: number }[];
   customerNameSnapshot: string;
   status: 'completed' | 'voided';
+  /** Value returned against this sale, and whether nothing is left to return. */
+  returnedTotalMinor?: number;
+  fullyReturned?: boolean;
   soldAt: string;
   cashierNameSnapshot: string;
   voidedAt: string | null;

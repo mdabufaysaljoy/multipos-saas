@@ -28,6 +28,8 @@ export interface PharmacySaleLine {
   allocations: BatchAllocation[];
   /** True when this line dispensed stock the branch did not have on record. */
   outOfStockOverride?: boolean;
+  /** How much of this line has come back. Absent on sales taken before returns existed. */
+  returnedQuantity?: number;
 }
 
 export interface PrescriptionRecord {
@@ -61,6 +63,9 @@ export interface PharmacySaleDoc extends BaseDoc {
   customerNameSnapshot: string;
   note: string;
   status: PharmacySaleStatus;
+  /** Value returned against this sale so far, and whether nothing is left. */
+  returnedTotalMinor?: number;
+  fullyReturned?: boolean;
   soldAt: Date;
   cashierId: Types.ObjectId;
   cashierNameSnapshot: string;
@@ -95,6 +100,7 @@ const lineSchema = new Schema<PharmacySaleLine>({
   lineTotalMinor: minor,
   allocations: { type: [allocationSchema], default: [] },
   outOfStockOverride: { type: Boolean },
+  returnedQuantity: { type: Number, default: 0, min: 0 },
 });
 
 const prescriptionSchema = new Schema<PrescriptionRecord>(
@@ -139,6 +145,8 @@ const pharmacySaleSchema = new Schema<PharmacySaleDoc>(
     customerNameSnapshot: { type: String, default: '' },
     note: { type: String, trim: true, maxlength: 300, default: '' },
     status: { type: String, enum: [...PHARMACY_SALE_STATUSES], default: 'completed' },
+    returnedTotalMinor: { type: Number, default: 0, min: 0 },
+    fullyReturned: { type: Boolean, default: false },
     soldAt: { type: Date, required: true },
     cashierId: { type: Schema.Types.ObjectId, ref: 'User', required: true },
     cashierNameSnapshot: { type: String, required: true },

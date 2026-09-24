@@ -1034,3 +1034,33 @@ export interface WalletBreakdown {
   grossDebitsMinor: number;
   services: { service: string; label: string; amountMinor: number }[];
 }
+
+/** What a till sends to return goods, in any vertical. */
+export interface PosReturnInput {
+  items: { saleItemId: string; quantity: number; restock: boolean }[];
+  reason: string;
+  refundMethod: string;
+}
+
+/** A recorded return, as any vertical reports it. */
+export interface PosReturn {
+  _id: string;
+  returnNumber: string;
+  saleNumberSnapshot: string;
+  totalMinor: number;
+  reason: string;
+  refundMethod: string;
+  refundMethodLabel?: string;
+  processedByNameSnapshot: string;
+  returnedAt: string;
+  items: {
+    _id: string;
+    productNameSnapshot: string;
+    variantNameSnapshot: string;
+    quantity: number;
+    unitPriceMinor: number;
+    lineTotalMinor: number;
+    restock: boolean;
+    allocations?: { batchNumber: string; quantity: number }[];
+  }[];
+}

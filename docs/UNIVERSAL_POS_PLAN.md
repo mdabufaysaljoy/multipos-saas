@@ -54,7 +54,7 @@ Legend: **mature** = reference implementation · **partial** = works but narrowe
 | 3 | Custom payment methods | **done** (task 03) | **done** | **done** | **done** | `PaymentMethod` collection (custom only), `listTenders`, `stampTenderLabels`; built-ins stay implicit | none | ✅ complete | — |
 | 4 | Customer selection | **mature** (`CustomerPicker`) | **done** (task 05) | **done** (task 05) | **done** (task 05) | `/api/customers`, the shared `CustomerPicker` and one `resolveForPosSale` | Restaurant selects per *order*, not per payment; Pharmacy keeps buyer and patient apart | ✅ complete | — |
 | 4b | Loyalty (card, points, scan) | **mature** (membership, EAN-13 card, ledger, earn/redeem, returns/exchange reversal) | missing | missing | missing | `loyaltyService` is model-agnostic except for its sale hooks | earn base differs (order total vs sale subtotal); Pharmacy may exclude prescription items | Generalise the four sale hooks; widen the entitlement's `verticals` | **Medium** |
-| 5 | Return / exchange / refund / cancel | **mature** | cancel only | void only | void only | nothing shared | Restaurant has no stock to return; Pharmacy must return to the *batch* it came from; Super Shop returns to `ShopStock` | New shared return engine with per-vertical inventory adapters | **High** |
+| 5 | Return / exchange / refund / cancel | **mature** | cancel only (**task 08 part 2**) | **done** (task 08) | **done** (task 08) | `services/returns/` engine + sale adapters, on top of the inventory adapter | Restaurant has no stock to return; Pharmacy returns to the *batch* it came from; Clothing keeps its exchange/loyalty engine | Restaurant refund + folding Clothing in | **High** |
 | 6 | Bulk product import | **mature** (registry, preview, row errors, streamed) | missing | missing | missing | `import.parse.ts` (xlsx/csv, header detection) is already generic | mandatory columns differ per model: Clothing needs Product+Variant+Price; Super Shop barcode+price+qty; Pharmacy name+price(+batch); Restaurant name+price | Extract a column registry per vertical behind one engine | **Medium** |
 | 7 | Category management + POS filter | **mature** (`Category` model, page, POS filter) | string field + client-side chip filter | string field, no filter | string field, no filter | none | a real category entity is only worth it where products are managed in bulk | Either promote the string to `Category` per vertical, or keep strings and add a shared filter API | **Medium** |
 | 8 | Authorized out-of-stock sale | **mature** (`sales.sellOutOfStock`, ledger flag, negative stock allowed) | n/a (no stock) | **missing** (batch quantity is hard-blocked) | **missing** (`ShopStock.quantityOnHand` has `min: 0`) | the permission exists platform-wide | Pharmacy must never sell *expired* stock, override or not; negative batch quantity is meaningless | Per-vertical override path + ledger flag | **High** |
@@ -193,7 +193,7 @@ Each is independently executable, independently testable, and leaves the tree gr
 | **05** POS customer selection ✅ **done** | Shared `CustomerPicker` + `saleCustomerFields` + `posCustomerSchema` + `customerService.resolveForPosSale`; all four verticals take an id or create at the till, and move lifetime value | — | S | Low |
 | **06** Inventory adapter + ledger read API ✅ **done** | `services/inventory/adapter.ts` + four adapters, used by all four sale paths; `release` (no row) vs `restore` (row) settled; one `GET /stock-ledger` in every vertical, storage untouched | — | M | Medium |
 | **07** Out-of-stock override ✅ **done** | `allowOutOfStock` honoured by Super Shop (stock row below zero) and Pharmacy (latest unexpired batch below zero; never expired, never without a batch); narrow rule - covers "none", not "not enough"; ledger + sale-line flags | 06 | M | High |
-| **08** Universal return/exchange/refund | Shared engine + adapters; Restaurant cancel and Pharmacy/Super Shop void become refund-capable returns | 03, 06 | **L** | High |
+| **08** Universal return/exchange/refund ◐ **part 1 done** | `services/returns/` engine + Super Shop and Pharmacy sale adapters, partial returns, discount-aware refunds, restock switch, shared till dialog. Left: Restaurant money-only refunds, and folding Clothing's exchange/loyalty engine in | 03, 06 | **L** | High |
 | **09** Universal loyalty | Generalise the sale hooks; widen the entitlement's verticals; card scan selects the customer in every POS | 05 | M | Medium |
 | **10** Category management | Decide per vertical: promote to `Category` (Super Shop, Pharmacy) or keep strings (Restaurant); shared POS filter API | — | M | Medium |
 | **11** Universal import | Column registry per vertical behind the existing engine | 10 | M | Medium |
@@ -267,6 +267,7 @@ must pass unchanged, and the Clothing sections must not be edited to accommodate
 - `docs/POS_CUSTOMERS.md` — the customer on a sale, delivered by task 05.
 - `docs/POS_TENDER_RULES.md` — how a POS sale is paid for (§1-2 task 02, §3 task 04).
 - `docs/INVENTORY_ADAPTER.md` — the stock seam and the shared ledger read, delivered by task 06.
+- `docs/RETURNS.md` — taking goods back, delivered by task 08 (part 1).
 
 Feature docs (`PRINTING_ARCHITECTURE.md`, `PRODUCT_IMPORT.md`, `DATA_EXPORT.md`,
 `SUPPLIER_MANAGEMENT.md`, `CONTACT_VERIFICATION.md`, `ENTITLEMENTS.md`) remain accurate for Clothing
@@ -276,14 +277,16 @@ and are the reference material for the tasks above.
 
 ## 10. Recommended next task
 
-**Task 08 — Universal return / exchange / refund.**
+**Task 08 part 2 — Restaurant refunds**, or one of the lighter tasks.
 
-Its two dependencies are done: task 06 gave it `restore` on the inventory adapter, and task 03 gave
-it a tender to pay a refund back on. It is the biggest item left - a shared engine plus per-vertical
-adapters, turning Restaurant's cancel and Pharmacy's and Super Shop's voids into refund-capable
-returns - and the one that most needs its own session.
+Part 1 gave Super Shop and Pharmacy real returns on a shared engine. What is left of task 08 is
+smaller than what is done: a restaurant has no stock, so its return is money-only against a paid
+order - the engine needs nothing new, but `RestaurantOrder` has no per-line returned quantity yet and
+the till has no screen for it. Folding Clothing's own engine (exchanges, loyalty, idempotency) into
+the shared one is a separate decision, and worth leaving until the simpler engine has been used in
+anger.
 
-Lighter alternatives, neither of which blocks anything: task 09 (universal loyalty, medium), task 10
-(category management) or task 13 (analytics parity).
+Still untouched and blocking nothing: task 09 (universal loyalty), task 10 (categories), task 11
+(universal import), task 13 (analytics parity), task 14 (PDF/print of reports).
 
 Waiting for an explicit instruction before starting any of them.

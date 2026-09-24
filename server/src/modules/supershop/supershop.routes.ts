@@ -20,6 +20,7 @@ import {
   listSalesSchema,
   receiveStockSchema,
   updateProductSchema,
+  createReturnSchema,
   voidSaleSchema,
 } from './supershop.validators';
 import { posLedgerQuerySchema } from '../../services/inventory/posLedger';
@@ -60,6 +61,16 @@ router.get('/sales', requirePermission(PERMISSIONS.SALES_VIEW), validate({ query
 router.get('/sales/:id', requirePermission(PERMISSIONS.SALES_VIEW), validate({ params: idParam }), controller.getSale);
 router.get('/sales/:id/receipt', requirePermission(PERMISSIONS.SALES_VIEW), validate({ params: idParam }), controller.receipt);
 router.post('/sales/:id/void', requireActiveSubscription, requirePermission(PERMISSIONS.SALES_CANCEL), validate({ params: idParam, body: voidSaleSchema }), controller.voidSale);
+// A return against a completed sale: partial or whole, refunded on a tender
+// the branch takes, with the goods restocked unless the till says otherwise.
+router.post(
+  '/sales/:id/return',
+  requireActiveSubscription,
+  requirePermission(PERMISSIONS.RETURNS_CREATE),
+  validate({ params: idParam, body: createReturnSchema }),
+  controller.createReturn,
+);
+router.get('/returns', requirePermission(PERMISSIONS.RETURNS_VIEW), validate({ query: listSalesSchema }), controller.listReturns);
 
 router.get('/dashboard', requirePermission(PERMISSIONS.REPORTS_VIEW), validate({ query: dashboardRangeSchema }), controller.dashboard);
 

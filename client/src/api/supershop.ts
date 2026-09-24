@@ -10,6 +10,7 @@ import type {
   ShopSale,
 } from '@/types/supershop';
 import type { SaleCustomerFields } from '@/features/customers/CustomerPicker';
+import type { PosReturn, PosReturnInput } from '@/types/domain';
 
 type Query = Record<string, unknown>;
 
@@ -44,6 +45,9 @@ export const supershopApi = {
   sales: (params?: Query) => getPaginated<ShopSale>('/supershop/sales', params),
   receipt: (id: string) => get<ShopReceipt>(`/supershop/sales/${id}/receipt`),
   voidSale: (id: string, reason: string) => post<ShopSale>(`/supershop/sales/${id}/void`, { reason }),
+  /** A return against a completed sale: chosen lines, money back on a tender. */
+  createReturn: (id: string, body: PosReturnInput) => post<PosReturn>(`/supershop/sales/${id}/return`, body),
+  returns: (params?: Query) => getPaginated<PosReturn>('/supershop/returns', params),
 
   dashboard: (params?: Query) => get<ShopDashboard>('/supershop/dashboard', params),
   /** Advanced Analytics; the server refuses it on plans without the feature. */
