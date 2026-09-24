@@ -27,6 +27,7 @@ import { ApiError } from '@/api/client';
 import { authApi, storeApi } from '@/api/endpoints';
 import { useAuth } from '@/hooks/useAuth';
 import { DEFAULT_LABEL_SETTINGS, type ReceiptPayload, type StoreSettings } from '@/types/domain';
+import { SUPPORTED_WIDTHS } from '@/features/receipt/ThermalReceipt';
 
 export function SettingsPage() {
   const queryClient = useQueryClient();
@@ -348,14 +349,14 @@ export function SettingsPage() {
                 <div className="space-y-1.5">
                   <Label>Paper width</Label>
                   <div className="flex flex-wrap gap-2">
-                    {[48, 58, 78, 80].map((width) => (
+                    {SUPPORTED_WIDTHS.map((width) => (
                       <Button
                         key={width}
                         type="button"
                         size="sm"
                         disabled={readOnly}
                         variant={draft.receipt.paperWidthMm === width ? 'default' : 'outline'}
-                        onClick={() => patch({ receipt: { ...draft.receipt, paperWidthMm: width as 48 | 58 | 78 | 80 } })}
+                        onClick={() => patch({ receipt: { ...draft.receipt, paperWidthMm: width } })}
                       >
                         {width}mm
                       </Button>

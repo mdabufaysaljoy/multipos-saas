@@ -7,6 +7,7 @@ import { MedicineBatchModel, type MedicineBatchDoc } from '../../models/Medicine
 import { PharmacySaleModel, type BatchAllocation } from '../../models/PharmacySale';
 import { PharmacyStockMovementModel, type StockMovementType } from '../../models/PharmacyStockMovement';
 import { StoreModel } from '../../models/Store';
+import { loadReceiptStore } from '../../services/receipt/receiptStore';
 import { ApiError } from '../../utils/ApiError';
 import { formatDocumentNumber, nextSequence } from '../../utils/counters';
 import { resolvePage, searchRegex } from '../../utils/pagination';
@@ -446,10 +447,7 @@ class PharmacyService {
 
   async receipt(ctx: TenantContext, id: Types.ObjectId) {
     const sale = await this.getSale(ctx, id);
-    const store = await StoreModel.findOne({ _id: ctx.storeId, tenantId: ctx.tenantId })
-      .select('name phone email address currency receipt')
-      .lean();
-    if (!store) throw ApiError.notFound('Branch not found');
+    const store = await loadReceiptStore(ctx.tenantId, ctx.storeId, sale.storeId);
     return { sale, store };
   }
 

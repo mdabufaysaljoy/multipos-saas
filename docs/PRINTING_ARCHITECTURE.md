@@ -95,7 +95,7 @@ A second mode, **Windows driver (image)**, sends a PNG through the printer drive
 size set per job: width = printable width, height = content height. This is for printers that
 are not ESC/POS (for example TSPL label printers). Neither mode uses browser paper sizes.
 
-### Width (48 mm)
+### Width
 
 These are separate values:
 
@@ -192,10 +192,45 @@ and never in the database. There is no device-management module to attach them t
 
 | Untouched | Why |
 |---|---|
-| `ThermalReceipt.tsx` layout, `printReceipt()` export | Shared with Restaurant, which keeps browser printing. |
-| Restaurant / Pharmacy / Super Shop print code | Out of scope (Clothing only). |
 | Sale, return, loyalty services | Printing is output only. |
 | Browser print CSS | Kept as the explicit fallback and for `browser` mode. |
+
+---
+
+## 2b. Universal: the same printing in all four POS verticals
+
+Direct printing started in Clothing. It is now the printing path for **Clothing,
+Restaurant, Pharmacy and Super Shop**, through three shared pieces rather than four
+copies of the same logic:
+
+| Shared piece | What it is |
+|---|---|
+| `features/receipt/ReceiptPaper.tsx` | The paper: the single `#receipt-print-area` node, the `receipt-paper` styles and the `@page` size, at the branch's configured width. The browser print CSS isolates this node and QZ Tray rasterises this node, so screen and paper cannot drift apart. |
+| `features/receipt/useReceiptPrint.ts` | The behaviour: direct when the device is set up for it, browser otherwise, one automatic print per document, retry, and reset when the dialog closes. |
+| `features/receipt/ReceiptPrintBar.tsx` | What the till is told: printing / printed / failed with the reason, Retry, and an explicit "Print using browser". |
+
+Each vertical supplies only its own **content** — Clothing's variants and loyalty
+lines, Super Shop's weighed goods and VAT, Pharmacy's batch, expiry and
+prescription block, Restaurant's bill, kitchen ticket and shift report.
+
+**After a sale, the receipt prints itself.** No browser dialog, no printer picker,
+no second click:
+
+```
+sale created (authoritative)  →  receipt dialog opens  →  QZ Tray  →  printer
+```
+
+Reprints from a sales list deliberately do **not** auto-print, and Restaurant's
+"print bill" button does not either - only the receipt that follows a payment does.
+
+**Printing can never duplicate a sale.** Every print path reads an existing
+document through a `GET` and renders it; no print action calls a sale, order or
+return API. A failed print leaves the sale alone and offers Retry - which is why
+automatic printing is safe to switch on.
+
+| Server change | Why |
+|---|---|
+| `services/receipt/receiptStore.ts` | One projection of the branch a receipt is printed with (header, logo, footer, return policy, currency, tax and the paper width), used by all four verticals. Super Shop and Pharmacy previously returned a narrower store object with no receipt settings, so there was nothing to size the paper by. |
 
 ---
 
@@ -218,8 +253,9 @@ and never in the database. There is no device-management module to attach them t
 
 ### Receipt paper
 
-Set **Settings → Receipt → Paper width = 48 mm** so the layout is designed for the printable width.
-A wider layout is scaled down to fit.
+Set **Settings → Receipt → Paper width** to the roll the printer takes: **48, 57, 58, 78, 80 or 88 mm**.
+(57 and 58 are the same roll sold under two names; 88 is the wide 3-inch roll.) The layout is
+parameterised by that width, and a wider layout is scaled down to fit.
 
 ---
 

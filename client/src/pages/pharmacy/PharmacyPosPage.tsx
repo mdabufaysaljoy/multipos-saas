@@ -281,7 +281,9 @@ export function PharmacyPosPage() {
         </div>
       </Card>
 
-      <PharmacyReceiptDialog saleId={receiptFor} onClose={() => setReceiptFor(null)} />
+      {/* Opened only by a completed sale, so it prints itself - no dialog, no
+          printer picker. The sale is already saved; printing cannot undo it. */}
+      <PharmacyReceiptDialog saleId={receiptFor} onClose={() => setReceiptFor(null)} onNewSale={() => setReceiptFor(null)} autoPrint />
     </div>
   );
 }

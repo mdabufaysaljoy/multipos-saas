@@ -7,6 +7,7 @@ import { ShopSaleModel } from '../../models/ShopSale';
 import { ShopStockModel, type ShopStockDoc } from '../../models/ShopStock';
 import { ShopStockMovementModel, type ShopMovementType } from '../../models/ShopStockMovement';
 import { StoreModel } from '../../models/Store';
+import { loadReceiptStore } from '../../services/receipt/receiptStore';
 import { ApiError } from '../../utils/ApiError';
 import { formatDocumentNumber, nextSequence } from '../../utils/counters';
 import { resolvePage, searchRegex } from '../../utils/pagination';
@@ -416,8 +417,9 @@ class SupershopService {
 
   async receipt(ctx: TenantContext, id: Types.ObjectId) {
     const sale = await this.getSale(ctx, id);
-    const store = await StoreModel.findOne({ _id: ctx.storeId, tenantId: ctx.tenantId }).select('name phone email address currency').lean();
-    if (!store) throw ApiError.notFound('Branch not found');
+    // The shared receipt branch: header, logo, footer and the configured paper
+    // width, so this receipt prints like every other vertical's.
+    const store = await loadReceiptStore(ctx.tenantId, ctx.storeId, sale.storeId);
     return { sale, store };
   }
 

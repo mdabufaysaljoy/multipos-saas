@@ -454,7 +454,7 @@ export interface StoreSettings {
     returnPolicy: string;
     showLogo: boolean;
     showCashier: boolean;
-    paperWidthMm: 48 | 58 | 78 | 80;
+    paperWidthMm: number;
   };
   tax: { enabled: boolean; label: string; rateBasisPoints: number; inclusive: boolean };
   loyalty?: LoyaltySettings;

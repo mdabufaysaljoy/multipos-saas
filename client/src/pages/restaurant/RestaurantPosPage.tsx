@@ -60,6 +60,8 @@ export function RestaurantPosPage() {
   const [cancelling, setCancelling] = React.useState(false);
   const [ticketToPrint, setTicketToPrint] = React.useState<{ orderId: string; ticketId: string } | null>(null);
   const [receiptFor, setReceiptFor] = React.useState<string | null>(null);
+  // A bill is asked for; a receipt follows a payment and prints itself.
+  const [autoPrintReceipt, setAutoPrintReceipt] = React.useState(false);
 
   const { data: tables } = useQuery({ queryKey: ['restaurant', 'tables'], queryFn: restaurantApi.tables });
   const { data: currentShift, isSuccess: shiftChecked } = useQuery({
@@ -386,7 +388,15 @@ export function RestaurantPosPage() {
                   ) : (
                     <span />
                   )}
-                  <Button variant="outline" size="lg" onClick={() => setReceiptFor(activeOrder._id)} aria-label="Print bill">
+                  <Button
+                    variant="outline"
+                    size="lg"
+                    onClick={() => {
+                      setAutoPrintReceipt(false);
+                      setReceiptFor(activeOrder._id);
+                    }}
+                    aria-label="Print bill"
+                  >
                     <Printer />
                   </Button>
                   <Button size="lg" disabled={activeOrder.items.every((line) => line.quantity === 0)} onClick={() => setPaying(true)}>
@@ -418,7 +428,8 @@ export function RestaurantPosPage() {
             });
             clear();
             refresh();
-            // The receipt is ready to print as soon as the order is settled.
+            // The receipt prints itself as soon as the order is settled.
+            setAutoPrintReceipt(true);
             setReceiptFor(paid._id);
           }}
         />
@@ -437,7 +448,14 @@ export function RestaurantPosPage() {
       )}
 
       <KitchenTicketDialog target={ticketToPrint} onClose={() => setTicketToPrint(null)} />
-      <RestaurantReceiptDialog orderId={receiptFor} onClose={() => setReceiptFor(null)} />
+      <RestaurantReceiptDialog
+        orderId={receiptFor}
+        onClose={() => {
+          setReceiptFor(null);
+          setAutoPrintReceipt(false);
+        }}
+        autoPrint={autoPrintReceipt}
+      />
     </div>
   );
 }

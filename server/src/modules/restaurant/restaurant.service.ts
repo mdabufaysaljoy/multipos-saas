@@ -7,6 +7,7 @@ import { MenuItemModel } from '../../models/MenuItem';
 import { RestaurantOrderModel, type RestaurantOrderLine } from '../../models/RestaurantOrder';
 import { RestaurantShiftModel } from '../../models/RestaurantShift';
 import { StoreModel } from '../../models/Store';
+import { loadReceiptStore } from '../../services/receipt/receiptStore';
 import { ApiError } from '../../utils/ApiError';
 import { formatDocumentNumber, nextSequence } from '../../utils/counters';
 import { resolvePage, searchRegex } from '../../utils/pagination';
@@ -499,10 +500,7 @@ class RestaurantService {
   }
 
   private async printStore(ctx: TenantContext) {
-    const store = await StoreModel.findOne({ _id: ctx.storeId, tenantId: ctx.tenantId })
-      .select('name logoUrl receiptLogoUrl phone email address currency receipt tax')
-      .lean();
-    if (!store) throw ApiError.notFound('Branch not found');
+    const store = await loadReceiptStore(ctx.tenantId, ctx.storeId);
     return store;
   }
 

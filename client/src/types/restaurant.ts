@@ -1,3 +1,5 @@
+import type { ReceiptStore } from './receipt';
+
 /** Restaurant POS vertical. Kept apart from the Clothing domain types on purpose. */
 
 export interface MenuItem {
@@ -64,23 +66,8 @@ export interface KitchenQueueTicket extends KitchenTicket {
   orderNote: string;
 }
 
-export interface PrintStore {
-  name: string;
-  logoUrl: string | null;
-  receiptLogoUrl: string | null;
-  phone: string;
-  email: string;
-  address: string;
-  currency: string;
-  receipt: {
-    headerText: string;
-    footerText: string;
-    returnPolicy: string;
-    showLogo: boolean;
-    showCashier: boolean;
-    paperWidthMm: number;
-  };
-}
+/** The shared receipt branch; kept under its original name for existing callers. */
+export type PrintStore = ReceiptStore;
 
 export interface RestaurantReceiptPayload {
   kind: 'bill' | 'receipt';

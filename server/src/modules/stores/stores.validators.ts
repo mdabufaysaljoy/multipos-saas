@@ -1,3 +1,4 @@
+import { RECEIPT_WIDTHS_MM } from '../../models/Store';
 import { z } from 'zod';
 import { PAYMENT_METHODS } from '../../config/constants';
 import { optionalEmailAddress, optionalPhoneNumber, optionalHttpUrl } from '../common/common.validators';
@@ -8,7 +9,13 @@ const receiptSchema = z.object({
   returnPolicy: z.string().trim().max(300).optional(),
   showLogo: z.boolean().optional(),
   showCashier: z.boolean().optional(),
-  paperWidthMm: z.union([z.literal(48), z.literal(58), z.literal(78), z.literal(80)]).optional(),
+  // The list lives on the model; the validator follows it rather than repeating it.
+  paperWidthMm: z
+    .number()
+    .refine((value): value is (typeof RECEIPT_WIDTHS_MM)[number] => (RECEIPT_WIDTHS_MM as readonly number[]).includes(value), {
+      message: `Paper width must be one of ${RECEIPT_WIDTHS_MM.join(', ')}mm`,
+    })
+    .optional(),
 });
 
 const taxSchema = z.object({

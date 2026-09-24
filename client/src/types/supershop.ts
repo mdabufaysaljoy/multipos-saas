@@ -1,3 +1,5 @@
+import type { ReceiptStore } from './receipt';
+
 /** `each`: quantity in pieces, price per piece. `weight`: quantity in grams, price per kg. */
 export type ShopUnitType = 'each' | 'weight';
 
@@ -92,7 +94,7 @@ export interface ShopSale {
 
 export interface ShopReceipt {
   sale: ShopSale;
-  store: { name: string; phone?: string; address?: unknown; currency?: string };
+  store: ReceiptStore;
 }
 
 export interface ShopPeriodSummary {

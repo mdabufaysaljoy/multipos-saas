@@ -5,7 +5,10 @@ import { Printer, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent } from '@/components/ui/dialog';
 import { ErrorState, LoadingState } from '@/components/states';
-import { printReceipt, resolveReceiptWidth } from '@/features/receipt/ThermalReceipt';
+import { ReceiptPaper } from '@/features/receipt/ReceiptPaper';
+import { ReceiptPrintBar } from '@/features/receipt/ReceiptPrintBar';
+import { useReceiptPrint } from '@/features/receipt/useReceiptPrint';
+import { resolveReceiptWidth } from '@/features/receipt/ThermalReceipt';
 import { restaurantApi } from '@/api/restaurant';
 import { formatMoney } from '@/lib/money';
 import type { KitchenTicketPayload, PrintStore, RestaurantReceiptPayload, ShiftPayload } from '@/types/restaurant';
@@ -19,20 +22,7 @@ import type { KitchenTicketPayload, PrintStore, RestaurantReceiptPayload, ShiftP
  */
 
 function PaperFrame({ store, children }: { store: PrintStore; children: React.ReactNode }) {
-  const width = resolveReceiptWidth(store.receipt?.paperWidthMm);
-  return (
-    <>
-      <style>{`@media print { @page { size: ${width}mm auto; margin: 0; } #receipt-print-area { width: ${width}mm; } }`}</style>
-      <div
-        id="receipt-print-area"
-        className="receipt-paper mx-auto shadow-sm"
-        data-width={width}
-        style={{ ['--receipt-width' as string]: `${width}mm` }}
-      >
-        {children}
-      </div>
-    </>
-  );
+  return <ReceiptPaper widthMm={store.receipt?.paperWidthMm}>{children}</ReceiptPaper>;
 }
 
 const Row = ({ label, value, bold }: { label: string; value: string; bold?: boolean }) => (
@@ -178,6 +168,13 @@ export function KitchenTicketSlip({ payload }: { payload: KitchenTicketPayload }
   );
 }
 
+/**
+ * Every Restaurant print - bill, receipt, kitchen ticket, shift report - goes
+ * through here, so they all print the same way: straight to the thermal printer
+ * through QZ Tray when this computer is set up for it, and the browser dialog
+ * otherwise. `documentId` identifies the document so an automatic print happens
+ * once and a reprint is deliberate.
+ */
 function PrintDialog({
   open,
   title,
@@ -186,6 +183,9 @@ function PrintDialog({
   error,
   onRetry,
   width,
+  documentId,
+  autoPrint = false,
+  afterSale = false,
   children,
 }: {
   open: boolean;
@@ -195,8 +195,20 @@ function PrintDialog({
   error: boolean;
   onRetry: () => void;
   width: number | undefined;
+  documentId?: string | null;
+  autoPrint?: boolean;
+  afterSale?: boolean;
   children: React.ReactNode;
 }) {
+  const host = React.useRef<HTMLDivElement>(null);
+  const print = useReceiptPrint({
+    host,
+    documentId: open ? (documentId ?? title) : null,
+    ready: open && !loading && !error,
+    autoPrint,
+    afterSale,
+  });
+
   return (
     <Dialog open={open} onOpenChange={(next) => !next && onClose()}>
       <DialogContent className="max-w-md gap-3 p-4" hideClose>
@@ -206,15 +218,21 @@ function PrintDialog({
             <X />
           </Button>
         </div>
-        <div className="scrollbar-thin max-h-[65vh] overflow-y-auto rounded-md bg-muted/40 p-3">
+        <div ref={host} className="scrollbar-thin max-h-[65vh] overflow-y-auto rounded-md bg-muted/40 p-3">
           {loading && <LoadingState label="Preparing…" />}
           {error && <ErrorState message="Could not load this document" onRetry={onRetry} />}
           {children}
         </div>
+        <ReceiptPrintBar print={print} />
         <div className="no-print">
-          <Button className="w-full" onClick={printReceipt} disabled={loading || error}>
+          <Button
+            className="w-full"
+            onClick={print.print}
+            disabled={loading || error}
+            loading={print.direct && print.status === 'printing'}
+          >
             <Printer />
-            Print ({resolveReceiptWidth(width)}mm)
+            {print.direct ? 'Print' : `Print (${resolveReceiptWidth(width)}mm)`}
           </Button>
         </div>
       </DialogContent>
@@ -324,13 +342,23 @@ export function ShiftReportDialog({ payload, onClose }: { payload: ShiftPayload 
       error={false}
       onRetry={() => undefined}
       width={payload?.store.receipt?.paperWidthMm}
+      documentId={payload?.shift._id ?? null}
     >
       {payload && <ShiftZReport payload={payload} />}
     </PrintDialog>
   );
 }
 
-export function RestaurantReceiptDialog({ orderId, onClose }: { orderId: string | null; onClose: () => void }) {
+export function RestaurantReceiptDialog({
+  orderId,
+  onClose,
+  autoPrint = false,
+}: {
+  orderId: string | null;
+  onClose: () => void;
+  /** Prints once as soon as the receipt renders - used right after payment. */
+  autoPrint?: boolean;
+}) {
   const { data, isLoading, isError, refetch } = useQuery({
     queryKey: ['restaurant', 'receipt', orderId],
     queryFn: () => restaurantApi.receipt(orderId!),
@@ -345,6 +373,9 @@ export function RestaurantReceiptDialog({ orderId, onClose }: { orderId: string 
       error={isError}
       onRetry={() => void refetch()}
       width={data?.store.receipt?.paperWidthMm}
+      documentId={orderId}
+      autoPrint={autoPrint}
+      afterSale={autoPrint}
     >
       {data && <RestaurantReceipt payload={data} />}
     </PrintDialog>
@@ -372,6 +403,7 @@ export function KitchenTicketDialog({
       error={isError}
       onRetry={() => void refetch()}
       width={data?.store.receipt?.paperWidthMm}
+      documentId={target ? `${target.orderId}:${target.ticketId}` : null}
     >
       {data && <KitchenTicketSlip payload={data} />}
     </PrintDialog>

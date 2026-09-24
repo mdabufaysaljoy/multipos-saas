@@ -1,8 +1,10 @@
 import { format } from 'date-fns';
+import { ReceiptPaper } from './ReceiptPaper';
 import { formatMoney } from '@/lib/money';
 import type { ReceiptPayload } from '@/types/domain';
 
-const SUPPORTED_WIDTHS = [48, 58, 78, 80] as const;
+/** Thermal paper widths the receipt layout is built for, in millimetres. */
+export const SUPPORTED_WIDTHS = [48, 57, 58, 78, 80, 88] as const;
 export type ReceiptWidth = (typeof SUPPORTED_WIDTHS)[number];
 
 /** Falls back to 58mm for any unexpected stored value. */
@@ -14,7 +16,7 @@ export const resolveReceiptWidth = (value: number | undefined | null): ReceiptWi
 
 /**
  * Thermal receipt, rendered at the width configured in store settings
- * (48mm / 58mm / 78mm / 80mm).
+ * (48 / 57 / 58 / 78 / 80 / 88 mm).
  *
  * There is one layout, parameterised by `--receipt-width`, rather than three
  * separate receipt systems. It is real DOM inside `#receipt-print-area` and is
@@ -35,19 +37,8 @@ export function ThermalReceipt({ payload }: { payload: ReceiptPayload }) {
   const paidWithPointsOnly = Boolean(loyalty) && sale.totalMinor === 0 && (sale.payments ?? []).length === 0;
 
   return (
-    <>
-      {/*
-        @page cannot read a CSS custom property, so the physical page size is
-        injected here from the store's configured width.
-      */}
-      <style>{`@media print { @page { size: ${width}mm auto; margin: 0; } #receipt-print-area { width: ${width}mm; } }`}</style>
-
-      <div
-        id="receipt-print-area"
-        className="receipt-paper mx-auto shadow-sm"
-        data-width={width}
-        style={{ ['--receipt-width' as string]: `${width}mm` }}
-      >
+    <ReceiptPaper widthMm={width}>
+      <>
         <div className="r-center">
           {showLogo && <img src={store.receiptLogoUrl!} alt="" className="r-logo" />}
           <div className="r-bold" style={{ fontSize: '1.15em' }}>
@@ -284,8 +275,8 @@ export function ThermalReceipt({ payload }: { payload: ReceiptPayload }) {
           {/* Platform branding: fixed in the template, not read from settings, props or the API. */}
           <div style={{ marginTop: '2mm', fontSize: '0.85em' }}>{PLATFORM_RECEIPT_BRANDING}</div>
         </div>
-      </div>
-    </>
+      </>
+    </ReceiptPaper>
   );
 }
 

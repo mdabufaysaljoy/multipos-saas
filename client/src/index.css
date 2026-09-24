@@ -143,7 +143,8 @@
 
 /* Wider paper gets slightly larger type and a little more breathing room. */
 .receipt-paper[data-width='78'],
-.receipt-paper[data-width='80'] {
+.receipt-paper[data-width='80'],
+.receipt-paper[data-width='88'] {
   --receipt-font: 10.5pt;
   --receipt-font-sm: 8.5pt;
   padding: 3mm;

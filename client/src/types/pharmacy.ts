@@ -1,3 +1,5 @@
+import type { ReceiptStore } from './receipt';
+
 export type DosageForm =
   | 'tablet'
   | 'capsule'
@@ -121,7 +123,7 @@ export interface PharmacySale {
 
 export interface PharmacyReceipt {
   sale: PharmacySale;
-  store: { name: string; phone?: string; email?: string; address?: unknown; currency?: string };
+  store: ReceiptStore;
 }
 
 export interface AnalyticsRange {

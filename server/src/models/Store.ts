@@ -8,7 +8,7 @@ export interface ReceiptSettings {
   returnPolicy: string;
   showLogo: boolean;
   showCashier: boolean;
-  paperWidthMm: 48 | 58 | 78 | 80;
+  paperWidthMm: (typeof RECEIPT_WIDTHS_MM)[number];
 }
 
 export interface TaxSettings {
@@ -34,7 +34,12 @@ export interface LoyaltySettings {
   membershipFeeMinor: number;
 }
 
-export const RECEIPT_WIDTHS_MM = [48, 58, 78, 80] as const;
+/**
+ * Thermal paper widths, in millimetres. 57 and 58 are the same roll sold under
+ * two names, and 88 is the wide roll some 3-inch printers take; both are listed
+ * because printers and paper are bought by the number on the box.
+ */
+export const RECEIPT_WIDTHS_MM = [48, 57, 58, 78, 80, 88] as const;
 export const PRODUCT_LABEL_WIDTHS_MM = [38, 48, 58] as const;
 export const LOYALTY_CARD_WIDTHS_MM = [48, 58, 85] as const;
 export const LABEL_PAPERS = ['sheet', 'roll'] as const;

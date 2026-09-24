@@ -530,7 +530,7 @@ async function main() {
 
   // ------------------------------------------------------- receipt width
   section('Receipt width');
-  for (const width of [48, 58, 78, 80]) {
+  for (const width of [48, 57, 58, 78, 80, 88]) {
     const saved = await api('/stores/current', {
       method: 'PATCH',
       token: admin.token,
@@ -547,6 +547,7 @@ async function main() {
     body: { receipt: { paperWidthMm: 72 } },
   });
   check('Unsupported receipt width is rejected', badWidth.status === 422);
+  check('A fractional or zero width is rejected too', (await api('/stores/current', { method: 'PATCH', token: admin.token, body: { receipt: { paperWidthMm: 58.5 } } })).status === 422 && (await api('/stores/current', { method: 'PATCH', token: admin.token, body: { receipt: { paperWidthMm: 0 } } })).status === 422);
   await api('/stores/current', { method: 'PATCH', token: admin.token, body: { receipt: { paperWidthMm: 58 } } });
 
   // ------------------------------------------------------- barcode label sizes
@@ -4256,6 +4257,11 @@ async function main() {
     check('The order is paid while tickets are still in the kitchen', settled.status === 200, settled.error);
     const receipt = await api(`/restaurant/orders/${kt.data._id}/receipt`, { token: rvToken });
     check(
+      'The Restaurant receipt carries the branch receipt settings the printer needs',
+      typeof receipt.data?.store?.receipt?.paperWidthMm === 'number' && typeof receipt.data?.store?.receipt?.headerText === 'string' && 'receiptLogoUrl' in (receipt.data?.store ?? {}),
+      receipt.data?.store?.receipt,
+    );
+    check(
       'A paid order prints as a receipt with its payment and change',
       receipt.data?.kind === 'receipt' && receipt.data?.order?.changeMinor === 6000 && receipt.data?.order?.payments?.[0]?.amountMinor === 30000,
       receipt.data?.order,
@@ -5489,7 +5495,19 @@ async function main() {
       phDash.data?.lowStock?.some((row) => row.name === 'Napa' && row.sellable === 135),
     phDash.data ?? phDash.error,
   );
-  check('A receipt is available with the branch details', (await phApi(`/sales/${rxSale._id}/receipt`)).data?.store?.name === 'Shefa Main');
+  const phReceipt = await phApi(`/sales/${rxSale._id}/receipt`);
+  check('A receipt is available with the branch details', phReceipt.data?.store?.name === 'Shefa Main');
+  check(
+    'The Pharmacy receipt carries the branch receipt settings the printer needs',
+    typeof phReceipt.data?.store?.receipt?.paperWidthMm === 'number' &&
+      typeof phReceipt.data?.store?.receipt?.headerText === 'string' &&
+      'receiptLogoUrl' in (phReceipt.data?.store ?? {}),
+    phReceipt.data?.store?.receipt,
+  );
+  check('...and still the dispensing record: which batch, and when it expires', (phReceipt.data?.sale?.items ?? []).every((line) => Array.isArray(line.allocations)));
+  const phSalesBeforeReprint = (await phApi('/sales?limit=1')).meta?.total;
+  for (let i = 0; i < 3; i += 1) await phApi(`/sales/${rxSale._id}/receipt`);
+  check('Reprinting a Pharmacy receipt three times dispenses nothing and creates no sale', (await phApi('/sales?limit=1')).meta?.total === phSalesBeforeReprint);
   check('A medicine with stock cannot be removed', (await phApi(`/medicines/${napa.data._id}`, { method: 'DELETE' })).status === 409);
   check("Plan meters count this pharmacy's medicines and sales", (await api(`/platform/tenants/${phCreated.data?.workspace?.id}`, { token: platform2.token })).data?.usage?.products === 3);
   check('Customers still work in a Pharmacy workspace', (await api('/customers', { token: phToken })).status === 200);
@@ -5634,7 +5652,21 @@ async function main() {
     ssDash.data ?? ssDash.error,
   );
   check('The low-stock filter lists products at or below their reorder level', ((await ssApi('/products?lowStockOnly=true')).data ?? []).map((p) => p.name).join(',') === 'Candle');
-  check('A receipt is available with the branch details', (await ssApi(`/sales/${candleRace.find((r) => r.status === 201).data._id}/receipt`)).data?.store?.name === 'Meena Gulshan');
+  const ssReceipt = await ssApi(`/sales/${candleRace.find((r) => r.status === 201).data._id}/receipt`);
+  check('A receipt is available with the branch details', ssReceipt.data?.store?.name === 'Meena Gulshan');
+  // Direct (QZ Tray) printing sizes the paper from the branch's own settings,
+  // so the receipt payload has to carry them in every vertical.
+  check(
+    'The Supershop receipt carries the branch receipt settings the printer needs',
+    typeof ssReceipt.data?.store?.receipt?.paperWidthMm === 'number' &&
+      typeof ssReceipt.data?.store?.receipt?.headerText === 'string' &&
+      typeof ssReceipt.data?.store?.receipt?.showCashier === 'boolean' &&
+      'receiptLogoUrl' in (ssReceipt.data?.store ?? {}),
+    ssReceipt.data?.store?.receipt,
+  );
+  const ssSalesBeforeReprint = (await ssApi('/sales?limit=1')).meta?.total;
+  for (let i = 0; i < 3; i += 1) await ssApi(`/sales/${candleRace.find((r) => r.status === 201).data._id}/receipt`);
+  check('Reprinting a Supershop receipt three times creates no sale', (await ssApi('/sales?limit=1')).meta?.total === ssSalesBeforeReprint);
   check('A product with stock cannot be removed', (await ssApi(`/products/${soap.data._id}`, { method: 'DELETE' })).status === 409);
   check("Plan meters count this supershop's products", (await api(`/platform/tenants/${ssCreated.data?.workspace?.id}`, { token: platform2.token })).data?.usage?.products === 3);
 

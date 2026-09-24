@@ -1,7 +1,8 @@
 # Universal POS features — audit, architecture and migration plan
 
-**Audit only.** Nothing in this document has been implemented. It records what the four verticals do
-today, what "universal" should mean for each capability, and the order the work should be done in.
+**Audit and plan.** It records what the four verticals do today, what "universal" should mean for each
+capability, and the order the work should be done in. Tasks are marked ✅ as they land - **Task 01
+(universal QZ Tray printing) is done**; everything else below is still a plan.
 
 Date: 2026-09-24 · Commit audited: `18bc974` (main, with the Clothing work merged in)
 Method: reading the code and the models, plus the checks the end-to-end suite already makes.
@@ -46,7 +47,7 @@ Legend: **mature** = reference implementation · **partial** = works but narrowe
 
 | # | Feature | Clothing | Restaurant | Pharmacy | Super Shop | Shared logic today | Vertical difference that must survive | Migration | Risk |
 |---|---|---|---|---|---|---|---|---|
-| 1 | QZ Tray direct printing | **mature** (raster ESC/POS, queue, per-device settings, auto-print after sale) | partial (browser print, shared receipt CSS) | partial (`win.print()` popup) | partial (`win.print()` popup) | `features/printing/*` is already vertical-neutral | receipt *content* and paper width per vertical; kitchen tickets are Restaurant-only | Wire 3 receipt dialogs to `useThermalPrint`; widen widths | **Low** |
+| 1 | QZ Tray direct printing | **mature** | **done** (task 01) | **done** (task 01) | **done** (task 01) | `features/printing/*` plus the shared `ReceiptPaper` / `useReceiptPrint` / `ReceiptPrintBar` | receipt *content* per vertical; kitchen tickets are Restaurant-only | ✅ complete | — |
 | 2 | Split payment | **mature** (UI + server) | server ✅ / UI single-method | server ✅ / UI single-method | server ✅ / UI single-method | all four services validate `payments[]`, change and cash rules identically | none | Lift `PaymentPanel` + `usePayments` into a shared feature | **Low** |
 | 3 | Custom payment methods | **missing** | missing | missing | missing | `PAYMENT_METHODS` is a hard-coded enum in `config/constants.ts`; `Store.paymentMethods` selects a subset | none | New `PaymentMethod` collection + snapshots on every sale model | **High** |
 | 4 | Customer selection | **mature** (`CustomerPicker`) | missing UI (field exists) | missing UI (field exists) | missing UI (field exists) | `/api/customers` already shared | Restaurant selects per *order*, not per payment | Reuse the picker in 3 POS pages | **Low** |
@@ -183,7 +184,7 @@ Each is independently executable, independently testable, and leaves the tree gr
 
 | Task | Scope | Depends on | Effort | Risk |
 |---|---|---|---|---|
-| **01** Universal QZ printing | Point `PharmacyReceiptDialog`, `ShopReceiptDialog`, `RestaurantPrints` at `useThermalPrint`; auto-print after sale in 3 POS pages; widen `RECEIPT_WIDTHS_MM` to 48/57/58/78/80/88 (store setting + validator + CSS) | — | S | Low |
+| **01** Universal QZ printing ✅ **done** | Shared `ReceiptPaper` + `useReceiptPrint` + `ReceiptPrintBar`; all four verticals print direct, auto-print after a sale; widths 48/57/58/78/80/88; one shared `receiptStore` projection | — | S | Low |
 | **02** Shared payment-method service | Move the three-rule validation into one service used by all four sale paths; no behaviour change, tests prove identical outcomes | — | S | Low |
 | **03** Custom payment methods | `PaymentMethod` collection (tenant+store, active flag, unique active name), snapshot `{key,label}` on every sale's payment lines, settings UI, reports/receipts read the snapshot | 02 | **L** | High |
 | **04** Split payment UI everywhere | `PaymentPanel` + `usePayments` in Restaurant/Pharmacy/Super Shop POS | 02 | S | Low |
@@ -198,7 +199,7 @@ Each is independently executable, independently testable, and leaves the tree gr
 | **13** Analytics parity | Shared metric contract; fill the gaps per vertical | 12 | M | Medium |
 | **14** PDF/print of reports | Serialise the current report view through `export.formats.ts` (already writes PDF) | 13 | M | Medium |
 
-Recommended sequencing: **01 → 12 → 05 → 02 → 04 → 06 → 07 → 03 → 08 → 09 → 10 → 11 → 13 → 14.**
+Recommended sequencing: **01 ✅ → 12 → 05 → 02 → 04 → 06 → 07 → 03 → 08 → 09 → 10 → 11 → 13 → 14.**
 That front-loads the visible wins that carry almost no risk, and defers the two schema-wide changes
 (payment methods, returns) until the adapter seam exists to absorb them.
 
@@ -248,11 +249,11 @@ must pass unchanged, and the Clothing sections must not be edited to accommodate
 
 ---
 
-## 9. Documentation changes made by this audit
+## 9. Documentation
 
-- **Added** `docs/UNIVERSAL_POS_PLAN.md` (this file).
-- **Updated** `CLAUDE.md` — points at this plan and records that Clothing is the reference vertical.
-- Nothing else was touched. No implementation code was changed for this task.
+- `docs/UNIVERSAL_POS_PLAN.md` (this file) — the audit, the matrix and the task list.
+- `CLAUDE.md` — points at this plan and records that Clothing is the reference vertical.
+- `docs/PRINTING_ARCHITECTURE.md` §2b — the universal printing architecture delivered by task 01.
 
 Feature docs (`PRINTING_ARCHITECTURE.md`, `PRODUCT_IMPORT.md`, `DATA_EXPORT.md`,
 `SUPPLIER_MANAGEMENT.md`, `CONTACT_VERIFICATION.md`, `ENTITLEMENTS.md`) remain accurate for Clothing
@@ -262,11 +263,12 @@ and are the reference material for the tasks above.
 
 ## 10. Recommended next task
 
-**Task 01 — Universal QZ Tray direct printing.**
+**Task 12 — Universal dashboard date ranges.**
 
-Highest value for the least risk: three receipt dialogs adopt an already-universal printing stack,
-sales stop needing a browser print dialog in every vertical, and no model, no money path and no
-Clothing behaviour is touched. It also proves the "shared feature, vertical content" pattern that
-tasks 04, 05 and 12 repeat.
+Task 01 is done (see `docs/PRINTING_ARCHITECTURE.md` §2b). Task 12 is the other cheap, visible one:
+the Pharmacy and Super Shop dashboards take no date range at all today, while their analytics
+endpoints already accept one and `resolveRange` is already shared. It is two endpoints and two pages,
+with no model or money path involved - and it is the natural moment to settle the timezone
+inconsistency in §7, risk 5.
 
 Waiting for an explicit instruction before starting it.
