@@ -3,6 +3,7 @@ import { PAYMENT_METHODS } from '../../config/constants';
 import { RESTAURANT_ORDER_STATUSES, RESTAURANT_ORDER_TYPES } from '../../models/RestaurantOrder';
 import { CASH_MOVEMENT_TYPES, SHIFT_STATUSES } from '../../models/RestaurantShift';
 import { calendarDate, objectId, paginationSchema, searchSchema } from '../common/common.validators';
+import { posCustomerSchema } from '../customers/customers.validators';
 import { dashboardRangeSchema } from '../reports/reports.validators';
 
 const amount = z.number().int().min(0).max(100_000_000);
@@ -77,6 +78,7 @@ export const createOrderSchema = z
     type: z.enum(RESTAURANT_ORDER_TYPES),
     tableId: objectId.optional(),
     customerId: objectId.optional(),
+    customer: posCustomerSchema.optional(),
     items: z.array(lineInput).min(1, 'Add at least one item').max(100),
     note: z.string().trim().max(300).optional().default(''),
   })

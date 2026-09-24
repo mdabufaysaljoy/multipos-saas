@@ -9,8 +9,16 @@ import type {
   ShopReports,
   ShopSale,
 } from '@/types/supershop';
+import type { SaleCustomerFields } from '@/features/customers/CustomerPicker';
 
 type Query = Record<string, unknown>;
+
+export interface ShopSaleInput extends SaleCustomerFields {
+  items: { productId: string; quantity: number }[];
+  payments: { method: string; amountMinor: number }[];
+  discountMinor?: number;
+  note?: string;
+}
 
 /**
  * Supershop POS API. Sale lines carry a product and a quantity (pieces, or
@@ -32,8 +40,7 @@ export const supershopApi = {
     post<{ stock: { quantityOnHand: number }; previousOnHand: number }>(`/supershop/products/${id}/adjust`, body),
   movements: (params?: Query) => getPaginated<ShopMovement>('/supershop/movements', params),
 
-  createSale: (body: { items: { productId: string; quantity: number }[]; payments: { method: string; amountMinor: number }[]; discountMinor?: number }) =>
-    post<ShopSale>('/supershop/sales', body),
+  createSale: (body: ShopSaleInput) => post<ShopSale>('/supershop/sales', body),
   sales: (params?: Query) => getPaginated<ShopSale>('/supershop/sales', params),
   receipt: (id: string) => get<ShopReceipt>(`/supershop/sales/${id}/receipt`),
   voidSale: (id: string, reason: string) => post<ShopSale>(`/supershop/sales/${id}/void`, { reason }),

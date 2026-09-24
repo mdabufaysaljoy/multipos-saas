@@ -1,9 +1,9 @@
 # Universal POS features — audit, architecture and migration plan
 
 **Audit and plan.** It records what the four verticals do today, what "universal" should mean for each
-capability, and the order the work should be done in. Tasks are marked ✅ as they land - **Task 01
-(universal QZ Tray printing) and task 12 (universal dashboard date ranges) are done**; everything
-else below is still a plan.
+capability, and the order the work should be done in. Tasks are marked ✅ as they land - **tasks 01
+(universal QZ Tray printing), 12 (universal dashboard date ranges) and 05 (POS customer selection)
+are done**; everything else below is still a plan.
 
 Date: 2026-09-24 · Commit audited: `18bc974` (main, with the Clothing work merged in)
 Method: reading the code and the models, plus the checks the end-to-end suite already makes.
@@ -51,7 +51,7 @@ Legend: **mature** = reference implementation · **partial** = works but narrowe
 | 1 | QZ Tray direct printing | **mature** | **done** (task 01) | **done** (task 01) | **done** (task 01) | `features/printing/*` plus the shared `ReceiptPaper` / `useReceiptPrint` / `ReceiptPrintBar` | receipt *content* per vertical; kitchen tickets are Restaurant-only | ✅ complete | — |
 | 2 | Split payment | **mature** (UI + server) | server ✅ / UI single-method | server ✅ / UI single-method | server ✅ / UI single-method | all four services validate `payments[]`, change and cash rules identically | none | Lift `PaymentPanel` + `usePayments` into a shared feature | **Low** |
 | 3 | Custom payment methods | **missing** | missing | missing | missing | `PAYMENT_METHODS` is a hard-coded enum in `config/constants.ts`; `Store.paymentMethods` selects a subset | none | New `PaymentMethod` collection + snapshots on every sale model | **High** |
-| 4 | Customer selection | **mature** (`CustomerPicker`) | missing UI (field exists) | missing UI (field exists) | missing UI (field exists) | `/api/customers` already shared | Restaurant selects per *order*, not per payment | Reuse the picker in 3 POS pages | **Low** |
+| 4 | Customer selection | **mature** (`CustomerPicker`) | **done** (task 05) | **done** (task 05) | **done** (task 05) | `/api/customers`, the shared `CustomerPicker` and one `resolveForPosSale` | Restaurant selects per *order*, not per payment; Pharmacy keeps buyer and patient apart | ✅ complete | — |
 | 4b | Loyalty (card, points, scan) | **mature** (membership, EAN-13 card, ledger, earn/redeem, returns/exchange reversal) | missing | missing | missing | `loyaltyService` is model-agnostic except for its sale hooks | earn base differs (order total vs sale subtotal); Pharmacy may exclude prescription items | Generalise the four sale hooks; widen the entitlement's `verticals` | **Medium** |
 | 5 | Return / exchange / refund / cancel | **mature** | cancel only | void only | void only | nothing shared | Restaurant has no stock to return; Pharmacy must return to the *batch* it came from; Super Shop returns to `ShopStock` | New shared return engine with per-vertical inventory adapters | **High** |
 | 6 | Bulk product import | **mature** (registry, preview, row errors, streamed) | missing | missing | missing | `import.parse.ts` (xlsx/csv, header detection) is already generic | mandatory columns differ per model: Clothing needs Product+Variant+Price; Super Shop barcode+price+qty; Pharmacy name+price(+batch); Restaurant name+price | Extract a column registry per vertical behind one engine | **Medium** |
@@ -189,7 +189,7 @@ Each is independently executable, independently testable, and leaves the tree gr
 | **02** Shared payment-method service | Move the three-rule validation into one service used by all four sale paths; no behaviour change, tests prove identical outcomes | — | S | Low |
 | **03** Custom payment methods | `PaymentMethod` collection (tenant+store, active flag, unique active name), snapshot `{key,label}` on every sale's payment lines, settings UI, reports/receipts read the snapshot | 02 | **L** | High |
 | **04** Split payment UI everywhere | `PaymentPanel` + `usePayments` in Restaurant/Pharmacy/Super Shop POS | 02 | S | Low |
-| **05** POS customer selection | `CustomerPicker` in the three POS pages; server already accepts `customerId` | — | S | Low |
+| **05** POS customer selection ✅ **done** | Shared `CustomerPicker` + `saleCustomerFields` + `posCustomerSchema` + `customerService.resolveForPosSale`; all four verticals take an id or create at the till, and move lifetime value | — | S | Low |
 | **06** Inventory adapter + ledger read API | Extract `InventoryAdapter`; one paginated, filterable ledger endpoint shape for all verticals (storage stays per-vertical) | — | M | Medium |
 | **07** Out-of-stock override | Per-vertical override honouring `sales.sellOutOfStock`; Pharmacy still refuses expired; ledger + sale-line flags | 06 | M | High |
 | **08** Universal return/exchange/refund | Shared engine + adapters; Restaurant cancel and Pharmacy/Super Shop void become refund-capable returns | 03, 06 | **L** | High |
@@ -200,7 +200,7 @@ Each is independently executable, independently testable, and leaves the tree gr
 | **13** Analytics parity | Shared metric contract; fill the gaps per vertical | 12 | M | Medium |
 | **14** PDF/print of reports | Serialise the current report view through `export.formats.ts` (already writes PDF) | 13 | M | Medium |
 
-Recommended sequencing: **01 ✅ → 12 ✅ → 05 → 02 → 04 → 06 → 07 → 03 → 08 → 09 → 10 → 11 → 13 → 14.**
+Recommended sequencing: **01 ✅ → 12 ✅ → 05 ✅ → 02 → 04 → 06 → 07 → 03 → 08 → 09 → 10 → 11 → 13 → 14.**
 That front-loads the visible wins that carry almost no risk, and defers the two schema-wide changes
 (payment methods, returns) until the adapter seam exists to absorb them.
 
@@ -257,6 +257,7 @@ must pass unchanged, and the Clothing sections must not be edited to accommodate
 - `CLAUDE.md` — points at this plan and records that Clothing is the reference vertical.
 - `docs/PRINTING_ARCHITECTURE.md` §2b — the universal printing architecture delivered by task 01.
 - `docs/DASHBOARD_RANGES.md` — the universal dashboard range delivered by task 12.
+- `docs/POS_CUSTOMERS.md` — the customer on a sale, delivered by task 05.
 
 Feature docs (`PRINTING_ARCHITECTURE.md`, `PRODUCT_IMPORT.md`, `DATA_EXPORT.md`,
 `SUPPLIER_MANAGEMENT.md`, `CONTACT_VERIFICATION.md`, `ENTITLEMENTS.md`) remain accurate for Clothing
@@ -266,13 +267,15 @@ and are the reference material for the tasks above.
 
 ## 10. Recommended next task
 
-**Task 05 — POS customer selection.**
+**Task 02 — Shared payment-method service.**
 
-Tasks 01 and 12 are done. Task 05 is the next cheap, visible one: the three newer POS pages cannot
-attach a customer to a sale, though all three sale services already accept `customerId` and the
-Clothing POS has the picker. It is one shared component and three pages, with no schema change.
+Tasks 01, 12 and 05 are done. Task 02 is the groundwork the payment work needs: all four sale
+services already validate payments by the same three rules (every method accepted by the branch, the
+total covered, change only out of cash), written out four times. Moving that into one service is a
+no-behaviour-change refactor whose tests prove the outcomes are identical - and it is what makes
+task 04 (split-payment UI everywhere) and task 03 (custom payment methods) safe to do.
 
-Task 13 (analytics parity) now has what it depends on - every dashboard speaks the same range - but
-it is a larger job, and task 05 unblocks task 09 (universal loyalty).
+Task 09 (universal loyalty) is now unblocked by task 05, but it is a larger job and depends on 05
+plus the sale hooks; task 02 is the cheaper next step.
 
 Waiting for an explicit instruction before starting either.

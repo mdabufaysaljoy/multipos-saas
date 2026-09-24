@@ -3,6 +3,7 @@ import { PAYMENT_METHODS } from '../../config/constants';
 import { SHOP_UNIT_TYPES } from '../../models/ShopProduct';
 import { SHOP_SALE_STATUSES } from '../../models/ShopSale';
 import { objectId, paginationSchema, searchSchema } from '../common/common.validators';
+import { posCustomerSchema } from '../customers/customers.validators';
 
 const amount = z.number().int().min(0).max(100_000_000);
 const text = (max: number) => z.string().trim().max(max);
@@ -107,6 +108,7 @@ export const createSaleSchema = z
       .max(5),
     discountMinor: amount.default(0),
     customerId: objectId.optional(),
+    customer: posCustomerSchema.optional(),
     note: text(300).optional().default(''),
   })
   .strict();

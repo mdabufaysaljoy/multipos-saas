@@ -12,8 +12,16 @@ import type {
   RestaurantSummary,
   ShiftPayload,
 } from '@/types/restaurant';
+import type { SaleCustomerFields } from '@/features/customers/CustomerPicker';
 
 type Query = Record<string, unknown>;
+
+export interface CreateOrderInput extends SaleCustomerFields {
+  type: 'dine_in' | 'takeaway';
+  tableId?: string;
+  items: { menuItemId: string; quantity: number; note?: string }[];
+  note?: string;
+}
 
 /**
  * Restaurant POS API. Prices are never sent: order lines carry a menu item and
@@ -32,12 +40,7 @@ export const restaurantApi = {
 
   orders: (params?: Query) => getPaginated<RestaurantOrder>('/restaurant/orders', params),
   order: (id: string) => get<RestaurantOrder>(`/restaurant/orders/${id}`),
-  createOrder: (body: {
-    type: 'dine_in' | 'takeaway';
-    tableId?: string;
-    items: { menuItemId: string; quantity: number; note?: string }[];
-    note?: string;
-  }) => post<RestaurantOrder>('/restaurant/orders', body),
+  createOrder: (body: CreateOrderInput) => post<RestaurantOrder>('/restaurant/orders', body),
   addItems: (id: string, items: { menuItemId: string; quantity: number }[]) =>
     post<RestaurantOrder>(`/restaurant/orders/${id}/items`, { items }),
   updateLine: (id: string, lineId: string, quantity: number) =>

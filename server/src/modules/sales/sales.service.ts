@@ -636,16 +636,9 @@ class SaleService {
     return { subtotalMinor, discountMinor, taxMinor, totalMinor, paidMinor, changeMinor, paymentStatus: 'paid' };
   }
 
+  /** The same resolution every POS vertical uses; a walk-in sale has none. */
   private async resolveCustomer(ctx: TenantContext, input: CreateSaleInput) {
-    if (input.customerId) return customerService.resolveForSale(ctx, input.customerId);
-    if (input.customer) {
-      if (!ctx.can(PERMISSIONS.CUSTOMERS_CREATE)) {
-        throw ApiError.forbidden('You do not have permission to add customers');
-      }
-      return customerService.findOrCreateByPhone(ctx, input.customer);
-    }
-    // No customer supplied - that is a perfectly valid walk-in sale.
-    return null;
+    return customerService.resolveForPosSale(ctx, input);
   }
 }
 

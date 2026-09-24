@@ -2,7 +2,7 @@ import * as React from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import { toast } from 'sonner';
-import { Armchair, ChefHat, CreditCard, Minus, Plus, Printer, ShoppingBag, Trash2, X } from 'lucide-react';
+import { Armchair, ChefHat, CreditCard, Minus, Plus, Printer, ShoppingBag, Trash2, UserRound, X } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -22,6 +22,7 @@ import { MoneyInput } from '@/components/MoneyInput';
 import { LimitAlert } from '@/components/LimitAlert';
 import { KitchenTicketDialog, RestaurantReceiptDialog } from '@/features/restaurant/RestaurantPrints';
 import { ApiError } from '@/api/client';
+import { CustomerPicker, saleCustomerFields, type SelectedCustomer } from '@/features/customers/CustomerPicker';
 import { restaurantApi } from '@/api/restaurant';
 import { formatMoney } from '@/lib/money';
 import { cn } from '@/lib/utils';
@@ -33,6 +34,8 @@ interface Draft {
   type: 'dine_in' | 'takeaway';
   tableId?: string;
   tableName?: string;
+  /** Whose order this is. Chosen before it is sent - see the panel below. */
+  customer?: SelectedCustomer | null;
   lines: { menuItemId: string; name: string; priceMinor: number; quantity: number }[];
 }
 
@@ -109,6 +112,7 @@ export function RestaurantPosPage() {
       const created = await restaurantApi.createOrder({
         type: current.type,
         ...(current.tableId ? { tableId: current.tableId } : {}),
+        ...saleCustomerFields(current.customer ?? null),
         items: current.lines.map((line) => ({ menuItemId: line.menuItemId, quantity: line.quantity })),
       });
       try {
@@ -355,6 +359,13 @@ export function RestaurantPosPage() {
 
         {(draft || activeOrder) && (
           <div className="space-y-3 border-t p-4">
+            {activeOrder?.customerNameSnapshot && (
+              <p className="flex items-center gap-1.5 text-sm">
+                <UserRound className="h-4 w-4 text-muted-foreground" />
+                <span className="truncate font-medium">{activeOrder.customerNameSnapshot}</span>
+              </p>
+            )}
+
             <div className="flex items-baseline justify-between">
               <span className="text-sm text-muted-foreground">{draft ? 'Estimated total' : 'Total'}</span>
               <span className="tabular text-2xl font-bold">
@@ -366,10 +377,19 @@ export function RestaurantPosPage() {
             </div>
 
             {draft && (
-              <Button className="w-full" size="lg" disabled={draft.lines.length === 0} loading={send.isPending} onClick={() => send.mutate(draft)}>
-                <ChefHat />
-                Send order
-              </Button>
+              <>
+                {/* A restaurant customer belongs to the order: chosen now, and
+                    fixed once the kitchen has it. */}
+                <CustomerPicker
+                  value={draft.customer ?? null}
+                  onChange={(customer) => setDraft({ ...draft, customer })}
+                  canCreate={can('customers.create')}
+                />
+                <Button className="w-full" size="lg" disabled={draft.lines.length === 0} loading={send.isPending} onClick={() => send.mutate(draft)}>
+                  <ChefHat />
+                  Send order
+                </Button>
+              </>
             )}
 
             {activeOrder?.status === 'open' && (

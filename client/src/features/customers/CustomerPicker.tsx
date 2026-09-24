@@ -23,6 +23,23 @@ export interface SelectedCustomer {
   email?: string;
 }
 
+/** How a sale endpoint is told who the sale is for, in every vertical. */
+export interface SaleCustomerFields {
+  customerId?: string;
+  customer?: { name: string; phone: string; email?: string };
+}
+
+/**
+ * Turns the picked customer into the fields a sale endpoint expects: an id when
+ * they are already on file, otherwise the details for the server to find by
+ * phone or create. Nothing at all for a walk-in.
+ */
+export function saleCustomerFields(customer: SelectedCustomer | null): SaleCustomerFields {
+  if (!customer) return {};
+  if (customer.id) return { customerId: customer.id };
+  return { customer: { name: customer.name, phone: customer.phone, email: customer.email || undefined } };
+}
+
 interface CustomerPickerProps {
   value: SelectedCustomer | null;
   onChange: (customer: SelectedCustomer | null) => void;
@@ -30,8 +47,12 @@ interface CustomerPickerProps {
 }
 
 /**
- * Attaching a customer is entirely optional - a walk-in sale needs no customer
- * at all, and nothing here can block checkout.
+ * Attach a customer to a sale, in any POS vertical.
+ *
+ * Entirely optional - a walk-in sale needs no customer at all, and nothing here
+ * can block checkout. A customer typed in here is not created straight away:
+ * the details travel with the sale, and the server finds them by phone or
+ * creates them in the same step that records the sale.
  */
 export function CustomerPicker({ value, onChange, canCreate }: CustomerPickerProps) {
   const [open, setOpen] = React.useState(false);

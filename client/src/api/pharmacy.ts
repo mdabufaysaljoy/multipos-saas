@@ -10,10 +10,11 @@ import type {
   PharmacySale,
   StockMovement,
 } from '@/types/pharmacy';
+import type { SaleCustomerFields } from '@/features/customers/CustomerPicker';
 
 type Query = Record<string, unknown>;
 
-export interface PharmacySaleInput {
+export interface PharmacySaleInput extends SaleCustomerFields {
   items: { medicineId: string; quantity: number }[];
   payments: { method: string; amountMinor: number }[];
   discountMinor?: number;

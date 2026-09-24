@@ -1,4 +1,5 @@
 import { Types, type ClientSession } from 'mongoose';
+import { PERMISSIONS } from '../../config/permissions';
 import { CustomerModel } from '../../models/Customer';
 import { SaleModel } from '../../models/Sale';
 import { ApiError } from '../../utils/ApiError';
@@ -150,6 +151,27 @@ class CustomerService {
       { session },
     );
     return { _id: created._id, name: created.name, phone: created.phone, email: created.email };
+  }
+
+  /**
+   * The customer a POS sale is for, in any vertical: one already on file, one
+   * created at the till from a name and phone, or none at all.
+   *
+   * Attaching a customer is always optional - a walk-in sale has none, and
+   * nothing here may block a checkout that did not ask for one.
+   */
+  async resolveForPosSale(
+    ctx: TenantContext,
+    input: { customerId?: Types.ObjectId | null; customer?: { name: string; phone: string; email?: string } },
+  ) {
+    if (input.customerId) return this.resolveForSale(ctx, input.customerId);
+    if (input.customer) {
+      if (!ctx.can(PERMISSIONS.CUSTOMERS_CREATE)) {
+        throw ApiError.forbidden('You do not have permission to add customers');
+      }
+      return this.findOrCreateByPhone(ctx, input.customer);
+    }
+    return null;
   }
 
   /** Keeps lifetime-value counters current after a sale or a return. */

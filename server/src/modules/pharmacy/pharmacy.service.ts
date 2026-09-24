@@ -1,7 +1,6 @@
 import { Types } from 'mongoose';
 import dayjs from 'dayjs';
 import { PERMISSIONS } from '../../config/permissions';
-import { CustomerModel } from '../../models/Customer';
 import { MedicineModel, type MedicineDoc } from '../../models/Medicine';
 import { MedicineBatchModel, type MedicineBatchDoc } from '../../models/MedicineBatch';
 import { PharmacySaleModel, type BatchAllocation } from '../../models/PharmacySale';
@@ -12,6 +11,7 @@ import { ApiError } from '../../utils/ApiError';
 import { formatDocumentNumber, nextSequence } from '../../utils/counters';
 import { resolvePage, searchRegex } from '../../utils/pagination';
 import { entitlementService } from '../../services/subscription/entitlement.service';
+import { customerService } from '../customers/customers.service';
 import { resolveDashboardWindow } from '../reports/reports.service';
 import type { DashboardRangeInput } from '../reports/reports.validators';
 import type { TenantContext } from '../../types/express';
@@ -328,14 +328,10 @@ class PharmacyService {
     const cashMinor = input.payments.filter((payment) => payment.method === 'cash').reduce((sum, payment) => sum + payment.amountMinor, 0);
     if (changeMinor > cashMinor) throw ApiError.badRequest('Only a cash payment can exceed the total');
 
-    let customerNameSnapshot = '';
-    if (input.customerId) {
-      const customer = await CustomerModel.findOne({ _id: input.customerId, tenantId: ctx.tenantId, storeId: ctx.storeId, deletedAt: null })
-        .select('name')
-        .lean();
-      if (!customer) throw ApiError.badRequest('That customer was not found');
-      customerNameSnapshot = customer.name;
-    }
+    // Optional, and resolved the same way in every vertical: an existing
+    // customer, or one created at the till from a name and phone. This is who
+    // the medicine was dispensed to; the prescription names the patient.
+    const customer = await customerService.resolveForPosSale(ctx, input);
 
     // ---- take stock, earliest expiry first --------------------------------
     const taken: Taken[] = [];
@@ -382,8 +378,8 @@ class PharmacyService {
         changeMinor,
         payments: input.payments,
         prescription: input.prescription ?? null,
-        customerId: input.customerId ?? null,
-        customerNameSnapshot,
+        customerId: customer?._id ?? null,
+        customerNameSnapshot: customer?.name ?? '',
         note: input.note,
         status: 'completed',
         soldAt,
@@ -411,6 +407,10 @@ class PharmacyService {
           }),
         ),
       );
+      if (customer) {
+        await customerService.applySaleStats(ctx, customer._id, { amountMinor: totalMinor, orderDelta: 1, purchasedAt: soldAt });
+      }
+
       return sale.toObject();
     } catch (error) {
       if (saved) await PharmacySaleModel.deleteOne({ _id: saleId, tenantId: ctx.tenantId });
@@ -485,6 +485,12 @@ class PharmacyService {
       }
     }
     if (movements.length > 0) await PharmacyStockMovementModel.insertMany(movements);
+
+    // A voided sale is not a purchase: take it back off the customer's total.
+    if (sale.customerId) {
+      await customerService.applySaleStats(ctx, sale.customerId, { amountMinor: -sale.totalMinor, orderDelta: -1 });
+    }
+
     return sale;
   }
 

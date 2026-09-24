@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { PAYMENT_METHODS } from '../../config/constants';
-import { minorAmount, objectId, positiveIntegerQuantity, positiveMinorAmount, searchSchema, phoneNumber, optionalEmailAddress, calendarDate } from '../common/common.validators';
+import { minorAmount, objectId, positiveIntegerQuantity, positiveMinorAmount, searchSchema, calendarDate } from '../common/common.validators';
+import { posCustomerSchema } from '../customers/customers.validators';
 
 /**
  * A checkout line.
@@ -28,13 +29,7 @@ export const createSaleSchema = z
 
     // Customer information is entirely optional at checkout.
     customerId: objectId.nullable().optional(),
-    customer: z
-      .object({
-        name: z.string().trim().min(1).max(160),
-        phone: phoneNumber,
-        email: optionalEmailAddress,
-      })
-      .optional(),
+    customer: posCustomerSchema.optional(),
 
     discountType: z.enum(['none', 'fixed', 'percent']).default('none'),
     /** Minor units when type is "fixed"; basis points (1% = 100) when "percent". */

@@ -11,7 +11,7 @@ import { MoneyInput } from '@/components/MoneyInput';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { LimitAlert } from '@/components/LimitAlert';
 import { CartPanel } from '@/features/pos/CartPanel';
-import { CustomerPicker, type SelectedCustomer } from '@/features/pos/CustomerPicker';
+import { CustomerPicker, type SelectedCustomer } from '@/features/customers/CustomerPicker';
 import { ProductSearchPanel } from '@/features/pos/ProductSearchPanel';
 import { computeTotals, useCart, validateCart } from '@/features/pos/useCart';
 import { PaymentPanel } from '@/features/pos/PaymentPanel';

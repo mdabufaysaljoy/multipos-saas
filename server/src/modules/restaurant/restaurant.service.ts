@@ -1,7 +1,6 @@
 import { Types, type PipelineStage } from 'mongoose';
 import dayjs from 'dayjs';
 import { PERMISSIONS } from '../../config/permissions';
-import { CustomerModel } from '../../models/Customer';
 import { DiningTableModel } from '../../models/DiningTable';
 import { MenuItemModel } from '../../models/MenuItem';
 import { RestaurantOrderModel, type RestaurantOrderLine } from '../../models/RestaurantOrder';
@@ -13,6 +12,7 @@ import { formatDocumentNumber, nextSequence } from '../../utils/counters';
 import { resolvePage, searchRegex } from '../../utils/pagination';
 import { entitlementService } from '../../services/subscription/entitlement.service';
 import { resolveDashboardWindow } from '../reports/reports.service';
+import { customerService } from '../customers/customers.service';
 import type { TenantContext } from '../../types/express';
 import type {
   DashboardInput,
@@ -231,19 +231,11 @@ class RestaurantService {
       tableNameSnapshot = table.name;
     }
 
-    let customerNameSnapshot = '';
-    if (input.customerId) {
-      const customer = await CustomerModel.findOne({
-        _id: input.customerId,
-        tenantId: ctx.tenantId,
-        storeId: ctx.storeId,
-        deletedAt: null,
-      })
-        .select('name')
-        .lean();
-      if (!customer) throw ApiError.badRequest('That customer was not found');
-      customerNameSnapshot = customer.name;
-    }
+    // Optional, and resolved the same way in every vertical: an existing
+    // customer, or one created at the till from a name and phone. A restaurant
+    // customer belongs to the ORDER - the table is booked in their name long
+    // before anyone pays.
+    const customer = await customerService.resolveForPosSale(ctx, input);
 
     const lines = await this.priceLines(ctx, input.items);
     const subtotalMinor = this.sumLines(lines);
@@ -258,8 +250,8 @@ class RestaurantService {
         type: input.type,
         tableId: input.tableId ?? null,
         tableNameSnapshot,
-        customerId: input.customerId ?? null,
-        customerNameSnapshot,
+        customerId: customer?._id ?? null,
+        customerNameSnapshot: customer?.name ?? '',
         items: lines,
         subtotalMinor,
         discountMinor: 0,
@@ -556,6 +548,13 @@ class RestaurantService {
       { new: true },
     ).lean();
     if (!paid) throw ApiError.conflict('The order was changed or already settled. Refresh and try again.');
+
+    // An order only counts towards a customer's lifetime value once it is paid;
+    // an open order is not yet revenue, and a cancelled one never will be.
+    if (paid.customerId) {
+      await customerService.applySaleStats(ctx, paid.customerId, { amountMinor: totalMinor, orderDelta: 1, purchasedAt: paid.paidAt ?? new Date() });
+    }
+
     return paid;
   }
 

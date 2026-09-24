@@ -13,6 +13,7 @@ import { EmptyState, LoadingState } from '@/components/states';
 import { MoneyInput } from '@/components/MoneyInput';
 import { LimitAlert } from '@/components/LimitAlert';
 import { useDebounced } from '@/components/SearchInput';
+import { CustomerPicker, saleCustomerFields, type SelectedCustomer } from '@/features/customers/CustomerPicker';
 import { ShopReceiptDialog } from '@/features/supershop/ShopReceiptDialog';
 import { ApiError } from '@/api/client';
 import { supershopApi } from '@/api/supershop';
@@ -55,6 +56,7 @@ export function SupershopPosPage() {
   const [discount, setDiscount] = React.useState<number | null>(0);
   const [method, setMethod] = React.useState('cash');
   const [tendered, setTendered] = React.useState<number | null>(null);
+  const [customer, setCustomer] = React.useState<SelectedCustomer | null>(null);
   const [receiptFor, setReceiptFor] = React.useState<string | null>(null);
 
   const { data: results, isLoading } = useQuery({
@@ -108,6 +110,7 @@ export function SupershopPosPage() {
     setDiscount(0);
     setTendered(null);
     setMethod('cash');
+    setCustomer(null);
     scanRef.current?.focus();
   };
 
@@ -117,6 +120,7 @@ export function SupershopPosPage() {
         items: cart.map((line) => ({ productId: line.product._id, quantity: line.quantity })),
         payments: [{ method, amountMinor: paid }],
         discountMinor,
+        ...saleCustomerFields(customer),
       }),
     onSuccess: (sale) => {
       toast.success(`${sale.saleNumber} completed`, {
@@ -259,6 +263,8 @@ export function SupershopPosPage() {
               <dd className="tabular">{formatMoney(total, currency)}</dd>
             </div>
           </dl>
+
+          <CustomerPicker value={customer} onChange={setCustomer} canCreate={can('customers.create')} />
 
           <div className="grid grid-cols-2 gap-2">
             <div className="space-y-1.5">

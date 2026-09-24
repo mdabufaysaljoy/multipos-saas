@@ -3,6 +3,7 @@ import { PAYMENT_METHODS } from '../../config/constants';
 import { DOSAGE_FORMS } from '../../models/Medicine';
 import { PHARMACY_SALE_STATUSES } from '../../models/PharmacySale';
 import { objectId, paginationSchema, searchSchema } from '../common/common.validators';
+import { posCustomerSchema } from '../customers/customers.validators';
 
 const amount = z.number().int().min(0).max(100_000_000);
 const text = (max: number) => z.string().trim().max(max);
@@ -129,6 +130,7 @@ export const createSaleSchema = z
       .max(5),
     discountMinor: amount.default(0),
     customerId: objectId.optional(),
+    customer: posCustomerSchema.optional(),
     prescription: z
       .object({
         patientName: z.string().trim().min(2, "Enter the patient's name").max(120),

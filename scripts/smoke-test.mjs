@@ -5736,6 +5736,95 @@ async function main() {
   );
   check('An invalid Supershop range is rejected', (await ssApi('/reports?preset=forever')).status === 422);
 
+
+  // --- Customer on a sale, in every vertical -----------------------------------
+  // Clothing has always been able to attach a customer at the till; these are the
+  // same rules in the other three. Runs last in each vertical's data so the
+  // figures the analytics checks above assert on are already settled.
+  section('POS customer selection (all verticals)');
+
+  const cusStamp = Date.now().toString().slice(-6);
+  const cusPhone = `018${cusStamp}1`;
+  const cusFind = async (token, phone) => ((await api(`/customers?search=${phone}`, { token })).data ?? [])[0];
+
+  // --- Super Shop --------------------------------------------------------------
+  const ssWithNew = await ssSale({
+    items: [{ productId: soap.data._id, quantity: 1 }],
+    payments: [{ method: 'cash', amountMinor: 4800 }],
+    customer: { name: 'Rahim Uddin', phone: cusPhone },
+  });
+  check('Super Shop: a customer typed at the till is created with the sale', ssWithNew.status === 201 && ssWithNew.data?.customerNameSnapshot === 'Rahim Uddin' && ssWithNew.data?.customerId, ssWithNew.data ?? ssWithNew.error);
+  const ssCustomer = await cusFind(ssToken, cusPhone);
+  check('Super Shop: and is on file afterwards, with the sale counted', ssCustomer?.name === 'Rahim Uddin' && ssCustomer?.orderCount === 1 && ssCustomer?.totalSpentMinor === ssWithNew.data?.totalMinor, ssCustomer);
+
+  const ssSecond = await ssSale({
+    items: [{ productId: soap.data._id, quantity: 1 }],
+    payments: [{ method: 'cash', amountMinor: 4800 }],
+    customer: { name: 'Rahim U.', phone: cusPhone },
+  });
+  check('Super Shop: the same phone is the same customer, not a second one', ssSecond.status === 201 && String(ssSecond.data?.customerId) === String(ssWithNew.data?.customerId) && ((await api(`/customers?search=${cusPhone}`, { token: ssToken })).data ?? []).length === 1, ssSecond.data?.customerId);
+  const ssAfterTwo = await cusFind(ssToken, cusPhone);
+  check('Super Shop: lifetime value adds up across sales', ssAfterTwo?.orderCount === 2 && ssAfterTwo?.totalSpentMinor === ssWithNew.data.totalMinor + ssSecond.data.totalMinor, ssAfterTwo);
+
+  const ssById = await ssSale({
+    items: [{ productId: soap.data._id, quantity: 1 }],
+    payments: [{ method: 'cash', amountMinor: 4800 }],
+    customerId: ssCustomer._id,
+  });
+  check('Super Shop: a customer already on file is attached by id', ssById.status === 201 && String(ssById.data?.customerId) === String(ssCustomer._id));
+  const ssVoidedSale = await ssVoid(ssById.data._id, 'Customer changed their mind');
+  check('Super Shop: voiding a sale takes it back off the customer', ssVoidedSale.status === 200 && (await cusFind(ssToken, cusPhone))?.orderCount === 2, await cusFind(ssToken, cusPhone));
+
+  const ssWalkIn = await ssSale({ items: [{ productId: soap.data._id, quantity: 1 }], payments: [{ method: 'cash', amountMinor: 4800 }] });
+  check('Super Shop: a walk-in sale still needs no customer at all', ssWalkIn.status === 201 && ssWalkIn.data?.customerId === null && ssWalkIn.data?.customerNameSnapshot === '');
+
+  // Never trust a customer id from the client: it must belong to this workspace.
+  const cusForeign = await api('/customers', { method: 'POST', token: admin.token, body: { name: 'Clothing Only', phone: `017${cusStamp}9` } });
+  check('A customer from another workspace cannot be attached to a sale', (await ssSale({ items: [{ productId: soap.data._id, quantity: 1 }], payments: [{ method: 'cash', amountMinor: 4800 }], customerId: cusForeign.data?._id })).status === 400, cusForeign.data?._id);
+  check('An unknown customer id is refused', (await ssSale({ items: [{ productId: soap.data._id, quantity: 1 }], payments: [{ method: 'cash', amountMinor: 4800 }], customerId: '64b000000000000000000000' })).status === 400);
+  check('A customer with no usable phone number is rejected', (await ssSale({ items: [{ productId: soap.data._id, quantity: 1 }], payments: [{ method: 'cash', amountMinor: 4800 }], customer: { name: 'No Phone', phone: 'not-a-phone' } })).status === 422);
+  check('Unknown fields on the customer are rejected', (await ssSale({ items: [{ productId: soap.data._id, quantity: 1 }], payments: [{ method: 'cash', amountMinor: 4800 }], customer: { name: 'Sneaky', phone: `019${cusStamp}1`, totalSpentMinor: 999_999 } })).status === 422);
+
+  // --- Pharmacy ----------------------------------------------------------------
+  const phCusPhone = `018${cusStamp}2`;
+  const phWithCustomer = await phApi('/sales', {
+    method: 'POST',
+    body: {
+      items: [{ medicineId: napa.data._id, quantity: 2 }],
+      payments: [{ method: 'cash', amountMinor: 1000 }],
+      customer: { name: 'Karim Mia', phone: phCusPhone },
+      prescription: { patientName: 'Karim Mia Jr', prescriberName: 'Dr Rahman' },
+    },
+  });
+  check('Pharmacy: a customer typed at the till is created with the sale', phWithCustomer.status === 201 && phWithCustomer.data?.customerNameSnapshot === 'Karim Mia' && phWithCustomer.data?.customerId, phWithCustomer.data ?? phWithCustomer.error);
+  check('Pharmacy: the buyer and the patient on the prescription are separate', phWithCustomer.data?.prescription?.patientName === 'Karim Mia Jr' && phWithCustomer.data?.customerNameSnapshot === 'Karim Mia');
+  check('Pharmacy: the receipt names the customer', (await phApi(`/sales/${phWithCustomer.data._id}/receipt`)).data?.sale?.customerNameSnapshot === 'Karim Mia');
+  const phCustomer = await cusFind(phToken, phCusPhone);
+  check('Pharmacy: the sale counts towards their lifetime value', phCustomer?.orderCount === 1 && phCustomer?.totalSpentMinor === phWithCustomer.data?.totalMinor, phCustomer);
+  check('Pharmacy: voiding takes it back off', (await phApi(`/sales/${phWithCustomer.data._id}/void`, { method: 'POST', body: { reason: 'Wrong customer' } })).status === 200 && (await cusFind(phToken, phCusPhone))?.orderCount === 0);
+  check('Pharmacy: a customer from another workspace is refused', (await phApi('/sales', { method: 'POST', body: { items: [{ medicineId: napa.data._id, quantity: 1 }], payments: [{ method: 'cash', amountMinor: 1000 }], customerId: cusForeign.data?._id } })).status === 400);
+
+  // --- Restaurant --------------------------------------------------------------
+  const rvCusPhone = `018${cusStamp}3`;
+  const rvWithCustomer = await rvOrder({
+    type: 'takeaway',
+    items: [{ menuItemId: borhani.data._id, quantity: 2 }],
+    customer: { name: 'Nusrat Jahan', phone: rvCusPhone },
+  });
+  check('Restaurant: the customer belongs to the order', rvWithCustomer.status === 201 && rvWithCustomer.data?.customerNameSnapshot === 'Nusrat Jahan' && rvWithCustomer.data?.customerId, rvWithCustomer.data ?? rvWithCustomer.error);
+  const rvCustomer = await cusFind(rvToken, rvCusPhone);
+  check('Restaurant: an open order is not a purchase yet', rvCustomer?.orderCount === 0 && rvCustomer?.totalSpentMinor === 0, rvCustomer);
+  const rvPaidWithCustomer = await api(`/restaurant/orders/${rvWithCustomer.data._id}/pay`, {
+    method: 'POST',
+    token: rvToken,
+    body: { rev: rvWithCustomer.data.rev, payments: [{ method: 'cash', amountMinor: rvWithCustomer.data.totalMinor }] },
+  });
+  check('Restaurant: paying the order counts it towards their lifetime value', rvPaidWithCustomer.status === 200 && (await cusFind(rvToken, rvCusPhone))?.orderCount === 1 && (await cusFind(rvToken, rvCusPhone))?.totalSpentMinor === rvPaidWithCustomer.data?.totalMinor, await cusFind(rvToken, rvCusPhone));
+  const rvCancelled = await rvOrder({ type: 'takeaway', items: [{ menuItemId: borhani.data._id, quantity: 1 }], customerId: rvCustomer._id });
+  await api(`/restaurant/orders/${rvCancelled.data._id}/cancel`, { method: 'POST', token: rvToken, body: { reason: 'Guest left' } });
+  check('Restaurant: a cancelled order never counts', (await cusFind(rvToken, rvCusPhone))?.orderCount === 1);
+  check('Restaurant: a customer from another workspace is refused', (await rvOrder({ type: 'takeaway', items: [{ menuItemId: borhani.data._id, quantity: 1 }], customerId: cusForeign.data?._id })).status === 400);
+
   // --- Universal plan catalog + pricing engine ---------------------------------
   section('Pricing engine');
   const EXPECTED_PRICES = { starter: [99_000, 990_000], professional: [199_000, 1_990_000], enterprise: [299_000, 2_990_000] };

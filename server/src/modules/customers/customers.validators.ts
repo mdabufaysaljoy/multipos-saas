@@ -12,6 +12,19 @@ export const createCustomerSchema = z
   // A workspace, branch or owner named in the body is refused, not ignored.
   .strict();
 
+/**
+ * A customer typed at the till, in any POS vertical: the sale endpoint finds
+ * them by phone or creates them in one step, so a cashier never has to leave
+ * the checkout. Every vertical accepts the same shape alongside `customerId`.
+ */
+export const posCustomerSchema = z
+  .object({
+    name: z.string().trim().min(1).max(160),
+    phone: phoneNumber,
+    email: optionalEmailAddress,
+  })
+  .strict();
+
 export const updateCustomerSchema = createCustomerSchema.partial();
 
 export const listCustomersSchema = searchSchema.extend({

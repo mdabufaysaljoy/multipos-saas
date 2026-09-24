@@ -12,6 +12,7 @@ import { EmptyState, LoadingState } from '@/components/states';
 import { MoneyInput } from '@/components/MoneyInput';
 import { LimitAlert } from '@/components/LimitAlert';
 import { useDebounced } from '@/components/SearchInput';
+import { CustomerPicker, saleCustomerFields, type SelectedCustomer } from '@/features/customers/CustomerPicker';
 import { PharmacyReceiptDialog } from '@/features/pharmacy/PharmacyReceiptDialog';
 import { ApiError } from '@/api/client';
 import { pharmacyApi } from '@/api/pharmacy';
@@ -54,6 +55,7 @@ export function PharmacyPosPage() {
   const [method, setMethod] = React.useState('cash');
   const [tendered, setTendered] = React.useState<number | null>(null);
   const [rx, setRx] = React.useState(EMPTY_RX);
+  const [customer, setCustomer] = React.useState<SelectedCustomer | null>(null);
   const [receiptFor, setReceiptFor] = React.useState<string | null>(null);
 
   const { data: results, isLoading } = useQuery({
@@ -91,6 +93,7 @@ export function PharmacyPosPage() {
     setTendered(null);
     setRx(EMPTY_RX);
     setMethod('cash');
+    setCustomer(null);
   };
 
   const complete = useMutation({
@@ -99,6 +102,7 @@ export function PharmacyPosPage() {
         items: cart.map((line) => ({ medicineId: line.medicine._id, quantity: line.quantity })),
         payments: [{ method, amountMinor: paid }],
         discountMinor,
+        ...saleCustomerFields(customer),
         ...(needsRx
           ? { prescription: { patientName: rx.patientName.trim(), prescriberName: rx.prescriberName.trim(), prescriptionNumber: rx.prescriptionNumber.trim() } }
           : {}),
@@ -246,6 +250,8 @@ export function PharmacyPosPage() {
               <dd className="tabular">{formatMoney(total, currency)}</dd>
             </div>
           </dl>
+
+          <CustomerPicker value={customer} onChange={setCustomer} canCreate={can('customers.create')} />
 
           <div className="grid grid-cols-2 gap-2">
             <div className="space-y-1.5">
