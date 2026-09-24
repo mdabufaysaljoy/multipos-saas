@@ -33,6 +33,7 @@ Base URL: `/api` · All responses use one envelope.
 | `SUBSCRIPTION_INACTIVE` | 402 | Subscription expired or suspended |
 | `VALIDATION_ERROR` | 422 | Zod failure; `details[]` carries `{ path, message }` |
 | `TOO_MANY_REQUESTS` | 429 | Rate limited |
+| `VERIFICATION_REQUIRED` | 403 | No email address or phone number verified yet, and the request buys something |
 | `INTERNAL` | 500 | Unexpected server error (no stack in production) |
 
 ---
@@ -344,6 +345,71 @@ admins outright, keeping the two surfaces separate.
 | PATCH | `/subscriptions/:id/status` | Force active / suspended / expired / cancelled |
 | GET | `/payments` | All payments |
 | POST | `/payments/:id/mark-paid` | Confirm an offline payment (a deliberate human step) |
+
+---
+
+## Data export — `/api/exports`
+
+Professional and Enterprise (`dataExport` entitlement) + `reports.export`. Files
+stream to the caller and are never stored. See `docs/DATA_EXPORT.md`.
+
+| Method | Path | Purpose |
+|---|---|---|
+| GET | `/datasets` | The server-side registry: what may be exported, and in which formats |
+| POST | `/` | `{ type, format, preset/from/to, branch }` → streams CSV / XLSX / JSON / PDF |
+| GET | `/` | Export history (metadata only) |
+
+---
+
+## Contact verification — `/api/auth/verification`
+
+One proven contact (email **or** phone) is required before buying a
+subscription. See `docs/CONTACT_VERIFICATION.md`.
+
+| Method | Path | Purpose |
+|---|---|---|
+| GET | `/` | What is verified, destinations masked |
+| POST | `/send` | `{ channel: 'email' \| 'phone' }` → sends a 6-digit code (returns `devCode` outside production) |
+| POST | `/confirm` | `{ channel, code }` → verifies and returns the new status |
+
+Gated by it: `POST /subscriptions/purchase`, `/subscriptions/renew`,
+`/subscriptions/upgrade-request` and `/payments/checkout` → `403
+VERIFICATION_REQUIRED`. Automatic wallet renewal and platform-admin assignment
+are not.
+
+---
+
+## Suppliers — `/api/suppliers`
+
+Professional and Enterprise (`supplierManagement` entitlement) + the matching
+`suppliers.*` permission, Clothing only. Workspace-level: every branch sees the
+same list. See `docs/SUPPLIER_MANAGEMENT.md`.
+
+| Method | Path | Purpose |
+|---|---|---|
+| GET | `/summary` | Counts, the plan ceiling, and whether the workspace is over it |
+| GET | `/` `?search&status&type&sort&order&page&limit` | Paginated list (no banking, tax or notes) |
+| GET | `/:id` | One supplier in full (banking only for `suppliers.edit`) |
+| POST | `/` | Create — the server assigns `SUP-0001` |
+| PATCH | `/:id` | Edit in place |
+| POST | `/:id/status` | `{ isActive }` — deactivate or reactivate |
+| DELETE | `/:id` | Soft delete |
+
+---
+
+## Product import — `/api/products/import`
+
+**Every plan** (`productImport` entitlement — deliberately not `dataExport`) +
+`products.import`, Clothing only. Two steps: nothing is created until a preview
+is confirmed. See `docs/PRODUCT_IMPORT.md`.
+
+| Method | Path | Purpose |
+|---|---|---|
+| GET | `/columns` | The column contract and limits (2,000 rows, 5 MB, .xlsx/.csv) |
+| POST | `/preview` | multipart `file` + `createMissingCategories` → validation, mapping, row errors, plan |
+| POST | `/:id/commit` | `{ skipInvalidRows }` → creates the products through the ordinary product service |
+| POST | `/:id/cancel` | Discards an unconfirmed preview |
+| GET | `/` | Import history (filename, counts, status, who, when) |
 
 ---
 

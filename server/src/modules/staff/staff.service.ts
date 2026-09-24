@@ -179,7 +179,12 @@ class StaffService {
     }
 
     if (input.name !== undefined) user.name = input.name;
-    if (input.phone !== undefined) user.phone = input.phone;
+    if (input.phone !== undefined && input.phone !== user.phone) {
+      // A new number is an unproven number: whatever was verified was verified
+      // about the old one.
+      user.phone = input.phone;
+      user.phoneVerifiedAt = null;
+    }
 
     if (input.storeId !== undefined && input.storeId) {
       await this.assertStoresBelongToTenant(ctx, [input.storeId]);

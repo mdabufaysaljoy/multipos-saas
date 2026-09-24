@@ -1,4 +1,4 @@
-import { del, get, getPaginated, patch, post } from './client';
+import { del, get, getPaginated, http, patch, post, postDownload } from './client';
 import type { PaymentInstruction } from '@/features/billing/UpgradeDialog';
 import type {
   BranchReport,
@@ -14,6 +14,15 @@ import type {
   StaffReportRow,
   InventoryRow,
   InventorySummary,
+  ExportCatalog,
+  ExportJob,
+  ImportCatalog,
+  Supplier,
+  SupplierListItem,
+  SupplierSummary,
+  ImportPreview,
+  ImportResult,
+  ProductImportJob,
   LabelSettings,
   LedgerEntry,
   LoyaltyLookup,
@@ -43,7 +52,7 @@ import type {
   WalletBreakdown,
   WalletTransaction,
 } from '@/types/domain';
-import type { AuthTokens, Session } from '@/types/api';
+import type { AuthTokens, Session, VerificationSendResult, VerificationStatus } from '@/types/api';
 
 type Query = Record<string, unknown>;
 
@@ -171,6 +180,49 @@ export const customerApi = {
   create: (body: Record<string, unknown>) => post<Customer>('/customers', body),
   update: (id: string, body: Record<string, unknown>) => patch<Customer>(`/customers/${id}`, body),
   remove: (id: string) => del<{ id: string }>(`/customers/${id}`),
+};
+
+/** Proving an email address or a phone number with a one-time code. */
+export const verificationApi = {
+  status: () => get<VerificationStatus>('/auth/verification'),
+  send: (channel: 'email' | 'phone') => post<VerificationSendResult>('/auth/verification/send', { channel }),
+  confirm: (channel: 'email' | 'phone', code: string) => post<VerificationStatus>('/auth/verification/confirm', { channel, code }),
+};
+
+export const supplierApi = {
+  summary: () => get<SupplierSummary>('/suppliers/summary'),
+  list: (params?: Query) => getPaginated<SupplierListItem>('/suppliers', params),
+  get: (id: string) => get<Supplier>(`/suppliers/${id}`),
+  create: (body: Record<string, unknown>) => post<Supplier>('/suppliers', body),
+  update: (id: string, body: Record<string, unknown>) => patch<Supplier>(`/suppliers/${id}`, body),
+  setStatus: (id: string, isActive: boolean) => post<Supplier>(`/suppliers/${id}/status`, { isActive }),
+  remove: (id: string) => del<{ id: string }>(`/suppliers/${id}`),
+};
+
+export const exportApi = {
+  /** The server-side registry of exportable datasets and formats. */
+  datasets: () => get<ExportCatalog>('/exports/datasets'),
+  history: (params?: Query) => getPaginated<ExportJob>('/exports', params),
+  /** Streams the generated file; the server assigns the filename. */
+  run: (body: Record<string, unknown>) => postDownload('/exports', body),
+};
+
+/**
+ * Bulk product import. Two steps on purpose: the file is validated and
+ * previewed first, and nothing is created until the preview is confirmed.
+ */
+export const productImportApi = {
+  columns: () => get<ImportCatalog>('/products/import/columns'),
+  history: (params?: Query) => getPaginated<ProductImportJob>('/products/import', params),
+  preview: async (file: File, options: { createMissingCategories: boolean }) => {
+    const form = new FormData();
+    form.append('file', file);
+    form.append('createMissingCategories', String(options.createMissingCategories));
+    const res = await http.post<{ success: true; data: ImportPreview }>('/products/import/preview', form);
+    return res.data.data;
+  },
+  commit: (importId: string, body: { skipInvalidRows: boolean }) => post<ImportResult>(`/products/import/${importId}/commit`, body),
+  cancel: (importId: string) => post<{ importId: string; status: string }>(`/products/import/${importId}/cancel`, {}),
 };
 
 export const loyaltyApi = {

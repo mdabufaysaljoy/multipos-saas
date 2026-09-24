@@ -58,6 +58,9 @@ const ShopSalesPage = lazyPage(() => import('@/pages/supershop/ShopSalesPage'), 
 // Shared workspace screens
 const CustomersPage = lazyPage(() => import('@/pages/CustomersPage'), 'CustomersPage');
 const LoyaltyPage = lazyPage(() => import('@/pages/LoyaltyPage'), 'LoyaltyPage');
+const DataExportPage = lazyPage(() => import('@/pages/DataExportPage'), 'DataExportPage');
+const ProductImportPage = lazyPage(() => import('@/pages/ProductImportPage'), 'ProductImportPage');
+const SuppliersPage = lazyPage(() => import('@/pages/SuppliersPage'), 'SuppliersPage');
 const MarketingPage = lazyPage(() => import('@/pages/MarketingPage'), 'MarketingPage');
 const StaffPage = lazyPage(() => import('@/pages/StaffPage'), 'StaffPage');
 const RolesPage = lazyPage(() => import('@/pages/RolesPage'), 'RolesPage');
@@ -274,6 +277,23 @@ export function AppRoutes() {
           }
         />
         <Route
+          path="/catalogue/import"
+          element={
+            <ProtectedRoute anyOf={['products.import']}>
+              <ProductImportPage />
+            </ProtectedRoute>
+          }
+        />
+        {/* Shows its own locked state on plans without supplier management. */}
+        <Route
+          path="/suppliers"
+          element={
+            <ProtectedRoute anyOf={['suppliers.view']}>
+              <SuppliersPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
           path="/categories"
           element={
             <ProtectedRoute anyOf={['categories.view']}>
@@ -351,6 +371,15 @@ export function AppRoutes() {
           }
         />
         <Route path="/reports" element={<Navigate to="/analytics" replace />} />
+        {/* Shows its own locked state on plans without data export. */}
+        <Route
+          path="/data-export"
+          element={
+            <ProtectedRoute anyOf={['reports.export']}>
+              <DataExportPage />
+            </ProtectedRoute>
+          }
+        />
         <Route
           path="/wallet"
           element={

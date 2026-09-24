@@ -1,7 +1,8 @@
 import * as React from 'react';
+import { Link } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { ImageOff, Package, Pencil, Plus, Trash2 } from 'lucide-react';
+import { ImageOff, Package, Pencil, Plus, Trash2, Upload } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
@@ -174,17 +175,27 @@ export function ProductsPage() {
         title="Products"
         description="Your clothing catalogue. Each colour and size combination is its own sellable variant."
         actions={
-          <PermissionGate anyOf={['products.create']}>
-            <Button
-              onClick={() => {
-                setEditingId(null);
-                setFormOpen(true);
-              }}
-            >
-              <Plus />
-              New product
-            </Button>
-          </PermissionGate>
+          <>
+            <PermissionGate anyOf={['products.import']}>
+              <Button variant="outline" asChild>
+                <Link to="/catalogue/import">
+                  <Upload />
+                  Import
+                </Link>
+              </Button>
+            </PermissionGate>
+            <PermissionGate anyOf={['products.create']}>
+              <Button
+                onClick={() => {
+                  setEditingId(null);
+                  setFormOpen(true);
+                }}
+              >
+                <Plus />
+                New product
+              </Button>
+            </PermissionGate>
+          </>
         }
       />
       <LimitAlert resource="products" />

@@ -2,9 +2,21 @@
   "version": "0.0.1",
   "configurations": [
     {
+      "name": "pos-server",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": [
+        "run",
+        "dev:server"
+      ],
+      "port": 4100
+    },
+    {
       "name": "pos-client",
       "runtimeExecutable": "npm",
-      "runtimeArgs": ["run", "dev:client"],
+      "runtimeArgs": [
+        "run",
+        "dev:client"
+      ],
       "port": 5173,
       "autoPort": true
     }

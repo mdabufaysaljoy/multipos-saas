@@ -87,9 +87,14 @@ export const PLAN_SECTIONS: PlanSection[] = [
       { kind: 'always', label: 'Barcode generation' },
       { kind: 'always', label: 'Categories' },
       { kind: 'always', label: 'Product photos' },
+      // Its own plan flag, on for every plan (Starter included) - deliberately
+      // NOT the Data export flag, which is Professional and above.
+      { kind: 'flag', key: 'productImport', label: 'Bulk product import (Excel, CSV)', hint: 'Create many products and variants at once from a spreadsheet.' },
       { kind: 'always', label: 'Stock levels per branch' },
       { kind: 'always', label: 'Low-stock alerts' },
       { kind: 'flag', key: 'inventoryLedger', label: 'Full inventory ledger', hint: 'Every movement, with who and why.' },
+      { kind: 'flag', key: 'supplierManagement', label: 'Supplier management', hint: 'Keep your sourcing contacts, their people, terms and tax details in one place.', upsell: true },
+      { kind: 'limit', key: 'maxSuppliers', label: 'Suppliers' },
     ],
   },
   {
@@ -140,6 +145,7 @@ export const PLAN_SECTIONS: PlanSection[] = [
       { kind: 'flag', key: 'advancedReports', label: 'Product and variant performance' },
       { kind: 'flag', key: 'advancedReports', label: 'Payment, return and staff analysis' },
       { kind: 'flag', key: 'advancedReports', label: 'Inventory valuation' },
+      { kind: 'flag', key: 'exportData', label: 'Data export (CSV, Excel, JSON, PDF)', hint: 'Download customers, products, sales, inventory, returns and loyalty data.', upsell: true },
       { kind: 'flag', key: 'multiStore', label: 'Branch performance comparison' },
     ],
   },
@@ -176,6 +182,8 @@ export const FEATURE_LABELS: Record<string, string> = {
   multiStore: 'Multiple branches',
   customRoles: 'Custom roles',
   exportData: 'Data export',
+  productImport: 'Bulk product import',
+  supplierManagement: 'Supplier management',
   prioritySupport: 'Priority support',
   smsMarketing: 'SMS marketing',
   emailMarketing: 'Email marketing',

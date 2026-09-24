@@ -10,6 +10,8 @@ interface LabelSettingsCardProps {
   storeName: string;
   currency: string;
   readOnly: boolean;
+  /** The store's VAT switch, so the preview matches what is printed. */
+  vatEnabled: boolean;
   /** Loyalty card size is only relevant where the loyalty program exists (Clothing). */
   showLoyaltyCard: boolean;
   onChange: (labels: LabelSettings) => void;
@@ -22,7 +24,7 @@ const CARD_WIDTHS = [48, 58, 85] as const;
  * Barcode label sizes for this branch. Saved with the rest of the settings
  * (needs settings.edit); every label print dialog reads them from the POS config.
  */
-export function LabelSettingsCard({ value, storeName, currency, readOnly, showLoyaltyCard, onChange }: LabelSettingsCardProps) {
+export function LabelSettingsCard({ value, storeName, currency, readOnly, vatEnabled, showLoyaltyCard, onChange }: LabelSettingsCardProps) {
   return (
     <div className="grid gap-4 lg:grid-cols-2">
       <Card>
@@ -78,6 +80,7 @@ export function LabelSettingsCard({ value, storeName, currency, readOnly, showLo
             currency={currency}
             storeName={storeName}
             widthMm={value.productWidthMm}
+            vatEnabled={vatEnabled}
           />
           {showLoyaltyCard && (
             <LoyaltyCardSticker

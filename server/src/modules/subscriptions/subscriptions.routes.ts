@@ -7,6 +7,7 @@ import { PERMISSIONS } from '../../config/permissions';
 import { authenticate } from '../../middleware/auth';
 import { requirePermission } from '../../middleware/rbac';
 import { resolveTenant } from '../../middleware/tenant';
+import { requireVerifiedContact } from '../../middleware/verifiedContact';
 import { validate } from '../../middleware/validate';
 import * as controller from './subscriptions.controller';
 import { idParam } from '../common/common.validators';
@@ -60,6 +61,8 @@ router.post(
   '/purchase',
   purchaseLimiter,
   requirePermission(PERMISSIONS.SUBSCRIPTION_MANAGE),
+  // Money leaves the wallet here: the buyer must have a proven contact.
+  requireVerifiedContact,
   validate({ body: purchaseSchema }),
   controller.purchase,
 );
@@ -69,7 +72,7 @@ router.get('/renewal', requirePermission(PERMISSIONS.SUBSCRIPTION_VIEW), control
 // Automatic renewal spends the account wallet, so it needs the wallet permission too.
 router.post('/auto-renew', requirePermission(PERMISSIONS.SUBSCRIPTION_MANAGE, PERMISSIONS.WALLET_MANAGE), validate({ body: autoRenewSchema }), controller.setAutoRenew);
 // Renew now from the account wallet. No amount in the body: the server prices it.
-router.post('/renew', purchaseLimiter, requirePermission(PERMISSIONS.SUBSCRIPTION_MANAGE, PERMISSIONS.WALLET_MANAGE), validate({ body: emptyBodySchema }), controller.renew);
+router.post('/renew', purchaseLimiter, requirePermission(PERMISSIONS.SUBSCRIPTION_MANAGE, PERMISSIONS.WALLET_MANAGE), requireVerifiedContact, validate({ body: emptyBodySchema }), controller.renew);
 router.post(
   '/scheduled-change',
   requirePermission(PERMISSIONS.SUBSCRIPTION_MANAGE),
@@ -87,6 +90,7 @@ router.get('/payment-instructions', requirePermission(PERMISSIONS.SUBSCRIPTION_V
 router.post(
   '/upgrade-request',
   requirePermission(PERMISSIONS.SUBSCRIPTION_MANAGE),
+  requireVerifiedContact,
   validate({ body: submitUpgradeSchema }),
   controller.submitUpgrade,
 );

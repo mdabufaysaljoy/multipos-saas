@@ -13,6 +13,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { ApiError } from '@/api/client';
 import { storeApi } from '@/api/endpoints';
 import { useAuth } from '@/hooks/useAuth';
+import { VerifyContactCard } from '@/features/verification/VerifyContactCard';
 import { homePathForVertical } from '@/lib/verticalRoutes';
 
 const schema = z.object({
@@ -67,6 +68,23 @@ export function OnboardingPage() {
             This is the shop your sales, stock and receipts belong to.
           </p>
         </div>
+
+        {/* One proven contact is what a subscription, an invoice and a renewal
+            reminder all depend on, so it is asked for here rather than at the
+            till. It is not a wall: the store can be set up either way. */}
+        <Card>
+          <CardHeader className="pb-3">
+            <CardTitle className="text-base">Verify your contact</CardTitle>
+            <CardDescription>
+              {session?.user.verification?.anyVerified
+                ? 'Thanks - your contact details are confirmed.'
+                : 'Confirm your email address or phone number. One of them is needed before you can buy a subscription.'}
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <VerifyContactCard />
+          </CardContent>
+        </Card>
 
         <Card>
           <CardHeader className="pb-3">

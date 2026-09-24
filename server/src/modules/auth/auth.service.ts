@@ -20,6 +20,7 @@ import { withTransaction } from '../../utils/tx';
 import { resolvePermissions } from '../../middleware/auth';
 import { createSystemRoles } from '../roles/roles.defaults';
 import { startTrialSubscription } from '../../services/subscription/provisioning.service';
+import { verificationService } from '../../services/auth/verification.service';
 import { entitlementService } from '../../services/subscription/entitlement.service';
 import { ownsAccount, ensureAccountForOwner } from '../../services/account/account.service';
 import { AccountModel } from '../../models/Account';
@@ -356,6 +357,8 @@ class AuthService {
         permissions,
         /** Owns the customer account: sees billing across every workspace. */
         isAccountOwner,
+        /** Which contact details this person has proven. Buying needs one of them. */
+        verification: verificationService.status(user),
       },
       tenant: tenant
         ? {

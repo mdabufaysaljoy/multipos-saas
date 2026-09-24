@@ -26,6 +26,9 @@
     "migrate:wallet-sequences": "tsx src/migrations/backfillWalletSequences.ts",
     "migrate:loyalty": "tsx src/migrations/enableLoyaltyProgram.ts",
     "migrate:out-of-stock-permission": "tsx src/migrations/grantOutOfStockPermission.ts",
+    "migrate:export-permission": "tsx src/migrations/grantExportPermission.ts",
+    "migrate:product-import": "tsx src/migrations/enableProductImport.ts",
+    "migrate:suppliers": "tsx src/migrations/enableSupplierManagement.ts",
     "migrate:verify-clothing": "tsx src/migrations/verifyClothingMigration.ts",
     "report:identities": "tsx src/migrations/reportDuplicateIdentities.ts",
     "bkash:sandbox": "tsx src/scripts/bkashSandboxCheck.ts"
@@ -37,6 +40,7 @@
     "cors": "^2.8.5",
     "dayjs": "^1.11.13",
     "dotenv": "^16.4.7",
+    "exceljs": "^4.4.0",
     "express": "^4.21.2",
     "express-rate-limit": "^7.5.0",
     "helmet": "^8.0.0",
@@ -46,6 +50,7 @@
     "morgan": "^1.10.0",
     "multer": "^1.4.5-lts.1",
     "nodemailer": "^6.10.1",
+    "pdfkit": "^0.15.2",
     "sharp": "^0.35.4",
     "zod": "^3.24.1"
   },
@@ -60,6 +65,7 @@
     "@types/multer": "^1.4.12",
     "@types/node": "^22.10.5",
     "@types/nodemailer": "^8.0.1",
+    "@types/pdfkit": "^0.17.6",
     "tsx": "^4.19.2",
     "typescript": "^5.7.3"
   }

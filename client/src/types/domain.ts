@@ -185,6 +185,185 @@ export interface SaleLoyalty {
   pointsRedeemedRestored: number;
 }
 
+/** The datasets and formats the server allows for data export. */
+export interface ExportCatalog {
+  datasets: { key: string; label: string; description: string; dated: boolean }[];
+  formats: { key: 'csv' | 'xlsx' | 'json' | 'pdf'; label: string; description: string }[];
+  limits: { rows: number; pdfRows: number };
+}
+
+export interface ExportJob {
+  _id: string;
+  type: string;
+  format: string;
+  filterSummary: string;
+  status: 'completed' | 'failed';
+  rowCount: number;
+  byteSize: number;
+  error: string;
+  requestedByNameSnapshot: string;
+  createdAt: string;
+}
+
+/** Supplier management (Clothing POS, Professional and Enterprise). */
+export const SUPPLIER_TYPES = ['manufacturer', 'wholesaler', 'distributor', 'importer', 'local', 'other'] as const;
+export type SupplierType = (typeof SUPPLIER_TYPES)[number];
+
+export const PAYMENT_TERMS = ['cash', 'on_delivery', 'net_7', 'net_15', 'net_30', 'net_60', 'other'] as const;
+export type PaymentTerm = (typeof PAYMENT_TERMS)[number];
+
+export interface SupplierContact {
+  name: string;
+  designation: string;
+  phone: string;
+  altPhone: string;
+  email: string;
+}
+
+export interface SupplierAddress {
+  line1: string;
+  line2: string;
+  area: string;
+  city: string;
+  district: string;
+  division: string;
+  postalCode: string;
+  country: string;
+}
+
+/** Only ever present on the detail view, and only for users who may edit suppliers. */
+export interface SupplierBanking {
+  accountName: string;
+  accountNumber: string;
+  bankName: string;
+  branchName: string;
+}
+
+export interface Supplier {
+  _id: string;
+  code: string;
+  name: string;
+  type: SupplierType;
+  contact: SupplierContact;
+  phone: string;
+  email: string;
+  website: string;
+  address: SupplierAddress;
+  taxNumber: string;
+  tradeLicense: string;
+  banking?: SupplierBanking;
+  paymentTerms: PaymentTerm;
+  paymentTermsNote: string;
+  notes: string;
+  isActive: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** The list row: no banking, no tax, no notes. */
+export type SupplierListItem = Pick<Supplier, '_id' | 'code' | 'name' | 'type' | 'phone' | 'email' | 'isActive' | 'createdAt' | 'updatedAt'> & {
+  contact: Pick<SupplierContact, 'name' | 'phone' | 'email'>;
+};
+
+export interface SupplierSummary {
+  active: number;
+  inactive: number;
+  total: number;
+  /** null when the plan sets no ceiling. */
+  max: number | null;
+  unlimited: boolean;
+  remaining: number | null;
+  /** True after a downgrade left more suppliers than the new plan allows. */
+  overLimit: boolean;
+  planName: string | null;
+}
+
+/** Bulk product import (Excel/CSV) - available on every plan. */
+export interface ImportColumnSpec {
+  field: string;
+  label: string;
+  required: boolean;
+  aliases: string[];
+  hint: string;
+}
+
+export interface ImportCatalog {
+  columns: ImportColumnSpec[];
+  limits: { maxRows: number; maxBytes: number };
+  formats: string[];
+}
+
+export interface ImportRowError {
+  rowNumber: number;
+  productName: string;
+  variantName: string;
+  field: string;
+  message: string;
+}
+
+export interface ImportPreview {
+  importId: string;
+  filename: string;
+  format: 'xlsx' | 'csv';
+  headerRow: number;
+  mapping: { header: string; field: string | null; ignored: boolean }[];
+  unmappedHeaders: string[];
+  summary: {
+    totalRows: number;
+    validRows: number;
+    invalidRows: number;
+    blankRows: number;
+    productsToCreate: number;
+    variantsToCreate: number;
+    categoriesToCreate: number;
+  };
+  missingCategories: string[];
+  preview: {
+    name: string;
+    brand: string;
+    category: string;
+    variantCount: number;
+    variants: { name: string; sku: string; barcode: string; sellingPriceMinor: number; stock: number }[];
+  }[];
+  errors: ImportRowError[];
+  errorsTruncated: boolean;
+  expiresAt: string | null;
+}
+
+export interface ImportResult {
+  importId: string;
+  status: 'completed' | 'failed';
+  summary: {
+    rowsProcessed: number;
+    rowsImported: number;
+    rowsFailed: number;
+    rowsSkipped: number;
+    productsCreated: number;
+    variantsCreated: number;
+    categoriesCreated: number;
+  };
+  failures: { productName: string; rowNumbers: number[]; message: string }[];
+  stopped: string | null;
+}
+
+export interface ProductImportJob {
+  _id: string;
+  filename: string;
+  format: 'xlsx' | 'csv';
+  status: 'pending' | 'completed' | 'failed' | 'cancelled';
+  totalRows: number;
+  validRows: number;
+  invalidRows: number;
+  productsCreated: number;
+  variantsCreated: number;
+  rowsImported: number;
+  rowsFailed: number;
+  categoriesCreated: number;
+  error: string;
+  requestedByNameSnapshot: string;
+  createdAt: string;
+}
+
 /** Barcode label printing sizes (store settings). */
 export interface LabelSettings {
   productWidthMm: 38 | 48 | 58;

@@ -8,11 +8,19 @@ export const PERMISSIONS = {
   PRODUCTS_CREATE: 'products.create',
   PRODUCTS_EDIT: 'products.edit',
   PRODUCTS_DELETE: 'products.delete',
+  /** Bulk product import from a spreadsheet. Creating one product at a time is `products.create`. */
+  PRODUCTS_IMPORT: 'products.import',
 
   CATEGORIES_VIEW: 'categories.view',
   CATEGORIES_CREATE: 'categories.create',
   CATEGORIES_EDIT: 'categories.edit',
   CATEGORIES_DELETE: 'categories.delete',
+
+  /** Supplier management (Clothing POS, plans with the supplier entitlement). */
+  SUPPLIERS_VIEW: 'suppliers.view',
+  SUPPLIERS_CREATE: 'suppliers.create',
+  SUPPLIERS_EDIT: 'suppliers.edit',
+  SUPPLIERS_DELETE: 'suppliers.delete',
 
   INVENTORY_VIEW: 'inventory.view',
   INVENTORY_ADJUST: 'inventory.adjust',
@@ -39,6 +47,8 @@ export const PERMISSIONS = {
   CUSTOMERS_DELETE: 'customers.delete',
 
   REPORTS_VIEW: 'reports.view',
+  /** Data export (needs the plan's data-export entitlement as well). */
+  REPORTS_EXPORT: 'reports.export',
 
   MARKETING_VIEW: 'marketing.view',
   MARKETING_CREATE_CAMPAIGN: 'marketing.createCampaign',
@@ -85,6 +95,7 @@ export const PERMISSION_CATALOG: PermissionGroup[] = [
       { key: PERMISSIONS.PRODUCTS_CREATE, label: 'Create products', description: 'Add new products and variants' },
       { key: PERMISSIONS.PRODUCTS_EDIT, label: 'Edit products', description: 'Change product details and prices' },
       { key: PERMISSIONS.PRODUCTS_DELETE, label: 'Delete products', description: 'Deactivate or soft-delete products' },
+      { key: PERMISSIONS.PRODUCTS_IMPORT, label: 'Import products', description: 'Create many products at once from an Excel or CSV file' },
     ],
   },
   {
@@ -103,6 +114,16 @@ export const PERMISSION_CATALOG: PermissionGroup[] = [
     permissions: [
       { key: PERMISSIONS.INVENTORY_VIEW, label: 'View inventory', description: 'See stock levels and the ledger' },
       { key: PERMISSIONS.INVENTORY_ADJUST, label: 'Adjust stock', description: 'Manually add or remove stock' },
+    ],
+  },
+  {
+    group: 'suppliers',
+    label: 'Suppliers',
+    permissions: [
+      { key: PERMISSIONS.SUPPLIERS_VIEW, label: 'View suppliers', description: 'Browse supplier contacts and their details' },
+      { key: PERMISSIONS.SUPPLIERS_CREATE, label: 'Add suppliers', description: 'Save a new supplier' },
+      { key: PERMISSIONS.SUPPLIERS_EDIT, label: 'Edit suppliers', description: 'Change supplier details, including banking and tax information' },
+      { key: PERMISSIONS.SUPPLIERS_DELETE, label: 'Remove suppliers', description: 'Deactivate or delete a supplier' },
     ],
   },
   {
@@ -169,6 +190,7 @@ export const PERMISSION_CATALOG: PermissionGroup[] = [
     label: 'Reports',
     permissions: [
       { key: PERMISSIONS.REPORTS_VIEW, label: 'View reports', description: 'Access the dashboard and analytics' },
+      { key: PERMISSIONS.REPORTS_EXPORT, label: 'Export data', description: 'Download customers, products, sales and other business data' },
     ],
   },
   {

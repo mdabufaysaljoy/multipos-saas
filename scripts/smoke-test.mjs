@@ -43,6 +43,34 @@ async function api(path, { method = 'GET', token, body, storeId, headers: extraH
   return { status: res.status, ok: res.ok, ...json };
 }
 
+/**
+ * Requests a file download (data export). Returns the raw bytes, so the tests
+ * can check real file signatures rather than a JSON stand-in.
+ */
+async function download(path, { token, storeId, body } = {}) {
+  const res = await fetch(`${BASE}${path}`, {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+      ...(token ? { authorization: `Bearer ${token}` } : {}),
+      ...(storeId ? { 'x-store-id': storeId } : {}),
+    },
+    body: JSON.stringify(body ?? {}),
+  });
+  const buffer = Buffer.from(await res.arrayBuffer());
+  const contentType = res.headers.get('content-type') ?? '';
+  const json = contentType.includes('application/json') ? JSON.parse(buffer.toString('utf8') || '{}') : null;
+  return {
+    status: res.status,
+    contentType,
+    disposition: res.headers.get('content-disposition') ?? '',
+    cacheControl: res.headers.get('cache-control') ?? '',
+    buffer,
+    text: buffer.toString('utf8'),
+    error: json?.error,
+  };
+}
+
 /** Uploads an in-memory file. Used to prove the storage quota actually counts. */
 async function upload(path, { token, storeId, bytes, filename = 'pixel.png' } = {}) {
   const form = new FormData();
@@ -57,6 +85,46 @@ async function upload(path, { token, storeId, bytes, filename = 'pixel.png' } = 
   });
   const json = await res.json().catch(() => ({}));
   return { status: res.status, ok: res.ok, ...json };
+}
+
+/**
+ * Proves a contact the way a real person does: ask for a code, read it, type it
+ * back. Outside production the server returns the code it sent, which is the
+ * only reason an automated run can complete the step at all.
+ */
+async function verifyContact(token, channel = 'email') {
+  const sent = await api('/auth/verification/send', { method: 'POST', token, body: { channel } });
+  if (!sent.data?.devCode) return sent;
+  return api('/auth/verification/confirm', { method: 'POST', token, body: { channel, code: sent.data.devCode } });
+}
+
+/** Uploads a spreadsheet to the product import API, with its multipart fields. */
+async function uploadSheet(path, { token, storeId, bytes, filename = 'products.csv', type = 'text/csv', fields = {} } = {}) {
+  const form = new FormData();
+  form.append('file', new Blob([bytes], { type }), filename);
+  for (const [key, value] of Object.entries(fields)) form.append(key, String(value));
+  const res = await fetch(`${BASE}${path}`, {
+    method: 'POST',
+    headers: {
+      ...(token ? { authorization: `Bearer ${token}` } : {}),
+      ...(storeId ? { 'x-store-id': storeId } : {}),
+    },
+    body: form,
+  });
+  const json = await res.json().catch(() => ({}));
+  return { status: res.status, ok: res.ok, ...json };
+}
+
+/** A CSV in the product export's own shape: title block, blank line, headers, rows. */
+function productCsv(rows, { headers = ['Product', 'Variant', 'Selling price', 'Cost price', 'SKU', 'Barcode', 'Category', 'Brand', 'Attributes', 'Stock', 'Active'], title = true } = {}) {
+  const cell = (value) => `"${String(value ?? '').replace(/"/g, '""')}"`;
+  const lines = [];
+  if (title) {
+    lines.push(cell('Demo Wear - Main'), cell('Products & variants - Last 30 days'), cell('Generated 2026-09-23 10:00 (Asia/Dhaka) by Owner'), cell('All records'), '');
+  }
+  lines.push(headers.map(cell).join(','));
+  for (const row of rows) lines.push(headers.map((_, index) => cell(row[index])).join(','));
+  return Buffer.from('\uFEFF' + lines.join('\r\n') + '\r\n', 'utf8');
 }
 
 /**
@@ -907,6 +975,16 @@ async function main() {
   const brand = plans.data.find((p) => p.code === 'brand-monthly');
   check('Plans expose an upgrade tier', typeof brand?.tier === 'number');
 
+  // Buying needs a proven contact, so the refusal comes before anything else.
+  const unverifiedBuy = await api('/subscriptions/upgrade-request', {
+    method: 'POST',
+    token: admin.token,
+    body: { planId: brand._id, paymentMethod: 'bkash', amountMinor: brand.priceMinor, transactionId: `TXNUNV${runId}`, senderNumber: '01700000000' },
+  });
+  check('Buying is refused until an email address or phone number is verified', unverifiedBuy.status === 403 && unverifiedBuy.error?.code === 'VERIFICATION_REQUIRED', unverifiedBuy.error);
+  const verified = await verifyContact(admin.token);
+  check('Verifying the email address with the emailed code unlocks buying', verified.data?.anyVerified === true && verified.data?.email?.verified === true, verified.error ?? verified.data);
+
   // Tenant is on Showroom (tier 2); Starter is tier 1 -> a downgrade.
   const downgrade = await api('/subscriptions/upgrade-request', {
     method: 'POST',
@@ -1473,6 +1551,8 @@ async function main() {
     });
     const token = reg.data.tokens.accessToken;
     await api('/stores', { method: 'POST', token, body: { name: 'MX Store', code: `MX${label}${runId}`.slice(0, 16), currency: 'BDT' } });
+    // Every buyer proves a contact first, exactly as a person would.
+    await verifyContact(token);
     return { token, tenantId: reg.data.tenant.id ?? reg.data.tenant._id };
   };
 
@@ -3891,6 +3971,7 @@ async function main() {
     body: { businessName: `Rest Home ${rvStamp}`, name: 'Rest Owner', email: `rest${rvStamp}@example.com`, password: 'Password@123' },
   });
   const rvHomeToken = rvReg.data?.tokens?.accessToken;
+  await verifyContact(rvHomeToken);
   const rvHomeId = rvReg.data?.tenant?.id;
   await api('/stores', { method: 'POST', token: rvHomeToken, body: { name: 'Rest Home Main', currency: 'BDT' } });
 
@@ -4708,6 +4789,7 @@ async function main() {
     });
     const rt = reg.data?.tokens?.accessToken;
     await api('/stores', { method: 'POST', token: rt, body: { name: 'Race Main', code: `RACE${ms}`.slice(0, 16), currency: 'BDT' } });
+    await verifyContact(rt);
     const proPlan = ((await api('/plans')).data ?? []).find((p) => p.code === 'showroom-monthly');
     const request = await api('/subscriptions/upgrade-request', {
       method: 'POST',
@@ -4763,6 +4845,7 @@ async function main() {
     });
     const pt = reg.data?.tokens?.accessToken;
     await api('/stores', { method: 'POST', token: pt, body: { name: 'Pay Main', code: `PAY${ms}`.slice(0, 16), currency: 'BDT' } });
+    await verifyContact(pt);
     const allPlans = (await api('/plans')).data ?? [];
     const proPlan = allPlans.find((p) => p.code === 'showroom-monthly');
     const topPlan = allPlans.find((p) => p.code === 'brand-monthly');
@@ -5053,6 +5136,7 @@ async function main() {
     body: { businessName: `Create Home ${wcStamp}`, name: 'Create Owner', email: `create${wcStamp}@example.com`, password: 'Password@123' },
   });
   const wcHomeToken = wcReg.data?.tokens?.accessToken;
+  await verifyContact(wcHomeToken);
   const wcHomeId = wcReg.data?.tenant?.id;
   check('An owner signs up and uses the account trial', wcReg.status === 201 && wcReg.data?.entitlement?.status === 'trial', wcReg.data?.entitlement?.status);
   await api('/stores', { method: 'POST', token: wcHomeToken, body: { name: 'Create Home Main', currency: 'BDT' } });
@@ -5275,6 +5359,7 @@ async function main() {
     body: { businessName: `PH Home ${phStamp}`, name: 'PH Owner', email: `ph${phStamp}@example.com`, password: 'Password@123' },
   });
   const phHomeToken = phReg.data?.tokens?.accessToken;
+  await verifyContact(phHomeToken);
   const phHomeId = phReg.data?.tenant?.id;
   await api('/stores', { method: 'POST', token: phHomeToken, body: { name: 'PH Home Main', currency: 'BDT' } });
   const phCreated = await wcCreateAs(phHomeToken, { businessName: `Shefa Pharmacy ${phStamp}`, vertical: 'pharmacy' });
@@ -5446,6 +5531,7 @@ async function main() {
     body: { businessName: `SS Home ${ssStamp}`, name: 'SS Owner', email: `ss${ssStamp}@example.com`, password: 'Password@123' },
   });
   const ssHomeToken = ssReg.data?.tokens?.accessToken;
+  await verifyContact(ssHomeToken);
   const ssHomeId = ssReg.data?.tenant?.id;
   await api('/stores', { method: 'POST', token: ssHomeToken, body: { name: 'SS Home Main', currency: 'BDT' } });
   const ssCreated = await wcCreateAs(ssHomeToken, { businessName: `Meena Bazar ${ssStamp}`, vertical: 'supershop' });
@@ -5683,6 +5769,7 @@ async function main() {
   const puShop = await wcCreateAs(puHomeToken, { businessName: `PU Mart ${puStamp}`, vertical: 'supershop' });
   const puToken = (await api('/auth/switch-workspace', { method: 'POST', token: puHomeToken, body: { workspaceId: puShop.data?.workspace?.id } })).data?.tokens?.accessToken;
   await api('/stores', { method: 'POST', token: puToken, body: { name: 'PU Mart Main', currency: 'BDT' } });
+  await verifyContact(puToken);
   check('A Supershop workspace without a plan is ready to buy', puShop.status === 201 && Boolean(puToken), puShop.error);
 
   const puApi = (path, opts = {}) => api(path, { token: puToken, ...opts });
@@ -5797,6 +5884,7 @@ async function main() {
   const rnToken = rnReg.data?.tokens?.accessToken;
   const rnTenantId = rnReg.data?.tenant?.id;
   await api('/stores', { method: 'POST', token: rnToken, body: { name: 'RN Main', currency: 'BDT' } });
+  await verifyContact(rnToken);
   const rnApi = (path, opts = {}) => api(path, { token: rnToken, ...opts });
   const rnQuote = (body) => rnApi('/subscriptions/purchase/quote', { method: 'POST', body });
   const rnBuy = (body) => rnApi('/subscriptions/purchase', { method: 'POST', body });
@@ -6085,6 +6173,7 @@ async function main() {
     body: { businessName: `RG Shop ${rgrStamp}`, name: 'RG Owner', email: `rg${rgrStamp}@example.com`, password: 'Password@123' },
   });
   const rgrToken = rgrReg.data?.tokens?.accessToken;
+  await verifyContact(rgrToken);
   const rgrTenantId = rgrReg.data?.tenant?.id;
   await api('/stores', { method: 'POST', token: rgrToken, body: { name: 'RG Main', currency: 'BDT' } });
   const rgrApi = (path, opts = {}) => api(path, { token: rgrToken, ...opts });
@@ -6283,6 +6372,7 @@ async function main() {
     body: { businessName: `IV Clothing ${ivcStamp}`, name: 'IV Owner', email: `iv${ivcStamp}@example.com`, password: 'Password@123' },
   });
   const ivcToken = ivcReg.data?.tokens?.accessToken;
+  await verifyContact(ivcToken);
   const ivcClothingId = ivcReg.data?.tenant?.id;
   await api('/stores', { method: 'POST', token: ivcToken, body: { name: 'IV Main', currency: 'BDT' } });
   const ivcCredit = (amountMinor) =>
@@ -6378,6 +6468,7 @@ async function main() {
     body: { businessName: `WR Clothing ${wrcStamp}`, name: 'WR Owner', email: `wr${wrcStamp}@example.com`, password: 'Password@123' },
   });
   const wrcToken = wrcReg.data?.tokens?.accessToken;
+  await verifyContact(wrcToken);
   const wrcClothingId = wrcReg.data?.tenant?.id;
   await api('/stores', { method: 'POST', token: wrcToken, body: { name: 'WR Main', currency: 'BDT' } });
   const wrcTopUp = (amountMinor, transactionId) =>
@@ -6541,6 +6632,7 @@ async function main() {
     body: { businessName: `SV Clothing ${spvStamp}`, name: 'SV Owner', email: `sv${spvStamp}@example.com`, password: 'Password@123' },
   });
   const spvToken = spvReg.data?.tokens?.accessToken;
+  await verifyContact(spvToken);
   const spvAccountId = spvReg.data?.tenant?.accountId;
   await api('/stores', { method: 'POST', token: spvToken, body: { name: 'SV Main', currency: 'BDT' } });
   const spvTopUp = await api('/wallet/top-ups', { method: 'POST', token: spvToken, body: { amountMinor: 150_000, paymentMethod: 'bkash', senderNumber: '01799887766', transactionId: `SPV${spvStamp}` } });
@@ -6682,6 +6774,7 @@ async function main() {
   const rnwRegister = async (label) => {
     const reg = await api('/auth/register', { method: 'POST', body: { businessName: `${label} ${rnwStamp}`, name: `${label} Owner`, email: `${label.toLowerCase().replace(/\s+/g, '')}${rnwStamp}@example.com`, password: 'Password@123' } });
     const store = await api('/stores', { method: 'POST', token: reg.data?.tokens?.accessToken, body: { name: `${label} Main`, currency: 'BDT' } });
+    await verifyContact(reg.data?.tokens?.accessToken);
     return { token: reg.data?.tokens?.accessToken, homeId: reg.data?.tenant?.id, accountId: reg.data?.tenant?.accountId, storeId: store.data?._id, email: `${label.toLowerCase().replace(/\s+/g, '')}${rnwStamp}@example.com` };
   };
   const rnwAssign = (tenantId, planCode, startDate, endDate) =>
@@ -8291,6 +8384,715 @@ async function main() {
     check('No endpoint accepts raw print jobs', (await api('/printing/print', { method: 'POST', token: prCashier.token, body: { data: '1b40' } })).status === 404);
   }
 
+  // --- Clothing POS data export ---------------------------------------------
+  section('Clothing POS: data export (CSV, Excel, JSON, PDF)');
+  {
+    const exStamp = String(Date.now()).slice(-7);
+    const exPlatform = await login('platform@pos.dev', 'Platform@123');
+    const exPlans = (await api('/plans', {})).data ?? [];
+    const exSetPlan = (tenantId, code) =>
+      api('/platform/subscriptions', { method: 'POST', token: exPlatform.token, body: { tenantId, planId: exPlans.find((p) => p.code === code)._id, periods: 1, status: 'active', autoRenew: false } });
+    const exReg = await api('/auth/register', { method: 'POST', body: { businessName: `Export Wear ${exStamp}`, name: 'Export Owner', email: `exp${exStamp}@example.com`, password: 'Password@123', vertical: 'clothing' } });
+    const exOwner = exReg.data?.tokens?.accessToken;
+    const exTenantId = exReg.data?.tenant?.id ?? exReg.data?.tenant?._id;
+    const exStoreA = (await api('/stores', { method: 'POST', token: exOwner, body: { name: 'Export Main', code: `EX${exStamp}`, currency: 'BDT' } })).data;
+    const A = { storeId: exStoreA?._id };
+    check('A fresh Clothing workspace is set up for export tests', Boolean(exOwner && exStoreA?._id), exReg.error);
+
+    // ---- Starter: no access at all ----
+    await exSetPlan(exTenantId, 'starter-store-monthly');
+    const exStarterList = await api('/exports/datasets', { token: exOwner, ...A });
+    check('Starter: the dataset registry is refused with ENTITLEMENT_REQUIRED', exStarterList.status === 403 && exStarterList.error?.code === 'ENTITLEMENT_REQUIRED', exStarterList.error);
+    const exStarterRun = await download('/exports', { token: exOwner, ...A, body: { type: 'customers', format: 'csv' } });
+    check('Starter: running an export is refused and no file is produced', exStarterRun.status === 403 && !exStarterRun.disposition, exStarterRun.error);
+    check('Starter: the export history is refused', (await api('/exports', { token: exOwner, ...A })).status === 403);
+    check('An export needs a signed-in user', (await download('/exports', { ...A, body: { type: 'customers', format: 'csv' } })).status === 401);
+
+    // ---- Professional: the registry ----
+    await exSetPlan(exTenantId, 'showroom-monthly');
+    const exCatalog = await api('/exports/datasets', { token: exOwner, ...A });
+    const exKeys = (exCatalog.data?.datasets ?? []).map((d) => d.key);
+    check('Professional: the registry lists the datasets, formats and limits', exCatalog.status === 200 && exKeys.includes('sales') && exKeys.includes('customers') && exCatalog.data.formats.length === 4 && exCatalog.data.limits.rows > 0, exCatalog.error ?? exCatalog.data);
+    check('The registry never offers users, roles or settings', !exKeys.some((k) => /user|staff|role|setting|password|token/i.test(k)), exKeys);
+    check('An unknown dataset is refused (no arbitrary collection export)', (await download('/exports', { token: exOwner, ...A, body: { type: 'users', format: 'csv' } })).status === 422);
+    check('...and so is a raw collection name', (await download('/exports', { token: exOwner, ...A, body: { collection: 'users', format: 'csv' } })).status === 422);
+    check('An unknown format is refused', (await download('/exports', { token: exOwner, ...A, body: { type: 'customers', format: 'sql' } })).status === 422);
+    check('A custom range without both dates is refused', (await download('/exports', { token: exOwner, ...A, body: { type: 'sales', format: 'csv', preset: 'custom' } })).status === 422);
+    check('A backwards custom range is refused', (await download('/exports', { token: exOwner, ...A, body: { type: 'sales', format: 'csv', preset: 'custom', from: '2026-02-01', to: '2026-01-01' } })).status === 422);
+
+    // ---- data worth exporting: a formula-injection name, Bengali text, money ----
+    const exEvil = (await api('/customers', { method: 'POST', token: exOwner, ...A, body: { name: `=1+1 Evil ${exStamp}`, phone: `0151${exStamp}` } })).data;
+    const exBangla = (await api('/customers', { method: 'POST', token: exOwner, ...A, body: { name: `রহিম উদ্দিন ${exStamp}`, phone: `0152${exStamp}` } })).data;
+    const exVariant = (await api('/products', { method: 'POST', token: exOwner, ...A, body: { name: `শার্ট ${exStamp}`, variants: [{ attributes: [], sellingPriceMinor: 129900, costPriceMinor: 80000, stock: 50 }] } })).data?.variants?.[0]?._id;
+    const exSale = await api('/sales', { method: 'POST', token: exOwner, ...A, body: { paymentMethod: 'cash', customerId: exEvil?._id, items: [{ variantId: exVariant, quantity: 2 }] } });
+    check('Test data is in place (customers, a Bengali product and a ৳2,598 sale)', Boolean(exEvil?._id && exBangla?._id && exVariant) && exSale.data?.totalMinor === 259800, exSale.error ?? exSale.data?.totalMinor);
+
+    // ---- CSV ----
+    const exCsv = await download('/exports', { token: exOwner, ...A, body: { type: 'customers', format: 'csv' } });
+    check('CSV: served as a download with the right type and never cached', exCsv.status === 200 && exCsv.contentType.includes('text/csv') && /attachment; filename="customers-\d{4}-\d{2}-\d{2}\.csv"/.test(exCsv.disposition) && exCsv.cacheControl.includes('no-store'), { t: exCsv.contentType, d: exCsv.disposition, c: exCsv.cacheControl });
+    check('CSV: starts with a UTF-8 BOM so Excel reads Bengali correctly', exCsv.buffer[0] === 0xef && exCsv.buffer[1] === 0xbb && exCsv.buffer[2] === 0xbf);
+    check('CSV: Bengali survives the round trip', exCsv.text.includes(`রহিম উদ্দিন ${exStamp}`));
+    check('CSV: a name that looks like a formula is neutralised with an apostrophe', exCsv.text.includes(`'=1+1 Evil ${exStamp}`) && !exCsv.text.includes(`"=1+1 Evil ${exStamp}`), exCsv.text.split('\r\n').find((l) => l.includes('Evil')));
+    check('CSV: quotes are escaped and every row is CRLF terminated', exCsv.text.split('\r\n').filter(Boolean).length > 3 && !/[^\r]\n/.test(exCsv.text));
+    const exCsvSales = await download('/exports', { token: exOwner, ...A, body: { type: 'sales', format: 'csv', preset: 'today' } });
+    check('CSV: money is written as a plain 2-decimal number, not minor units', exCsvSales.text.includes('"2598.00"') && !exCsvSales.text.includes('259800'), exCsvSales.text.split('\r\n').find((l) => l.includes('2598')));
+    check('CSV: no password, hash, token or secret column ever appears', !/password|passwordHash|token|secret|apiKey/i.test(exCsv.text) && !/password|token|secret/i.test(exCsvSales.text));
+
+    // ---- XLSX ----
+    const exXlsx = await download('/exports', { token: exOwner, ...A, body: { type: 'products', format: 'xlsx' } });
+    // A truncated workbook still starts with "PK", so the ZIP is checked end to
+    // end: the central directory must be there, with the workbook part in it.
+    const exZipComplete = exXlsx.buffer.includes(Buffer.from('PK\u0005\u0006', 'latin1')) && exXlsx.buffer.includes(Buffer.from('xl/workbook.xml')) && exXlsx.buffer.includes(Buffer.from('xl/worksheets/sheet1.xml'));
+    check('XLSX: a complete, readable workbook with the spreadsheet content type', exXlsx.status === 200 && exXlsx.buffer.subarray(0, 2).toString() === 'PK' && exZipComplete && exXlsx.contentType.includes('spreadsheetml') && exXlsx.buffer.length > 2000, { t: exXlsx.contentType, n: exXlsx.buffer.length, zip: exZipComplete });
+    check('XLSX: the history records the export as completed, with its real size', (await api('/exports?limit=1', { token: exOwner, ...A })).data?.[0]?.status === 'completed');
+    check('XLSX: the file is named .xlsx', exXlsx.disposition.includes('.xlsx'));
+
+    // ---- JSON ----
+    const exJson = await download('/exports', { token: exOwner, ...A, body: { type: 'customers', format: 'json' } });
+    let exParsed = null;
+    try { exParsed = JSON.parse(exJson.text); } catch { exParsed = null; }
+    check('JSON: valid, structured and describes what it contains', exJson.status === 200 && exParsed?.exportType === 'customers' && Array.isArray(exParsed.sections?.[0]?.records) && exParsed.timezone && exParsed.workspace, exJson.text.slice(0, 200));
+    check('JSON: the records carry the exported customers', (exParsed?.sections?.[0]?.records ?? []).some((r) => String(r.name ?? '').includes('রহিম')));
+    check('JSON: money is a number in major units', (exParsed?.sections?.[0]?.records ?? []).every((r) => r.totalSpent === undefined || typeof r.totalSpent === 'number'));
+
+    // ---- PDF ----
+    const exPdf = await download('/exports', { token: exOwner, ...A, body: { type: 'sales', format: 'pdf', preset: 'today' } });
+    check('PDF: a real PDF document', exPdf.status === 200 && exPdf.text.startsWith('%PDF-') && exPdf.contentType.includes('application/pdf') && exPdf.buffer.length > 1000, { t: exPdf.contentType, head: exPdf.text.slice(0, 8) });
+
+    // ---- empty dataset ----
+    const exEmpty = await download('/exports', { token: exOwner, ...A, body: { type: 'returns', format: 'csv', preset: 'today' } });
+    check('An empty dataset still produces a valid file with its header row', exEmpty.status === 200 && exEmpty.text.includes('Export Main') && exEmpty.text.split('\r\n').some((l) => l.startsWith('"Return')), exEmpty.text.slice(0, 200));
+
+    // ---- permissions ----
+    const exRoles = (await api('/roles', { token: exOwner, ...A })).data ?? [];
+    check('Store Manager exports by default; Cashier does not', exRoles.find((r) => r.name === 'Store Manager')?.permissions.includes('reports.export') === true && exRoles.find((r) => r.name === 'Cashier')?.permissions.includes('reports.export') !== true, exRoles.map((r) => r.name));
+    await api('/staff', { method: 'POST', token: exOwner, ...A, body: { name: 'Export Cashier', email: `expc${exStamp}@example.com`, password: 'Password@123', storeId: exStoreA._id, roleId: exRoles.find((r) => r.name === 'Cashier')?._id } });
+    await api('/staff', { method: 'POST', token: exOwner, ...A, body: { name: 'Export Manager', email: `expm${exStamp}@example.com`, password: 'Password@123', storeId: exStoreA._id, roleId: exRoles.find((r) => r.name === 'Store Manager')?._id } });
+    const exCashier = (await login(`expc${exStamp}@example.com`, 'Password@123')).token;
+    const exManager = (await login(`expm${exStamp}@example.com`, 'Password@123')).token;
+    const exCashierRun = await download('/exports', { token: exCashier, ...A, body: { type: 'customers', format: 'csv' } });
+    check('A cashier cannot export, even on Professional', exCashierRun.status === 403 && !exCashierRun.disposition, exCashierRun.error);
+    check('...and cannot see the history', (await api('/exports', { token: exCashier, ...A })).status === 403);
+    check('A store manager can export', (await download('/exports', { token: exManager, ...A, body: { type: 'customers', format: 'csv' } })).status === 200);
+
+    // ---- branch isolation ----
+    const exStoreB = (await api('/stores', { method: 'POST', token: exOwner, body: { name: 'Export Two', code: `EZ${exStamp}`, currency: 'BDT' } })).data;
+    const B = { storeId: exStoreB?._id };
+    await api('/customers', { method: 'POST', token: exOwner, ...B, body: { name: `Branch Two Only ${exStamp}`, phone: `0153${exStamp}` } });
+    const exBranchA = await download('/exports', { token: exOwner, ...A, body: { type: 'customers', format: 'csv' } });
+    check("A branch export contains only that branch's customers", !exBranchA.text.includes(`Branch Two Only ${exStamp}`) && exBranchA.text.includes(`রহিম উদ্দিন ${exStamp}`));
+    const exAllBranches = await download('/exports', { token: exOwner, ...A, body: { type: 'customers', format: 'csv', branch: 'all' } });
+    check('The owner may export all branches at once', exAllBranches.status === 200 && exAllBranches.text.includes(`Branch Two Only ${exStamp}`) && exAllBranches.text.includes('All branches'));
+    const exManagerAll = await download('/exports', { token: exManager, ...A, body: { type: 'customers', format: 'csv', branch: 'all' } });
+    check('A branch manager asking for "all branches" still only gets their own', exManagerAll.status === 200 && !exManagerAll.text.includes(`Branch Two Only ${exStamp}`), exManagerAll.text.slice(0, 120));
+    const exManagerOther = await download('/exports', { token: exManager, ...B, body: { type: 'customers', format: 'csv' } });
+    check('A branch manager cannot export another branch at all', exManagerOther.status === 403, exManagerOther.error);
+
+    // ---- tenant isolation ----
+    const exOther = await api('/auth/register', { method: 'POST', body: { businessName: `Other Wear ${exStamp}`, name: 'Other Owner', email: `exo${exStamp}@example.com`, password: 'Password@123', vertical: 'clothing' } });
+    const exOtherToken = exOther.data?.tokens?.accessToken;
+    const exOtherStore = (await api('/stores', { method: 'POST', token: exOtherToken, body: { name: 'Other Main', code: `EO${exStamp}`, currency: 'BDT' } })).data;
+    await exSetPlan(exOther.data?.tenant?.id ?? exOther.data?.tenant?._id, 'showroom-monthly');
+    await api('/customers', { method: 'POST', token: exOtherToken, ...{ storeId: exOtherStore?._id }, body: { name: `Foreign Customer ${exStamp}`, phone: `0154${exStamp}` } });
+    const exForeign = await download('/exports', { token: exOtherToken, storeId: exOtherStore?._id, body: { type: 'customers', format: 'csv', branch: 'all' } });
+    check("Another workspace's export contains none of this workspace's data", exForeign.status === 200 && !exForeign.text.includes(`রহিম উদ্দিন ${exStamp}`) && exForeign.text.includes(`Foreign Customer ${exStamp}`));
+    check("...and it cannot name this workspace's branch", (await download('/exports', { token: exOtherToken, storeId: exStoreA._id, body: { type: 'customers', format: 'csv' } })).status === 403);
+    check("...nor smuggle a workspace id through the body", (await download('/exports', { token: exOtherToken, storeId: exOtherStore?._id, body: { type: 'customers', format: 'csv', tenantId: exTenantId, workspaceId: exTenantId } })).status === 422);
+
+    // ---- history and audit ----
+    const exHistory = await api('/exports', { token: exOwner, ...A });
+    const exRecent = exHistory.data?.[0];
+    check('The history records what was exported: type, format, filters, rows, size and who', exHistory.status === 200 && (exHistory.data ?? []).length > 0 && exRecent?.type && exRecent?.format && exRecent?.rowCount >= 0 && exRecent?.byteSize > 0 && exRecent?.requestedByNameSnapshot, exRecent);
+    check('The history stores metadata only - never the exported rows or a file link', !/name|phone|email|url|downloadUrl|filePath/i.test(Object.keys(exRecent ?? {}).join(',')) || !JSON.stringify(exRecent ?? {}).includes(`রহিম উদ্দিন ${exStamp}`), Object.keys(exRecent ?? {}));
+    check("A workspace's history shows only its own exports", (exHistory.data ?? []).every((row) => row.storeId === exStoreA._id));
+    const exAudit = await api('/platform/audit-log?action=data.exported&limit=50', { token: exPlatform.token });
+    check('Every export is written to the audit log with counts only', exAudit.status === 200 && (exAudit.data ?? []).length > 0 && !JSON.stringify(exAudit.data ?? []).includes(`রহিম উদ্দিন ${exStamp}`), exAudit.error);
+
+    // ---- downgrade and Enterprise ----
+    await exSetPlan(exTenantId, 'starter-store-monthly');
+    check('After a downgrade to Starter the export API is refused again', (await download('/exports', { token: exOwner, ...A, body: { type: 'customers', format: 'csv' } })).status === 403);
+    await exSetPlan(exTenantId, 'brand-monthly');
+    const exEnterprise = await download('/exports', { token: exOwner, ...A, body: { type: 'customers', format: 'csv' } });
+    check('Enterprise keeps everything Professional has: export works again', exEnterprise.status === 200 && exEnterprise.text.includes(`রহিম উদ্দিন ${exStamp}`), exEnterprise.error);
+  }
+
+  // --- Clothing POS bulk product import ---------------------------------------
+  section('Clothing POS: bulk product import (Excel / CSV, every plan)');
+  {
+    const imStamp = String(Date.now()).slice(-7);
+    const imPlatform = await login('platform@pos.dev', 'Platform@123');
+    const imPlans = (await api('/plans', {})).data ?? [];
+    const imSetPlan = (tenantId, code) =>
+      api('/platform/subscriptions', { method: 'POST', token: imPlatform.token, body: { tenantId, planId: imPlans.find((p) => p.code === code)._id, periods: 1, status: 'active', autoRenew: false } });
+    const imReg = await api('/auth/register', { method: 'POST', body: { businessName: `Import Wear ${imStamp}`, name: 'Import Owner', email: `imp${imStamp}@example.com`, password: 'Password@123', vertical: 'clothing' } });
+    const imOwner = imReg.data?.tokens?.accessToken;
+    const imTenantId = imReg.data?.tenant?.id ?? imReg.data?.tenant?._id;
+    const imStoreA = (await api('/stores', { method: 'POST', token: imOwner, body: { name: 'Import Main', code: `IM${imStamp}`, currency: 'BDT' } })).data;
+    const A = { storeId: imStoreA?._id };
+    check('A fresh Clothing workspace is set up for import tests', Boolean(imOwner && imStoreA?._id), imReg.error);
+
+    const preview = (bytes, extra = {}) => uploadSheet('/products/import/preview', { token: imOwner, ...A, bytes, ...extra });
+    const commitImport = (importId, body = {}, token = imOwner, store = A) =>
+      api(`/products/import/${importId}/commit`, { method: 'POST', token, ...store, body: { skipInvalidRows: false, ...body } });
+    const productCount = async (token = imOwner, store = A) => (await api('/products?limit=1&includeInactive=true', { token, ...store })).meta?.total ?? 0;
+    const findProduct = async (name, token = imOwner, store = A) =>
+      ((await api(`/products?search=${encodeURIComponent(name)}&includeInactive=true&limit=50`, { token, ...store })).data ?? []).find((p) => p.name === name);
+
+    // ---- every plan, starting with Starter ----
+    await imSetPlan(imTenantId, 'starter-store-monthly');
+    const imStarterColumns = await api('/products/import/columns', { token: imOwner, ...A });
+    check('STARTER: the import API is available (import is not a paid upgrade)', imStarterColumns.status === 200 && imStarterColumns.data?.columns?.length > 0, imStarterColumns.error);
+    const imStarterPreview = await preview(productCsv([['Starter Tee', 'Default', '500', '', '', '', '', '', '', '3', 'Yes']]));
+    check('STARTER: a file validates', imStarterPreview.status === 200 && imStarterPreview.data?.summary?.validRows === 1, imStarterPreview.error);
+    const imStarterRun = await commitImport(imStarterPreview.data?.importId);
+    check('STARTER: the products are created', imStarterRun.status === 200 && imStarterRun.data?.summary?.productsCreated === 1, imStarterRun.error);
+    check('Data export stays Professional-only: Starter still cannot export', (await api('/exports/datasets', { token: imOwner, ...A })).status === 403);
+
+    await imSetPlan(imTenantId, 'showroom-monthly');
+    check('PROFESSIONAL: import is available', (await api('/products/import/columns', { token: imOwner, ...A })).status === 200);
+    await imSetPlan(imTenantId, 'brand-monthly');
+    check('ENTERPRISE: import is available', (await api('/products/import/columns', { token: imOwner, ...A })).status === 200);
+    check('An import needs a signed-in user', (await uploadSheet('/products/import/preview', { ...A, bytes: productCsv([['X', 'Default', '1']]) })).status === 401);
+
+    // ---- file types ----
+    check('A .txt file is refused', (await preview(Buffer.from('Product,Variant,Price\nA,B,1'), { filename: 'products.txt', type: 'text/plain' })).status === 400);
+    check('An .xlsm (macro) workbook is refused', (await preview(productCsv([['A', 'B', '1']]), { filename: 'products.xlsm', type: 'application/vnd.ms-excel.sheet.macroEnabled.12' })).status === 400);
+    check('An executable is refused', (await preview(Buffer.from('MZ binary'), { filename: 'evil.exe', type: 'application/octet-stream' })).status === 400);
+    const imNotCsv = await preview(Buffer.from('this is not a spreadsheet at all'), { filename: 'notes.csv' });
+    check('A .csv that is not a spreadsheet is refused with a readable message', imNotCsv.status === 400 && /header|column/i.test(imNotCsv.error?.message ?? ''), imNotCsv.error);
+
+    // ---- headers ----
+    const imNoPrice = await preview(productCsv([['A', 'Default']], { headers: ['Product', 'Variant'] }));
+    check('Missing required columns stop the import and are named', imNoPrice.status === 400 && /Selling price/.test(imNoPrice.error?.message ?? ''), imNoPrice.error);
+    const imLoose = await preview(productCsv([['Loose Tee', 'Default', '700']], { headers: [' product name ', 'VARIANT', 'Price'], title: false }));
+    check('Harmless header differences (case, spacing, "Price") still map', imLoose.status === 200 && imLoose.data?.summary?.validRows === 1, imLoose.error);
+    const imTwoPrice = await preview(productCsv([['A', 'Default', '1', '2']], { headers: ['Product', 'Variant', 'Price', 'Selling price'], title: false }));
+    check('Two columns for the same field are refused rather than guessed', imTwoPrice.status === 400, imTwoPrice.error);
+
+    // ---- mandatory fields ----
+    const imBad = await preview(
+      productCsv([
+        ['', 'Black / M', '990'],
+        ['No Variant Tee', '', '990'],
+        ['No Price Tee', 'Default', ''],
+        ['Bad Price Tee', 'Default', 'abc'],
+        ['Negative Tee', 'Default', '-100'],
+        ['Good Tee', 'Default', '990'],
+      ]),
+    );
+    const imBadErrors = imBad.data?.errors ?? [];
+    const errorFor = (row) => imBadErrors.find((e) => e.rowNumber === row)?.message ?? '';
+    check(
+      'Missing name, missing variant, missing price, "abc" and a negative price are all rejected - with the file row numbers',
+      imBad.status === 200 &&
+        imBad.data?.summary?.invalidRows === 5 &&
+        imBad.data?.summary?.validRows === 1 &&
+        /Product name is required/.test(errorFor(7)) &&
+        /Variant is required/.test(errorFor(8)) &&
+        /Selling price is required/.test(errorFor(9)) &&
+        /not a valid price/.test(errorFor(10)) &&
+        /not a valid price|negative/.test(errorFor(11)),
+      imBadErrors,
+    );
+    const imBefore = await productCount();
+    check('Validating creates nothing', (await productCount()) === imBefore);
+    const imRefused = await commitImport(imBad.data?.importId);
+    check('Importing a file with invalid rows is refused until the user confirms', imRefused.status === 400 && imRefused.error?.details?.reason === 'INVALID_ROWS', imRefused.error);
+    const imSkipped = await commitImport(imBad.data?.importId, { skipInvalidRows: true });
+    check('Confirming "valid rows only" imports exactly those rows', imSkipped.status === 200 && imSkipped.data?.summary?.productsCreated === 1 && imSkipped.data?.summary?.rowsSkipped === 5, imSkipped.error);
+    check('A previewed import cannot be committed twice', (await commitImport(imBad.data?.importId, { skipInvalidRows: true })).status === 400);
+
+    // ---- grouping, optional fields, Bengali ----
+    const imGroup = await preview(
+      productCsv([
+        ['Oversized T-Shirt', 'Black / M', '990', '600', '', '', '', 'Urban Thread', 'Color: Black; Size: M', '10', 'Yes'],
+        ['Oversized T-Shirt', 'Black / L', '990', '600', '', '', '', 'Urban Thread', 'Color: Black; Size: L', '7', 'Yes'],
+        ['Oversized T-Shirt', 'White / M', '1050.50', '', '', '', '', 'Urban Thread', 'Color: White; Size: M', '', 'Yes'],
+        [`Bangla Shirt ${imStamp}`, 'Default', '1299', '', '', '', '', '', '', '2', 'Yes'],
+      ]),
+    );
+    check(
+      'Four rows become two products: one with three variants, one with a single default variant',
+      imGroup.status === 200 && imGroup.data?.summary?.productsToCreate === 2 && imGroup.data?.summary?.variantsToCreate === 4,
+      imGroup.data?.summary,
+    );
+    const imGroupRun = await commitImport(imGroup.data?.importId);
+    check('...and they are created as such', imGroupRun.status === 200 && imGroupRun.data?.summary?.productsCreated === 2 && imGroupRun.data?.summary?.variantsCreated === 4, imGroupRun.error);
+    const imTee = await findProduct('Oversized T-Shirt');
+    const imTeeFull = (await api(`/products/${imTee?._id}`, { token: imOwner, ...A })).data;
+    const imTeeVariants = imTeeFull?.variants ?? [];
+    check(
+      'One product with Black / M, Black / L and White / M - not three unrelated products',
+      imTeeVariants.length === 3 && ['Black / M', 'Black / L', 'White / M'].every((name) => imTeeVariants.some((v) => v.name === name)),
+      imTeeVariants.map((v) => v.name),
+    );
+    check('Attributes are parsed into real options, so the product has Color and Size', (imTeeFull?.options ?? []).map((o) => o.name).join(',') === 'Color,Size' && imTeeFull?.hasVariants === true, imTeeFull?.options);
+    check('Prices are exact minor units, never floating point (1050.50 -> 105050)', imTeeVariants.find((v) => v.name === 'White / M')?.sellingPriceMinor === 105050 && imTeeVariants.find((v) => v.name === 'Black / M')?.costPriceMinor === 60000);
+    check('Blank optional fields fall back to the same defaults as the New product form', imTeeVariants.find((v) => v.name === 'White / M')?.costPriceMinor === 0 && imTeeVariants.find((v) => v.name === 'White / M')?.stock === 0 && imTeeVariants.every((v) => v.isActive === true));
+    check('Every imported variant gets a generated SKU', imTeeVariants.every((v) => typeof v.sku === 'string' && v.sku.length > 0) && new Set(imTeeVariants.map((v) => v.sku)).size === 3, imTeeVariants.map((v) => v.sku));
+    check('A blank barcode stays blank rather than being invented', imTeeVariants.every((v) => !v.barcode));
+
+    // ---- stock goes through the inventory ledger ----
+    const imLedger = (await api('/inventory/ledger?limit=50', { token: imOwner, ...A })).data ?? [];
+    const imBlackM = imTeeVariants.find((v) => v.name === 'Black / M');
+    check('Opening stock is recorded as an inventory movement, not a silent field write', imBlackM?.stock === 10 && imLedger.some((t) => String(t.variantId) === String(imBlackM?._id) && t.type === 'INITIAL_STOCK' && t.quantityChange === 10), imLedger.slice(0, 2));
+
+    // ---- the imported product works at the till ----
+    const imGenerated = await api(`/products/${imTee?._id}/variants/${imBlackM?._id}`, { method: 'PATCH', token: imOwner, ...A, body: { barcode: `299${imStamp}0001` } });
+    check('An imported variant can be given a barcode afterwards', imGenerated.status === 200, imGenerated.error);
+    const imScan = await api(`/products/pos-search?q=299${imStamp}0001`, { token: imOwner, ...A });
+    check('...and the POS finds it by scanning that barcode', (imScan.data ?? []).some((v) => String(v.variantId) === String(imBlackM?._id)), imScan.data);
+    const imSale = await api('/sales', { method: 'POST', token: imOwner, ...A, body: { paymentMethod: 'cash', items: [{ variantId: imBlackM?._id, quantity: 2 }] } });
+    check('...and it sells, at the imported price, taking stock with it', imSale.status === 201 && imSale.data?.totalMinor === 198000, imSale.error);
+    check('...leaving the ledger consistent (10 - 2 = 8)', (await api(`/products/${imTee?._id}`, { token: imOwner, ...A })).data?.variants?.find((v) => v.name === 'Black / M')?.stock === 8);
+
+    // ---- duplicates ----
+    const imDup = await preview(
+      productCsv([
+        ['Oversized T-Shirt', 'Black / XL', '990', '', '', '', '', '', '', '1', 'Yes'],
+        ['Dup Sku One', 'Default', '100', '', `DUP${imStamp}`, '', '', '', '', '1', 'Yes'],
+        ['Dup Sku Two', 'Default', '100', '', `DUP${imStamp}`, '', '', '', '', '1', 'Yes'],
+        ['Dup Barcode One', 'Default', '100', '', '', `299${imStamp}0002`, '', '', '', '1', 'Yes'],
+        ['Dup Barcode Two', 'Default', '100', '', '', `299${imStamp}0002`, '', '', '', '1', 'Yes'],
+        ['Existing Barcode', 'Default', '100', '', '', `299${imStamp}0001`, '', '', '', '1', 'Yes'],
+        ['Same Product', 'Default', '100', '', '', '', '', '', '', '1', 'Yes'],
+        ['Same Product', 'Default', '150', '', '', '', '', '', '', '1', 'Yes'],
+      ]),
+    );
+    const imDupErrors = imDup.data?.errors ?? [];
+    const dupError = (row) => imDupErrors.find((e) => e.rowNumber === row)?.message ?? '';
+    check('An existing product name is never silently overwritten or duplicated', /already exists/.test(dupError(7)), dupError(7));
+    check('A SKU repeated in the file is refused', /appears more than once/.test(dupError(9)), dupError(9));
+    check('A barcode repeated in the file is refused', /appears more than once/.test(dupError(11)), dupError(11));
+    check('A barcode that already exists in the branch is refused', /already exists/.test(dupError(12)), dupError(12));
+    check('The same variant twice in one product is refused', /already has a variant/.test(dupError(14)), dupError(14));
+    check('The valid rows of that file are still importable', imDup.data?.summary?.validRows === 3, imDup.data?.summary);
+
+    // ---- categories ----
+    const imCatCsv = productCsv([[`Cat Tee ${imStamp}`, 'Default', '400', '', '', '', `Imported Cat ${imStamp}`, '', '', '1', 'Yes']]);
+    const imCatOff = await preview(imCatCsv);
+    check("An unknown category is reported, not created behind the user's back", imCatOff.data?.summary?.invalidRows === 1 && /does not exist/.test(imCatOff.data?.errors?.[0]?.message ?? ''), imCatOff.data?.errors);
+    const imCatOn = await preview(imCatCsv, { fields: { createMissingCategories: 'true' } });
+    check('Ticking "create missing categories" plans it instead', imCatOn.data?.summary?.validRows === 1 && imCatOn.data?.missingCategories?.length === 1, imCatOn.data?.missingCategories);
+    const imCatRun = await commitImport(imCatOn.data?.importId);
+    check('...and the category is created in THIS branch and attached', imCatRun.data?.summary?.categoriesCreated === 1 && (await findProduct(`Cat Tee ${imStamp}`))?.categoryNameSnapshot === `Imported Cat ${imStamp}`, imCatRun.error);
+    const imExistingCat = (await api('/categories?limit=100', { token: imOwner, ...A })).data ?? [];
+    check('An existing category is matched by name, not duplicated', imExistingCat.filter((c) => c.name === `Imported Cat ${imStamp}`).length === 1);
+
+    // ---- ids in the file are never trusted ----
+    const imForeign = await api('/auth/register', { method: 'POST', body: { businessName: `Other Import ${imStamp}`, name: 'Other Owner', email: `impo${imStamp}@example.com`, password: 'Password@123', vertical: 'clothing' } });
+    const imForeignToken = imForeign.data?.tokens?.accessToken;
+    const imForeignTenant = imForeign.data?.tenant?.id ?? imForeign.data?.tenant?._id;
+    const imForeignStore = (await api('/stores', { method: 'POST', token: imForeignToken, body: { name: 'Other Main', code: `IO${imStamp}`, currency: 'BDT' } })).data;
+    await imSetPlan(imForeignTenant, 'starter-store-monthly');
+    const F = { storeId: imForeignStore?._id };
+    const imIdBytes = productCsv(
+      [[`Forged ${imStamp}`, 'Default', '100', imTenantId, imStoreA._id, imTee?._id, '', '', '', '1', 'Yes']],
+      { headers: ['Product', 'Variant', 'Selling price', 'Tenant ID', 'Store ID', 'Product ID', 'Category ID', 'Brand', 'Attributes', 'Stock', 'Active'] },
+    );
+    const imIdPreview = await uploadSheet('/products/import/preview', { token: imForeignToken, ...F, bytes: imIdBytes });
+    check(
+      'Id columns are ignored entirely - they are not even offered as unmapped columns',
+      imIdPreview.status === 200 && (imIdPreview.data?.unmappedHeaders ?? []).length === 0 && imIdPreview.data?.summary?.validRows === 1,
+      imIdPreview.error ?? imIdPreview.data?.unmappedHeaders,
+    );
+    const imIdRun = await api(`/products/import/${imIdPreview.data?.importId}/commit`, { method: 'POST', token: imForeignToken, ...F, body: { skipInvalidRows: false } });
+    const imForeignProduct = await findProduct(`Forged ${imStamp}`, imForeignToken, F);
+    check(
+      'A product imported with foreign ids in the file belongs to the importing workspace and branch, with new ids',
+      imIdRun.status === 200 && String(imForeignProduct?.storeId) === String(imForeignStore._id) && String(imForeignProduct?._id) !== String(imTee?._id),
+      imIdRun.error,
+    );
+    check("...and the other workspace's catalogue is untouched", !(await findProduct(`Forged ${imStamp}`)), 'leaked');
+    check('A workspace cannot import into a branch it does not own', (await uploadSheet('/products/import/preview', { token: imForeignToken, storeId: imStoreA._id, bytes: productCsv([['X', 'Default', '1']]) })).status === 403);
+
+    // ---- export -> import, the round trip ----
+    await imSetPlan(imForeignTenant, 'showroom-monthly');
+    const imExport = await download('/exports', { token: imOwner, ...A, body: { type: 'products', format: 'csv' } });
+    const imRoundTrip = await uploadSheet('/products/import/preview', { token: imForeignToken, ...F, bytes: imExport.buffer, filename: 'products-export.csv', fields: { createMissingCategories: 'true' } });
+    check(
+      'A file straight from Data export imports with no renaming: the export columns are the import columns',
+      imRoundTrip.status === 200 && imRoundTrip.data?.summary?.validRows > 0 && imRoundTrip.data?.summary?.invalidRows === 0,
+      imRoundTrip.error ?? imRoundTrip.data?.summary,
+    );
+    const imRoundRun = await api(`/products/import/${imRoundTrip.data?.importId}/commit`, { method: 'POST', token: imForeignToken, ...F, body: { skipInvalidRows: false } });
+    check('...and the round trip recreates the same products and variants in the new workspace', imRoundRun.status === 200 && imRoundRun.data?.summary?.variantsCreated === imRoundTrip.data?.summary?.validRows, imRoundRun.error);
+    const imRoundTee = await findProduct('Oversized T-Shirt', imForeignToken, F);
+    const imRoundVariants = (await api(`/products/${imRoundTee?._id}`, { token: imForeignToken, ...F })).data?.variants ?? [];
+    check('...with the variants grouped and the prices intact', imRoundVariants.length === 3 && imRoundVariants.find((v) => v.name === 'White / M')?.sellingPriceMinor === 105050, imRoundVariants.map((v) => [v.name, v.sellingPriceMinor]));
+    check('...and barcodes carried over only where the file had them', imRoundVariants.filter((v) => v.barcode).length === 1);
+
+    // ---- Excel ----
+    const ExcelJS = (await import('exceljs')).default;
+    const imBook = new ExcelJS.Workbook();
+    const imSheet = imBook.addWorksheet('Products');
+    imSheet.addRow(['Demo Wear - Main']);
+    imSheet.addRow([]);
+    imSheet.addRow(['Product', 'Variant', 'Selling price', 'Stock', 'Attributes']);
+    imSheet.addRow([`Excel Shirt ${imStamp}`, 'Red / S', 1234.5, 4, 'Color: Red; Size: S']);
+    imSheet.addRow([`Excel Shirt ${imStamp}`, 'Red / M', 1234.5, 6, 'Color: Red; Size: M']);
+    const imXlsxBytes = Buffer.from(await imBook.xlsx.writeBuffer());
+    const imXlsx = await preview(imXlsxBytes, { filename: 'products.xlsx', type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+    check('XLSX: a real workbook imports, with its own title block skipped', imXlsx.status === 200 && imXlsx.data?.summary?.validRows === 2 && imXlsx.data?.summary?.productsToCreate === 1, imXlsx.error ?? imXlsx.data?.summary);
+    const imXlsxRun = await commitImport(imXlsx.data?.importId);
+    const imXlsxProduct = await findProduct(`Excel Shirt ${imStamp}`);
+    const imXlsxVariants = (await api(`/products/${imXlsxProduct?._id}`, { token: imOwner, ...A })).data?.variants ?? [];
+    check('XLSX: 1234.5 becomes exactly 123450 minor units', imXlsxRun.status === 200 && imXlsxVariants.length === 2 && imXlsxVariants.every((v) => v.sellingPriceMinor === 123450), imXlsxVariants.map((v) => v.sellingPriceMinor));
+
+    // ---- spreadsheet formula text is data, never a formula ----
+    const imFormula = await preview(productCsv([[`'=1+1 Tee ${imStamp}`, 'Default', '100', '', '', '', '', '', '', '1', 'Yes']]));
+    await commitImport(imFormula.data?.importId);
+    const imFormulaProduct = await findProduct(`=1+1 Tee ${imStamp}`);
+    check('An exported "\'=1+1" name comes back as the plain text "=1+1", stored as data', Boolean(imFormulaProduct) && imFormulaProduct.name === `=1+1 Tee ${imStamp}`, imFormulaProduct?.name);
+    const imReExport = await download('/exports', { token: imOwner, ...A, body: { type: 'products', format: 'csv' } });
+    check('...and exporting it again neutralises it again', imReExport.text.includes(`"'=1+1 Tee ${imStamp}"`));
+
+    // ---- size ----
+    const imHuge = await preview(productCsv(Array.from({ length: 2_001 }, (_, i) => [`Bulk ${imStamp} ${i}`, 'Default', '100'])));
+    check('A file with more rows than the documented limit is refused, with the limit', imHuge.status === 400 && imHuge.error?.details?.maxRows === 2000, imHuge.error);
+
+    // ---- permissions ----
+    const imRoles = (await api('/roles', { token: imOwner, ...A })).data ?? [];
+    check('Store Manager imports by default; Cashier does not', imRoles.find((r) => r.name === 'Store Manager')?.permissions.includes('products.import') === true && imRoles.find((r) => r.name === 'Cashier')?.permissions.includes('products.import') !== true);
+    await api('/staff', { method: 'POST', token: imOwner, ...A, body: { name: 'Import Cashier', email: `impc${imStamp}@example.com`, password: 'Password@123', storeId: imStoreA._id, roleId: imRoles.find((r) => r.name === 'Cashier')?._id } });
+    await api('/staff', { method: 'POST', token: imOwner, ...A, body: { name: 'Import Maker', email: `impm${imStamp}@example.com`, password: 'Password@123', storeId: imStoreA._id, extraPermissions: ['products.view', 'products.create'] } });
+    const imCashier = (await login(`impc${imStamp}@example.com`, 'Password@123')).token;
+    const imMaker = (await login(`impm${imStamp}@example.com`, 'Password@123')).token;
+    check('A cashier cannot import', (await uploadSheet('/products/import/preview', { token: imCashier, ...A, bytes: productCsv([['X', 'Default', '1']]) })).status === 403);
+    check('Being able to CREATE a product is not being able to IMPORT products', (await uploadSheet('/products/import/preview', { token: imMaker, ...A, bytes: productCsv([['X', 'Default', '1']]) })).status === 403);
+    check('...and neither of them can see the import history', (await api('/products/import', { token: imCashier, ...A })).status === 403);
+
+    // ---- history and audit ----
+    const imHistory = await api('/products/import?limit=20', { token: imOwner, ...A });
+    const imRecent = (imHistory.data ?? [])[0];
+    check('The history records filename, counts, who and when - and never the file', imHistory.status === 200 && imRecent?.filename && imRecent?.productsCreated >= 0 && imRecent?.requestedByNameSnapshot && !('plan' in imRecent) && !('rowErrors' in imRecent), Object.keys(imRecent ?? {}));
+    check('Unconfirmed previews are not shown as imports', (imHistory.data ?? []).every((row) => row.status !== 'pending'));
+    const imAudit = await api('/platform/audit-log?action=products.imported&limit=20', { token: imPlatform.token });
+    check('Every import is written to the audit log with counts only', imAudit.status === 200 && (imAudit.data ?? []).length > 0 && !JSON.stringify(imAudit.data ?? []).includes('Oversized T-Shirt'), imAudit.error);
+
+    // ---- the plan's product limit still applies ----
+    await imSetPlan(imTenantId, 'starter-store-monthly');
+    const imLimitPreview = await preview(productCsv(Array.from({ length: 400 }, (_, i) => [`Limit ${imStamp} ${i}`, 'Default', '100'])));
+    const imLimitRun = await commitImport(imLimitPreview.data?.importId, { skipInvalidRows: true });
+    check(
+      "An import cannot exceed the plan's product limit: it stops and says why",
+      imLimitRun.status === 200 && imLimitRun.data?.summary?.productsCreated < 400 && /limit|upgrade|plan/i.test(imLimitRun.data?.stopped ?? ''),
+      imLimitRun.data?.stopped,
+    );
+  }
+
+  // --- Clothing POS supplier management ---------------------------------------
+  section('Clothing POS: supplier management (Professional and Enterprise)');
+  {
+    const spStamp = String(Date.now()).slice(-7);
+    const spPlatform = await login('platform@pos.dev', 'Platform@123');
+    const spPlans = (await api('/plans', {})).data ?? [];
+    const spSetPlan = (tenantId, code) =>
+      api('/platform/subscriptions', { method: 'POST', token: spPlatform.token, body: { tenantId, planId: spPlans.find((p) => p.code === code)._id, periods: 1, status: 'active', autoRenew: false } });
+    const spReg = await api('/auth/register', { method: 'POST', body: { businessName: `Supply Wear ${spStamp}`, name: 'Supply Owner', email: `sup${spStamp}@example.com`, password: 'Password@123', vertical: 'clothing' } });
+    const spOwner = spReg.data?.tokens?.accessToken;
+    const spTenantId = spReg.data?.tenant?.id ?? spReg.data?.tenant?._id;
+    const spStoreA = (await api('/stores', { method: 'POST', token: spOwner, body: { name: 'Supply Main', code: `SP${spStamp}`, currency: 'BDT' } })).data;
+    const A = { storeId: spStoreA?._id };
+    check('A fresh Clothing workspace is set up for supplier tests', Boolean(spOwner && spStoreA?._id), spReg.error);
+
+    const addSupplier = (body, token = spOwner, store = A) => api('/suppliers', { method: 'POST', token, ...store, body });
+    const supplierCount = async (token = spOwner, store = A) => (await api('/suppliers?limit=1', { token, ...store })).meta?.total ?? 0;
+
+    // ---- Starter: nothing at all ----
+    await spSetPlan(spTenantId, 'starter-store-monthly');
+    const spStarterList = await api('/suppliers', { token: spOwner, ...A });
+    check('STARTER: listing suppliers is refused with ENTITLEMENT_REQUIRED', spStarterList.status === 403 && spStarterList.error?.code === 'ENTITLEMENT_REQUIRED', spStarterList.error);
+    check('STARTER: creating a supplier is refused', (await addSupplier({ name: 'Denim Mills' })).status === 403);
+    check('STARTER: the summary is refused', (await api('/suppliers/summary', { token: spOwner, ...A })).status === 403);
+    check('STARTER: a supplier id cannot be read, edited or deleted', (await api('/suppliers/6a8f07351aab4b3f4b21306e', { token: spOwner, ...A })).status === 403 && (await api('/suppliers/6a8f07351aab4b3f4b21306e', { method: 'PATCH', token: spOwner, ...A, body: { name: 'X' } })).status === 403 && (await api('/suppliers/6a8f07351aab4b3f4b21306e', { method: 'DELETE', token: spOwner, ...A })).status === 403);
+    check('Suppliers need a signed-in user', (await api('/suppliers', { ...A })).status === 401);
+
+    // ---- Professional ----
+    await spSetPlan(spTenantId, 'showroom-monthly');
+    const spSummary0 = await api('/suppliers/summary', { token: spOwner, ...A });
+    check('PROFESSIONAL: supplier management is available, with a 100 ceiling', spSummary0.status === 200 && spSummary0.data?.max === 100 && spSummary0.data?.active === 0 && spSummary0.data?.unlimited === false, spSummary0.error ?? spSummary0.data);
+
+    const spFirst = await addSupplier({
+      name: `Denim Mills ${spStamp}`,
+      type: 'manufacturer',
+      contact: { name: 'Rahim Ahmed', designation: 'Sales Representative', phone: '01711111111', altPhone: '01811111111', email: 'rahim@example.com' },
+      phone: '029999999',
+      email: 'sales@denimmills.example',
+      website: 'denimmills.example',
+      address: { line1: 'House 12, Road 5', area: 'New Market', city: 'Dhaka', district: 'Dhaka', division: 'Dhaka', postalCode: '1205', country: 'Bangladesh' },
+      taxNumber: 'VAT-123456',
+      tradeLicense: 'TL-99887',
+      banking: { accountName: 'Denim Mills Ltd', accountNumber: '1234 5678 9012', bankName: 'City Bank', branchName: 'Dhanmondi' },
+      paymentTerms: 'net_30',
+      notes: 'Usually supplies premium denim.',
+    });
+    check('A supplier is created with everything the form collects', spFirst.status === 201 && spFirst.data?.name === `Denim Mills ${spStamp}` && spFirst.data?.contact?.designation === 'Sales Representative' && spFirst.data?.address?.postalCode === '1205' && spFirst.data?.paymentTerms === 'net_30', spFirst.error ?? spFirst.data);
+    check('...with a server-assigned code, never a database id', /^SUP-\d{4}$/.test(spFirst.data?.code ?? '') && !String(spFirst.data?.code).includes(String(spFirst.data?._id)), spFirst.data?.code);
+    check('...and it is active by default', spFirst.data?.isActive === true);
+    const spSecond = await addSupplier({ name: `Cotton House ${spStamp}`, type: 'wholesaler', phone: '01722222222' });
+    check('Only the name is really required', spSecond.status === 201 && spSecond.data?.code === 'SUP-0002', spSecond.error ?? spSecond.data?.code);
+    check('Codes run in sequence per workspace', spFirst.data?.code === 'SUP-0001');
+
+    // ---- ownership can never come from the client ----
+    const spForged = await addSupplier({ name: `Forged ${spStamp}`, tenantId: '6a8f07351aab4b3f4b21306e', storeId: '6a8f07351aab4b3f4b21306e', code: 'SUP-9999' });
+    check('A body carrying tenantId, storeId or a code is refused outright', spForged.status === 422, spForged.error);
+
+    // ---- validation ----
+    check('An empty name is refused', (await addSupplier({ name: '   ' })).status === 422);
+    check('An invalid email is refused', (await addSupplier({ name: `Bad Email ${spStamp}`, email: 'not-an-email' })).status === 422);
+    check('An invalid website is refused', (await addSupplier({ name: `Bad Site ${spStamp}`, website: 'http://' })).status === 422);
+    check('An invalid phone is refused', (await addSupplier({ name: `Bad Phone ${spStamp}`, phone: 'call me' })).status === 422);
+    check('An unknown supplier type is refused', (await addSupplier({ name: `Bad Type ${spStamp}`, type: 'smuggler' })).status === 422);
+    check('An unknown payment term is refused', (await addSupplier({ name: `Bad Terms ${spStamp}`, paymentTerms: 'whenever' })).status === 422);
+    check('An oversized note is refused', (await addSupplier({ name: `Long Note ${spStamp}`, notes: 'x'.repeat(2_001) })).status === 422);
+    check('A Bangladeshi address imports exactly as typed', (await api(`/suppliers/${spFirst.data?._id}`, { token: spOwner, ...A })).data?.address?.line1 === 'House 12, Road 5');
+
+    // ---- duplicates ----
+    const spDupe = await addSupplier({ name: `Denim Mills ${spStamp}`, phone: '029999999' });
+    check('The same name with the same phone is caught as a duplicate', spDupe.status === 409, spDupe.error);
+    check('...but a similar name is still allowed (ABC Garments vs ABC Garments Ltd.)', (await addSupplier({ name: `Denim Mills ${spStamp} Ltd.`, phone: '029999999' })).status === 201);
+    check('A different supplier with the same name but no shared contact is allowed', (await addSupplier({ name: `Denim Mills ${spStamp}`, phone: '028888888' })).status === 201);
+
+    // ---- sensitive fields ----
+    const spList = await api('/suppliers?limit=50', { token: spOwner, ...A });
+    const spListed = (spList.data ?? []).find((row) => row._id === spFirst.data?._id);
+    check('The list never carries banking, tax or notes', spList.status === 200 && spListed && !('banking' in spListed) && !('taxNumber' in spListed) && !('notes' in spListed) && !('tradeLicense' in spListed), Object.keys(spListed ?? {}));
+    check('The detail view carries banking for someone who may edit suppliers', (await api(`/suppliers/${spFirst.data?._id}`, { token: spOwner, ...A })).data?.banking?.accountNumber === '1234 5678 9012');
+
+    // ---- search, filters, sorting, pagination ----
+    check('Search by name', ((await api(`/suppliers?search=${encodeURIComponent(`Cotton House ${spStamp}`)}`, { token: spOwner, ...A })).data ?? []).length === 1);
+    check('Search by code', ((await api('/suppliers?search=SUP-0001', { token: spOwner, ...A })).data ?? []).some((row) => row.code === 'SUP-0001'));
+    check('Search by contact person', ((await api('/suppliers?search=Rahim', { token: spOwner, ...A })).data ?? []).some((row) => row._id === spFirst.data?._id));
+    check('Search by phone', ((await api('/suppliers?search=01722222222', { token: spOwner, ...A })).data ?? []).some((row) => row._id === spSecond.data?._id));
+    check('Search by email', ((await api('/suppliers?search=sales@denimmills.example', { token: spOwner, ...A })).data ?? []).some((row) => row._id === spFirst.data?._id));
+    check('Filter by type', ((await api('/suppliers?type=wholesaler&limit=50', { token: spOwner, ...A })).data ?? []).every((row) => row.type === 'wholesaler'));
+    const spSorted = (await api('/suppliers?sort=name&order=asc&limit=50', { token: spOwner, ...A })).data ?? [];
+    check('Sorting by name puts the list in name order', spSorted.map((row) => row.name).join('|') === [...spSorted].sort((a, b) => a.name.localeCompare(b.name)).map((row) => row.name).join('|'));
+    const spPaged = await api('/suppliers?limit=2&page=2', { token: spOwner, ...A });
+    check('Pagination returns a real slice with its meta', spPaged.status === 200 && (spPaged.data ?? []).length <= 2 && spPaged.meta?.page === 2 && spPaged.meta?.total >= 4, spPaged.meta);
+
+    // ---- edit, deactivate, delete ----
+    const spEdit = await api(`/suppliers/${spSecond.data?._id}`, { method: 'PATCH', token: spOwner, ...A, body: { contact: { name: 'Karim Uddin' }, paymentTerms: 'net_15' } });
+    check('Editing updates the record in place, without creating another one', spEdit.status === 200 && spEdit.data?._id === spSecond.data?._id && spEdit.data?.contact?.name === 'Karim Uddin' && spEdit.data?.paymentTerms === 'net_15', spEdit.error);
+    check('...and a partial edit never wipes the other blocks', spEdit.data?.name === `Cotton House ${spStamp}` && spEdit.data?.phone === '01722222222');
+    const spDeactivate = await api(`/suppliers/${spSecond.data?._id}/status`, { method: 'POST', token: spOwner, ...A, body: { isActive: false } });
+    check('Deactivating keeps the record and its details', spDeactivate.status === 200 && spDeactivate.data?.isActive === false);
+    check('...and an inactive supplier is still searchable', ((await api(`/suppliers?search=${encodeURIComponent(`Cotton House ${spStamp}`)}&status=inactive`, { token: spOwner, ...A })).data ?? []).length === 1);
+    check('...and no longer counts against the plan', (await api('/suppliers/summary', { token: spOwner, ...A })).data?.inactive === 1);
+    check('Reactivating works', (await api(`/suppliers/${spSecond.data?._id}/status`, { method: 'POST', token: spOwner, ...A, body: { isActive: true } })).data?.isActive === true);
+    const spThrowaway = await addSupplier({ name: `Throwaway ${spStamp}` });
+    const spDelete = await api(`/suppliers/${spThrowaway.data?._id}`, { method: 'DELETE', token: spOwner, ...A });
+    check('Removing a supplier soft-deletes it', spDelete.status === 200 && spDelete.data?.softDeleted === true);
+    check('...and it is gone from the list and from the detail view', !((await api('/suppliers?limit=50', { token: spOwner, ...A })).data ?? []).some((row) => row._id === spThrowaway.data?._id) && (await api(`/suppliers/${spThrowaway.data?._id}`, { token: spOwner, ...A })).status === 404);
+
+    // ---- permissions ----
+    const spRoles = (await api('/roles', { token: spOwner, ...A })).data ?? [];
+    check('Store Manager manages suppliers by default; Cashier does not', ['suppliers.view', 'suppliers.create', 'suppliers.edit', 'suppliers.delete'].every((p) => spRoles.find((r) => r.name === 'Store Manager')?.permissions.includes(p)) && !spRoles.find((r) => r.name === 'Cashier')?.permissions.some((p) => p.startsWith('suppliers.')));
+    await api('/staff', { method: 'POST', token: spOwner, ...A, body: { name: 'Supply Cashier', email: `supc${spStamp}@example.com`, password: 'Password@123', storeId: spStoreA._id, roleId: spRoles.find((r) => r.name === 'Cashier')?._id } });
+    await api('/staff', { method: 'POST', token: spOwner, ...A, body: { name: 'Supply Viewer', email: `supv${spStamp}@example.com`, password: 'Password@123', storeId: spStoreA._id, extraPermissions: ['products.view', 'suppliers.view'] } });
+    const spCashier = (await login(`supc${spStamp}@example.com`, 'Password@123')).token;
+    const spViewer = (await login(`supv${spStamp}@example.com`, 'Password@123')).token;
+    check('A cashier cannot even list suppliers', (await api('/suppliers', { token: spCashier, ...A })).status === 403);
+    check('A viewer can list them', (await api('/suppliers', { token: spViewer, ...A })).status === 200);
+    check('...but cannot create, edit, deactivate or delete', (await addSupplier({ name: `Viewer Co ${spStamp}` }, spViewer)).status === 403 && (await api(`/suppliers/${spFirst.data?._id}`, { method: 'PATCH', token: spViewer, ...A, body: { name: 'Changed' } })).status === 403 && (await api(`/suppliers/${spFirst.data?._id}/status`, { method: 'POST', token: spViewer, ...A, body: { isActive: false } })).status === 403 && (await api(`/suppliers/${spFirst.data?._id}`, { method: 'DELETE', token: spViewer, ...A })).status === 403);
+    check('...and a viewer is not shown the banking details', !(await api(`/suppliers/${spFirst.data?._id}`, { token: spViewer, ...A })).data?.banking);
+
+    // ---- workspace isolation ----
+    const spOther = await api('/auth/register', { method: 'POST', body: { businessName: `Other Supply ${spStamp}`, name: 'Other Owner', email: `supo${spStamp}@example.com`, password: 'Password@123', vertical: 'clothing' } });
+    const spOtherToken = spOther.data?.tokens?.accessToken;
+    const spOtherTenant = spOther.data?.tenant?.id ?? spOther.data?.tenant?._id;
+    const spOtherStore = (await api('/stores', { method: 'POST', token: spOtherToken, body: { name: 'Other Main', code: `SO${spStamp}`, currency: 'BDT' } })).data;
+    await spSetPlan(spOtherTenant, 'showroom-monthly');
+    const O = { storeId: spOtherStore?._id };
+    check("Another workspace sees none of this workspace's suppliers", ((await api('/suppliers?limit=50', { token: spOtherToken, ...O })).data ?? []).length === 0);
+    check("...cannot read one by id", (await api(`/suppliers/${spFirst.data?._id}`, { token: spOtherToken, ...O })).status === 404);
+    check('...cannot edit one', (await api(`/suppliers/${spFirst.data?._id}`, { method: 'PATCH', token: spOtherToken, ...O, body: { name: 'Stolen' } })).status === 404);
+    check('...cannot deactivate one', (await api(`/suppliers/${spFirst.data?._id}/status`, { method: 'POST', token: spOtherToken, ...O, body: { isActive: false } })).status === 404);
+    check('...cannot delete one', (await api(`/suppliers/${spFirst.data?._id}`, { method: 'DELETE', token: spOtherToken, ...O })).status === 404);
+    check("...and its own codes start at SUP-0001 again", (await api('/suppliers', { method: 'POST', token: spOtherToken, ...O, body: { name: `Other Supplier ${spStamp}` } })).data?.code === 'SUP-0001');
+
+    // ---- shared across the branches of one workspace ----
+    const spStoreB = (await api('/stores', { method: 'POST', token: spOwner, body: { name: 'Supply Two', code: `SQ${spStamp}`, currency: 'BDT' } })).data;
+    const B = { storeId: spStoreB?._id };
+    check('Suppliers are workspace-level: the second branch sees the same list', ((await api('/suppliers?limit=50', { token: spOwner, ...B })).data ?? []).some((row) => row._id === spFirst.data?._id));
+    check('...and a supplier added from one branch is one record, not two', (await supplierCount(spOwner, B)) === (await supplierCount(spOwner, A)));
+    check('A cashier of this workspace still cannot reach another branch', (await api('/suppliers', { token: spCashier, ...B })).status === 403);
+
+    // ---- the Professional ceiling ----
+    const spBulk = [];
+    for (let i = (await supplierCount()); i < 99; i += 1) spBulk.push(addSupplier({ name: `Bulk ${spStamp} ${i}` }));
+    await Promise.all(spBulk);
+    check('Ninety-nine suppliers is fine on Professional', (await supplierCount()) === 99, await supplierCount());
+    check('The summary counts down to the ceiling', (await api('/suppliers/summary', { token: spOwner, ...A })).data?.remaining === 1);
+    check('The hundredth is allowed', (await addSupplier({ name: `Hundredth ${spStamp}` })).status === 201);
+    const spOver = await addSupplier({ name: `One Too Many ${spStamp}` });
+    check('The hundred-and-first is refused, in words a merchant can act on', spOver.status === 402 && /100 suppliers/.test(spOver.error?.message ?? '') && /upgrade/i.test(spOver.error?.message ?? ''), spOver.error);
+    check('...and nothing was created', (await supplierCount()) === 100);
+    check('...and the message does not leak the entitlement internals', !/entitlement|planSnapshot|maxSuppliers.*true/i.test(JSON.stringify(spOver.error ?? {})));
+
+    // ---- concurrency: the ceiling holds when two tills create at once ----
+    await api(`/suppliers/${spFirst.data?._id}/status`, { method: 'POST', token: spOwner, ...A, body: { isActive: false } });
+    check('Deactivating one frees exactly one slot (99 active)', (await api('/suppliers/summary', { token: spOwner, ...A })).data?.active === 99);
+    const spRace = await Promise.all([
+      addSupplier({ name: `Race A ${spStamp}` }),
+      addSupplier({ name: `Race B ${spStamp}` }),
+      addSupplier({ name: `Race C ${spStamp}` }),
+      addSupplier({ name: `Race D ${spStamp}` }),
+    ]);
+    const spRaceCreated = spRace.filter((result) => result.status === 201).length;
+    const spActiveAfterRace = (await api('/suppliers/summary', { token: spOwner, ...A })).data?.active;
+    check('Four simultaneous creates on a 99/100 plan add exactly one, and the rest are refused', spRaceCreated === 1 && spActiveAfterRace === 100 && spRace.filter((r) => r.status === 402).length === 3, { created: spRaceCreated, active: spActiveAfterRace, statuses: spRace.map((r) => r.status) });
+    const spRaceRows = ((await api(`/suppliers?search=${encodeURIComponent(spStamp)}&limit=100`, { token: spOwner, ...A })).data ?? []).filter((row) => row.name.startsWith('Race '));
+    check('...and the refused ones left no half-made records behind', spRaceRows.length === 1 && (await supplierCount()) === 101, { rows: spRaceRows.length });
+
+    // ---- Enterprise: unlimited ----
+    await spSetPlan(spTenantId, 'brand-monthly');
+    const spEntSummary = await api('/suppliers/summary', { token: spOwner, ...A });
+    check('ENTERPRISE: the ceiling is lifted and nothing had to be migrated', spEntSummary.data?.unlimited === true && spEntSummary.data?.max === null && spEntSummary.data?.active === 100, spEntSummary.data);
+    const spBeyond = await Promise.all(Array.from({ length: 5 }, (_, i) => addSupplier({ name: `Beyond ${spStamp} ${i}` })));
+    check('...and suppliers past the old limit are created normally', spBeyond.every((result) => result.status === 201) && (await api('/suppliers/summary', { token: spOwner, ...A })).data?.active === 105);
+    check('Enterprise still pages rather than returning everything', (await api('/suppliers?limit=20', { token: spOwner, ...A })).data?.length === 20);
+
+    // ---- downgrade and re-upgrade ----
+    await spSetPlan(spTenantId, 'showroom-monthly');
+    const spDownSummary = await api('/suppliers/summary', { token: spOwner, ...A });
+    check('Enterprise -> Professional keeps every supplier and reports being over the limit', spDownSummary.data?.active === 105 && spDownSummary.data?.max === 100 && spDownSummary.data?.overLimit === true, spDownSummary.data);
+    check('...existing suppliers are still readable and editable', (await api(`/suppliers/${spSecond.data?._id}`, { token: spOwner, ...A })).status === 200 && (await api(`/suppliers/${spSecond.data?._id}`, { method: 'PATCH', token: spOwner, ...A, body: { notes: 'Still ours' } })).status === 200);
+    check('...but no more can be added while over the ceiling', (await addSupplier({ name: `Over Limit ${spStamp}` })).status === 402);
+    await spSetPlan(spTenantId, 'starter-store-monthly');
+    check('Professional -> Starter locks the feature', (await api('/suppliers', { token: spOwner, ...A })).status === 403);
+    check('...and the data is NOT deleted (the platform still sees the records)', (await api(`/platform/tenants/${spTenantId}`, { token: spPlatform.token })).status === 200);
+    await spSetPlan(spTenantId, 'brand-monthly');
+    const spBack = await api('/suppliers?limit=1', { token: spOwner, ...A });
+    check('Upgrading again brings every supplier back, untouched', spBack.status === 200 && spBack.meta?.total === 106 && (await api(`/suppliers/${spFirst.data?._id}`, { token: spOwner, ...A })).data?.taxNumber === 'VAT-123456', spBack.meta);
+
+
+    // ---- exporting the supplier list ----
+    await spSetPlan(spTenantId, 'showroom-monthly');
+    const spCatalogue = await api('/exports/datasets', { token: spOwner, ...A });
+    check('The supplier list is offered as an export dataset', (spCatalogue.data?.datasets ?? []).some((d) => d.key === 'suppliers'), (spCatalogue.data?.datasets ?? []).map((d) => d.key));
+    check('...as a snapshot, so a date range never hides the older suppliers', (spCatalogue.data?.datasets ?? []).find((d) => d.key === 'suppliers')?.dated === false);
+    const spCsv = await download('/exports', { token: spOwner, ...A, body: { type: 'suppliers', format: 'csv' } });
+    check(
+      'Exporting suppliers as CSV returns the contacts, their terms and their tax numbers',
+      spCsv.status === 200 && spCsv.text.includes('SUP-0001') && spCsv.text.includes('Rahim Ahmed') && spCsv.text.includes('Sales Representative') && spCsv.text.includes('VAT-123456') && spCsv.text.includes('30 days'),
+      spCsv.error ?? spCsv.text.slice(0, 200),
+    );
+    check('...and NEVER the banking details', !spCsv.text.includes('1234 5678 9012') && !/account\s*(name|number)/i.test(spCsv.text) && !/city bank/i.test(spCsv.text));
+    check('...including the inactive ones, since the list is a snapshot', spCsv.text.split('\r\n').filter((line) => line.startsWith('"SUP-')).length >= 100);
+    const spXlsxExport = await download('/exports', { token: spOwner, ...A, body: { type: 'suppliers', format: 'xlsx' } });
+    check('Excel works too', spXlsxExport.status === 200 && spXlsxExport.buffer.subarray(0, 2).toString() === 'PK' && spXlsxExport.buffer.includes(Buffer.from('xl/workbook.xml')));
+    check('...and the export history records it', ((await api('/exports?limit=5', { token: spOwner, ...A })).data ?? []).some((row) => row.type === 'suppliers'));
+
+    // Exporting must not become a side door into data the user cannot open.
+    await api('/staff', { method: 'POST', token: spOwner, ...A, body: { name: 'Report Only', email: `supr2${spStamp}@example.com`, password: 'Password@123', storeId: spStoreA._id, extraPermissions: ['reports.view', 'reports.export'] } });
+    const spReporter = (await login(`supr2${spStamp}@example.com`, 'Password@123')).token;
+    const spReporterCatalogue = await api('/exports/datasets', { token: spReporter, ...A });
+    check('Someone who may export but not see suppliers is not offered the dataset', spReporterCatalogue.status === 200 && !(spReporterCatalogue.data?.datasets ?? []).some((d) => d.key === 'suppliers') && (spReporterCatalogue.data?.datasets ?? []).some((d) => d.key === 'customers'), (spReporterCatalogue.data?.datasets ?? []).map((d) => d.key));
+    const spReporterRun = await download('/exports', { token: spReporter, ...A, body: { type: 'suppliers', format: 'csv' } });
+    check('...and asking for it anyway is refused', spReporterRun.status === 403 && !spReporterRun.disposition, spReporterRun.error);
+    check('...while the datasets they may have still download', (await download('/exports', { token: spReporter, ...A, body: { type: 'customers', format: 'csv' } })).status === 200);
+
+    // ---- audit ----
+    const spAudit = await api('/platform/audit-log?action=supplier.created&limit=20', { token: spPlatform.token });
+    check('Supplier creation is written to the audit log, without the banking or tax values', spAudit.status === 200 && (spAudit.data ?? []).length > 0 && !JSON.stringify(spAudit.data ?? []).includes('1234 5678 9012') && !JSON.stringify(spAudit.data ?? []).includes('VAT-123456'), spAudit.error);
+    check('Deactivation is audited too', ((await api('/platform/audit-log?action=supplier.deactivated&limit=5', { token: spPlatform.token })).data ?? []).length > 0);
+
+    // ---- other verticals are untouched ----
+    const spRest = await api('/auth/register', { method: 'POST', body: { businessName: `Resto Supply ${spStamp}`, name: 'Resto Owner', email: `supr${spStamp}@example.com`, password: 'Password@123', vertical: 'restaurant' } });
+    const spRestToken = spRest.data?.tokens?.accessToken;
+    const spRestStore = (await api('/stores', { method: 'POST', token: spRestToken, body: { name: 'Resto Main', code: `SR${spStamp}`, currency: 'BDT' } })).data;
+    await spSetPlan(spRest.data?.tenant?.id ?? spRest.data?.tenant?._id, 'brand-monthly');
+    check('A Restaurant workspace has no supplier module at all', (await api('/suppliers', { token: spRestToken, storeId: spRestStore?._id })).status === 403);
+  }
+
+  // --- contact verification ---------------------------------------------------
+  section('Contact verification (email or phone, before buying)');
+  {
+    const vfStamp = String(Date.now()).slice(-7);
+    const vfPlatform = await login('platform@pos.dev', 'Platform@123');
+    const vfPlans = (await api('/plans', {})).data ?? [];
+    const vfPlan = vfPlans.find((p) => p.code === 'showroom-monthly');
+    const vfReg = await api('/auth/register', {
+      method: 'POST',
+      body: { businessName: `Verify Wear ${vfStamp}`, name: 'Verify Owner', email: `vf${vfStamp}@example.com`, phone: `0171${vfStamp}`, password: 'Password@123', vertical: 'clothing' },
+    });
+    const vfToken = vfReg.data?.tokens?.accessToken;
+    const vfTenantId = vfReg.data?.tenant?.id ?? vfReg.data?.tenant?._id;
+    await api('/stores', { method: 'POST', token: vfToken, body: { name: 'Verify Main', code: `VF${vfStamp}`, currency: 'BDT' } });
+    check('A new workspace is registered with an email address and a phone number', Boolean(vfToken && vfTenantId), vfReg.error);
+
+    // ---- what the session says before anything is proven ----
+    const vfStatus0 = await api('/auth/verification', { token: vfToken });
+    check('Nothing is verified to begin with', vfStatus0.status === 200 && vfStatus0.data?.anyVerified === false && vfStatus0.data?.email?.verified === false && vfStatus0.data?.phone?.verified === false, vfStatus0.error ?? vfStatus0.data);
+    check('The contact details come back masked, never in full', vfStatus0.data?.email?.masked?.includes('*') && !vfStatus0.data?.email?.masked?.startsWith(`vf${vfStamp}`) && vfStatus0.data?.phone?.masked?.includes('*'), { email: vfStatus0.data?.email?.masked, phone: vfStatus0.data?.phone?.masked });
+    check('The session carries the same status, so the app knows what to ask for', (await api('/auth/me', { token: vfToken })).data?.user?.verification?.anyVerified === false);
+    check('Verification needs a signed-in user', (await api('/auth/verification', {})).status === 401 && (await api('/auth/verification/send', { method: 'POST', body: { channel: 'email' } })).status === 401);
+
+    // ---- buying is refused until something is proven ----
+    await api(`/platform/tenants/${vfTenantId}/wallet/adjust`, { method: 'POST', token: vfPlatform.token, body: { direction: 'credit', amountMinor: 1_000_000, reason: 'Smoke test: verification' } });
+    const vfEarlyBuy = await api('/subscriptions/purchase', { method: 'POST', token: vfToken, body: { plan: 'professional', billingCycle: 'monthly', paymentMethod: 'wallet', idempotencyKey: `vf${vfStamp}a` } });
+    check('A wallet purchase is refused with VERIFICATION_REQUIRED', vfEarlyBuy.status === 403 && vfEarlyBuy.error?.code === 'VERIFICATION_REQUIRED' && /verify/i.test(vfEarlyBuy.error?.message ?? ''), vfEarlyBuy.error);
+    check('...and so is a manual payment claim', (await api('/subscriptions/upgrade-request', { method: 'POST', token: vfToken, body: { planId: vfPlan._id, paymentMethod: 'bkash', amountMinor: vfPlan.priceMinor, senderNumber: '01700000000', transactionId: `VFT${vfStamp}` } })).error?.code === 'VERIFICATION_REQUIRED');
+    check('...and an online checkout', (await api('/payments/checkout', { method: 'POST', token: vfToken, body: { planId: vfPlan._id, provider: 'bkash' } })).error?.code === 'VERIFICATION_REQUIRED');
+    check('...and renewing by hand', (await api('/subscriptions/renew', { method: 'POST', token: vfToken, body: {} })).error?.code === 'VERIFICATION_REQUIRED');
+    check('The wallet is untouched by a refused purchase', (await api('/wallet', { token: vfToken })).data?.balanceMinor === 1_000_000);
+    check('Everything else still works while unverified - this gates buying, not the POS', (await api('/products', { token: vfToken })).status === 200);
+
+    // ---- the code itself ----
+    const vfSend = await api('/auth/verification/send', { method: 'POST', token: vfToken, body: { channel: 'email' } });
+    check('A code is sent to the email address, and the response says where without saying what', vfSend.status === 200 && vfSend.data?.masked?.includes('*') && typeof vfSend.data?.expiresAt === 'string', vfSend.error ?? vfSend.data);
+    // This server has no SMTP and only the SMS test double, so the honest
+    // answer is "nothing was delivered" - never a cheerful "code sent".
+    check('The response says whether a message really went out, and why not', vfSend.data?.delivered === false && /gateway|test double/i.test(vfSend.data?.deliveryNote ?? ''), { delivered: vfSend.data?.delivered, note: vfSend.data?.deliveryNote });
+    const vfSmsSend = await api('/auth/verification/send', { method: 'POST', token: vfToken, body: { channel: 'phone' } });
+    check('An SMS through the test double is reported as NOT delivered - it never reaches a phone', vfSmsSend.data?.delivered === false && /test double|not configured|gateway/i.test(vfSmsSend.data?.deliveryNote ?? ''), { delivered: vfSmsSend.data?.delivered, note: vfSmsSend.data?.deliveryNote });
+    check('...and the code still works, so the step is completable on a machine with no gateway', (await api('/auth/verification/confirm', { method: 'POST', token: vfToken, body: { channel: 'phone', code: vfSmsSend.data?.devCode } })).data?.phone?.verified === true);
+    const vfCode = vfSend.data?.devCode;
+    check('Outside production the code is returned so an automated run can complete the step', /^\d{6}$/.test(vfCode ?? ''), typeof vfCode);
+    check('An unknown channel is refused', (await api('/auth/verification/send', { method: 'POST', token: vfToken, body: { channel: 'pigeon' } })).status === 422);
+    check('A code that is not six digits is refused before anything is checked', (await api('/auth/verification/confirm', { method: 'POST', token: vfToken, body: { channel: 'email', code: '12' } })).status === 422 && (await api('/auth/verification/confirm', { method: 'POST', token: vfToken, body: { channel: 'email', code: 'abcdef' } })).status === 422);
+    const vfWrong = await api('/auth/verification/confirm', { method: 'POST', token: vfToken, body: { channel: 'email', code: vfCode === '000000' ? '111111' : '000000' } });
+    check('A wrong code is refused, and says how many attempts are left', vfWrong.status === 400 && /attempt/i.test(vfWrong.error?.message ?? ''), vfWrong.error);
+    check('...and it does not verify the email address', (await api('/auth/verification', { token: vfToken })).data?.email?.verified === false);
+    check('Asking for another code straight away is refused (a cooldown, not a free SMS tap)', (await api('/auth/verification/send', { method: 'POST', token: vfToken, body: { channel: 'email' } })).status === 429);
+
+    const vfConfirm = await api('/auth/verification/confirm', { method: 'POST', token: vfToken, body: { channel: 'email', code: vfCode } });
+    check('The right code verifies the email address', vfConfirm.status === 200 && vfConfirm.data?.email?.verified === true && vfConfirm.data?.anyVerified === true, vfConfirm.error);
+    check('The same code cannot be used twice', (await api('/auth/verification/confirm', { method: 'POST', token: vfToken, body: { channel: 'email', code: vfCode } })).status === 200 && (await api('/auth/verification', { token: vfToken })).data?.email?.verified === true);
+    check('Sending a code to an address that is already verified is refused', (await api('/auth/verification/send', { method: 'POST', token: vfToken, body: { channel: 'email' } })).status === 400);
+    check('The session now reports a verified contact', (await api('/auth/me', { token: vfToken })).data?.user?.verification?.anyVerified === true);
+
+    // ---- and now buying works ----
+    const vfBuy = await api('/subscriptions/purchase', { method: 'POST', token: vfToken, body: { plan: 'professional', billingCycle: 'monthly', paymentMethod: 'wallet', idempotencyKey: `vf${vfStamp}b` } });
+    check('With a verified email address the wallet purchase goes through', vfBuy.status === 201, vfBuy.error);
+    check('...and the workspace is on the plan it paid for', (await api('/subscriptions/current', { token: vfToken })).data?.subscription?.planSnapshot?.code === 'showroom-monthly');
+
+    // ---- the phone channel ----
+    check('Both contacts end up verified, each with its own code', (await api('/auth/verification', { token: vfToken })).data?.phone?.verified === true && (await api('/auth/verification', { token: vfToken })).data?.email?.verified === true);
+
+    // ---- a phone number that changes is no longer proven ----
+    const vfStaffRoles = (await api('/roles', { token: vfToken })).data ?? [];
+    await api('/staff', { method: 'POST', token: vfToken, body: { name: 'VF Manager', email: `vfm${vfStamp}@example.com`, password: 'Password@123', phone: `0181${vfStamp}`, roleId: vfStaffRoles.find((r) => r.name === 'Store Manager')?._id } });
+    const vfStaffList = (await api('/staff', { token: vfToken })).data ?? [];
+    const vfStaffId = vfStaffList.find((u) => u.email === `vfm${vfStamp}@example.com`)?.id;
+    const vfStaffToken = (await login(`vfm${vfStamp}@example.com`, 'Password@123')).token;
+    await verifyContact(vfStaffToken, 'phone');
+    check('A staff member can verify their own phone number', (await api('/auth/verification', { token: vfStaffToken })).data?.phone?.verified === true);
+    const vfPhoneChange = await api(`/staff/${vfStaffId}`, { method: 'PATCH', token: vfToken, body: { phone: `0191${vfStamp}` } });
+    check('Changing that number clears the verification - it was proven about the old one', vfPhoneChange.status === 200 && (await api('/auth/verification', { token: vfStaffToken })).data?.phone?.verified === false, vfPhoneChange.error);
+
+    // ---- one person, every workspace of their account ----
+    const vfSecond = await api('/workspaces', { method: 'POST', token: vfToken, body: { businessName: `Verify Two ${vfStamp}`, vertical: 'clothing' } });
+    const vfSecondToken = (await api('/auth/switch-workspace', { method: 'POST', token: vfToken, body: { workspaceId: vfSecond.data?.workspace?.id } })).data?.tokens?.accessToken;
+    check('Verification belongs to the person, so their next workspace does not ask again', (await api('/auth/verification', { token: vfSecondToken })).data?.anyVerified === true);
+
+    // ---- someone else's account is unaffected ----
+    const vfOther = await api('/auth/register', { method: 'POST', body: { businessName: `Verify Other ${vfStamp}`, name: 'Other Owner', email: `vfo${vfStamp}@example.com`, password: 'Password@123', vertical: 'clothing' } });
+    check('A different account starts unverified, whatever anyone else has done', (await api('/auth/verification', { token: vfOther.data?.tokens?.accessToken })).data?.anyVerified === false);
+  }
+
   // --- the new workspace, from inside ---------------------------------------
   const wcSwitch = await api('/auth/switch-workspace', { method: 'POST', token: wcHomeToken, body: { workspaceId: wcSecondId } });
   const wcToken = wcSwitch.data?.tokens?.accessToken;
@@ -8710,6 +9512,8 @@ async function main() {
     'server/src/modules/roles/roles.routes.ts',
     'server/src/modules/uploads/uploads.routes.ts',
     'server/src/modules/loyalty/loyalty.routes.ts',
+    'server/src/modules/exports/export.routes.ts',
+    'server/src/modules/suppliers/suppliers.routes.ts',
   ]
     .map((file) => readFileSync(new URL(`../${file}`, import.meta.url), 'utf8'))
     .join('\n');
@@ -9255,6 +10059,7 @@ async function main() {
   });
   check('Platform admin funds tenant B wallet', fundOther.status < 300, fundOther.error);
 
+  await verifyContact(otherToken);
   const balanceBefore = (await api('/wallet', { token: otherToken })).data?.balanceMinor ?? 0;
 
   const walletBuy = await api('/subscriptions/upgrade-request', {

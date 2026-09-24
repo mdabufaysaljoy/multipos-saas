@@ -17,6 +17,8 @@ interface BarcodeLabelProps {
   currency: string;
   storeName?: string;
   showPrice?: boolean;
+  /** The store's VAT switch (`store.tax.enabled`): prints "+ VAT" after the price. Display only. */
+  vatEnabled?: boolean;
   /** Label width from store settings (38, 48 or 58 mm). */
   widthMm?: number;
   /** Adds a QR code of the barcode value (scannable by a phone). */
@@ -32,7 +34,7 @@ interface BarcodeLabelProps {
  * and CODE128 otherwise, so a barcode typed in from a supplier's label still
  * renders correctly.
  */
-export function BarcodeLabel({ data, currency, storeName, showPrice = true, widthMm = 38, showQr = false, className }: BarcodeLabelProps) {
+export function BarcodeLabel({ data, currency, storeName, showPrice = true, vatEnabled = false, widthMm = 38, showQr = false, className }: BarcodeLabelProps) {
   const svgRef = React.useRef<SVGSVGElement>(null);
   const [error, setError] = React.useState<string | null>(null);
 
@@ -68,7 +70,13 @@ export function BarcodeLabel({ data, currency, storeName, showPrice = true, widt
         <svg ref={svgRef} className="bl-svg" data-barcode-value={data.barcode} data-barcode-format={/^\d{13}$/.test(data.barcode) ? 'EAN13' : 'CODE128'} />
       )}
       {showQr && !error && <QrCodeView value={data.barcode} sizeMm={Math.min(18, Math.round(widthMm * 0.4))} className="bl-qr" />}
-      {showPrice && <div className="bl-price">{formatMoney(data.priceMinor, currency)}</div>}
+      {showPrice && (
+        <div className="bl-price">
+          {formatMoney(data.priceMinor, currency)}
+          {/* The price itself is unchanged; this only says VAT is charged on top. */}
+          {vatEnabled && <span className="bl-vat"> + VAT</span>}
+        </div>
+      )}
     </div>
   );
 }

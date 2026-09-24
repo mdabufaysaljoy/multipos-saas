@@ -11,6 +11,7 @@ import { SaleModel } from '../../models/Sale';
 import { MenuItemModel } from '../../models/MenuItem';
 import { WorkspaceMemberModel } from '../../models/WorkspaceMember';
 import { RestaurantOrderModel } from '../../models/RestaurantOrder';
+import { SupplierModel } from '../../models/Supplier';
 import { StorageObjectModel } from '../../models/StorageObject';
 import { SALE_STATUS } from '../../config/constants';
 import { DEFAULT_POS_VERTICAL, type PosVertical } from '../../config/verticals';
@@ -18,10 +19,10 @@ import { MedicineModel } from '../../models/Medicine';
 import { PharmacySaleModel } from '../../models/PharmacySale';
 import { ShopProductModel } from '../../models/ShopProduct';
 import { ShopSaleModel } from '../../models/ShopSale';
-import { isPosVertical, verticalOfTenant } from './planEntitlements';
+import { isPosVertical, resolvePlanForVertical, verticalOfTenant } from './planEntitlements';
 import { renewalGraceEndsAt } from './renewalPolicy';
 import { ROLES } from '../../config/constants';
-import type { PlanFeatures, PlanLimits } from '../../models/SubscriptionPlan';
+import { SubscriptionPlanModel, type PlanFeatures, type PlanLimits } from '../../models/SubscriptionPlan';
 import { ApiError } from '../../utils/ApiError';
 import { formatBytes } from '../../utils/formatBytes';
 
@@ -48,6 +49,14 @@ export interface Entitlement {
   isReadOnly: boolean;
 }
 
+/**
+ * Keys added to the plan model AFTER subscriptions were already being sold.
+ * A snapshot without one of these is read from the plan document - see
+ * `resolvePlanValues`. Older keys are not listed: every snapshot has them.
+ */
+const LATE_FEATURE_KEYS = ['supplierManagement'] as const satisfies readonly (keyof PlanFeatures)[];
+const LATE_LIMIT_KEYS = ['maxSuppliers'] as const satisfies readonly (keyof PlanLimits)[];
+
 const NO_PLAN_FEATURES: PlanFeatures = {
   salesReports: false,
   advancedReports: false,
@@ -61,6 +70,8 @@ const NO_PLAN_FEATURES: PlanFeatures = {
   emailMarketing: false,
   imageOptimization: false,
   loyaltyProgram: false,
+  productImport: false,
+  supplierManagement: false,
 };
 
 const NO_PLAN_LIMITS: PlanLimits = {
@@ -70,6 +81,7 @@ const NO_PLAN_LIMITS: PlanLimits = {
   maxMonthlySales: 0,
   maxCustomers: 0,
   maxStorageBytes: 0,
+  maxSuppliers: 0,
 };
 
 /**
@@ -92,6 +104,7 @@ const normalizeLimits = (limits: Partial<PlanLimits> | null | undefined): PlanLi
   maxMonthlySales: limits?.maxMonthlySales ?? -1,
   maxCustomers: limits?.maxCustomers ?? -1,
   maxStorageBytes: limits?.maxStorageBytes ?? -1,
+  maxSuppliers: limits?.maxSuppliers ?? -1,
 });
 
 const normalizeFeatures = (features: Partial<PlanFeatures> | null | undefined): PlanFeatures => ({
@@ -107,6 +120,12 @@ const normalizeFeatures = (features: Partial<PlanFeatures> | null | undefined): 
   emailMarketing: features?.emailMarketing ?? false,
   imageOptimization: features?.imageOptimization ?? false,
   loyaltyProgram: features?.loyaltyProgram ?? false,
+  // The one feature that defaults to ON when a snapshot predates it: bulk
+  // product import is part of every plan, so "missing means off" would lock
+  // existing customers out of something nobody ever sold separately. A plan
+  // that explicitly stores `false` is still refused.
+  productImport: features?.productImport ?? true,
+  supplierManagement: features?.supplierManagement ?? false,
 });
 
 /**
@@ -193,8 +212,7 @@ class EntitlementService {
       // Snapshots from before per-vertical plans were all sold as Clothing.
       vertical: isPosVertical(subscription.planSnapshot?.vertical) ? subscription.planSnapshot.vertical : DEFAULT_POS_VERTICAL,
       interval: subscription.planSnapshot?.interval ?? null,
-      features: normalizeFeatures(subscription.planSnapshot?.features),
-      limits: normalizeLimits(subscription.planSnapshot?.limits),
+      ...(await this.resolvePlanValues(subscription.planSnapshot)),
       currentPeriodEnd: periodEnd,
       daysRemaining: periodEnd ? Math.max(0, dayjs(periodEnd).diff(dayjs(now), 'day')) : 0,
       cancelAtPeriodEnd: subscription.cancelAtPeriodEnd,
@@ -202,6 +220,42 @@ class EntitlementService {
       isUsable,
       isReadOnly: !isUsable,
     };
+  }
+
+  /**
+   * Features and limits for a subscription, from its frozen plan snapshot.
+   *
+   * A snapshot taken BEFORE a key existed simply has no value for it. For most
+   * keys the rules in `normalizeFeatures` / `normalizeLimits` settle that. Keys
+   * added after a plan was sold are different: the customer bought the plan,
+   * and the plan itself now says what it includes - so a missing key is read
+   * from the plan document instead of guessing. That is exactly what the
+   * backfill migrations write, computed at read time, so a workspace is never
+   * locked out of something its plan includes because a migration has not been
+   * run yet. A snapshot that HAS a value always wins; a plan that says false
+   * still says false.
+   */
+  private async resolvePlanValues(snapshot: { code?: string; vertical?: string; features?: Partial<PlanFeatures>; limits?: Partial<PlanLimits> } | undefined) {
+    const features = normalizeFeatures(snapshot?.features);
+    const limits = normalizeLimits(snapshot?.limits);
+
+    const missingFeatures = LATE_FEATURE_KEYS.filter((key) => snapshot?.features?.[key] === undefined);
+    const missingLimits = LATE_LIMIT_KEYS.filter((key) => snapshot?.limits?.[key] === undefined);
+    if (missingFeatures.length === 0 && missingLimits.length === 0) return { features, limits };
+
+    const plan = snapshot?.code ? await SubscriptionPlanModel.findOne({ code: snapshot.code }).select('features limits verticalOverrides posProductCode').lean() : null;
+    if (!plan) return { features, limits };
+
+    const vertical = isPosVertical(snapshot?.vertical) ? snapshot.vertical : DEFAULT_POS_VERTICAL;
+    const resolved = resolvePlanForVertical(plan, vertical);
+    for (const key of missingFeatures) {
+      if (typeof resolved.features?.[key] === 'boolean') features[key] = resolved.features[key];
+    }
+    for (const key of missingLimits) {
+      const value = resolved.limits?.[key];
+      if (typeof value === 'number' && Number.isSafeInteger(value)) limits[key] = value;
+    }
+    return { features, limits };
   }
 
   /** Throws unless the tenant's subscription currently permits writes. */
@@ -286,6 +340,15 @@ class EntitlementService {
 
   countStores(tenantId: Types.ObjectId) {
     return StoreModel.countDocuments({ tenantId, isActive: true, deletedAt: null });
+  }
+
+  /**
+   * Suppliers are workspace-level (not per branch), so the meter is a plain
+   * tenant count of live, active records - the same rule the create path and
+   * the downgrade view use.
+   */
+  countSuppliers(tenantId: Types.ObjectId) {
+    return SupplierModel.countDocuments({ tenantId, deletedAt: null, isActive: true });
   }
 
   countCustomers(tenantId: Types.ObjectId) {
@@ -379,6 +442,10 @@ class EntitlementService {
     this.assertWithinLimit(entitlement, 'maxCustomers', await this.countCustomers(tenantId), 'customer profiles');
   }
 
+  async assertCanAddSupplier(tenantId: Types.ObjectId, entitlement: Entitlement): Promise<void> {
+    this.assertWithinLimit(entitlement, 'maxSuppliers', await this.countSuppliers(tenantId), 'suppliers');
+  }
+
   async assertCanRecordSale(tenantId: Types.ObjectId, entitlement: Entitlement, vertical?: PosVertical): Promise<void> {
     this.assertWithinLimit(
       entitlement,
@@ -435,15 +502,16 @@ class EntitlementService {
   async usage(tenantId: Types.ObjectId) {
     // Resolved once so both vertical-specific meters agree on what they measure.
     const vertical = await verticalOfTenant(tenantId);
-    const [products, staff, stores, customers, monthlySales, storageBytes] = await Promise.all([
+    const [products, staff, stores, customers, monthlySales, storageBytes, suppliers] = await Promise.all([
       this.countProducts(tenantId, vertical),
       this.countStaff(tenantId),
       this.countStores(tenantId),
       this.countCustomers(tenantId),
       this.countMonthlySales(tenantId, vertical),
       this.storageBytes(tenantId),
+      this.countSuppliers(tenantId),
     ]);
-    return { vertical, products, staff, stores, customers, monthlySales, storageBytes };
+    return { vertical, products, staff, stores, customers, monthlySales, storageBytes, suppliers };
   }
 }
 

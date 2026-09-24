@@ -26,6 +26,9 @@ export interface UserDoc extends BaseDoc {
   deniedPermissions: string[];
   isActive: boolean;
   lastLoginAt: Date | null;
+  /** When this person proved they own the address / the number. Null = unproven. */
+  emailVerifiedAt: Date | null;
+  phoneVerifiedAt: Date | null;
   /**
    * The workspace this person last switched into. Sign-in lands there again if
    * they may still act in it; it is a preference, never a grant of access.
@@ -52,6 +55,8 @@ const userSchema = new Schema<UserDoc>(
     deniedPermissions: { type: [String], default: [] },
     isActive: { type: Boolean, default: true, index: true },
     lastLoginAt: { type: Date, default: null },
+    emailVerifiedAt: { type: Date, default: null },
+    phoneVerifiedAt: { type: Date, default: null },
     lastActiveTenantId: { type: Schema.Types.ObjectId, ref: 'Tenant', default: null },
     permissionVersion: { type: Number, default: 1 },
     deletedAt: { type: Date, default: null },

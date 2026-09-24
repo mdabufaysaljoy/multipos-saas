@@ -47,6 +47,8 @@ export const PLAN_SEEDS = [
       emailMarketing: false,
       imageOptimization: false,
       loyaltyProgram: false,
+      productImport: true,
+      supplierManagement: false,
     },
     // Starter is a single-shop plan.
     limits: {
@@ -56,6 +58,7 @@ export const PLAN_SEEDS = [
       maxMonthlySales: 2_500,
       maxCustomers: 500,
       maxStorageBytes: MB * 500,
+      maxSuppliers: 0,
     },
   },
   {
@@ -83,6 +86,8 @@ export const PLAN_SEEDS = [
       emailMarketing: true,
       imageOptimization: false,
       loyaltyProgram: true,
+      productImport: true,
+      supplierManagement: true,
     },
     limits: {
       maxStaff: 6,
@@ -91,6 +96,7 @@ export const PLAN_SEEDS = [
       maxMonthlySales: 30_000,
       maxCustomers: 10_000,
       maxStorageBytes: GB * 1,
+      maxSuppliers: 100,
     },
   },
   {
@@ -118,6 +124,8 @@ export const PLAN_SEEDS = [
       // Brand only: uploads are resized and stored as WebP.
       imageOptimization: true,
       loyaltyProgram: true,
+      productImport: true,
+      supplierManagement: true,
     },
     limits: {
       maxStaff: -1,
@@ -128,6 +136,7 @@ export const PLAN_SEEDS = [
       // Storage is the one thing Brand is not unlimited on - bytes cost money.
       // Brand's automatic WebP optimisation makes this go much further.
       maxStorageBytes: GB * 2,
+      maxSuppliers: -1,
     },
   },
 ];

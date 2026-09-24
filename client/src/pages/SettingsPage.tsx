@@ -465,6 +465,7 @@ export function SettingsPage() {
             storeName={draft.name}
             currency={draft.currency}
             readOnly={readOnly}
+            vatEnabled={draft.tax.enabled}
             showLoyaltyCard={(session?.tenant?.vertical ?? 'clothing') === 'clothing'}
             onChange={(labels) => patch({ labels })}
           />
