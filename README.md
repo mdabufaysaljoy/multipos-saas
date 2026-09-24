@@ -23,7 +23,7 @@ MongoDB on the back.
 10. [Business rules that are enforced](#business-rules-that-are-enforced)
 11. [API structure](#api-structure)
 12. [Testing](#testing)
-13. [Phase 2 roadmap](#phase-2-roadmap)
+13. [Roadmap](#roadmap)
 
 ---
 
@@ -518,8 +518,22 @@ enforce. The signed-in catalogue is at `/catalogue`.
 
 ## Roadmap
 
-None of these requires a migration; the schema and service layers already
-accommodate them.
+### Universal POS features
+
+The platform runs four POS verticals — Clothing, Restaurant, Pharmacy and Super
+Shop — from one server and one client, switched by the workspace's `vertical`.
+Clothing is the most mature and is treated as the **reference implementation**: a
+set of capabilities (direct QZ printing, split payment, custom payment methods,
+POS customer selection, loyalty, return/exchange/refund, bulk import, categories,
+authorized out-of-stock sale, inventory ledger, dashboard date ranges, advanced
+analytics and PDF/print reporting) is being made available in all four.
+
+The audit, the four-vertical feature matrix, the shared-vs-vertical architecture,
+the dependency order and the atomic task list are in
+[`docs/UNIVERSAL_POS_PLAN.md`](docs/UNIVERSAL_POS_PLAN.md). "Universal" there means
+the same capability and behaviour — not the same schema or UI.
+
+### Still open
 
 - Live bKash / Nagad / bank gateways — implement `initiatePayment`,
   `verifyPayment` and `handleWebhook` in the existing provider classes
@@ -527,6 +541,5 @@ accommodate them.
   `jobs/subscription.job.ts`)
 - S3 / Cloudinary storage drivers behind the existing `StorageProvider`
 - An email provider behind `EmailProvider`
-- Direct ESC/POS thermal printing alongside browser printing
-- Purchase orders and supplier management
-- Audit log of every administrative action
+- Purchase orders (supplier records themselves are done — see
+  [`docs/SUPPLIER_MANAGEMENT.md`](docs/SUPPLIER_MANAGEMENT.md))
