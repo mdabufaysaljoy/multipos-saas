@@ -46,7 +46,14 @@ value for it (`entitlement.service.ts`):
   an existing customer out of their own data;
 - **a missing feature is treated as off** — a feature nobody paid for must not be given away;
 - **except `productImport`, which is treated as ON**, because it is part of every plan and "off" would
-  take away something that was never sold separately. A stored `false` is still respected.
+  take away something that was never sold separately. A stored `false` is still respected;
+- **and except keys added after subscriptions were already being sold** (`LATE_FEATURE_KEYS` /
+  `LATE_LIMIT_KEYS` in `entitlement.service.ts`, currently `supplierManagement` and `maxSuppliers`),
+  which are read from the PLAN DOCUMENT when the snapshot has no value. The customer bought the plan,
+  and the plan itself says what it includes - so a Professional workspace is never locked out of
+  supplier management because a backfill migration has not been run yet. It is exactly what the
+  migration writes, computed at read time; a Starter plan still says no, and a stored value always
+  wins.
 
 Backfill migrations exist so none of this is load-bearing in practice:
 `npm run migrate` (or `migrate:loyalty`, `migrate:export-permission`, `migrate:product-import`,

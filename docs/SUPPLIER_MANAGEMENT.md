@@ -185,8 +185,12 @@ are never copied into the log.
    Starter one stays out;
 3. grants the four `suppliers.*` permissions to existing built-in Store Manager roles, once.
 
-Until it runs, a snapshot without the flag reads as "feature off" — nobody gets access they have not
-paid for.
+It is a tidy-up, not a prerequisite: a snapshot with no value for these keys is resolved from the plan
+document at read time (`entitlement.service.ts`), so a Professional or Enterprise workspace has supplier
+management whether or not the migration has run. A Starter plan still says no.
+
+The page itself asks the server rather than trusting the session it was loaded with, so a workspace that
+upgrades mid-session does not have to sign out and back in to see its suppliers.
 
 ---
 

@@ -19,7 +19,6 @@ import { SearchInput, useDebounced } from '@/components/SearchInput';
 import { SupplierDetailDialog } from '@/features/suppliers/SupplierDetailDialog';
 import { SupplierFormDialog } from '@/features/suppliers/SupplierFormDialog';
 import { SUPPLIER_TYPE_LABELS } from '@/features/suppliers/supplierLabels';
-import { useAuth } from '@/hooks/useAuth';
 import { cn } from '@/lib/utils';
 import type { SupplierListItem, SupplierType } from '@/types/domain';
 
@@ -32,8 +31,6 @@ import type { SupplierListItem, SupplierType } from '@/types/domain';
  */
 export function SuppliersPage() {
   const queryClient = useQueryClient();
-  const { session } = useAuth();
-  const entitled = session?.entitlement?.features?.supplierManagement === true;
 
   const [page, setPage] = React.useState(1);
   const [term, setTerm] = React.useState('');
@@ -46,6 +43,17 @@ export function SuppliersPage() {
   const [editingId, setEditingId] = React.useState<string | null>(null);
   const [viewingId, setViewingId] = React.useState<string | null>(null);
   const [deleting, setDeleting] = React.useState<SupplierListItem | null>(null);
+
+  // The SERVER decides whether this workspace may use suppliers. Reading the
+  // plan flag out of the cached session would lock the page out whenever that
+  // session is a little behind the subscription (a fresh upgrade, a plan the
+  // workspace gained after signing in), which is exactly the wrong answer.
+  const { data: summary, error: summaryError, isLoading: summaryLoading } = useQuery({
+    queryKey: ['suppliers', 'summary'],
+    queryFn: supplierApi.summary,
+    retry: false,
+  });
+  const locked = summaryError instanceof ApiError && ['ENTITLEMENT_REQUIRED', 'LIMIT_EXCEEDED'].includes(summaryError.code);
 
   const listKey = ['suppliers', page, search, status, type, sort] as const;
   const { data, isLoading, error, refetch } = useQuery({
@@ -60,11 +68,9 @@ export function SuppliersPage() {
         sort,
         order: sort === 'name' ? 'asc' : 'desc',
       }),
-    enabled: entitled,
+    enabled: !locked,
     retry: false,
   });
-
-  const { data: summary } = useQuery({ queryKey: ['suppliers', 'summary'], queryFn: supplierApi.summary, enabled: entitled, retry: false });
 
   const invalidate = () => {
     void queryClient.invalidateQueries({ queryKey: ['suppliers'] });
@@ -92,7 +98,9 @@ export function SuppliersPage() {
     onError: (err) => toast.error(err instanceof ApiError ? err.message : 'Could not remove the supplier'),
   });
 
-  if (!entitled) {
+  if (summaryLoading) return <div className="p-4 lg:p-6 text-sm text-muted-foreground">Loading…</div>;
+
+  if (locked) {
     return (
       <div className="p-4 lg:p-6">
         <Card className="mx-auto max-w-xl">

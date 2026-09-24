@@ -15,7 +15,6 @@ import {
   Menu,
   Megaphone,
   Plus,
-  Upload,
   UtensilsCrossed,
   Armchair,
   ChefHat,
@@ -90,8 +89,7 @@ const NAV_SECTIONS: { heading: string; items: NavItem[] }[] = [
     heading: 'Catalogue',
     items: [
       { to: '/catalogue', label: 'Products', icon: Tags, anyOf: ['products.view'], verticals: ['clothing'] },
-      { to: '/catalogue/import', label: 'Import products', icon: Upload, anyOf: ['products.import'], verticals: ['clothing'] },
-      { to: '/suppliers', label: 'Suppliers', icon: Factory, anyOf: ['suppliers.view'], feature: 'supplierManagement', verticals: ['clothing'] },
+      { to: '/suppliers', label: 'Suppliers', icon: Factory, anyOf: ['suppliers.view'], verticals: ['clothing'] },
       { to: '/categories', label: 'Categories', icon: FolderTree, anyOf: ['categories.view'], verticals: ['clothing'] },
       { to: '/inventory', label: 'Inventory', icon: Boxes, anyOf: ['inventory.view'], verticals: ['clothing'] },
       { to: '/menu', label: 'Menu', icon: UtensilsCrossed, anyOf: ['products.view'], verticals: ['restaurant'] },

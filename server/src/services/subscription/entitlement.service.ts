@@ -19,10 +19,10 @@ import { MedicineModel } from '../../models/Medicine';
 import { PharmacySaleModel } from '../../models/PharmacySale';
 import { ShopProductModel } from '../../models/ShopProduct';
 import { ShopSaleModel } from '../../models/ShopSale';
-import { isPosVertical, verticalOfTenant } from './planEntitlements';
+import { isPosVertical, resolvePlanForVertical, verticalOfTenant } from './planEntitlements';
 import { renewalGraceEndsAt } from './renewalPolicy';
 import { ROLES } from '../../config/constants';
-import type { PlanFeatures, PlanLimits } from '../../models/SubscriptionPlan';
+import { SubscriptionPlanModel, type PlanFeatures, type PlanLimits } from '../../models/SubscriptionPlan';
 import { ApiError } from '../../utils/ApiError';
 import { formatBytes } from '../../utils/formatBytes';
 
@@ -48,6 +48,14 @@ export interface Entitlement {
   isUsable: boolean;
   isReadOnly: boolean;
 }
+
+/**
+ * Keys added to the plan model AFTER subscriptions were already being sold.
+ * A snapshot without one of these is read from the plan document - see
+ * `resolvePlanValues`. Older keys are not listed: every snapshot has them.
+ */
+const LATE_FEATURE_KEYS = ['supplierManagement'] as const satisfies readonly (keyof PlanFeatures)[];
+const LATE_LIMIT_KEYS = ['maxSuppliers'] as const satisfies readonly (keyof PlanLimits)[];
 
 const NO_PLAN_FEATURES: PlanFeatures = {
   salesReports: false,
@@ -204,8 +212,7 @@ class EntitlementService {
       // Snapshots from before per-vertical plans were all sold as Clothing.
       vertical: isPosVertical(subscription.planSnapshot?.vertical) ? subscription.planSnapshot.vertical : DEFAULT_POS_VERTICAL,
       interval: subscription.planSnapshot?.interval ?? null,
-      features: normalizeFeatures(subscription.planSnapshot?.features),
-      limits: normalizeLimits(subscription.planSnapshot?.limits),
+      ...(await this.resolvePlanValues(subscription.planSnapshot)),
       currentPeriodEnd: periodEnd,
       daysRemaining: periodEnd ? Math.max(0, dayjs(periodEnd).diff(dayjs(now), 'day')) : 0,
       cancelAtPeriodEnd: subscription.cancelAtPeriodEnd,
@@ -213,6 +220,42 @@ class EntitlementService {
       isUsable,
       isReadOnly: !isUsable,
     };
+  }
+
+  /**
+   * Features and limits for a subscription, from its frozen plan snapshot.
+   *
+   * A snapshot taken BEFORE a key existed simply has no value for it. For most
+   * keys the rules in `normalizeFeatures` / `normalizeLimits` settle that. Keys
+   * added after a plan was sold are different: the customer bought the plan,
+   * and the plan itself now says what it includes - so a missing key is read
+   * from the plan document instead of guessing. That is exactly what the
+   * backfill migrations write, computed at read time, so a workspace is never
+   * locked out of something its plan includes because a migration has not been
+   * run yet. A snapshot that HAS a value always wins; a plan that says false
+   * still says false.
+   */
+  private async resolvePlanValues(snapshot: { code?: string; vertical?: string; features?: Partial<PlanFeatures>; limits?: Partial<PlanLimits> } | undefined) {
+    const features = normalizeFeatures(snapshot?.features);
+    const limits = normalizeLimits(snapshot?.limits);
+
+    const missingFeatures = LATE_FEATURE_KEYS.filter((key) => snapshot?.features?.[key] === undefined);
+    const missingLimits = LATE_LIMIT_KEYS.filter((key) => snapshot?.limits?.[key] === undefined);
+    if (missingFeatures.length === 0 && missingLimits.length === 0) return { features, limits };
+
+    const plan = snapshot?.code ? await SubscriptionPlanModel.findOne({ code: snapshot.code }).select('features limits verticalOverrides posProductCode').lean() : null;
+    if (!plan) return { features, limits };
+
+    const vertical = isPosVertical(snapshot?.vertical) ? snapshot.vertical : DEFAULT_POS_VERTICAL;
+    const resolved = resolvePlanForVertical(plan, vertical);
+    for (const key of missingFeatures) {
+      if (typeof resolved.features?.[key] === 'boolean') features[key] = resolved.features[key];
+    }
+    for (const key of missingLimits) {
+      const value = resolved.limits?.[key];
+      if (typeof value === 'number' && Number.isSafeInteger(value)) limits[key] = value;
+    }
+    return { features, limits };
   }
 
   /** Throws unless the tenant's subscription currently permits writes. */
