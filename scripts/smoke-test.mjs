@@ -8931,6 +8931,33 @@ async function main() {
     const spBack = await api('/suppliers?limit=1', { token: spOwner, ...A });
     check('Upgrading again brings every supplier back, untouched', spBack.status === 200 && spBack.meta?.total === 106 && (await api(`/suppliers/${spFirst.data?._id}`, { token: spOwner, ...A })).data?.taxNumber === 'VAT-123456', spBack.meta);
 
+
+    // ---- exporting the supplier list ----
+    await spSetPlan(spTenantId, 'showroom-monthly');
+    const spCatalogue = await api('/exports/datasets', { token: spOwner, ...A });
+    check('The supplier list is offered as an export dataset', (spCatalogue.data?.datasets ?? []).some((d) => d.key === 'suppliers'), (spCatalogue.data?.datasets ?? []).map((d) => d.key));
+    check('...as a snapshot, so a date range never hides the older suppliers', (spCatalogue.data?.datasets ?? []).find((d) => d.key === 'suppliers')?.dated === false);
+    const spCsv = await download('/exports', { token: spOwner, ...A, body: { type: 'suppliers', format: 'csv' } });
+    check(
+      'Exporting suppliers as CSV returns the contacts, their terms and their tax numbers',
+      spCsv.status === 200 && spCsv.text.includes('SUP-0001') && spCsv.text.includes('Rahim Ahmed') && spCsv.text.includes('Sales Representative') && spCsv.text.includes('VAT-123456') && spCsv.text.includes('30 days'),
+      spCsv.error ?? spCsv.text.slice(0, 200),
+    );
+    check('...and NEVER the banking details', !spCsv.text.includes('1234 5678 9012') && !/account\s*(name|number)/i.test(spCsv.text) && !/city bank/i.test(spCsv.text));
+    check('...including the inactive ones, since the list is a snapshot', spCsv.text.split('\r\n').filter((line) => line.startsWith('"SUP-')).length >= 100);
+    const spXlsxExport = await download('/exports', { token: spOwner, ...A, body: { type: 'suppliers', format: 'xlsx' } });
+    check('Excel works too', spXlsxExport.status === 200 && spXlsxExport.buffer.subarray(0, 2).toString() === 'PK' && spXlsxExport.buffer.includes(Buffer.from('xl/workbook.xml')));
+    check('...and the export history records it', ((await api('/exports?limit=5', { token: spOwner, ...A })).data ?? []).some((row) => row.type === 'suppliers'));
+
+    // Exporting must not become a side door into data the user cannot open.
+    await api('/staff', { method: 'POST', token: spOwner, ...A, body: { name: 'Report Only', email: `supr2${spStamp}@example.com`, password: 'Password@123', storeId: spStoreA._id, extraPermissions: ['reports.view', 'reports.export'] } });
+    const spReporter = (await login(`supr2${spStamp}@example.com`, 'Password@123')).token;
+    const spReporterCatalogue = await api('/exports/datasets', { token: spReporter, ...A });
+    check('Someone who may export but not see suppliers is not offered the dataset', spReporterCatalogue.status === 200 && !(spReporterCatalogue.data?.datasets ?? []).some((d) => d.key === 'suppliers') && (spReporterCatalogue.data?.datasets ?? []).some((d) => d.key === 'customers'), (spReporterCatalogue.data?.datasets ?? []).map((d) => d.key));
+    const spReporterRun = await download('/exports', { token: spReporter, ...A, body: { type: 'suppliers', format: 'csv' } });
+    check('...and asking for it anyway is refused', spReporterRun.status === 403 && !spReporterRun.disposition, spReporterRun.error);
+    check('...while the datasets they may have still download', (await download('/exports', { token: spReporter, ...A, body: { type: 'customers', format: 'csv' } })).status === 200);
+
     // ---- audit ----
     const spAudit = await api('/platform/audit-log?action=supplier.created&limit=20', { token: spPlatform.token });
     check('Supplier creation is written to the audit log, without the banking or tax values', spAudit.status === 200 && (spAudit.data ?? []).length > 0 && !JSON.stringify(spAudit.data ?? []).includes('1234 5678 9012') && !JSON.stringify(spAudit.data ?? []).includes('VAT-123456'), spAudit.error);

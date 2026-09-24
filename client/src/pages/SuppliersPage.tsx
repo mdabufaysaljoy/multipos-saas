@@ -3,9 +3,9 @@ import { Link } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { format } from 'date-fns';
-import { Factory, Lock, Pencil, Plus, Power, Sparkles, Trash2 } from 'lucide-react';
+import { Download, Factory, Lock, Pencil, Plus, Power, Sparkles, Trash2 } from 'lucide-react';
 import { ApiError } from '@/api/client';
-import { supplierApi } from '@/api/endpoints';
+import { exportApi, supplierApi } from '@/api/endpoints';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
@@ -19,6 +19,8 @@ import { SearchInput, useDebounced } from '@/components/SearchInput';
 import { SupplierDetailDialog } from '@/features/suppliers/SupplierDetailDialog';
 import { SupplierFormDialog } from '@/features/suppliers/SupplierFormDialog';
 import { SUPPLIER_TYPE_LABELS } from '@/features/suppliers/supplierLabels';
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
+import { saveBlob } from '@/lib/download';
 import { cn } from '@/lib/utils';
 import type { SupplierListItem, SupplierType } from '@/types/domain';
 
@@ -86,6 +88,20 @@ export function SuppliersPage() {
       invalidate();
     },
     onError: (err) => toast.error(err instanceof ApiError ? err.message : 'Could not change the supplier'),
+  });
+
+  /**
+   * The supplier list as a file, through the ordinary Data export API - same
+   * registry, same permissions, same history. Banking details are not in it.
+   */
+  const exportSuppliers = useMutation({
+    mutationFn: async (format: 'csv' | 'xlsx' | 'pdf') => {
+      const { blob, filename } = await exportApi.run({ type: 'suppliers', format });
+      saveBlob(blob, filename);
+      return filename;
+    },
+    onSuccess: (filename) => toast.success('Export ready', { description: filename }),
+    onError: (err) => toast.error(err instanceof ApiError ? err.message : 'Could not export the suppliers'),
   });
 
   const remove = useMutation({
@@ -225,17 +241,34 @@ export function SuppliersPage() {
         title="Suppliers"
         description="Who you buy from. Shared across every branch of this workspace."
         actions={
-          <PermissionGate anyOf={['suppliers.create']}>
-            <Button
-              onClick={() => {
-                setEditingId(null);
-                setFormOpen(true);
-              }}
-            >
-              <Plus />
-              Add supplier
-            </Button>
-          </PermissionGate>
+          <>
+            <PermissionGate anyOf={['reports.export']}>
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button variant="outline" loading={exportSuppliers.isPending} disabled={exportSuppliers.isPending || (data?.meta?.total ?? 0) === 0}>
+                    <Download />
+                    Export
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end">
+                  <DropdownMenuItem onSelect={() => exportSuppliers.mutate('xlsx')}>Excel (.xlsx)</DropdownMenuItem>
+                  <DropdownMenuItem onSelect={() => exportSuppliers.mutate('csv')}>CSV</DropdownMenuItem>
+                  <DropdownMenuItem onSelect={() => exportSuppliers.mutate('pdf')}>PDF</DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </PermissionGate>
+            <PermissionGate anyOf={['suppliers.create']}>
+              <Button
+                onClick={() => {
+                  setEditingId(null);
+                  setFormOpen(true);
+                }}
+              >
+                <Plus />
+                Add supplier
+              </Button>
+            </PermissionGate>
+          </>
         }
       />
 

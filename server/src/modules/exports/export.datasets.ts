@@ -5,8 +5,12 @@ import { InventoryTransactionModel } from '../../models/InventoryTransaction';
 import { LoyaltyMembershipModel } from '../../models/LoyaltyMembership';
 import { LoyaltyTransactionModel } from '../../models/LoyaltyTransaction';
 import { ProductVariantModel } from '../../models/ProductVariant';
+import { SupplierModel } from '../../models/Supplier';
 import { ReturnModel } from '../../models/Return';
 import { SaleModel } from '../../models/Sale';
+import { PERMISSIONS } from '../../config/permissions';
+import type { FeatureEntitlementKey } from '../../config/entitlements';
+import type { Permission } from '../../config/permissions';
 import type { TenantContext } from '../../types/express';
 import { reportService } from '../reports/reports.service';
 import type { ReportRangeInput } from '../reports/reports.validators';
@@ -51,6 +55,16 @@ export interface ExportDataset {
   description: string;
   /** Whether the date range applies (static lists such as inventory ignore it). */
   dated: boolean;
+  /**
+   * What a caller needs BEYOND the export gate itself.
+   *
+   * Data export is one permission (`reports.export`); some of the data behind
+   * it is its own feature with its own permission. A dataset that names them
+   * here is hidden from the catalogue and refused by the download for anyone
+   * who could not open that screen in the first place - so export can never
+   * become a side door into data the user is not allowed to see.
+   */
+  requires?: { entitlement?: FeatureEntitlementKey; permission?: Permission };
   sections: (scope: DatasetScope) => Promise<ExportSection[]>;
 }
 
@@ -63,6 +77,26 @@ export interface ExportDataset {
 type LeanDoc = Record<string, any>;
 
 const BATCH = 500;
+
+/** The wording the Suppliers screen uses, so an export reads the same way. */
+const SUPPLIER_TYPE_LABELS: Record<string, string> = {
+  manufacturer: 'Manufacturer',
+  wholesaler: 'Wholesaler',
+  distributor: 'Distributor',
+  importer: 'Importer',
+  local: 'Local supplier',
+  other: 'Other',
+};
+
+const PAYMENT_TERM_LABELS: Record<string, string> = {
+  cash: 'Cash',
+  on_delivery: 'Due on delivery',
+  net_7: '7 days',
+  net_15: '15 days',
+  net_30: '30 days',
+  net_60: '60 days',
+  other: 'Other',
+};
 
 /** Streams a query with a cursor, in batches; never materialises the collection. */
 async function* cursorRows<T>(
@@ -201,6 +235,90 @@ export const EXPORT_DATASETS: ExportDataset[] = [
                 .sort({ name: 1 })
                 .lean(),
             (category) => ({ ...category, _id: undefined }),
+          ),
+      ),
+  },
+  {
+    key: 'suppliers',
+    label: 'Suppliers',
+    // A contact book is a snapshot, like inventory: exporting "this month's
+    // suppliers" would be a surprising way to lose the older ones.
+    description: 'Every supplier contact, with terms and tax details. Banking details are never exported.',
+    dated: false,
+    // Suppliers are their own Professional/Enterprise feature with their own
+    // permission; holding `reports.export` alone is not enough.
+    requires: { entitlement: 'supplierManagement', permission: PERMISSIONS.SUPPLIERS_VIEW },
+    sections: async (scope) =>
+      single(
+        'suppliers',
+        'Suppliers',
+        [
+          { key: 'code', label: 'Supplier code', type: 'text' },
+          { key: 'name', label: 'Supplier', type: 'text' },
+          { key: 'type', label: 'Type', type: 'text' },
+          { key: 'contactName', label: 'Contact person', type: 'text' },
+          { key: 'contactDesignation', label: 'Designation', type: 'text' },
+          { key: 'contactPhone', label: 'Contact phone', type: 'text' },
+          { key: 'contactAltPhone', label: 'Alternative phone', type: 'text' },
+          { key: 'contactEmail', label: 'Contact email', type: 'text' },
+          { key: 'phone', label: 'Business phone', type: 'text' },
+          { key: 'email', label: 'Business email', type: 'text' },
+          { key: 'website', label: 'Website', type: 'text' },
+          { key: 'addressLine1', label: 'Address line 1', type: 'text' },
+          { key: 'addressLine2', label: 'Address line 2', type: 'text' },
+          { key: 'area', label: 'Area', type: 'text' },
+          { key: 'city', label: 'City', type: 'text' },
+          { key: 'district', label: 'District', type: 'text' },
+          { key: 'division', label: 'Division', type: 'text' },
+          { key: 'postalCode', label: 'Postal code', type: 'text' },
+          { key: 'country', label: 'Country', type: 'text' },
+          { key: 'taxNumber', label: 'Tax / VAT number', type: 'text' },
+          { key: 'tradeLicense', label: 'Trade licence', type: 'text' },
+          { key: 'paymentTerms', label: 'Payment terms', type: 'text' },
+          { key: 'paymentTermsNote', label: 'Payment terms note', type: 'text' },
+          { key: 'notes', label: 'Notes', type: 'text' },
+          { key: 'isActive', label: 'Active', type: 'boolean' },
+          { key: 'createdAt', label: 'Added', type: 'date' },
+        ],
+        () =>
+          cursorRows(
+            () =>
+              // Workspace-level: suppliers carry no branch, so the branch
+              // filter does not apply to them (see docs/SUPPLIER_MANAGEMENT.md).
+              SupplierModel.find({ tenantId: scope.ctx.tenantId, deletedAt: null })
+                // Banking is deliberately absent from the projection: an export
+                // file travels, and account numbers should not travel with it.
+                .select('code name type contact phone email website address taxNumber tradeLicense paymentTerms paymentTermsNote notes isActive createdAt')
+                .sort({ name: 1 })
+                .lean(),
+            (supplier: LeanDoc) => ({
+              code: supplier.code ?? '',
+              name: supplier.name ?? '',
+              type: SUPPLIER_TYPE_LABELS[supplier.type as string] ?? supplier.type ?? '',
+              contactName: supplier.contact?.name ?? '',
+              contactDesignation: supplier.contact?.designation ?? '',
+              contactPhone: supplier.contact?.phone ?? '',
+              contactAltPhone: supplier.contact?.altPhone ?? '',
+              contactEmail: supplier.contact?.email ?? '',
+              phone: supplier.phone ?? '',
+              email: supplier.email ?? '',
+              website: supplier.website ?? '',
+              addressLine1: supplier.address?.line1 ?? '',
+              addressLine2: supplier.address?.line2 ?? '',
+              area: supplier.address?.area ?? '',
+              city: supplier.address?.city ?? '',
+              district: supplier.address?.district ?? '',
+              division: supplier.address?.division ?? '',
+              postalCode: supplier.address?.postalCode ?? '',
+              country: supplier.address?.country ?? '',
+              taxNumber: supplier.taxNumber ?? '',
+              tradeLicense: supplier.tradeLicense ?? '',
+              paymentTerms: PAYMENT_TERM_LABELS[supplier.paymentTerms as string] ?? supplier.paymentTerms ?? '',
+              paymentTermsNote: supplier.paymentTermsNote ?? '',
+              notes: supplier.notes ?? '',
+              isActive: supplier.isActive !== false,
+              createdAt: supplier.createdAt ?? null,
+            }),
           ),
       ),
   },

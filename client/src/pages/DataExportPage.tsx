@@ -14,6 +14,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { DataTable, type Column } from '@/components/DataTable';
 import { PageHeader } from '@/components/PageHeader';
 import { useAuth } from '@/hooks/useAuth';
+import { saveBlob } from '@/lib/download';
 import { formatBytes } from '@/lib/planCatalog';
 import { cn } from '@/lib/utils';
 import type { ExportJob } from '@/types/domain';
@@ -73,15 +74,7 @@ export function DataExportPage() {
         ...(dataset?.dated ? { preset, ...(preset === 'custom' ? { from, to } : {}) } : {}),
         branch,
       });
-      // The server names the file; we only hand it to the browser.
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement('a');
-      link.href = url;
-      link.download = filename;
-      document.body.appendChild(link);
-      link.click();
-      link.remove();
-      URL.revokeObjectURL(url);
+      saveBlob(blob, filename);
       return filename;
     },
     onSuccess: (filename) => {

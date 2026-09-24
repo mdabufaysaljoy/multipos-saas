@@ -4,15 +4,14 @@ import { body, query } from '../../middleware/validate';
 import { recordAudit } from '../../services/audit/audit.service';
 import { buildPageMeta, ok, paginated } from '../../utils/apiResponse';
 import { asyncHandler } from '../../utils/asyncHandler';
-import { EXPORT_DATASETS } from './export.datasets';
 import { PDF_ROW_LIMIT, ROW_LIMIT } from './export.limits';
 import { exportService } from './export.service';
 import type { CreateExportInput } from './export.validators';
 
 /** What the UI may offer: the registry itself, never a free-text collection. */
-export const datasets = asyncHandler(async (_req: Request, res: Response) => {
+export const datasets = asyncHandler(async (req: Request, res: Response) => {
   ok(res, {
-    datasets: EXPORT_DATASETS.map((dataset) => ({ key: dataset.key, label: dataset.label, description: dataset.description, dated: dataset.dated })),
+    datasets: await exportService.catalogue(getContext(req)),
     formats: [
       { key: 'csv', label: 'CSV', description: 'Compatible with Excel and Google Sheets.' },
       { key: 'xlsx', label: 'Excel', description: 'Native .xlsx spreadsheet.' },

@@ -57,6 +57,7 @@ field from the request, so arbitrary database export is impossible.
 | `customers` | Customer directory | one row per customer | created |
 | `products` | Catalogue | one row per **variant** (product columns repeated) | created |
 | `categories` | Categories | one row per category | created |
+| `suppliers` | Supplier contacts, terms and tax details (**never banking**) | one row per supplier | – (a snapshot) |
 | `inventory` | Current stock | one row per variant | – |
 | `stock-movements` | Inventory ledger | one row per movement | movement date |
 | `sales` | Sales | one row per sale (totals, payment, customer, cashier) | sale date |
@@ -66,6 +67,9 @@ field from the request, so arbitrary database export is impossible.
 | `loyalty-members` | Membership cards | one row per membership | issued |
 | `loyalty-ledger` | Point transactions | one row per ledger entry | created |
 | `sales-report` | The **existing** sales report | summary + daily rows, reusing `reports.service` | report range |
+
+A dataset is workspace- or branch-scoped to match the data itself: `suppliers` is workspace-level (they
+have no branch), everything else follows the branch rule below.
 
 Never exported: users, passwords or hashes, tokens, sessions, API keys, provider credentials, platform
 settings, other workspaces' data, or any collection outside this registry.
@@ -128,7 +132,8 @@ POST /api/exports            (Professional/Enterprise + reports.export)
 | Permission | `reports.export` in the same guard. |
 | Tenant isolation | Every dataset query is built from `ctx.tenantId`; the request cannot carry a workspace id. |
 | Branch isolation | `storeId` comes from `ctx`; `branch: all` is honoured only for tenant admins, exactly as reports do. Non-admins always get their own branch. |
-| Registry | Only the 12 keys above; unknown keys are a 422. No collection/model/field names from the client. |
+| Registry | Only the 13 keys above; unknown keys are a 422. No collection/model/field names from the client. |
+| Per-dataset access | A dataset may declare its own `requires` (entitlement + permission). `suppliers` needs `supplierManagement` and `suppliers.view`, so `reports.export` alone is not a side door into data the user cannot open elsewhere. Such a dataset is hidden from `GET /datasets` and refused by the download. |
 | Field allow-list | Each dataset lists its columns explicitly; documents are projected, never spread. |
 | Secrets | Users, passwords, tokens and settings are not in the registry at all. |
 | Injection | Spreadsheet formula prefixes neutralised; filters are typed and validated by zod. |

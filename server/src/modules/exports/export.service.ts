@@ -9,7 +9,8 @@ import { resolvePage } from '../../utils/pagination';
 import type { TenantContext } from '../../types/express';
 import { resolveRange } from '../reports/reports.service';
 import type { ReportRangeInput } from '../reports/reports.validators';
-import { findDataset, type DatasetScope, type ExportSection } from './export.datasets';
+import { hasEntitlement } from '../../services/entitlements/entitlementEngine';
+import { EXPORT_DATASETS, findDataset, type DatasetScope, type ExportDataset, type ExportSection } from './export.datasets';
 import {
   EXPORT_FORMATS,
   ExportTooLargeError,
@@ -53,6 +54,30 @@ class ExportService {
     return { filter: { storeId: ctx.storeId }, allBranches: false };
   }
 
+  /**
+   * Whether this session may export a dataset that carries its own feature and
+   * permission. `reports.export` opens the export screen; it does not open a
+   * dataset the user could not read anywhere else in the app.
+   */
+  private async allows(ctx: TenantContext, dataset: ExportDataset): Promise<boolean> {
+    const required = dataset.requires;
+    if (!required) return true;
+    if (required.permission && !ctx.isAdmin && !ctx.permissions.includes(required.permission)) return false;
+    if (required.entitlement && !(await hasEntitlement(ctx.tenantId, required.entitlement))) return false;
+    return true;
+  }
+
+  /** The datasets THIS session may actually download. */
+  async catalogue(ctx: TenantContext) {
+    const allowed = await Promise.all(EXPORT_DATASETS.map((dataset) => this.allows(ctx, dataset)));
+    return EXPORT_DATASETS.filter((_, index) => allowed[index]).map((dataset) => ({
+      key: dataset.key,
+      label: dataset.label,
+      description: dataset.description,
+      dated: dataset.dated,
+    }));
+  }
+
   async list(ctx: TenantContext, input: { page?: number; limit?: number }) {
     const { page, limit, skip } = resolvePage(input);
     const filter = { tenantId: ctx.tenantId, storeId: ctx.storeId };
@@ -71,6 +96,9 @@ class ExportService {
     const tenant = await this.assertClothing(ctx);
     const dataset = findDataset(input.type);
     if (!dataset) throw ApiError.validation('Unknown export type');
+    if (!(await this.allows(ctx, dataset))) {
+      throw ApiError.forbidden(`You do not have access to the ${dataset.label.toLowerCase()} data.`);
+    }
 
     const store = await StoreModel.findOne({ _id: ctx.storeId, tenantId: ctx.tenantId }).select('name currency').lean();
     if (!store) throw ApiError.notFound('Store not found');

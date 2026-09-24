@@ -13,7 +13,7 @@ Availability: **Professional and Enterprise.** Starter cannot reach the feature,
 
 Today this is a **contact management** feature: who you buy from, their people, their terms and their
 tax details. Purchase orders, stock receiving, purchase history and payables are future modules; the
-model is shaped so they can be added without rebuilding anything (see §10).
+model is shaped so they can be added without rebuilding anything (see §11).
 
 ---
 
@@ -162,7 +162,26 @@ are never copied into the log.
 
 ---
 
-## 10. Built for what comes next
+## 10. Exporting the supplier list
+
+The **Export** button on the Suppliers page (Excel, CSV or PDF) goes through the ordinary Data export
+API — the same registry, limits, history and audit trail as every other export (`docs/DATA_EXPORT.md`).
+
+- The dataset is `suppliers`, and it is a **snapshot**: every supplier is included, active and inactive,
+  with no date range to trim the older ones.
+- It carries the code, name, type, contact person, business contacts, the full address, tax number,
+  trade licence, payment terms and notes.
+- **Banking details are never exported.** An export file travels — by email, by USB, into a shared
+  drive — and account numbers should not travel with it. They stay on the supplier's detail view.
+- Access is doubly gated: a caller needs the export feature (`dataExport` + `reports.export`) **and**
+  supplier access (`supplierManagement` + `suppliers.view`). Someone who may export reports but not see
+  suppliers is not even offered the dataset, and a direct request for it is refused.
+
+Supplier **import** is still not built (§13).
+
+---
+
+## 11. Built for what comes next
 
 - A supplier is referenced by its `_id`; the code is for humans.
 - **No product relationship is baked in.** A garment may be bought from several suppliers over time, so
@@ -170,12 +189,12 @@ are never copied into the log.
   and product creation are unchanged and still need no supplier.
 - Purchase orders, stock receiving, purchase history and payables can be added as their own modules
   referencing `supplierId`, with `paymentTerms` already recorded here.
-- Supplier import/export are deliberately **not** built. The dataset registry in `docs/DATA_EXPORT.md`
-  and the import column registry in `docs/PRODUCT_IMPORT.md` are the places they would be added.
+- Supplier **import** is deliberately not built; the import column registry in `docs/PRODUCT_IMPORT.md`
+  is where it would go. Export is done (§10).
 
 ---
 
-## 11. Rollout
+## 12. Rollout
 
 `npm run migrate:suppliers -w server` (also part of `npm run migrate`; idempotent):
 
@@ -194,12 +213,12 @@ upgrades mid-session does not have to sign out and back in to see its suppliers.
 
 ---
 
-## 12. Limitations
+## 13. Limitations
 
 - Contact records only: no purchase orders, receiving, payments or payables yet.
 - One primary contact person per supplier.
-- No supplier import or export.
-- No supplier ↔ product link (deliberate, see §10).
+- No supplier **import** (export is covered in §10).
+- No supplier ↔ product link (deliberate, see §11).
 - Duplicate detection is the same name **plus** the same phone or email; two different companies with
   similar names are allowed, and so is the same name with different contact details.
 - The supplier count is workspace-wide; there is no per-branch supplier quota.
