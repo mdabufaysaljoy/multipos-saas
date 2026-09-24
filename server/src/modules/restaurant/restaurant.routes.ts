@@ -7,6 +7,8 @@ import { resolveTenant } from '../../middleware/tenant';
 import { requireActiveSubscription, requireSubscribedAccess } from '../../middleware/subscription';
 import { requireVertical } from '../../middleware/vertical';
 import { validate } from '../../middleware/validate';
+import { posLedgerQuerySchema } from '../../services/inventory/posLedger';
+import { stockLedger } from '../inventory/stockLedger.controller';
 import { idParam } from '../common/common.validators';
 import * as controller from './restaurant.controller';
 import {
@@ -96,6 +98,10 @@ router.get(
   validate({ query: restaurantReportsSchema }),
   controller.reports,
 );
+
+// A restaurant keeps no stock, so this always answers with an empty page -
+// the same route and the same shape as every other vertical.
+router.get('/stock-ledger', requirePermission(PERMISSIONS.INVENTORY_VIEW), validate({ query: posLedgerQuerySchema }), stockLedger);
 
 router.get('/summary', requirePermission(PERMISSIONS.REPORTS_VIEW), validate({ query: summarySchema }), controller.summary);
 // The Restaurant dashboard: on every plan, like the Clothing dashboard.

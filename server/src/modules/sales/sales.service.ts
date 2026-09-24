@@ -11,10 +11,11 @@ import { ApiError } from '../../utils/ApiError';
 import { applyBasisPoints, clampDiscount } from '../../utils/money';
 import { formatDocumentNumber, nextSequence } from '../../utils/counters';
 import { resolvePage, searchRegex } from '../../utils/pagination';
-import { inventoryService, type StockMovementResult } from '../../services/inventory/inventory.service';
+import { inventoryService } from '../../services/inventory/inventory.service';
 import { entitlementService } from '../../services/subscription/entitlement.service';
 import { customerService } from '../customers/customers.service';
 import { assertCovered, assertMethodsEnabled, CLOTHING_TENDER_DIALECT } from '../../services/pos/paymentMethods.service';
+import { clothingInventoryAdapter, type ClothingReservation } from '../../services/inventory/adapters/clothing.adapter';
 import { pointsForSpend } from '../loyalty/loyalty.math';
 import { loyaltyService } from '../loyalty/loyalty.service';
 import { logger } from '../../utils/logger';
@@ -124,24 +125,26 @@ class SaleService {
     };
 
     // ---- stock ------------------------------------------------------------
-    const applied: StockMovementResult[] = [];
-    // From the permissions resolved for THIS request (read from the database),
-    // never from anything the client sends - so a revoked grant stops working
-    // on the very next sale.
+    // Through the adapter, like every other vertical. Clothing's is the only
+    // stock that may go below zero, and only for a till that holds the
+    // permission - resolved for THIS request from the database, never from
+    // anything the client sends, so a revoked grant stops working on the very
+    // next sale.
+    const applied: ClothingReservation[] = [];
     const allowOutOfStock = ctx.can(PERMISSIONS.SALES_SELL_OUT_OF_STOCK);
     try {
       for (const line of lines) {
-        const movement = await inventoryService.decreaseForSale(
-          ctx,
-          line.variantId,
-          line.quantity,
-          { type: INVENTORY_TX_TYPES.SALE, reason: 'POS sale', referenceType: 'sale' },
-          { allowOutOfStock },
+        applied.push(
+          await clothingInventoryAdapter.reserve(ctx, {
+            itemId: line.variantId,
+            quantity: line.quantity,
+            label: line.productNameSnapshot,
+            allowOutOfStock,
+          }),
         );
-        applied.push(movement);
       }
     } catch (error) {
-      await inventoryService.compensate(ctx, applied, 'sale could not be completed');
+      await clothingInventoryAdapter.release(ctx, applied);
       await undoRedemption();
       throw error;
     }
@@ -168,7 +171,7 @@ class SaleService {
           ...line,
           lineDiscountMinor: 0,
           returnedQuantity: 0,
-          ...(applied[index]?.outOfStockOverride ? { outOfStockOverride: true } : {}),
+          ...(applied[index]?.detail.outOfStockOverride ? { outOfStockOverride: true } : {}),
         })),
         subtotalMinor: totals.subtotalMinor,
         // Includes the loyalty discount, so every report that subtracts discounts stays right.
@@ -228,7 +231,7 @@ class SaleService {
       }
 
       // Backfill the ledger rows with the invoice number now that it exists.
-      await inventoryService.attachReference(ctx, applied, 'sale', sale._id, saleNumber);
+      await clothingInventoryAdapter.commit(ctx, applied, { referenceId: sale._id, referenceNumber: saleNumber });
 
       if (customer) {
         await customerService.applySaleStats(ctx, customer._id, {
@@ -264,7 +267,7 @@ class SaleService {
 
       return sale.toObject();
     } catch (error) {
-      await inventoryService.compensate(ctx, applied, 'sale record could not be saved');
+      await clothingInventoryAdapter.release(ctx, applied);
       await undoRedemption();
       // Two identical checkouts raced: the other one created the sale. Return it.
       if ((error as { code?: number }).code === 11000 && input.idempotencyKey) {

@@ -2,9 +2,9 @@
 
 **Audit and plan.** It records what the four verticals do today, what "universal" should mean for each
 capability, and the order the work should be done in. Tasks are marked ✅ as they land - **tasks 01
-(universal QZ Tray printing), 12 (universal dashboard date ranges), 05 (POS customer selection),
-02 (shared payment-method service) and 04 (split payment UI everywhere) are done**; everything else
-below is still a plan.
+(printing), 12 (dashboard ranges), 05 (customer selection), 02 (payment-method service), 04 (split
+payment UI) and 06 (inventory adapter + ledger read) are done**; everything else below is still a
+plan.
 
 Date: 2026-09-24 · Commit audited: `18bc974` (main, with the Clothing work merged in)
 Method: reading the code and the models, plus the checks the end-to-end suite already makes.
@@ -191,7 +191,7 @@ Each is independently executable, independently testable, and leaves the tree gr
 | **03** Custom payment methods | `PaymentMethod` collection (tenant+store, active flag, unique active name), snapshot `{key,label}` on every sale's payment lines, settings UI, reports/receipts read the snapshot | 02 | **L** | High |
 | **04** Split payment UI everywhere ✅ **done** | `features/payments/` (`usePayments`, `paymentMath`, `PaymentPanel`) in all four tills; every till now offers only the branch's enabled methods, and `tenderedRows()` maps one breakdown onto both API shapes | 02 | S | Low |
 | **05** POS customer selection ✅ **done** | Shared `CustomerPicker` + `saleCustomerFields` + `posCustomerSchema` + `customerService.resolveForPosSale`; all four verticals take an id or create at the till, and move lifetime value | — | S | Low |
-| **06** Inventory adapter + ledger read API | Extract `InventoryAdapter`; one paginated, filterable ledger endpoint shape for all verticals (storage stays per-vertical) | — | M | Medium |
+| **06** Inventory adapter + ledger read API ✅ **done** | `services/inventory/adapter.ts` + four adapters, used by all four sale paths; `release` (no row) vs `restore` (row) settled; one `GET /stock-ledger` in every vertical, storage untouched | — | M | Medium |
 | **07** Out-of-stock override | Per-vertical override honouring `sales.sellOutOfStock`; Pharmacy still refuses expired; ledger + sale-line flags | 06 | M | High |
 | **08** Universal return/exchange/refund | Shared engine + adapters; Restaurant cancel and Pharmacy/Super Shop void become refund-capable returns | 03, 06 | **L** | High |
 | **09** Universal loyalty | Generalise the sale hooks; widen the entitlement's verticals; card scan selects the customer in every POS | 05 | M | Medium |
@@ -201,7 +201,7 @@ Each is independently executable, independently testable, and leaves the tree gr
 | **13** Analytics parity | Shared metric contract; fill the gaps per vertical | 12 | M | Medium |
 | **14** PDF/print of reports | Serialise the current report view through `export.formats.ts` (already writes PDF) | 13 | M | Medium |
 
-Recommended sequencing: **01 ✅ → 12 ✅ → 05 ✅ → 02 ✅ → 04 ✅ → 06 → 07 → 03 → 08 → 09 → 10 → 11 → 13 → 14.**
+Recommended sequencing: **01 ✅ → 12 ✅ → 05 ✅ → 02 ✅ → 04 ✅ → 06 ✅ → 07 → 03 → 08 → 09 → 10 → 11 → 13 → 14.**
 That front-loads the visible wins that carry almost no risk, and defers the two schema-wide changes
 (payment methods, returns) until the adapter seam exists to absorb them.
 
@@ -262,6 +262,7 @@ must pass unchanged, and the Clothing sections must not be edited to accommodate
 - `docs/DASHBOARD_RANGES.md` — the universal dashboard range delivered by task 12.
 - `docs/POS_CUSTOMERS.md` — the customer on a sale, delivered by task 05.
 - `docs/POS_TENDER_RULES.md` — how a POS sale is paid for (§1-2 task 02, §3 task 04).
+- `docs/INVENTORY_ADAPTER.md` — the stock seam and the shared ledger read, delivered by task 06.
 
 Feature docs (`PRINTING_ARCHITECTURE.md`, `PRODUCT_IMPORT.md`, `DATA_EXPORT.md`,
 `SUPPLIER_MANAGEMENT.md`, `CONTACT_VERIFICATION.md`, `ENTITLEMENTS.md`) remain accurate for Clothing
@@ -271,15 +272,16 @@ and are the reference material for the tasks above.
 
 ## 10. Recommended next task
 
-**Task 06 — Inventory adapter + ledger read API.**
+**Task 07 — Out-of-stock override, or task 10/13 for something lighter.**
 
-The five cheap wins are done (01, 12, 05, 02, 04). What is left divides into two groups, and task 06
-is the gate to the larger one: extracting an `InventoryAdapter` - `reserve`, `release`, `restore`,
-`describe` - implemented by Clothing (variant), Pharmacy (batch/FEFO), Super Shop (stock row) and
-Restaurant (no-op), plus one paginated ledger read shape for all of them. Tasks 07 (out-of-stock
-override) and 08 (universal returns) both wait on it, and 08 is the biggest item in the plan.
+Six are done (01, 12, 05, 02, 04, 06). Task 07 is now unblocked and small in code: `StockRequest`
+already carries `allowOutOfStock`, honoured by Clothing alone; giving Super Shop and Pharmacy the
+same override means deciding what "below zero" means for a stock row and for a batch - and a pharmacy
+must still refuse expired stock however the permission reads. That decision is the work, not the
+typing.
 
-The cheaper alternative is task 10 (category management) or task 13 (analytics parity), neither of
-which blocks anything else.
+Task 08 (universal return/exchange/refund) is the biggest item left and now has its seam
+(`restore`), but it also wants task 03 (custom payment methods) for refund tender. Tasks 10
+(categories) and 13 (analytics parity) block nothing and are the lighter choices.
 
 Waiting for an explicit instruction before starting any of them.

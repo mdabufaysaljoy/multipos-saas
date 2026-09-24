@@ -8034,6 +8034,61 @@ async function main() {
   });
   check('Clothing: cash received with no cash payment is refused on the cash path', ctnCashPath.status === 422, ctnCashPath.status);
 
+
+  // --- One stock ledger, four verticals ----------------------------------------
+  // Every vertical keeps its own ledger with its own columns; `/stock-ledger`
+  // answers the question they all share - what moved, by how much, what was
+  // left, why, and who did it - in one shape.
+  section('Stock ledger (all verticals)');
+
+  const ledgerOf = async (path, token, params = '') => api(`${path}/stock-ledger${params}`, { token });
+  const ledgerShape = (row) =>
+    row &&
+    typeof row.id === 'string' &&
+    typeof row.itemLabel === 'string' &&
+    typeof row.quantityChange === 'number' &&
+    typeof row.balanceBefore === 'number' &&
+    typeof row.balanceAfter === 'number' &&
+    typeof row.by === 'string' &&
+    'referenceNumber' in row &&
+    'at' in row;
+
+  const ssLedger = await ledgerOf('/supershop', ssToken);
+  check('Super Shop: the ledger reads in the shared shape', ssLedger.status === 200 && ledgerShape(ssLedger.data?.[0]), ssLedger.data?.[0] ?? ssLedger.error);
+  check(
+    'Super Shop: a sale is a negative movement that lands on the balance',
+    (ssLedger.data ?? []).some((row) => row.type === 'sale' && row.quantityChange < 0 && row.balanceAfter === row.balanceBefore + row.quantityChange),
+    (ssLedger.data ?? []).slice(0, 3),
+  );
+  check('Super Shop: the sale rows carry the invoice they came from', (ssLedger.data ?? []).some((row) => row.type === 'sale' && row.referenceNumber.startsWith('INV-')));
+
+  const phLedger = await ledgerOf('/pharmacy', phToken);
+  check('Pharmacy: the ledger reads in the same shape', phLedger.status === 200 && ledgerShape(phLedger.data?.[0]), phLedger.data?.[0] ?? phLedger.error);
+  check('Pharmacy: a movement names the batch it moved', (phLedger.data ?? []).every((row) => row.itemDetail.startsWith('Batch ')), (phLedger.data ?? [])[0]);
+  check(
+    'Pharmacy: putting a voided sale back is its own movement, per batch',
+    (phLedger.data ?? []).some((row) => row.type === 'void' && row.quantityChange > 0),
+  );
+
+  const clLedger = await ledgerOf('/inventory', admin.token);
+  check('Clothing: the ledger reads in the same shape', clLedger.status === 200 && ledgerShape(clLedger.data?.[0]), clLedger.data?.[0] ?? clLedger.error);
+  check('Clothing: rows name the variant and its SKU', (clLedger.data ?? []).some((row) => row.itemLabel.includes('(') && row.itemDetail.length > 0), (clLedger.data ?? [])[0]);
+
+  // A restaurant has no stock, and says so rather than failing.
+  const rvLedger = await ledgerOf('/restaurant', rvToken);
+  check('Restaurant: the same route answers with an empty ledger, not an error', rvLedger.status === 200 && (rvLedger.data ?? []).length === 0 && rvLedger.meta?.total === 0, rvLedger.data ?? rvLedger.error);
+
+  // Filters behave the same everywhere.
+  const ssFirstItem = (ssLedger.data ?? [])[0]?.itemId;
+  const ssFiltered = await ledgerOf('/supershop', ssToken, `?itemId=${ssFirstItem}`);
+  check('The ledger filters to one item', ssFiltered.status === 200 && (ssFiltered.data ?? []).every((row) => row.itemId === ssFirstItem), ssFiltered.data?.length);
+  const ssSales = await ledgerOf('/supershop', ssToken, '?type=sale');
+  check('The ledger filters by movement type', ssSales.status === 200 && (ssSales.data ?? []).every((row) => row.type === 'sale'));
+  check('An unknown item id is rejected, not ignored', (await ledgerOf('/supershop', ssToken, '?itemId=not-an-id')).status === 422);
+  check('The ledger is paginated', (await ledgerOf('/supershop', ssToken, '?limit=1')).data?.length === 1);
+  check('Reading the ledger needs a session', (await api('/supershop/stock-ledger')).status === 401);
+  check('Another workspace cannot read this one’s ledger', (await ledgerOf('/supershop', phToken)).status === 403);
+
   // ------------------------------------------------ cash received, change and receipt
   section('Clothing POS: cash received, change and receipt');
   const ctnStamp = Date.now();

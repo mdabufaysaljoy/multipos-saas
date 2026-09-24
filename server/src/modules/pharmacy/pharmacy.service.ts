@@ -3,8 +3,8 @@ import dayjs from 'dayjs';
 import { PERMISSIONS } from '../../config/permissions';
 import { MedicineModel, type MedicineDoc } from '../../models/Medicine';
 import { MedicineBatchModel, type MedicineBatchDoc } from '../../models/MedicineBatch';
-import { PharmacySaleModel, type BatchAllocation } from '../../models/PharmacySale';
-import { PharmacyStockMovementModel, type StockMovementType } from '../../models/PharmacyStockMovement';
+import { PharmacySaleModel } from '../../models/PharmacySale';
+import { PharmacyStockMovementModel } from '../../models/PharmacyStockMovement';
 import { StoreModel } from '../../models/Store';
 import { loadReceiptStore } from '../../services/receipt/receiptStore';
 import { ApiError } from '../../utils/ApiError';
@@ -12,6 +12,7 @@ import { formatDocumentNumber, nextSequence } from '../../utils/counters';
 import { resolvePage, searchRegex } from '../../utils/pagination';
 import { entitlementService } from '../../services/subscription/entitlement.service';
 import { customerService } from '../customers/customers.service';
+import { pharmacyInventoryAdapter, pharmacyMovementRow, todayUtc, type PharmacyReservation } from '../../services/inventory/adapters/pharmacy.adapter';
 import { POS_TENDER_DIALECT, settleTender } from '../../services/pos/paymentMethods.service';
 import { resolveDashboardWindow } from '../reports/reports.service';
 import type { DashboardRangeInput } from '../reports/reports.validators';
@@ -32,12 +33,6 @@ type MedicineRecord = MedicineDoc & { _id: Types.ObjectId };
 type BatchRecord = MedicineBatchDoc & { _id: Types.ObjectId };
 
 /** Stock taken for a sale, kept so it can be put back if the sale fails. */
-interface Taken extends BatchAllocation {
-  medicineId: Types.ObjectId;
-  medicineName: string;
-  balanceAfter: number;
-}
-
 export interface MedicineStock {
   onHand: number;
   sellable: number;
@@ -47,10 +42,9 @@ export interface MedicineStock {
 
 const DAY_MS = 86_400_000;
 /** Safety valve for allocation retries under heavy contention. */
-const MAX_ALLOCATION_STEPS = 200;
 
 /** Today as a UTC calendar date. Batches expiring today are still sellable. */
-export const todayUtc = () => new Date(`${new Date().toISOString().slice(0, 10)}T00:00:00.000Z`);
+export { todayUtc };
 const utcDate = (iso: string) => new Date(`${iso}T00:00:00.000Z`);
 const escapeRegex = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 const exact = (value: string) => new RegExp(`^${escapeRegex(value)}$`, 'i');
@@ -212,7 +206,7 @@ class PharmacyService {
     }
 
     await PharmacyStockMovementModel.create(
-      this.movement(ctx, batch, medicine.name, 'receive', input.quantity, batch.quantityOnHand, {
+      pharmacyMovementRow(ctx, batch, medicine.name, 'receive', input.quantity, batch.quantityOnHand, {
         reason: input.supplierName ? `Received from ${input.supplierName}` : 'Stock received',
       }),
     );
@@ -255,7 +249,7 @@ class PharmacyService {
 
     const medicine = await MedicineModel.findOne({ _id: updated.medicineId, tenantId: ctx.tenantId }).select('name').lean();
     await PharmacyStockMovementModel.create(
-      this.movement(ctx, updated, medicine?.name ?? '', input.type, delta, updated.quantityOnHand, { reason: input.reason }),
+      pharmacyMovementRow(ctx, updated, medicine?.name ?? '', input.type, delta, updated.quantityOnHand, { reason: input.reason }),
     );
     return { batch: updated, previousOnHand: updated.quantityOnHand - delta, medicineName: medicine?.name ?? '' };
   }
@@ -329,11 +323,19 @@ class PharmacyService {
     const customer = await customerService.resolveForPosSale(ctx, input);
 
     // ---- take stock, earliest expiry first --------------------------------
-    const taken: Taken[] = [];
+    // Through the adapter, so shared code can do this without knowing that a
+    // pharmacy fills a line from batches and never from an expired one.
+    const taken: PharmacyReservation[] = [];
     try {
-      for (const line of priced) await this.allocate(ctx, line.medicine, line.quantity, taken);
+      for (const line of priced) {
+        taken.push(await pharmacyInventoryAdapter.reserve(ctx, {
+          itemId: line.medicine._id,
+          quantity: line.quantity,
+          label: line.medicine.name,
+        }));
+      }
     } catch (error) {
-      await this.putBack(ctx, taken);
+      await pharmacyInventoryAdapter.release(ctx, taken);
       throw error;
     }
 
@@ -362,13 +364,17 @@ class PharmacyService {
           quantity: line.quantity,
           lineTotalMinor: line.lineTotalMinor,
           allocations: taken
-            .filter((entry) => entry.medicineId.equals(line.medicine._id))
+            .filter((entry) => entry.itemId.equals(line.medicine._id))
+            .flatMap((entry) => entry.detail.allocations)
             .map(({ batchId, batchNumber, expiryDate, quantity, costPriceMinor }) => ({ batchId, batchNumber, expiryDate, quantity, costPriceMinor })),
         })),
         subtotalMinor,
         discountMinor: input.discountMinor,
         totalMinor,
-        costMinor: taken.reduce((sum, entry) => sum + entry.quantity * entry.costPriceMinor, 0),
+        costMinor: taken.reduce(
+          (sum, entry) => sum + entry.detail.allocations.reduce((lineSum, allocation) => lineSum + allocation.quantity * allocation.costPriceMinor, 0),
+          0,
+        ),
         paidMinor,
         changeMinor,
         payments: input.payments,
@@ -394,14 +400,7 @@ class PharmacyService {
       });
       entitlementService.assertOrdinalWithinLimit(entitlement, 'maxMonthlySales', ordinal, 'sales per month');
 
-      await PharmacyStockMovementModel.insertMany(
-        taken.map((entry) =>
-          this.movement(ctx, { _id: entry.batchId, medicineId: entry.medicineId, batchNumber: entry.batchNumber }, entry.medicineName, 'sale', -entry.quantity, entry.balanceAfter, {
-            referenceId: saleId,
-            referenceNumber: saleNumber,
-          }),
-        ),
-      );
+      await pharmacyInventoryAdapter.commit(ctx, taken, { referenceId: saleId, referenceNumber: saleNumber });
       if (customer) {
         await customerService.applySaleStats(ctx, customer._id, { amountMinor: totalMinor, orderDelta: 1, purchasedAt: soldAt });
       }
@@ -409,7 +408,7 @@ class PharmacyService {
       return sale.toObject();
     } catch (error) {
       if (saved) await PharmacySaleModel.deleteOne({ _id: saleId, tenantId: ctx.tenantId });
-      await this.putBack(ctx, taken);
+      await pharmacyInventoryAdapter.release(ctx, taken);
       throw error;
     }
   }
@@ -460,26 +459,18 @@ class PharmacyService {
       throw ApiError.conflict('This sale has already been voided');
     }
 
-    const movements = [];
-    for (const line of sale.items) {
-      for (const allocation of line.allocations) {
-        const batch = await MedicineBatchModel.findOneAndUpdate(
-          { _id: allocation.batchId, tenantId: ctx.tenantId, storeId: ctx.storeId },
-          { $inc: { quantityOnHand: allocation.quantity } },
-          { new: true },
-        ).lean<BatchRecord>();
-        if (batch) {
-          movements.push(
-            this.movement(ctx, batch, line.nameSnapshot, 'void', allocation.quantity, batch.quantityOnHand, {
-              reason,
-              referenceId: sale._id,
-              referenceNumber: sale.saleNumber,
-            }),
-          );
-        }
-      }
-    }
-    if (movements.length > 0) await PharmacyStockMovementModel.insertMany(movements);
+    // The sale happened, so every unit going back to its own batch is a
+    // movement of its own.
+    await pharmacyInventoryAdapter.restore(
+      ctx,
+      sale.items.map((line) => ({
+        itemId: line.medicineId,
+        quantity: line.quantity,
+        balanceAfter: 0,
+        detail: { medicineName: line.nameSnapshot, allocations: line.allocations.map((allocation) => ({ ...allocation, balanceAfter: 0 })) },
+      })),
+      { reason, referenceId: sale._id, referenceNumber: sale.saleNumber },
+    );
 
     // A voided sale is not a purchase: take it back off the customer's total.
     if (sale.customerId) {
@@ -589,59 +580,9 @@ class PharmacyService {
    * race to another till simply looks again. Everything taken is appended to
    * `taken`, so the caller can put it all back if the sale cannot complete.
    */
-  private async allocate(ctx: TenantContext, medicine: MedicineRecord, quantity: number, taken: Taken[]) {
-    const today = todayUtc();
-    let remaining = quantity;
-    for (let step = 0; remaining > 0 && step < MAX_ALLOCATION_STEPS; step += 1) {
-      const batch = await MedicineBatchModel.findOne({
-        tenantId: ctx.tenantId,
-        storeId: ctx.storeId,
-        medicineId: medicine._id,
-        quantityOnHand: { $gt: 0 },
-        expiryDate: { $gte: today },
-      })
-        .sort({ expiryDate: 1, _id: 1 })
-        .lean<BatchRecord>();
-      if (!batch) break;
 
-      const take = Math.min(remaining, batch.quantityOnHand);
-      const updated = await MedicineBatchModel.findOneAndUpdate(
-        { _id: batch._id, tenantId: ctx.tenantId, storeId: ctx.storeId, quantityOnHand: { $gte: take }, expiryDate: { $gte: today } },
-        { $inc: { quantityOnHand: -take } },
-        { new: true },
-      ).lean<BatchRecord>();
-      if (!updated) continue;
 
-      taken.push({
-        batchId: batch._id,
-        batchNumber: batch.batchNumber,
-        expiryDate: batch.expiryDate,
-        quantity: take,
-        costPriceMinor: batch.costPriceMinor,
-        medicineId: medicine._id,
-        medicineName: medicine.name,
-        balanceAfter: updated.quantityOnHand,
-      });
-      remaining -= take;
-    }
 
-    if (remaining > 0) {
-      const available = quantity - remaining;
-      throw ApiError.badRequest(
-        `Only ${available} unexpired unit(s) of ${medicine.name} are in stock in this branch.`,
-        { medicineId: medicine._id, requested: quantity, available },
-      );
-    }
-  }
-
-  private async putBack(ctx: TenantContext, taken: Taken[]) {
-    await Promise.all(
-      taken.map((entry) =>
-        MedicineBatchModel.updateOne({ _id: entry.batchId, tenantId: ctx.tenantId }, { $inc: { quantityOnHand: entry.quantity } }),
-      ),
-    );
-    taken.length = 0;
-  }
 
   /** On-hand, sellable (unexpired) and expired units per medicine in this branch. */
   private async stockFor(ctx: TenantContext, medicineIds: Types.ObjectId[]) {
@@ -694,32 +635,7 @@ class PharmacyService {
     }
   }
 
-  private movement(
-    ctx: TenantContext,
-    batch: { _id: Types.ObjectId; medicineId: Types.ObjectId; batchNumber: string },
-    medicineName: string,
-    type: StockMovementType,
-    quantity: number,
-    balanceAfter: number,
-    extra: { reason?: string; referenceId?: Types.ObjectId; referenceNumber?: string } = {},
-  ) {
-    return {
-      tenantId: ctx.tenantId,
-      storeId: ctx.storeId,
-      medicineId: batch.medicineId,
-      batchId: batch._id,
-      batchNumberSnapshot: batch.batchNumber,
-      medicineNameSnapshot: medicineName,
-      type,
-      quantity,
-      balanceAfter,
-      reason: extra.reason ?? '',
-      referenceId: extra.referenceId ?? null,
-      referenceNumber: extra.referenceNumber ?? '',
-      createdBy: ctx.userId,
-      createdByNameSnapshot: ctx.userName,
-    };
-  }
+
 }
 
 export const pharmacyService = new PharmacyService();

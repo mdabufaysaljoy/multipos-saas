@@ -22,6 +22,8 @@ import {
   updateProductSchema,
   voidSaleSchema,
 } from './supershop.validators';
+import { posLedgerQuerySchema } from '../../services/inventory/posLedger';
+import { stockLedger } from '../inventory/stockLedger.controller';
 
 const router = Router();
 
@@ -49,6 +51,8 @@ router.delete('/products/:id', requireActiveSubscription, requirePermission(PERM
 router.post('/products/:id/stock', requireActiveSubscription, requirePermission(PERMISSIONS.INVENTORY_ADJUST), validate({ params: idParam, body: receiveStockSchema }), controller.receiveStock);
 router.post('/products/:id/adjust', requireActiveSubscription, requirePermission(PERMISSIONS.INVENTORY_ADJUST), validate({ params: idParam, body: adjustStockSchema }), controller.adjustStock);
 router.get('/movements', requirePermission(PERMISSIONS.INVENTORY_VIEW), validate({ query: listMovementsSchema }), controller.listMovements);
+// The same ledger in the shape every vertical reports; see services/inventory/posLedger.
+router.get('/stock-ledger', requirePermission(PERMISSIONS.INVENTORY_VIEW), validate({ query: posLedgerQuerySchema }), stockLedger);
 
 // ----------------------------------------------------------------- sales
 router.post('/sales', requireActiveSubscription, requirePermission(PERMISSIONS.SALES_CREATE), validate({ body: createSaleSchema }), controller.createSale);

@@ -22,6 +22,8 @@ import {
   updateMedicineSchema,
   voidSaleSchema,
 } from './pharmacy.validators';
+import { posLedgerQuerySchema } from '../../services/inventory/posLedger';
+import { stockLedger } from '../inventory/stockLedger.controller';
 
 const router = Router();
 
@@ -47,6 +49,8 @@ router.post('/medicines/:id/batches', requireActiveSubscription, requirePermissi
 router.get('/batches', requirePermission(PERMISSIONS.INVENTORY_VIEW), validate({ query: listBatchesSchema }), controller.listBatches);
 router.post('/batches/:id/adjust', requireActiveSubscription, requirePermission(PERMISSIONS.INVENTORY_ADJUST), validate({ params: idParam, body: adjustBatchSchema }), controller.adjustBatch);
 router.get('/movements', requirePermission(PERMISSIONS.INVENTORY_VIEW), validate({ query: listMovementsSchema }), controller.listMovements);
+// The same ledger in the shape every vertical reports; see services/inventory/posLedger.
+router.get('/stock-ledger', requirePermission(PERMISSIONS.INVENTORY_VIEW), validate({ query: posLedgerQuerySchema }), stockLedger);
 
 // ----------------------------------------------------------------- sales
 router.post('/sales', requireActiveSubscription, requirePermission(PERMISSIONS.SALES_CREATE), validate({ body: createSaleSchema }), controller.createSale);

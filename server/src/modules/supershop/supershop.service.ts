@@ -4,7 +4,7 @@ import { PERMISSIONS } from '../../config/permissions';
 import { ShopProductModel, type ShopProductDoc, type ShopUnitType } from '../../models/ShopProduct';
 import { ShopSaleModel } from '../../models/ShopSale';
 import { ShopStockModel, type ShopStockDoc } from '../../models/ShopStock';
-import { ShopStockMovementModel, type ShopMovementType } from '../../models/ShopStockMovement';
+import { ShopStockMovementModel } from '../../models/ShopStockMovement';
 import { StoreModel } from '../../models/Store';
 import { loadReceiptStore } from '../../services/receipt/receiptStore';
 import { ApiError } from '../../utils/ApiError';
@@ -12,6 +12,7 @@ import { formatDocumentNumber, nextSequence } from '../../utils/counters';
 import { resolvePage, searchRegex } from '../../utils/pagination';
 import { entitlementService } from '../../services/subscription/entitlement.service';
 import { customerService } from '../customers/customers.service';
+import { shopMovementRow, supershopInventoryAdapter, type ShopReservation } from '../../services/inventory/adapters/supershop.adapter';
 import { POS_TENDER_DIALECT, settleTender } from '../../services/pos/paymentMethods.service';
 import { resolveDashboardWindow } from '../reports/reports.service';
 import type { DashboardRangeInput } from '../reports/reports.validators';
@@ -30,33 +31,15 @@ import type {
 type ProductRecord = ShopProductDoc & { _id: Types.ObjectId };
 type StockRecord = ShopStockDoc & { _id: Types.ObjectId };
 
-interface Taken {
-  productId: Types.ObjectId;
-  productName: string;
-  unitType: ShopUnitType;
-  quantity: number;
-  balanceAfter: number;
-  costPriceMinor: number;
-}
-
 const escapeRegex = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 const exact = (value: string) => new RegExp(`^${escapeRegex(value)}$`, 'i');
 const isDuplicateKey = (error: unknown) => (error as { code?: number } | null)?.code === 11000;
 
-// ---------------------------------------------------------------- money math
-// All integer arithmetic. Weighed goods: price per kg, quantity in grams.
+// The unit maths lives beside the model, so the inventory adapter can use it
+// without importing this module.
+import { describeQuantity, includedVat, lineAmount } from '../../models/shopUnits';
 
-/** What a quantity costs at a unit price, rounded half-up to the minor unit. */
-export const lineAmount = (unitPriceMinor: number, quantity: number, unitType: ShopUnitType): number =>
-  unitType === 'weight' ? Math.floor((unitPriceMinor * quantity + 500) / 1000) : unitPriceMinor * quantity;
-
-/** VAT contained in a VAT-inclusive amount at a rate in basis points, rounded half-up. */
-export const includedVat = (grossMinor: number, rateBps: number): number =>
-  rateBps <= 0 ? 0 : Math.floor((grossMinor * rateBps + Math.floor((10_000 + rateBps) / 2)) / (10_000 + rateBps));
-
-/** "3" or "1.25 kg" - for messages. */
-export const describeQuantity = (quantity: number, unitType: ShopUnitType) =>
-  unitType === 'weight' ? `${(quantity / 1000).toFixed(3).replace(/\.?0+$/, '')} kg` : String(quantity);
+export { describeQuantity, includedVat, lineAmount };
 
 /**
  * Supershop POS.
@@ -199,7 +182,7 @@ class SupershopService {
     if (!stock) throw ApiError.internal('Stock could not be recorded');
 
     await ShopStockMovementModel.create(
-      this.movement(ctx, product, 'receive', input.quantity, stock.quantityOnHand, {
+      shopMovementRow(ctx, product, 'receive', input.quantity, stock.quantityOnHand, {
         unitCostMinor: input.costPriceMinor,
         reason: input.supplierName ? `Received from ${input.supplierName}` : 'Stock received',
       }),
@@ -221,7 +204,7 @@ class SupershopService {
       if (!stock) throw ApiError.badRequest(`${product.name} has no stock in this branch yet. Receive stock first.`);
       throw ApiError.badRequest(`Only ${describeQuantity(stock.quantityOnHand, product.unitType)} of ${product.name} is on hand.`);
     }
-    await ShopStockMovementModel.create(this.movement(ctx, product, input.type, delta, updated.quantityOnHand, { reason: input.reason }));
+    await ShopStockMovementModel.create(shopMovementRow(ctx, product, input.type, delta, updated.quantityOnHand, { reason: input.reason }));
     return { stock: updated, previousOnHand: updated.quantityOnHand - delta, product: { _id: product._id, name: product.name, unitType: product.unitType } };
   }
 
@@ -281,32 +264,21 @@ class SupershopService {
     const customer = await customerService.resolveForPosSale(ctx, input);
 
     // ---- take stock ----------------------------------------------------------
-    const taken: Taken[] = [];
+    // Through the adapter, so shared code can do this without knowing that a
+    // Super Shop keeps one stock row per product per branch.
+    const taken: ShopReservation[] = [];
     try {
       for (const line of priced) {
-        const updated = await ShopStockModel.findOneAndUpdate(
-          { tenantId: ctx.tenantId, storeId: ctx.storeId, productId: line.product._id, quantityOnHand: { $gte: line.quantity } },
-          { $inc: { quantityOnHand: -line.quantity } },
-          { new: true },
-        ).lean<StockRecord>();
-        if (!updated) {
-          const stock = await ShopStockModel.findOne({ tenantId: ctx.tenantId, storeId: ctx.storeId, productId: line.product._id }).select('quantityOnHand').lean();
-          throw ApiError.badRequest(`Only ${describeQuantity(stock?.quantityOnHand ?? 0, line.product.unitType)} of ${line.product.name} is in stock in this branch.`, {
-            productId: line.product._id,
-            available: stock?.quantityOnHand ?? 0,
-          });
-        }
-        taken.push({
-          productId: line.product._id,
-          productName: line.product.name,
-          unitType: line.product.unitType,
+        const reservation = await supershopInventoryAdapter.reserve(ctx, {
+          itemId: line.product._id,
           quantity: line.quantity,
-          balanceAfter: updated.quantityOnHand,
-          costPriceMinor: updated.costPriceMinor,
+          label: line.product.name,
         });
+        reservation.detail.unitType = line.product.unitType;
+        taken.push(reservation);
       }
     } catch (error) {
-      await this.putBack(ctx, taken);
+      await supershopInventoryAdapter.release(ctx, taken);
       throw error;
     }
 
@@ -318,7 +290,7 @@ class SupershopService {
       const saleNumber = formatDocumentNumber(store.invoicePrefix || 'SS-', seq);
       const soldAt = new Date();
       const items = priced.map((line) => {
-        const stockTaken = taken.find((entry) => entry.productId.equals(line.product._id))!;
+        const stockTaken = taken.find((entry) => entry.itemId.equals(line.product._id))!;
         return {
           _id: new Types.ObjectId(),
           productId: line.product._id,
@@ -332,7 +304,7 @@ class SupershopService {
           lineTotalMinor: line.lineTotalMinor,
           vatRateBps: line.product.vatRateBps,
           vatMinor: line.vatMinor,
-          costMinor: lineAmount(stockTaken.costPriceMinor, line.quantity, line.product.unitType),
+          costMinor: lineAmount(stockTaken.detail.costPriceMinor, line.quantity, line.product.unitType),
         };
       });
 
@@ -369,14 +341,7 @@ class SupershopService {
       });
       entitlementService.assertOrdinalWithinLimit(entitlement, 'maxMonthlySales', ordinal, 'sales per month');
 
-      await ShopStockMovementModel.insertMany(
-        taken.map((entry) =>
-          this.movement(ctx, { _id: entry.productId, name: entry.productName, unitType: entry.unitType }, 'sale', -entry.quantity, entry.balanceAfter, {
-            referenceId: saleId,
-            referenceNumber: saleNumber,
-          }),
-        ),
-      );
+      await supershopInventoryAdapter.commit(ctx, taken, { referenceId: saleId, referenceNumber: saleNumber });
       if (customer) {
         await customerService.applySaleStats(ctx, customer._id, { amountMinor: totalMinor, orderDelta: 1, purchasedAt: soldAt });
       }
@@ -384,7 +349,7 @@ class SupershopService {
       return sale.toObject();
     } catch (error) {
       if (saved) await ShopSaleModel.deleteOne({ _id: saleId, tenantId: ctx.tenantId });
-      await this.putBack(ctx, taken);
+      await supershopInventoryAdapter.release(ctx, taken);
       throw error;
     }
   }
@@ -436,24 +401,17 @@ class SupershopService {
       throw ApiError.conflict('This sale has already been voided');
     }
 
-    const movements = [];
-    for (const line of sale.items) {
-      const stock = await ShopStockModel.findOneAndUpdate(
-        { tenantId: ctx.tenantId, storeId: ctx.storeId, productId: line.productId },
-        { $inc: { quantityOnHand: line.quantity } },
-        { new: true },
-      ).lean<StockRecord>();
-      if (stock) {
-        movements.push(
-          this.movement(ctx, { _id: line.productId, name: line.nameSnapshot, unitType: line.unitType }, 'void', line.quantity, stock.quantityOnHand, {
-            reason,
-            referenceId: sale._id,
-            referenceNumber: sale.saleNumber,
-          }),
-        );
-      }
-    }
-    if (movements.length > 0) await ShopStockMovementModel.insertMany(movements);
+    // The sale happened, so putting the goods back is a movement of its own.
+    await supershopInventoryAdapter.restore(
+      ctx,
+      sale.items.map((line) => ({
+        itemId: line.productId,
+        quantity: line.quantity,
+        balanceAfter: 0,
+        detail: { productName: line.nameSnapshot, unitType: line.unitType, costPriceMinor: 0 },
+      })),
+      { reason, referenceId: sale._id, referenceNumber: sale.saleNumber },
+    );
 
     // A voided sale is not a purchase: take it back off the customer's total.
     if (sale.customerId) {
@@ -546,13 +504,6 @@ class SupershopService {
 
   // ================================================================= helpers
 
-  private async putBack(ctx: TenantContext, taken: Taken[]) {
-    await Promise.all(
-      taken.map((entry) => ShopStockModel.updateOne({ tenantId: ctx.tenantId, storeId: ctx.storeId, productId: entry.productId }, { $inc: { quantityOnHand: entry.quantity } })),
-    );
-    taken.length = 0;
-  }
-
   private async stockFor(ctx: TenantContext, productIds: Types.ObjectId[]) {
     if (productIds.length === 0) return new Map<string, { quantityOnHand: number; costPriceMinor: number }>();
     const rows = await ShopStockModel.find({ tenantId: ctx.tenantId, storeId: ctx.storeId, productId: { $in: productIds } }).select('productId quantityOnHand costPriceMinor').lean();
@@ -580,31 +531,7 @@ class SupershopService {
     }
   }
 
-  private movement(
-    ctx: TenantContext,
-    product: { _id: Types.ObjectId; name: string; unitType: string },
-    type: ShopMovementType,
-    quantity: number,
-    balanceAfter: number,
-    extra: { reason?: string; referenceId?: Types.ObjectId; referenceNumber?: string; unitCostMinor?: number } = {},
-  ) {
-    return {
-      tenantId: ctx.tenantId,
-      storeId: ctx.storeId,
-      productId: product._id,
-      productNameSnapshot: product.name,
-      unitType: product.unitType,
-      type,
-      quantity,
-      balanceAfter,
-      unitCostMinor: extra.unitCostMinor ?? null,
-      reason: extra.reason ?? '',
-      referenceId: extra.referenceId ?? null,
-      referenceNumber: extra.referenceNumber ?? '',
-      createdBy: ctx.userId,
-      createdByNameSnapshot: ctx.userName,
-    };
-  }
+
 }
 
 export const supershopService = new SupershopService();
