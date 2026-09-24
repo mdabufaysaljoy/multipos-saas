@@ -181,9 +181,19 @@ export interface PharmacyReports {
   slowMovers: { medicineId: string; name: string; strength: string; units: number; stockCostMinor: number }[];
 }
 
+export interface PharmacyDashboardTotals {
+  salesCount: number;
+  totalMinor: number;
+  discountMinor: number;
+  averageSaleMinor: number;
+}
+
 export interface PharmacyDashboard {
-  today: { salesCount: number; totalMinor: number; prescriptionSales: number };
-  month: { salesCount: number; totalMinor: number };
+  range: { from: string; to: string; label: string; preset: string; bucket: 'hour' | 'day' | 'month' };
+  kpis: PharmacyDashboardTotals & { prescriptionSales: number };
+  /** The period of equal length just before the range, for comparison. */
+  previous: PharmacyDashboardTotals;
+  /** Stock is not a period: expiry and low stock describe the shelf right now. */
   expiringSoon: {
     batchId: string;
     medicineId: string | null;

@@ -17,8 +17,10 @@ interface RangePickerProps {
 
 export const DASHBOARD_PRESETS = [
   { value: 'today', label: 'Today' },
+  { value: 'yesterday', label: 'Yesterday' },
   { value: 'last7', label: '7 days' },
   { value: 'last30', label: '30 days' },
+  { value: 'thisMonth', label: 'This month' },
 ];
 
 export const REPORT_PRESETS = [

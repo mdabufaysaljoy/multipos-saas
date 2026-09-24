@@ -12,6 +12,8 @@ import { ApiError } from '../../utils/ApiError';
 import { formatDocumentNumber, nextSequence } from '../../utils/counters';
 import { resolvePage, searchRegex } from '../../utils/pagination';
 import { entitlementService } from '../../services/subscription/entitlement.service';
+import { resolveDashboardWindow } from '../reports/reports.service';
+import type { DashboardRangeInput } from '../reports/reports.validators';
 import type { TenantContext } from '../../types/express';
 import type {
   AdjustBatchInput,
@@ -488,22 +490,30 @@ class PharmacyService {
 
   // ================================================================ dashboard
 
-  async dashboard(ctx: TenantContext) {
-    const startOfDay = dayjs().startOf('day').toDate();
-    const startOfMonth = dayjs().startOf('month').toDate();
+  /**
+   * The Pharmacy dashboard for the current branch.
+   *
+   * Trading figures cover the chosen range and are compared with the period of
+   * equal length just before it. Stock is not a period: what is low and what is
+   * expiring are always "right now", whatever range is chosen, because that is
+   * what the shelf looks like when someone walks up to it.
+   */
+  async dashboard(ctx: TenantContext, input: DashboardRangeInput) {
+    const { bucket, previousFrom, previousTo, ...range } = resolveDashboardWindow(input);
     const today = todayUtc();
     const soon = new Date(today.getTime() + 31 * DAY_MS);
     const completed = { tenantId: ctx.tenantId, storeId: ctx.storeId, status: 'completed' };
-    const totals = (from: Date) =>
-      PharmacySaleModel.aggregate<{ count: number; totalMinor: number }>([
-        { $match: { ...completed, soldAt: { $gte: from } } },
-        { $group: { _id: null, count: { $sum: 1 }, totalMinor: { $sum: '$totalMinor' } } },
+    const soldIn = (from: Date, to: Date) => ({ ...completed, soldAt: { $gte: from, $lte: to } });
+    const totals = (from: Date, to: Date) =>
+      PharmacySaleModel.aggregate<{ count: number; totalMinor: number; discountMinor: number }>([
+        { $match: soldIn(from, to) },
+        { $group: { _id: null, count: { $sum: 1 }, totalMinor: { $sum: '$totalMinor' }, discountMinor: { $sum: '$discountMinor' } } },
       ]);
 
-    const [todayRows, monthRows, prescriptionSales, expiring, expiredRows, reorderable] = await Promise.all([
-      totals(startOfDay),
-      totals(startOfMonth),
-      PharmacySaleModel.countDocuments({ ...completed, soldAt: { $gte: startOfDay }, prescription: { $ne: null } }),
+    const [currentRows, previousRows, prescriptionSales, expiring, expiredRows, reorderable] = await Promise.all([
+      totals(range.from, range.to),
+      totals(previousFrom, previousTo),
+      PharmacySaleModel.countDocuments({ ...soldIn(range.from, range.to), prescription: { $ne: null } }),
       MedicineBatchModel.find({ tenantId: ctx.tenantId, storeId: ctx.storeId, quantityOnHand: { $gt: 0 }, expiryDate: { $gte: today, $lt: soon } })
         .sort({ expiryDate: 1 })
         .limit(10)
@@ -539,9 +549,23 @@ class PharmacyService {
       .sort((a, b) => a.sellable - b.sellable)
       .slice(0, 10);
 
+    const summarise = (rows: { count: number; totalMinor: number; discountMinor: number }[]) => {
+      const row = rows[0];
+      const salesCount = row?.count ?? 0;
+      const totalMinor = row?.totalMinor ?? 0;
+      return {
+        salesCount,
+        totalMinor,
+        discountMinor: row?.discountMinor ?? 0,
+        averageSaleMinor: salesCount > 0 ? Math.round(totalMinor / salesCount) : 0,
+      };
+    };
+    const current = summarise(currentRows);
+
     return {
-      today: { salesCount: todayRows[0]?.count ?? 0, totalMinor: todayRows[0]?.totalMinor ?? 0, prescriptionSales },
-      month: { salesCount: monthRows[0]?.count ?? 0, totalMinor: monthRows[0]?.totalMinor ?? 0 },
+      range: { from: range.from, to: range.to, label: range.label, preset: range.preset, bucket },
+      kpis: { ...current, prescriptionSales },
+      previous: summarise(previousRows),
       expiringSoon: expiring.map((batch) => ({
         batchId: batch._id,
         medicineId: batch.medicineId?._id ?? null,

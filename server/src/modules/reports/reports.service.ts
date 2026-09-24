@@ -7,7 +7,7 @@ import type { TenantContext } from '../../types/express';
 import { ProductVariantModel } from '../../models/ProductVariant';
 import { StoreModel } from '../../models/Store';
 import { ApiError } from '../../utils/ApiError';
-import type { BreakdownInput, ReportRangeInput } from './reports.validators';
+import type { BreakdownInput, DashboardRangeInput, ReportRangeInput } from './reports.validators';
 
 export interface ResolvedRange {
   from: Date;
@@ -49,6 +49,56 @@ export function resolveRange(input: ReportRangeInput): ResolvedRange {
         label: 'Custom range',
       };
   }
+}
+
+/**
+ * The clock every report groups by.
+ *
+ * `resolveRange` computes its boundaries with dayjs, which uses the server's
+ * timezone, so anything that buckets sales into days has to use the same one.
+ * Grouping in UTC while the range ends at local midnight puts a late-evening
+ * sale in tomorrow's bucket - or drops it from "today" altogether.
+ */
+export function reportTimezone(): string {
+  return Intl.DateTimeFormat().resolvedOptions().timeZone;
+}
+
+/** A dashboard's range, the period before it, and how to bucket the trend. */
+export interface DashboardWindow extends ResolvedRange {
+  preset: DashboardRangeInput['preset'];
+  /** Fine enough to be useful, coarse enough to stay readable. */
+  bucket: 'hour' | 'day' | 'month';
+  /** The `$dateToString` format for `bucket`. */
+  format: string;
+  timezone: string;
+  days: number;
+  previousFrom: Date;
+  previousTo: Date;
+}
+
+/**
+ * Everything a vertical dashboard needs from its date range, resolved once.
+ *
+ * The comparison period is the span of equal length ending the instant the
+ * range begins, so "last 7 days" is always measured against the 7 days before
+ * it, whatever the preset. Shared by all four POS types so that the same
+ * preset means the same dates in every one of them.
+ */
+export function resolveDashboardWindow(input: DashboardRangeInput): DashboardWindow {
+  const range = resolveRange({ ...input, granularity: 'day', branch: 'current', limit: 10 } as ReportRangeInput);
+  const days = Math.max(1, dayjs(range.to).startOf('day').diff(dayjs(range.from).startOf('day'), 'day') + 1);
+  const bucket = days <= 1 ? 'hour' : days <= 62 ? 'day' : 'month';
+
+  return {
+    ...range,
+    preset: input.preset,
+    bucket,
+    format: { hour: '%H:00', day: '%Y-%m-%d', month: '%Y-%m' }[bucket],
+    timezone: reportTimezone(),
+    days,
+    previousFrom: dayjs(range.from).subtract(days, 'day').toDate(),
+    previousTo: dayjs(range.from).subtract(1, 'millisecond').toDate(),
+  };
 }
 
 const DATE_FORMAT: Record<string, string> = { day: '%Y-%m-%d', week: '%G-W%V', month: '%Y-%m' };
@@ -828,7 +878,7 @@ class ReportService {
       { $match: match },
       {
         $group: {
-          _id: { $dateToString: { format: DATE_FORMAT[granularity] ?? DATE_FORMAT.day, date: '$soldAt' } },
+          _id: { $dateToString: { format: DATE_FORMAT[granularity] ?? DATE_FORMAT.day, date: '$soldAt', timezone: reportTimezone() } },
           totalMinor: { $sum: '$totalMinor' },
           orderCount: { $sum: 1 },
           itemCount: { $sum: { $sum: '$items.quantity' } },

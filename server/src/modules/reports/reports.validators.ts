@@ -31,6 +31,31 @@ export const reportRangeSchema = z
 export type ReportRangeInput = z.infer<typeof reportRangeSchema>;
 
 /**
+ * The date range a POS dashboard takes - the same presets and custom-range
+ * rules as every other report, for the current branch.
+ *
+ * It defaults to `today` because that is what a till wants when it opens,
+ * where a report defaults to the last seven days. Every vertical's dashboard
+ * uses this one schema, so "last 30 days" means the same thing in all of them.
+ */
+export const dashboardRangeSchema = z
+  .object({
+    preset: z.enum(RANGE_PRESETS).default('today'),
+    from: calendarDate.optional(),
+    to: calendarDate.optional(),
+  })
+  .superRefine((data, ctx) => {
+    if (data.preset === 'custom' && (!data.from || !data.to)) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['from'], message: 'A custom range needs both a start and an end date' });
+    }
+    if (data.from && data.to && data.from > data.to) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['to'], message: 'The end date must be after the start date' });
+    }
+  });
+
+export type DashboardRangeInput = z.infer<typeof dashboardRangeSchema>;
+
+/**
  * The date range for a vertical's Advanced Analytics (Pharmacy, Supershop):
  * the same presets and custom-range rules as every other report, current branch.
  */

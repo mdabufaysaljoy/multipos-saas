@@ -97,13 +97,6 @@ export interface ShopReceipt {
   store: ReceiptStore;
 }
 
-export interface ShopPeriodSummary {
-  salesCount: number;
-  totalMinor: number;
-  vatMinor: number;
-  grossProfitMinor: number;
-}
-
 export interface ShopReports {
   range: { from: string; to: string; label: string; preset: string };
   totals: {
@@ -143,10 +136,22 @@ export interface ShopReports {
   deadStock: { productId: string; name: string; unitType: ShopUnitType; quantityOnHand: number; stockCostMinor: number }[];
 }
 
+export interface ShopDashboardTotals {
+  salesCount: number;
+  totalMinor: number;
+  vatMinor: number;
+  discountMinor: number;
+  grossProfitMinor: number;
+  averageSaleMinor: number;
+}
+
 export interface ShopDashboard {
-  today: ShopPeriodSummary;
-  month: ShopPeriodSummary;
+  range: { from: string; to: string; label: string; preset: string; bucket: 'hour' | 'day' | 'month' };
+  kpis: ShopDashboardTotals;
+  /** The period of equal length just before the range, for comparison. */
+  previous: ShopDashboardTotals;
   topProducts: { productId: string; name: string; unitType: ShopUnitType; quantity: number; totalMinor: number }[];
+  /** Stock is not a period: these describe the shelf right now. */
   lowStock: { productId: string; name: string; unitType: ShopUnitType; reorderLevel: number; quantityOnHand: number }[];
   lowStockCount: number;
 }

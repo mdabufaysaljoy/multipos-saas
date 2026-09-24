@@ -5489,12 +5489,30 @@ async function main() {
   check(
     'The dashboard counts completed sales and flags expiry and low stock',
     phDash.status === 200 &&
-      phDash.data?.today?.salesCount === 4 &&
-      phDash.data?.today?.prescriptionSales === 3 &&
+      phDash.data?.kpis?.salesCount === 4 &&
+      phDash.data?.kpis?.prescriptionSales === 3 &&
       phDash.data?.expiringSoon?.some((b) => b.batchNumber === 'NP-OLD') &&
       phDash.data?.lowStock?.some((row) => row.name === 'Napa' && row.sellable === 135),
     phDash.data ?? phDash.error,
   );
+  check('The dashboard defaults to today, bucketed by hour', phDash.data?.range?.preset === 'today' && phDash.data?.range?.bucket === 'hour', phDash.data?.range);
+  check(
+    'The average sale is the range total over its sales',
+    phDash.data?.kpis?.averageSaleMinor === Math.round(phDash.data.kpis.totalMinor / phDash.data.kpis.salesCount),
+    phDash.data?.kpis,
+  );
+  check('The previous period is reported for comparison', typeof phDash.data?.previous?.totalMinor === 'number' && typeof phDash.data?.previous?.salesCount === 'number');
+  const phYesterday = await phApi('/dashboard?preset=yesterday');
+  check('A range with no trading shows zeros, not errors', phYesterday.status === 200 && phYesterday.data?.kpis?.totalMinor === 0 && phYesterday.data?.kpis?.salesCount === 0);
+  check(
+    'Expiry and low stock are always now, whatever the range',
+    phYesterday.data?.expiringSoon?.some((b) => b.batchNumber === 'NP-OLD') && phYesterday.data?.lowStock?.some((row) => row.name === 'Napa'),
+  );
+  check('A 30-day range is bucketed by day', (await phApi('/dashboard?preset=last30')).data?.range?.bucket === 'day');
+  check('A 30-day range includes today\u2019s sales', (await phApi('/dashboard?preset=last30')).data?.kpis?.salesCount === 4);
+  check('An unknown preset is rejected', (await phApi('/dashboard?preset=forever')).status === 422);
+  check('A custom range needs both dates', (await phApi('/dashboard?preset=custom&from=2026-01-01')).status === 422);
+  check('A custom range cannot end before it starts', (await phApi('/dashboard?preset=custom&from=2026-02-01&to=2026-01-01')).status === 422);
   const phReceipt = await phApi(`/sales/${rxSale._id}/receipt`);
   check('A receipt is available with the branch details', phReceipt.data?.store?.name === 'Shefa Main');
   check(
@@ -5646,11 +5664,32 @@ async function main() {
   check(
     'The dashboard counts completed sales, best sellers and low stock',
     ssDash.status === 200 &&
-      ssDash.data?.today?.salesCount === 2 &&
+      ssDash.data?.kpis?.salesCount === 2 &&
       ssDash.data?.topProducts?.[0]?.name === 'Candle' &&
       ssDash.data?.lowStock?.some((row) => row.name === 'Candle' && row.quantityOnHand === 1),
     ssDash.data ?? ssDash.error,
   );
+  check('The dashboard defaults to today, bucketed by hour', ssDash.data?.range?.preset === 'today' && ssDash.data?.range?.bucket === 'hour', ssDash.data?.range);
+  check(
+    'Gross profit is net sales less VAT less cost, never more',
+    ssDash.data?.kpis?.grossProfitMinor <= ssDash.data.kpis.totalMinor - ssDash.data.kpis.vatMinor,
+    ssDash.data?.kpis,
+  );
+  check(
+    'The average sale is the range total over its sales',
+    ssDash.data?.kpis?.averageSaleMinor === Math.round(ssDash.data.kpis.totalMinor / ssDash.data.kpis.salesCount),
+    ssDash.data?.kpis,
+  );
+  check('The previous period is reported for comparison', typeof ssDash.data?.previous?.totalMinor === 'number' && typeof ssDash.data?.previous?.salesCount === 'number');
+  const ssYesterday = await ssApi('/dashboard?preset=yesterday');
+  check('A range with no trading shows zeros, not errors', ssYesterday.status === 200 && ssYesterday.data?.kpis?.totalMinor === 0 && ssYesterday.data?.kpis?.salesCount === 0);
+  check('There are no best sellers in a period with no sales', (ssYesterday.data?.topProducts ?? []).length === 0);
+  check('Reordering is always now, whatever the range', ssYesterday.data?.lowStock?.some((row) => row.name === 'Candle'));
+  check('A 30-day range is bucketed by day', (await ssApi('/dashboard?preset=last30')).data?.range?.bucket === 'day');
+  check('A 30-day range includes today\u2019s sales', (await ssApi('/dashboard?preset=last30')).data?.kpis?.salesCount === 2);
+  check('An unknown preset is rejected', (await ssApi('/dashboard?preset=forever')).status === 422);
+  check('A custom range needs both dates', (await ssApi('/dashboard?preset=custom&from=2026-01-01')).status === 422);
+  check('A custom range cannot end before it starts', (await ssApi('/dashboard?preset=custom&from=2026-02-01&to=2026-01-01')).status === 422);
   check('The low-stock filter lists products at or below their reorder level', ((await ssApi('/products?lowStockOnly=true')).data ?? []).map((p) => p.name).join(',') === 'Candle');
   const ssReceipt = await ssApi(`/sales/${candleRace.find((r) => r.status === 201).data._id}/receipt`);
   check('A receipt is available with the branch details', ssReceipt.data?.store?.name === 'Meena Gulshan');

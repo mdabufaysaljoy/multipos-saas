@@ -3,7 +3,7 @@ import { PAYMENT_METHODS } from '../../config/constants';
 import { RESTAURANT_ORDER_STATUSES, RESTAURANT_ORDER_TYPES } from '../../models/RestaurantOrder';
 import { CASH_MOVEMENT_TYPES, SHIFT_STATUSES } from '../../models/RestaurantShift';
 import { calendarDate, objectId, paginationSchema, searchSchema } from '../common/common.validators';
-import { RANGE_PRESETS } from '../reports/reports.validators';
+import { dashboardRangeSchema } from '../reports/reports.validators';
 
 const amount = z.number().int().min(0).max(100_000_000);
 
@@ -133,21 +133,8 @@ export const listOrdersSchema = paginationSchema.extend({
   to: calendarDate.optional(),
 });
 
-/** Same presets and custom-range rules as the Clothing dashboard. */
-export const dashboardSchema = z
-  .object({
-    preset: z.enum(RANGE_PRESETS).default('today'),
-    from: calendarDate.optional(),
-    to: calendarDate.optional(),
-  })
-  .superRefine((data, ctx) => {
-    if (data.preset === 'custom' && (!data.from || !data.to)) {
-      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['from'], message: 'A custom range needs both a start and an end date' });
-    }
-    if (data.from && data.to && data.from > data.to) {
-      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['to'], message: 'The end date must be after the start date' });
-    }
-  });
+/** Every vertical's dashboard takes the same range; this is that schema. */
+export const dashboardSchema = dashboardRangeSchema;
 
 // ---------------------------------------------------------------- shifts
 

@@ -48,7 +48,7 @@ export const pharmacyApi = {
   receipt: (id: string) => get<PharmacyReceipt>(`/pharmacy/sales/${id}/receipt`),
   voidSale: (id: string, reason: string) => post<PharmacySale>(`/pharmacy/sales/${id}/void`, { reason }),
 
-  dashboard: () => get<PharmacyDashboard>('/pharmacy/dashboard'),
+  dashboard: (params?: Query) => get<PharmacyDashboard>('/pharmacy/dashboard', params),
   /** Advanced Analytics; the server refuses it on plans without the feature. */
   reports: (params?: Query) => get<PharmacyReports>('/pharmacy/reports', params),
 };

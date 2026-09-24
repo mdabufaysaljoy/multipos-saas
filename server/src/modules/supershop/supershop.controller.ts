@@ -7,7 +7,7 @@ import { getContext } from '../../middleware/tenant';
 import { recordAudit } from '../../services/audit/audit.service';
 import { supershopService } from './supershop.service';
 import { supershopReportsService } from './supershopReports.service';
-import type { AnalyticsRangeInput } from '../reports/reports.validators';
+import type { AnalyticsRangeInput, DashboardRangeInput } from '../reports/reports.validators';
 import type {
   AdjustStockInput,
   CreateProductInput,
@@ -121,7 +121,7 @@ export const voidSale = asyncHandler(async (req: Request, res: Response) => {
 });
 
 export const dashboard = asyncHandler(async (req: Request, res: Response) => {
-  ok(res, await supershopService.dashboard(getContext(req)));
+  ok(res, await supershopService.dashboard(getContext(req), query<DashboardRangeInput>(req)));
 });
 
 export const reports = asyncHandler(async (req: Request, res: Response) => {

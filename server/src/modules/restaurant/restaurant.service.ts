@@ -12,8 +12,7 @@ import { ApiError } from '../../utils/ApiError';
 import { formatDocumentNumber, nextSequence } from '../../utils/counters';
 import { resolvePage, searchRegex } from '../../utils/pagination';
 import { entitlementService } from '../../services/subscription/entitlement.service';
-import { resolveRange } from '../reports/reports.service';
-import type { ReportRangeInput } from '../reports/reports.validators';
+import { resolveDashboardWindow } from '../reports/reports.service';
 import type { TenantContext } from '../../types/express';
 import type {
   DashboardInput,
@@ -660,16 +659,7 @@ class RestaurantService {
    * over order snapshots, so it never shifts when the menu changes.
    */
   async dashboard(ctx: TenantContext, input: DashboardInput) {
-    const range = resolveRange({ ...input, granularity: 'day', branch: 'current', limit: 10 } as ReportRangeInput);
-    const days = Math.max(1, dayjs(range.to).startOf('day').diff(dayjs(range.from).startOf('day'), 'day') + 1);
-    const previousTo = dayjs(range.from).subtract(1, 'millisecond').toDate();
-    const previousFrom = dayjs(range.from).subtract(days, 'day').toDate();
-
-    // Buckets fine enough to be useful, coarse enough to stay readable.
-    const bucket = days <= 1 ? 'hour' : days <= 62 ? 'day' : 'month';
-    const format = { hour: '%H:00', day: '%Y-%m-%d', month: '%Y-%m' }[bucket];
-    // Same clock as the range boundaries, which dayjs computes in server time.
-    const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    const { bucket, format, timezone, previousFrom, previousTo, ...range } = resolveDashboardWindow(input);
 
     const scope = { tenantId: ctx.tenantId, storeId: ctx.storeId };
     const paidIn = (from: Date, to: Date) => ({ ...scope, status: 'paid', paidAt: { $gte: from, $lte: to } });

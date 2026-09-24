@@ -38,7 +38,7 @@ export const supershopApi = {
   receipt: (id: string) => get<ShopReceipt>(`/supershop/sales/${id}/receipt`),
   voidSale: (id: string, reason: string) => post<ShopSale>(`/supershop/sales/${id}/void`, { reason }),
 
-  dashboard: () => get<ShopDashboard>('/supershop/dashboard'),
+  dashboard: (params?: Query) => get<ShopDashboard>('/supershop/dashboard', params),
   /** Advanced Analytics; the server refuses it on plans without the feature. */
   reports: (params?: Query) => get<ShopReports>('/supershop/reports', params),
 };

@@ -5,7 +5,7 @@ import { authenticate } from '../../middleware/auth';
 import { requirePermission } from '../../middleware/rbac';
 import { resolveTenant } from '../../middleware/tenant';
 import { requireActiveSubscription, requireSubscribedAccess } from '../../middleware/subscription';
-import { analyticsRangeSchema } from '../reports/reports.validators';
+import { analyticsRangeSchema, dashboardRangeSchema } from '../reports/reports.validators';
 import { requireVertical } from '../../middleware/vertical';
 import { validate } from '../../middleware/validate';
 import { idParam } from '../common/common.validators';
@@ -56,7 +56,7 @@ router.get('/sales/:id/receipt', requirePermission(PERMISSIONS.SALES_VIEW), vali
 router.post('/sales/:id/void', requireActiveSubscription, requirePermission(PERMISSIONS.SALES_CANCEL), validate({ params: idParam, body: voidSaleSchema }), controller.voidSale);
 
 // The Pharmacy dashboard: on every plan, like the other verticals' dashboards.
-router.get('/dashboard', requirePermission(PERMISSIONS.REPORTS_VIEW), controller.dashboard);
+router.get('/dashboard', requirePermission(PERMISSIONS.REPORTS_VIEW), validate({ query: dashboardRangeSchema }), controller.dashboard);
 
 // Pharmacy Advanced Analytics: RBAC AND the plan feature, same gate as the other verticals.
 router.get(

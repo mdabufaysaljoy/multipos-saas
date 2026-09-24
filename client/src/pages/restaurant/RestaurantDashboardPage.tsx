@@ -5,9 +5,7 @@ import { format, parseISO } from 'date-fns';
 import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import {
   Armchair,
-  ArrowDownRight,
   ArrowRight,
-  ArrowUpRight,
   Banknote,
   ClipboardList,
   Receipt,
@@ -22,6 +20,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { EmptyState, LoadingState } from '@/components/states';
 import { PageHeader } from '@/components/PageHeader';
 import { DASHBOARD_PRESETS, RangePicker, isRangeReady, rangeParams, type RangeValue } from '@/features/reports/RangePicker';
+import { DashboardKpi } from '@/features/reports/DashboardKpi';
 import { restaurantApi } from '@/api/restaurant';
 import { formatMoney, formatMoneyCompact } from '@/lib/money';
 import { cn } from '@/lib/utils';
@@ -83,28 +82,28 @@ export function RestaurantDashboardPage() {
       {data && kpis && (
         <>
           <div className="grid grid-cols-2 gap-3 xl:grid-cols-4">
-            <Kpi
+            <DashboardKpi
               icon={<Banknote className="h-4 w-4" />}
               label="Revenue"
               value={formatMoney(kpis.revenueMinor, currency)}
               now={kpis.revenueMinor}
               before={data.previous.revenueMinor}
             />
-            <Kpi
+            <DashboardKpi
               icon={<Receipt className="h-4 w-4" />}
               label="Paid orders"
               value={String(kpis.paidOrders)}
               now={kpis.paidOrders}
               before={data.previous.paidOrders}
             />
-            <Kpi
+            <DashboardKpi
               icon={<Wallet className="h-4 w-4" />}
               label="Average order"
               value={formatMoney(kpis.averageOrderMinor, currency)}
               now={kpis.averageOrderMinor}
               before={data.previous.averageOrderMinor}
             />
-            <Kpi
+            <DashboardKpi
               icon={<Soup className="h-4 w-4" />}
               label="Items sold"
               value={String(kpis.itemsSold)}
@@ -296,49 +295,6 @@ export function RestaurantDashboardPage() {
         </>
       )}
     </div>
-  );
-}
-
-function Kpi({
-  icon,
-  label,
-  value,
-  hint,
-  now,
-  before,
-}: {
-  icon: React.ReactNode;
-  label: string;
-  value: string;
-  hint?: string;
-  now?: number;
-  before?: number;
-}) {
-  const hasComparison = now !== undefined && before !== undefined;
-  const change = hasComparison && before! > 0 ? ((now! - before!) / before!) * 100 : null;
-
-  return (
-    <Card>
-      <CardContent className="p-4">
-        <div className="flex items-center gap-1.5 text-xs font-medium uppercase tracking-wide text-muted-foreground">
-          {icon}
-          {label}
-        </div>
-        <p className="tabular mt-1 text-2xl font-semibold">{value}</p>
-        {hint && <p className="mt-0.5 text-xs text-muted-foreground">{hint}</p>}
-        {hasComparison &&
-          (change === null ? (
-            <p className="mt-0.5 text-xs text-muted-foreground">{now! > 0 ? 'Nothing in the previous period' : 'No change'}</p>
-          ) : Math.abs(change) < 0.05 ? (
-            <p className="mt-0.5 text-xs text-muted-foreground">No change vs previous</p>
-          ) : (
-            <p className={cn('mt-0.5 flex items-center gap-0.5 text-xs font-medium', change > 0 ? 'text-success' : 'text-destructive')}>
-              {change > 0 ? <ArrowUpRight className="h-3.5 w-3.5" /> : <ArrowDownRight className="h-3.5 w-3.5" />}
-              {Math.abs(change).toFixed(1)}% vs previous
-            </p>
-          ))}
-      </CardContent>
-    </Card>
   );
 }
 

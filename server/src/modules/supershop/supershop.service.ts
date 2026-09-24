@@ -12,6 +12,8 @@ import { ApiError } from '../../utils/ApiError';
 import { formatDocumentNumber, nextSequence } from '../../utils/counters';
 import { resolvePage, searchRegex } from '../../utils/pagination';
 import { entitlementService } from '../../services/subscription/entitlement.service';
+import { resolveDashboardWindow } from '../reports/reports.service';
+import type { DashboardRangeInput } from '../reports/reports.validators';
 import type { TenantContext } from '../../types/express';
 import type {
   AdjustStockInput,
@@ -458,21 +460,40 @@ class SupershopService {
 
   // =============================================================== dashboard
 
-  async dashboard(ctx: TenantContext) {
-    const startOfDay = dayjs().startOf('day').toDate();
-    const startOfMonth = dayjs().startOf('month').toDate();
+  /**
+   * The Super Shop dashboard for the current branch.
+   *
+   * Trading figures cover the chosen range and are compared with the period of
+   * equal length just before it. What needs reordering is always "right now",
+   * whatever range is chosen: it describes the shelf, not a period.
+   *
+   * Gross profit is net sales less VAT less cost of goods - VAT is collected
+   * for the government, not earned - the same definition Advanced Analytics uses.
+   */
+  async dashboard(ctx: TenantContext, input: DashboardRangeInput) {
+    const { bucket, previousFrom, previousTo, ...range } = resolveDashboardWindow(input);
     const completed = { tenantId: ctx.tenantId, storeId: ctx.storeId, status: 'completed' };
-    const totals = (from: Date) =>
-      ShopSaleModel.aggregate<{ count: number; totalMinor: number; vatMinor: number; costMinor: number }>([
-        { $match: { ...completed, soldAt: { $gte: from } } },
-        { $group: { _id: null, count: { $sum: 1 }, totalMinor: { $sum: '$totalMinor' }, vatMinor: { $sum: '$vatMinor' }, costMinor: { $sum: '$costMinor' } } },
+    const soldIn = (from: Date, to: Date) => ({ ...completed, soldAt: { $gte: from, $lte: to } });
+    const totals = (from: Date, to: Date) =>
+      ShopSaleModel.aggregate<{ count: number; totalMinor: number; vatMinor: number; costMinor: number; discountMinor: number }>([
+        { $match: soldIn(from, to) },
+        {
+          $group: {
+            _id: null,
+            count: { $sum: 1 },
+            totalMinor: { $sum: '$totalMinor' },
+            vatMinor: { $sum: '$vatMinor' },
+            costMinor: { $sum: '$costMinor' },
+            discountMinor: { $sum: '$discountMinor' },
+          },
+        },
       ]);
 
-    const [todayRows, monthRows, topProducts, reorderable, stocked] = await Promise.all([
-      totals(startOfDay),
-      totals(startOfMonth),
+    const [currentRows, previousRows, topProducts, reorderable, stocked] = await Promise.all([
+      totals(range.from, range.to),
+      totals(previousFrom, previousTo),
       ShopSaleModel.aggregate<{ _id: Types.ObjectId; name: string; unitType: ShopUnitType; quantity: number; totalMinor: number }>([
-        { $match: { ...completed, soldAt: { $gte: startOfDay } } },
+        { $match: soldIn(range.from, range.to) },
         { $unwind: '$items' },
         { $group: { _id: '$items.productId', name: { $last: '$items.nameSnapshot' }, unitType: { $last: '$items.unitType' }, quantity: { $sum: '$items.quantity' }, totalMinor: { $sum: '$items.lineTotalMinor' } } },
         { $sort: { totalMinor: -1 } },
@@ -494,16 +515,24 @@ class SupershopService {
       .filter((row) => row.quantityOnHand <= row.reorderLevel)
       .sort((a, b) => a.quantityOnHand / a.reorderLevel - b.quantityOnHand / b.reorderLevel);
 
-    const summarise = (rows: { count: number; totalMinor: number; vatMinor: number; costMinor: number }[]) => ({
-      salesCount: rows[0]?.count ?? 0,
-      totalMinor: rows[0]?.totalMinor ?? 0,
-      vatMinor: rows[0]?.vatMinor ?? 0,
-      grossProfitMinor: (rows[0]?.totalMinor ?? 0) - (rows[0]?.vatMinor ?? 0) - (rows[0]?.costMinor ?? 0),
-    });
+    const summarise = (rows: { count: number; totalMinor: number; vatMinor: number; costMinor: number; discountMinor: number }[]) => {
+      const row = rows[0];
+      const salesCount = row?.count ?? 0;
+      const totalMinor = row?.totalMinor ?? 0;
+      return {
+        salesCount,
+        totalMinor,
+        vatMinor: row?.vatMinor ?? 0,
+        discountMinor: row?.discountMinor ?? 0,
+        grossProfitMinor: totalMinor - (row?.vatMinor ?? 0) - (row?.costMinor ?? 0),
+        averageSaleMinor: salesCount > 0 ? Math.round(totalMinor / salesCount) : 0,
+      };
+    };
 
     return {
-      today: summarise(todayRows),
-      month: summarise(monthRows),
+      range: { from: range.from, to: range.to, label: range.label, preset: range.preset, bucket },
+      kpis: summarise(currentRows),
+      previous: summarise(previousRows),
       topProducts: topProducts.map((row) => ({ productId: row._id, name: row.name, unitType: row.unitType, quantity: row.quantity, totalMinor: row.totalMinor })),
       lowStock: lowStock.slice(0, 10),
       lowStockCount: lowStock.length,

@@ -2,7 +2,8 @@
 
 **Audit and plan.** It records what the four verticals do today, what "universal" should mean for each
 capability, and the order the work should be done in. Tasks are marked ✅ as they land - **Task 01
-(universal QZ Tray printing) is done**; everything else below is still a plan.
+(universal QZ Tray printing) and task 12 (universal dashboard date ranges) are done**; everything
+else below is still a plan.
 
 Date: 2026-09-24 · Commit audited: `18bc974` (main, with the Clothing work merged in)
 Method: reading the code and the models, plus the checks the end-to-end suite already makes.
@@ -57,7 +58,7 @@ Legend: **mature** = reference implementation · **partial** = works but narrowe
 | 7 | Category management + POS filter | **mature** (`Category` model, page, POS filter) | string field + client-side chip filter | string field, no filter | string field, no filter | none | a real category entity is only worth it where products are managed in bulk | Either promote the string to `Category` per vertical, or keep strings and add a shared filter API | **Medium** |
 | 8 | Authorized out-of-stock sale | **mature** (`sales.sellOutOfStock`, ledger flag, negative stock allowed) | n/a (no stock) | **missing** (batch quantity is hard-blocked) | **missing** (`ShopStock.quantityOnHand` has `min: 0`) | the permission exists platform-wide | Pharmacy must never sell *expired* stock, override or not; negative batch quantity is meaningless | Per-vertical override path + ledger flag | **High** |
 | 9 | Inventory management + ledger | **mature** (`InventoryTransaction`, before/after, actor, reference) | n/a | partial (`PharmacyStockMovement`) | partial (`ShopStockMovement`) | three parallel ledgers with the same shape | batch/expiry (Pharmacy), weighted-average cost (Super Shop), variants (Clothing) | Unify the *read* API and the movement contract, not the storage | **Medium** |
-| 10 | Dashboard date ranges | **mature** (`RangePicker`, presets + custom) | **mature** (same picker) | **missing** (single snapshot, no query) | **missing** (single snapshot, no query) | `resolveRange` is already shared | metric names differ (orders vs sales) | Add the range to 2 endpoints + 2 pages | **Low** |
+| 10 | Dashboard date ranges | **mature** (`RangePicker`, presets + custom) | **mature** (same picker) | **done** (task 12) | **done** (task 12) | one `dashboardRangeSchema` + `resolveDashboardWindow`; `RangePicker` + `DashboardKpi` on every page | metric names differ (orders vs sales) - task 13 | ✅ complete | — |
 | 11 | Advanced analytics | **mature** (10 endpoints: sales, profit, breakdown, payments, returns, staff, inventory, customers, branches) | partial (1 `report` endpoint) | partial (1 `report` endpoint) | partial (1 `report` endpoint) | `advancedAnalytics` entitlement gates all four | Restaurant: tables/tickets/shifts; Pharmacy: expiry/prescription; Super Shop: VAT/dead stock | Shared metric contract; keep vertical metrics vertical | **Medium** |
 | 12 | PDF / print of dashboard + analytics | **missing** (export module can produce PDF for *datasets*, not for a report view) | missing | missing | missing | `export.formats.ts` already writes CSV/XLSX/JSON/PDF from sections | — | Feed report output through the existing export writers | **Medium** |
 
@@ -195,11 +196,11 @@ Each is independently executable, independently testable, and leaves the tree gr
 | **09** Universal loyalty | Generalise the sale hooks; widen the entitlement's verticals; card scan selects the customer in every POS | 05 | M | Medium |
 | **10** Category management | Decide per vertical: promote to `Category` (Super Shop, Pharmacy) or keep strings (Restaurant); shared POS filter API | — | M | Medium |
 | **11** Universal import | Column registry per vertical behind the existing engine | 10 | M | Medium |
-| **12** Dashboard date ranges | Add `reportRangeSchema` to the Pharmacy and Super Shop dashboards; `RangePicker` on both pages | — | S | Low |
+| **12** Dashboard date ranges ✅ **done** | One `dashboardRangeSchema` and `resolveDashboardWindow` (range, previous period, bucket, timezone) behind all four dashboards; `RangePicker` + shared `DashboardKpi` on the Pharmacy and Super Shop pages; risk 5 settled | — | S | Low |
 | **13** Analytics parity | Shared metric contract; fill the gaps per vertical | 12 | M | Medium |
 | **14** PDF/print of reports | Serialise the current report view through `export.formats.ts` (already writes PDF) | 13 | M | Medium |
 
-Recommended sequencing: **01 ✅ → 12 → 05 → 02 → 04 → 06 → 07 → 03 → 08 → 09 → 10 → 11 → 13 → 14.**
+Recommended sequencing: **01 ✅ → 12 ✅ → 05 → 02 → 04 → 06 → 07 → 03 → 08 → 09 → 10 → 11 → 13 → 14.**
 That front-loads the visible wins that carry almost no risk, and defers the two schema-wide changes
 (payment methods, returns) until the adapter seam exists to absorb them.
 
@@ -215,10 +216,11 @@ That front-loads the visible wins that carry almost no risk, and defers the two 
 3. **Pharmacy expiry.** An out-of-stock override must never become an "sell expired stock" override.
 4. **Loyalty double-award.** The dedupe key is what stops it; generalising the hooks must keep one key
    per (sale, action), not per vertical.
-5. **Timezone inconsistency (existing).** `resolveRange` uses the server's local day boundaries;
-   Clothing's trend groups in **UTC**; the other three group in the *server's* `Intl` timezone. Three
-   different answers to "which day is this sale in". Worth fixing inside task 12/13 — and worth knowing
-   that it is already wrong today.
+5. ~~**Timezone inconsistency (existing).**~~ **Settled in task 12.** `resolveRange` computes its
+   boundaries in the server's timezone, but Clothing's trend grouped in **UTC** while the other three
+   grouped in the server's `Intl` timezone - three different answers to "which day is this sale in".
+   There is now one answer: `reportTimezone()`, which every `$dateToString` passes, including
+   Clothing's. A sale at 11pm Dhaka time no longer lands in tomorrow's bucket.
 6. **Restaurant has no stock.** Do not invent one to satisfy a shared interface; the no-op adapter is
    the correct implementation.
 7. **Print regressions on real hardware.** The Clothing path is proven on the owner's 48mm printer;
@@ -254,6 +256,7 @@ must pass unchanged, and the Clothing sections must not be edited to accommodate
 - `docs/UNIVERSAL_POS_PLAN.md` (this file) — the audit, the matrix and the task list.
 - `CLAUDE.md` — points at this plan and records that Clothing is the reference vertical.
 - `docs/PRINTING_ARCHITECTURE.md` §2b — the universal printing architecture delivered by task 01.
+- `docs/DASHBOARD_RANGES.md` — the universal dashboard range delivered by task 12.
 
 Feature docs (`PRINTING_ARCHITECTURE.md`, `PRODUCT_IMPORT.md`, `DATA_EXPORT.md`,
 `SUPPLIER_MANAGEMENT.md`, `CONTACT_VERIFICATION.md`, `ENTITLEMENTS.md`) remain accurate for Clothing
@@ -263,12 +266,13 @@ and are the reference material for the tasks above.
 
 ## 10. Recommended next task
 
-**Task 12 — Universal dashboard date ranges.**
+**Task 05 — POS customer selection.**
 
-Task 01 is done (see `docs/PRINTING_ARCHITECTURE.md` §2b). Task 12 is the other cheap, visible one:
-the Pharmacy and Super Shop dashboards take no date range at all today, while their analytics
-endpoints already accept one and `resolveRange` is already shared. It is two endpoints and two pages,
-with no model or money path involved - and it is the natural moment to settle the timezone
-inconsistency in §7, risk 5.
+Tasks 01 and 12 are done. Task 05 is the next cheap, visible one: the three newer POS pages cannot
+attach a customer to a sale, though all three sale services already accept `customerId` and the
+Clothing POS has the picker. It is one shared component and three pages, with no schema change.
 
-Waiting for an explicit instruction before starting it.
+Task 13 (analytics parity) now has what it depends on - every dashboard speaks the same range - but
+it is a larger job, and task 05 unblocks task 09 (universal loyalty).
+
+Waiting for an explicit instruction before starting either.

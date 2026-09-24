@@ -7,7 +7,7 @@ import { getContext } from '../../middleware/tenant';
 import { recordAudit } from '../../services/audit/audit.service';
 import { pharmacyService } from './pharmacy.service';
 import { pharmacyReportsService } from './pharmacyReports.service';
-import type { AnalyticsRangeInput } from '../reports/reports.validators';
+import type { AnalyticsRangeInput, DashboardRangeInput } from '../reports/reports.validators';
 import type {
   AdjustBatchInput,
   CreateMedicineInput,
@@ -119,7 +119,7 @@ export const voidSale = asyncHandler(async (req: Request, res: Response) => {
 });
 
 export const dashboard = asyncHandler(async (req: Request, res: Response) => {
-  ok(res, await pharmacyService.dashboard(getContext(req)));
+  ok(res, await pharmacyService.dashboard(getContext(req), query<DashboardRangeInput>(req)));
 });
 
 export const reports = asyncHandler(async (req: Request, res: Response) => {
