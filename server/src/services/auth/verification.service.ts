@@ -32,6 +32,8 @@ const MAX_ATTEMPTS = 5;
 const RESEND_COOLDOWN_SECONDS = 60;
 /** Codes per channel per hour - a cap on what one account can make us send. */
 const MAX_SENDS_PER_HOUR = 5;
+/** The billing-test double. It never contacts a network, so it never verifies anything. */
+const MOCK_SMS_PROVIDER = 'mock';
 
 export type { VerificationChannel };
 
@@ -47,6 +49,14 @@ export interface SendResult {
   masked: string;
   expiresAt: Date;
   resendAfterSeconds: number;
+  /**
+   * Whether a real message actually went out. False when no gateway is
+   * configured, when the gateway refused, or when the only provider available
+   * is the test double - the UI must not promise a message that is not coming.
+   */
+  delivered: boolean;
+  /** Why nothing was delivered, in words a shop owner can act on. */
+  deliveryNote?: string;
   /**
    * The code itself, OUTSIDE production only.
    *
@@ -136,52 +146,78 @@ class VerificationService {
     await VerificationCodeModel.updateMany({ userId, channel, consumedAt: null }, { $set: { consumedAt: new Date() } });
     await VerificationCodeModel.create({ userId, channel, destination, codeHash: hashCode(code, userId, channel), expiresAt });
 
-    await this.deliver(channel, destination, code);
+    const delivery = await this.deliver(channel, destination, code);
 
     return {
       channel,
       masked: maskDestination(channel, destination),
       expiresAt,
       resendAfterSeconds: RESEND_COOLDOWN_SECONDS,
+      delivered: delivery.delivered,
+      ...(delivery.note ? { deliveryNote: delivery.note } : {}),
       ...(isProd ? {} : { devCode: code }),
     };
   }
 
   /**
-   * Hands the code to the provider.
+   * Hands the code to the provider, and says whether it really went out.
    *
-   * A delivery failure is reported to the caller - telling someone "code sent"
-   * when nothing was sent would leave them waiting for a message that is never
-   * coming - but the code itself is never in the error.
+   * Credentials live in platform settings and are editable by a platform admin,
+   * so BOTH providers are reloaded before sending - reading whatever was loaded
+   * at boot would send through a stale (or absent) gateway. The SMS test double
+   * is explicitly not a delivery: it exists for the billing tests and never
+   * contacts a network, so a code "sent" through it is reported as undelivered
+   * rather than promised to the customer.
+   *
+   * In production a failure is an error - telling someone "code sent" when
+   * nothing was sent leaves them waiting for a message that is never coming.
+   * Elsewhere it is reported honestly alongside the development code, so a
+   * machine without SMTP or an SMS gateway can still be worked on.
    */
-  private async deliver(channel: VerificationChannel, destination: string, code: string) {
+  private async deliver(channel: VerificationChannel, destination: string, code: string): Promise<{ delivered: boolean; note?: string }> {
     const minutes = CODE_TTL_MINUTES;
+    const message = `${code} is your ${BRANDING.productName} verification code. It expires in ${minutes} minutes.`;
     try {
       if (channel === 'email') {
+        // `provider()` reloads the SMTP credentials from platform settings.
         const provider = await emailService.provider();
-        if (!provider.isConfigured()) throw new Error('email provider not configured');
-        await provider.send({
+        if (!provider.isConfigured()) return this.undelivered(channel, 'No email gateway is configured.');
+        const result = await provider.send({
           to: destination,
           subject: `${code} is your ${BRANDING.productName} verification code`,
           html: `<p>Your ${BRANDING.productName} verification code is:</p><p style="font-size:28px;font-weight:700;letter-spacing:4px">${code}</p><p>It expires in ${minutes} minutes. If you did not ask for it, you can ignore this email.</p>`,
-          text: `Your ${BRANDING.productName} verification code is ${code}. It expires in ${minutes} minutes.`,
+          text: message,
         });
-        return;
+        if (result && result.success === false) return this.undelivered(channel, 'The email gateway refused the message.');
+        return { delivered: true };
       }
-      const provider = smsRegistry.active();
-      if (!provider?.isConfigured()) throw new Error('sms provider not configured');
-      await provider.send({ to: destination, message: `${code} is your ${BRANDING.productName} verification code. It expires in ${minutes} minutes.` });
+
+      // activeAsync() reloads the gateway credentials first: they live in the
+      // database, and the copy held since boot is usually empty.
+      const provider = await smsRegistry.activeAsync();
+      if (!provider?.isConfigured()) return this.undelivered(channel, 'No SMS gateway is configured.');
+      if (provider.name === MOCK_SMS_PROVIDER) {
+        return this.undelivered(channel, 'Only the SMS test double is available on this server, and it does not deliver messages.');
+      }
+      const result = await provider.send({ to: destination, message });
+      if (!result.success) return this.undelivered(channel, 'The SMS gateway refused the message.');
+      return { delivered: true };
     } catch (error) {
       // Never log the code, and never leak the provider's internals outward.
       logger.warn('Verification code could not be delivered', { channel, error: String(error) });
-      if (isProd) {
-        throw ApiError.badRequest(
-          channel === 'email'
-            ? 'We could not send the email just now. Try your phone number, or try again shortly.'
-            : 'We could not send the SMS just now. Try your email address, or try again shortly.',
-        );
-      }
+      return this.undelivered(channel, channel === 'email' ? 'The email gateway could not be reached.' : 'The SMS gateway could not be reached.');
     }
+  }
+
+  /** One place to decide what an undelivered code means for the caller. */
+  private undelivered(channel: VerificationChannel, note: string): { delivered: boolean; note: string } {
+    logger.warn('Verification code was not delivered', { channel, note });
+    if (isProd) {
+      throw ApiError.badRequest(
+        `${note} ${channel === 'email' ? 'Try your phone number instead, or try again shortly.' : 'Try your email address instead, or try again shortly.'}`,
+      );
+    }
+    return { delivered: false, note };
   }
 
   /** Checks a code and, on success, marks the contact verified. */

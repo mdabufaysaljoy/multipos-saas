@@ -39,6 +39,23 @@ Sending goes straight through the platform's SMTP provider or SMS provider — *
 wallet-billed messaging service. This is the platform verifying its own customer, so no workspace
 wallet is charged.
 
+**Credentials are reloaded before every send.** Both gateways are configured by a platform admin and
+live in the database, so the copy held in memory since boot is usually empty; the SMS path calls
+`smsRegistry.activeAsync()` (which refreshes first) and the email path `emailService.provider()`. Using
+the un-refreshed registry silently selected the **SMS test double** on a server that had
+`SMS_MOCK_ENABLED=true`, which reports success and delivers nothing — that is exactly how a code can
+"send" and never arrive.
+
+The test double is never treated as a delivery, even when it is the only provider available.
+
+### "Code sent" is only said when it was
+
+The send response carries `delivered` and, when false, a `deliveryNote` naming the reason ("No SMS
+gateway is configured.", "The SMS gateway refused the message.", "Only the SMS test double is
+available…"). Outside production the UI shows that instead of a success toast, with the development
+code beside it. In production an undelivered code is an outright error, so nobody is left waiting for a
+message that was never sent.
+
 ### The development code
 
 Development and test servers rarely have SMTP or an SMS gateway configured, and a verification step
@@ -96,6 +113,9 @@ is for. Nothing else in the app is affected while they are unverified.
 - One email address and one phone number per person — the ones on their user record. Changing them is
   done in Settings/Staff, not here.
 - No "verify later, remind me" schedule: the prompt is at registration, and the gate is at purchase.
-- SMS delivery depends on the platform's configured provider; if it is not set up, email is the way
-  through (and vice versa).
+- SMS delivery depends on the platform's configured provider (Platform admin → Settings → SMS); if it
+  is not set up, email is the way through, and vice versa. With neither configured, nobody can verify
+  and therefore nobody can buy — so configure at least one before going live.
+- `SMS_MOCK_ENABLED=true` belongs on test machines only. It registers a double that delivers nothing;
+  verification reports it as undelivered rather than pretending.
 - The code is not a second factor for signing in — it proves a contact detail, nothing more.

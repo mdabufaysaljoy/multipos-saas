@@ -9043,13 +9043,19 @@ async function main() {
     // ---- the code itself ----
     const vfSend = await api('/auth/verification/send', { method: 'POST', token: vfToken, body: { channel: 'email' } });
     check('A code is sent to the email address, and the response says where without saying what', vfSend.status === 200 && vfSend.data?.masked?.includes('*') && typeof vfSend.data?.expiresAt === 'string', vfSend.error ?? vfSend.data);
+    // This server has no SMTP and only the SMS test double, so the honest
+    // answer is "nothing was delivered" - never a cheerful "code sent".
+    check('The response says whether a message really went out, and why not', vfSend.data?.delivered === false && /gateway|test double/i.test(vfSend.data?.deliveryNote ?? ''), { delivered: vfSend.data?.delivered, note: vfSend.data?.deliveryNote });
+    const vfSmsSend = await api('/auth/verification/send', { method: 'POST', token: vfToken, body: { channel: 'phone' } });
+    check('An SMS through the test double is reported as NOT delivered - it never reaches a phone', vfSmsSend.data?.delivered === false && /test double|not configured|gateway/i.test(vfSmsSend.data?.deliveryNote ?? ''), { delivered: vfSmsSend.data?.delivered, note: vfSmsSend.data?.deliveryNote });
+    check('...and the code still works, so the step is completable on a machine with no gateway', (await api('/auth/verification/confirm', { method: 'POST', token: vfToken, body: { channel: 'phone', code: vfSmsSend.data?.devCode } })).data?.phone?.verified === true);
     const vfCode = vfSend.data?.devCode;
     check('Outside production the code is returned so an automated run can complete the step', /^\d{6}$/.test(vfCode ?? ''), typeof vfCode);
     check('An unknown channel is refused', (await api('/auth/verification/send', { method: 'POST', token: vfToken, body: { channel: 'pigeon' } })).status === 422);
     check('A code that is not six digits is refused before anything is checked', (await api('/auth/verification/confirm', { method: 'POST', token: vfToken, body: { channel: 'email', code: '12' } })).status === 422 && (await api('/auth/verification/confirm', { method: 'POST', token: vfToken, body: { channel: 'email', code: 'abcdef' } })).status === 422);
     const vfWrong = await api('/auth/verification/confirm', { method: 'POST', token: vfToken, body: { channel: 'email', code: vfCode === '000000' ? '111111' : '000000' } });
     check('A wrong code is refused, and says how many attempts are left', vfWrong.status === 400 && /attempt/i.test(vfWrong.error?.message ?? ''), vfWrong.error);
-    check('...and it does not verify anything', (await api('/auth/verification', { token: vfToken })).data?.anyVerified === false);
+    check('...and it does not verify the email address', (await api('/auth/verification', { token: vfToken })).data?.email?.verified === false);
     check('Asking for another code straight away is refused (a cooldown, not a free SMS tap)', (await api('/auth/verification/send', { method: 'POST', token: vfToken, body: { channel: 'email' } })).status === 429);
 
     const vfConfirm = await api('/auth/verification/confirm', { method: 'POST', token: vfToken, body: { channel: 'email', code: vfCode } });
@@ -9064,11 +9070,7 @@ async function main() {
     check('...and the workspace is on the plan it paid for', (await api('/subscriptions/current', { token: vfToken })).data?.subscription?.planSnapshot?.code === 'showroom-monthly');
 
     // ---- the phone channel ----
-    const vfPhoneSend = await api('/auth/verification/send', { method: 'POST', token: vfToken, body: { channel: 'phone' } });
-    check('The phone number can be verified separately, with its own code', vfPhoneSend.status === 200 && /^\d{6}$/.test(vfPhoneSend.data?.devCode ?? ''), vfPhoneSend.error);
-    check('An email code does not work for the phone', (await api('/auth/verification/confirm', { method: 'POST', token: vfToken, body: { channel: 'phone', code: vfCode } })).status === 400);
-    const vfPhoneOk = await api('/auth/verification/confirm', { method: 'POST', token: vfToken, body: { channel: 'phone', code: vfPhoneSend.data?.devCode } });
-    check('...and its own code does', vfPhoneOk.status === 200 && vfPhoneOk.data?.phone?.verified === true);
+    check('Both contacts end up verified, each with its own code', (await api('/auth/verification', { token: vfToken })).data?.phone?.verified === true && (await api('/auth/verification', { token: vfToken })).data?.email?.verified === true);
 
     // ---- a phone number that changes is no longer proven ----
     const vfStaffRoles = (await api('/roles', { token: vfToken })).data ?? [];

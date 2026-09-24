@@ -55,6 +55,9 @@ export interface VerificationSendResult {
   masked: string;
   expiresAt: string;
   resendAfterSeconds: number;
+  /** False when no real message went out (no gateway, or it refused). */
+  delivered: boolean;
+  deliveryNote?: string;
   /** Development and test only - never returned by a production server. */
   devCode?: string;
 }

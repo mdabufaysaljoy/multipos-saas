@@ -40,12 +40,20 @@ export function VerifyContactCard({ onVerified, className }: { onVerified?: (sta
       setSentTo(result.masked);
       setCooldown(result.resendAfterSeconds);
       setCode('');
-      toast.success(`Code sent to ${result.masked}`, {
-        // Development servers usually have no SMTP or SMS gateway; the server
-        // only returns this outside production.
-        description: result.devCode ? `Development code: ${result.devCode}` : 'It expires in 10 minutes.',
-        duration: result.devCode ? 30_000 : 5_000,
-      });
+      // Only claim a message was sent when one really was: the server says so,
+      // and a shop owner staring at a silent phone deserves the real reason.
+      const dev = result.devCode ? `Development code: ${result.devCode}` : null;
+      if (result.delivered) {
+        toast.success(`Code sent to ${result.masked}`, {
+          description: dev ?? 'It expires in 10 minutes.',
+          duration: dev ? 30_000 : 5_000,
+        });
+      } else {
+        toast.warning('No message was sent', {
+          description: [result.deliveryNote, dev].filter(Boolean).join(' ') || 'The gateway is not configured on this server.',
+          duration: 30_000,
+        });
+      }
     },
     onError: (error) => toast.error(error instanceof ApiError ? error.message : 'Could not send the code'),
   });
