@@ -9654,6 +9654,120 @@ async function main() {
     check('Enterprise keeps everything Professional has: export works again', exEnterprise.status === 200 && exEnterprise.text.includes(`রহিম উদ্দিন ${exStamp}`), exEnterprise.error);
   }
 
+  // --- Import in the other three POS types --------------------------------------
+  // The same two steps and the same engine as Clothing: validate & preview
+  // writes nothing, confirm creates each item through that vertical's OWN
+  // create service, so limits, uniqueness and opening stock behave exactly as
+  // they do for an item typed in by hand. What differs is the columns.
+  section('Bulk import (Super Shop, Pharmacy, Restaurant)');
+
+  const impStamp = String(Date.now()).slice(-7);
+  const sheetFor = (headers, rows) => productCsv(rows, { headers });
+
+  // ---- Super Shop ----
+  const ssImpCols = await api('/supershop/imports/columns', { token: ssToken });
+  check('Super Shop: the import API documents its own columns', ssImpCols.status === 200 && ssImpCols.data?.columns?.some((c) => c.label === 'Sold by'), ssImpCols.data?.columns?.map((c) => c.label));
+  check('Super Shop: it says what it is importing', ssImpCols.data?.noun?.many === 'products', ssImpCols.data?.noun);
+
+  const ssHeaders = ['Product', 'Price', 'Barcode', 'Department', 'Brand', 'Sold by', 'VAT rate', 'Reorder level', 'Opening stock', 'Cost price'];
+  const ssImpPreview = await uploadSheet('/supershop/imports/preview', {
+    token: ssToken,
+    bytes: sheetFor(ssHeaders, [
+      [`Imported Rice ${impStamp}`, '250', `88${impStamp}01`, `Imported ${impStamp}`, 'ZZ', 'Piece', '0', '5', '20', '150'],
+      [`Imported Dal ${impStamp}`, '180', '', `Imported ${impStamp}`, 'ZZ', 'Weight', '5', '0', '', ''],
+      ['', '99', '', '', '', '', '', '', '', ''],
+      [`Imported Oil ${impStamp}`, 'not a price', '', '', '', '', '', '', '', ''],
+    ]),
+  });
+  check('Super Shop: a file is validated without creating anything', ssImpPreview.status === 200 && ssImpPreview.data?.summary?.validRows === 2 && ssImpPreview.data.summary.invalidRows === 2, ssImpPreview.data?.summary ?? ssImpPreview.error);
+  check('Super Shop: the errors name the row and the column', (ssImpPreview.data?.errors ?? []).some((e) => e.field === 'price' && e.message.includes('number')), ssImpPreview.data?.errors);
+  check('Super Shop: the preview says which departments are new', (ssImpPreview.data?.newCategories ?? []).includes(`Imported ${impStamp}`), ssImpPreview.data?.newCategories);
+  check('Super Shop: and how many rows bring opening stock', ssImpPreview.data?.summary?.withOpeningStock === 1, ssImpPreview.data?.summary);
+  check('Super Shop: nothing was created by the preview', ((await ssApi(`/products?search=Imported Rice ${impStamp}`)).data ?? []).length === 0);
+
+  const ssImpRefused = await api(`/supershop/imports/${ssImpPreview.data.importId}/commit`, { method: 'POST', token: ssToken, body: { skipInvalidRows: false } });
+  check('Super Shop: a file with bad rows is refused unless the user says otherwise', ssImpRefused.status === 400 && ssImpRefused.error?.details?.reason === 'INVALID_ROWS', ssImpRefused.error);
+  const ssImpRun = await api(`/supershop/imports/${ssImpPreview.data.importId}/commit`, { method: 'POST', token: ssToken, body: { skipInvalidRows: true } });
+  check('Super Shop: the valid rows are imported', ssImpRun.status === 200 && ssImpRun.data?.summary?.itemsCreated === 2, ssImpRun.data?.summary ?? ssImpRun.error);
+
+  const ssImported = ((await ssApi(`/products?search=Imported Rice ${impStamp}`)).data ?? [])[0];
+  check('Super Shop: the product is priced and departmented as the file said', ssImported?.priceMinor === 25_000 && ssImported?.category === `Imported ${impStamp}`, ssImported);
+  check('Super Shop: the opening stock was received into this branch', ssImported?.stock?.quantityOnHand === 20 && ssImported?.stock?.costPriceMinor === 15_000, ssImported?.stock);
+  check('Super Shop: the opening stock is in the ledger, not a raw field write', ((await api(`/supershop/stock-ledger?itemId=${ssImported?._id}&limit=5`, { token: ssToken })).data ?? []).some((row) => row.quantityChange === 20));
+  check('Super Shop: a weighed row is created as weighed', ((await ssApi(`/products?search=Imported Dal ${impStamp}`)).data ?? [])[0]?.unitType === 'weight');
+  check('Super Shop: the new department joined the catalogue', ((await ssApi('/categories')).data ?? []).some((row) => row.name === `Imported ${impStamp}`));
+  check('Super Shop: the same import cannot be committed twice', (await api(`/supershop/imports/${ssImpPreview.data.importId}/commit`, { method: 'POST', token: ssToken, body: { skipInvalidRows: true } })).status === 400);
+  check('Super Shop: the history records what it created, never the file', ((await api('/supershop/imports', { token: ssToken })).data ?? []).some((row) => row.rowsImported === 2 && !('plan' in row)));
+
+  // A name already in the catalogue fails as a row, not as a file.
+  // Same name AND same brand as the row just imported: the vertical's own
+  // uniqueness rule refuses it, and the import reports the ROW, not the file.
+  const ssImpDup = await uploadSheet('/supershop/imports/preview', { token: ssToken, bytes: sheetFor(ssHeaders, [[`Imported Rice ${impStamp}`, '300', '', '', 'ZZ', '', '', '', '', '']]) });
+  const ssImpDupRun = await api(`/supershop/imports/${ssImpDup.data.importId}/commit`, { method: 'POST', token: ssToken, body: { skipInvalidRows: false } });
+  check(
+    'Super Shop: a product that already exists is reported as a failed row',
+    ssImpDupRun.status === 200 && ssImpDupRun.data?.summary?.rowsFailed === 1 && /already exists/i.test(ssImpDupRun.data.failures[0]?.message ?? ''),
+    ssImpDupRun.data,
+  );
+
+  // Two rows with the same name inside ONE file are caught before anything runs.
+  const ssImpTwice = await uploadSheet('/supershop/imports/preview', {
+    token: ssToken,
+    bytes: sheetFor(ssHeaders, [[`Twice ${impStamp}`, '10', '', '', '', '', '', '', '', ''], [`twice ${impStamp}`, '12', '', '', '', '', '', '', '', '']]),
+  });
+  check('Super Shop: the same name twice in one file is caught at preview', ssImpTwice.data?.summary?.invalidRows === 1 && (ssImpTwice.data?.errors ?? []).some((e) => e.message.includes('already on row')), ssImpTwice.data?.errors);
+
+  // ---- Pharmacy: batches make opening stock all-or-nothing ----
+  const phHeaders = ['Medicine', 'Price', 'Generic name', 'Strength', 'Form', 'Category', 'Prescription', 'Batch', 'Expiry', 'Quantity', 'Cost price'];
+  const phImpPreview = await uploadSheet('/pharmacy/imports/preview', {
+    token: phToken,
+    bytes: sheetFor(phHeaders, [
+      [`Imp Napa ${impStamp}`, '12', 'Paracetamol', '500 mg', 'tablet', `Imported ${impStamp}`, 'No', `IMP-${impStamp}`, '2030-01-31', '100', '8'],
+      [`Imp Amox ${impStamp}`, '30', 'Amoxicillin', '250 mg', 'capsule', '', 'Yes', '', '', '', ''],
+      [`Imp Bad ${impStamp}`, '10', '', '', 'tablet', '', 'No', `IMPX-${impStamp}`, '', '50', '5'],
+      [`Imp Old ${impStamp}`, '10', '', '', 'tablet', '', 'No', `IMPO-${impStamp}`, '2020-01-01', '5', '5'],
+    ]),
+  });
+  check('Pharmacy: rows with a batch, an expiry and a quantity are ready', phImpPreview.status === 200 && phImpPreview.data?.summary?.validRows === 2, phImpPreview.data?.summary ?? phImpPreview.error);
+  check('Pharmacy: a batch without an expiry is refused', (phImpPreview.data?.errors ?? []).some((e) => e.field === 'expiryDate' && /expiry/i.test(e.message)), phImpPreview.data?.errors);
+  check('Pharmacy: an already expired batch is refused', (phImpPreview.data?.errors ?? []).some((e) => /already expired/i.test(e.message)), phImpPreview.data?.errors);
+  const phImpRun = await api(`/pharmacy/imports/${phImpPreview.data.importId}/commit`, { method: 'POST', token: phToken, body: { skipInvalidRows: true } });
+  check('Pharmacy: the medicines are created', phImpRun.status === 200 && phImpRun.data?.summary?.itemsCreated === 2, phImpRun.data?.summary ?? phImpRun.error);
+  const phImported = ((await phApi(`/medicines?search=Imp Napa ${impStamp}`)).data ?? [])[0];
+  check('Pharmacy: the medicine carries what the file said', phImported?.sellingPriceMinor === 1_200 && phImported?.genericName === 'Paracetamol' && phImported?.strength === '500 mg', phImported);
+  check('Pharmacy: the opening batch was received with its expiry', (phImported?.stock?.sellable ?? 0) === 100, phImported?.stock);
+  check('Pharmacy: a row with no batch creates the medicine with no stock', (((await phApi(`/medicines?search=Imp Amox ${impStamp}`)).data ?? [])[0]?.stock?.sellable ?? 0) === 0);
+  check('Pharmacy: a prescription-only row is marked as such', ((await phApi(`/medicines?search=Imp Amox ${impStamp}`)).data ?? [])[0]?.requiresPrescription === true);
+
+  // ---- Restaurant ----
+  const rvHeaders = ['Dish', 'Price', 'Section', 'Description', 'Order', 'Available'];
+  const rvImpPreview = await uploadSheet('/restaurant/imports/preview', {
+    token: rvToken,
+    bytes: sheetFor(rvHeaders, [
+      [`Imp Tehari ${impStamp}`, '280', `Imported ${impStamp}`, 'Beef tehari', '1', 'Yes'],
+      [`Imp Lassi ${impStamp}`, '90', `Imported ${impStamp}`, '', '2', 'No'],
+    ]),
+  });
+  check('Restaurant: the menu file validates', rvImpPreview.status === 200 && rvImpPreview.data?.summary?.validRows === 2, rvImpPreview.data?.summary ?? rvImpPreview.error);
+  const rvImpRun = await api(`/restaurant/imports/${rvImpPreview.data.importId}/commit`, { method: 'POST', token: rvToken, body: { skipInvalidRows: false } });
+  check('Restaurant: the dishes are created', rvImpRun.status === 200 && rvImpRun.data?.summary?.itemsCreated === 2, rvImpRun.data?.summary ?? rvImpRun.error);
+  const rvImported = ((await api(`/restaurant/menu?search=Imp Tehari ${impStamp}`, { token: rvToken })).data ?? [])[0];
+  check('Restaurant: the dish is priced and sectioned as the file said', rvImported?.priceMinor === 28_000 && rvImported?.category === `Imported ${impStamp}`, rvImported);
+  check('Restaurant: an unavailable dish is created unavailable', ((await api(`/restaurant/menu?search=Imp Lassi ${impStamp}`, { token: rvToken })).data ?? [])[0]?.isAvailable === false);
+  check('Restaurant: the new section joined the catalogue', ((await api('/restaurant/categories', { token: rvToken })).data ?? []).some((row) => row.name === `Imported ${impStamp}`));
+
+  // ---- the rules that hold everywhere ----
+  check('An import needs a signed-in user', (await uploadSheet('/supershop/imports/preview', { bytes: sheetFor(ssHeaders, [['X', '1', '', '', '', '', '', '', '', '']]) })).status === 401);
+  check('Another workspace cannot import into this one', (await uploadSheet('/supershop/imports/preview', { token: phToken, bytes: sheetFor(ssHeaders, [['X', '1', '', '', '', '', '', '', '', '']]) })).status === 403);
+  check("Another workspace cannot commit this one's import", (await api(`/supershop/imports/${ssImpTwice.data.importId}/commit`, { method: 'POST', token: phToken, body: { skipInvalidRows: true } })).status === 403);
+  check('A till without products.import cannot import', (await uploadSheet('/supershop/imports/preview', { token: ssTill.session.token, bytes: sheetFor(ssHeaders, [['X', '1', '', '', '', '', '', '', '', '']]) })).status === 403);
+  check('A .txt file is refused', (await uploadSheet('/supershop/imports/preview', { token: ssToken, bytes: Buffer.from('Product,Price\nA,1'), filename: 'products.txt', type: 'text/plain' })).status === 400);
+  check('An .xlsm (macro) workbook is refused', (await uploadSheet('/supershop/imports/preview', { token: ssToken, bytes: sheetFor(ssHeaders, [['A', '1']]), filename: 'products.xlsm', type: 'application/vnd.ms-excel.sheet.macroEnabled.12' })).status === 400);
+  const ssImpNoHeader = await uploadSheet('/supershop/imports/preview', { token: ssToken, bytes: Buffer.from('nothing,useful\n1,2'), filename: 'products.csv' });
+  check('A file without the required columns says which are missing', ssImpNoHeader.status === 400 && /Price|header/i.test(ssImpNoHeader.error?.message ?? ''), ssImpNoHeader.error);
+  check('An id column in the file is ignored, never trusted', (await uploadSheet('/supershop/imports/preview', { token: ssToken, bytes: sheetFor(['Product', 'Price', 'Tenant id', 'Store id'], [[`Ignored Ids ${impStamp}`, '10', '64b000000000000000000000', '64b000000000000000000000']]) })).data?.summary?.validRows === 1);
+
+
   // --- Clothing POS bulk product import ---------------------------------------
   section('Clothing POS: bulk product import (Excel / CSV, every plan)');
   {

@@ -9,6 +9,7 @@ import { requireVertical } from '../../middleware/vertical';
 import { validate } from '../../middleware/validate';
 import { posLedgerQuerySchema } from '../../services/inventory/posLedger';
 import { stockLedger } from '../inventory/stockLedger.controller';
+import { posImportRouter } from '../posImports/posImports.routes';
 import { createCategory, listCategories, removeCategory, updateCategory } from '../posCategories/posCategories.controller';
 import { createPosCategorySchema, listPosCategoriesSchema, updatePosCategorySchema } from '../../services/catalogue/posCategories.service';
 import { idParam } from '../common/common.validators';
@@ -144,5 +145,8 @@ router.get('/stock-ledger', requirePermission(PERMISSIONS.INVENTORY_VIEW), valid
 router.get('/summary', requirePermission(PERMISSIONS.REPORTS_VIEW), validate({ query: summarySchema }), controller.summary);
 // The Restaurant dashboard: on every plan, like the Clothing dashboard.
 router.get('/dashboard', requirePermission(PERMISSIONS.REPORTS_VIEW), validate({ query: dashboardSchema }), controller.dashboard);
+
+// Bulk import of this vertical's catalogue; the same two-step flow Clothing has.
+router.use('/imports', posImportRouter());
 
 export default router;

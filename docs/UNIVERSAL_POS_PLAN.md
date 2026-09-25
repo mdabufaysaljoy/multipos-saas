@@ -56,7 +56,7 @@ Legend: **mature** = reference implementation · **partial** = works but narrowe
 | 4 | Customer selection | **mature** (`CustomerPicker`) | **done** (task 05) | **done** (task 05) | **done** (task 05) | `/api/customers`, the shared `CustomerPicker` and one `resolveForPosSale` | Restaurant selects per *order*, not per payment; Pharmacy keeps buyer and patient apart | ✅ complete | — |
 | 4b | Loyalty (card, points, scan) | **mature** | **done** (task 09 pt 2) | **done** (task 09 pt 2) | **done** (task 09 pt 1) | `loyaltyService` takes the sale model as a parameter; the return engine calls an optional `reverseLoyalty` on the sale adapter | earn base differs: Clothing subtotal, Super Shop ex-VAT, Pharmacy excludes prescription medicines, Restaurant earns on the settled bill | ✅ complete | **Medium** |
 | 5 | Return / exchange / refund / cancel | **mature** | **done** (task 08) | **done** (task 08) | **done** (task 08) | `services/returns/` engine + a sale adapter per vertical, on top of the inventory adapter | a restaurant refunds money only; Pharmacy returns to the *batch* it came from; Clothing keeps its exchange/loyalty engine | folding Clothing in, one day | **High** |
-| 6 | Bulk product import | **mature** (registry, preview, row errors, streamed) | missing | missing | missing | `import.parse.ts` (xlsx/csv, header detection) is already generic | mandatory columns differ per model: Clothing needs Product+Variant+Price; Super Shop barcode+price+qty; Pharmacy name+price(+batch); Restaurant name+price | Extract a column registry per vertical behind one engine | **Medium** |
+| 6 | Bulk product import | **mature** (registry, preview, row errors, streamed) | **done** (task 11) | **done** (task 11) | **done** (task 11) | one parser (`services/import/sheet.parse.ts`) + one preview/commit service; a column registry and a create step per vertical | Clothing's file describes products AND variants; Pharmacy's opening stock needs a dated batch; a restaurant has no stock at all | ✅ complete | **Medium** |
 | 7 | Category management + POS filter | **mature** (`Category` model, page, POS filter) | **done** (task 10) | **done** (task 10) | **done** (task 10) | `PosCategory` + `services/catalogue/posCategories.service.ts` + one screen and one filter component | Clothing keeps entities with ids and parents; the other three keep the name on the item, so the name IS the link | ✅ complete (no migration: names in use are listed whether or not a row exists) | **Medium** |
 | 8 | Authorized out-of-stock sale | **mature** (`sales.sellOutOfStock`, ledger flag, negative stock allowed) | n/a (no stock) | **missing** (batch quantity is hard-blocked) | **missing** (`ShopStock.quantityOnHand` has `min: 0`) | the permission exists platform-wide | Pharmacy must never sell *expired* stock, override or not; negative batch quantity is meaningless | Per-vertical override path + ledger flag | **High** |
 | 9 | Inventory management + ledger | **mature** (`InventoryTransaction`, before/after, actor, reference) | n/a | partial (`PharmacyStockMovement`) | partial (`ShopStockMovement`) | three parallel ledgers with the same shape | batch/expiry (Pharmacy), weighted-average cost (Super Shop), variants (Clothing) | Unify the *read* API and the movement contract, not the storage | **Medium** |
@@ -198,7 +198,7 @@ Each is independently executable, independently testable, and leaves the tree gr
 | **08** Universal return/exchange/refund ✅ **done** | `services/returns/` engine + a sale adapter for all three new verticals, partial returns, discount-aware refunds, restock switch, shared till dialog; a restaurant refunds money only. Left as a separate decision: folding Clothing's exchange/loyalty engine in | 03, 06 | **L** | High |
 | **09** Universal loyalty | Generalise the sale hooks; widen the entitlement's verticals; card scan selects the customer in every POS | 05 | M | Medium |
 | **10** Category management ✅ **done** | `PosCategory` (tenant + vertical), shared list/create/rename/hide/remove behind `/<vertical>/categories` in the three name-based verticals; rename rewrites the items, hide retires a department, remove refused while in use; till chips and an item-form picker; Clothing untouched | — | M | Medium |
-| **11** Universal import | Column registry per vertical behind the existing engine | 10 | M | Medium |
+| **11** Universal import ✅ **done** | Column registry per vertical behind the shared engine; `/<vertical>/imports` preview + commit, opening stock (Super Shop) and dated batches (Pharmacy), per-row errors, `productImport` now on every vertical | 10 | M | Medium |
 | **12** Dashboard date ranges ✅ **done** | One `dashboardRangeSchema` and `resolveDashboardWindow` (range, previous period, bucket, timezone) behind all four dashboards; `RangePicker` + shared `DashboardKpi` on the Pharmacy and Super Shop pages; risk 5 settled | — | S | Low |
 | **13** Analytics parity ✅ **done** | `services/reports/posMetrics.ts` contract (gross/returns/net/cost/profit); all three newer verticals report net of refunds on dashboard AND analytics, with a returns card; Restaurant gained the payment breakdown it never had. Left: staff performance in Super Shop and Pharmacy | 12 | M | Medium |
 | **14** PDF/print of reports | Serialise the current report view through `export.formats.ts` (already writes PDF) | 13 | M | Medium |
@@ -273,6 +273,7 @@ must pass unchanged, and the Clothing sections must not be edited to accommodate
 - `docs/ANALYTICS_PARITY.md` — the shared metric vocabulary, delivered by task 13.
 - `docs/LOYALTY_UNIVERSAL.md` — the card program in all four POS types, delivered by task 09.
 - `docs/CATEGORIES.md` — two shapes of category and the shared catalogue, delivered by task 10.
+- `docs/PRODUCT_IMPORT.md` — Clothing's import, and (task 11) the shared engine behind the other three.
 
 Feature docs (`PRINTING_ARCHITECTURE.md`, `PRODUCT_IMPORT.md`, `DATA_EXPORT.md`,
 `SUPPLIER_MANAGEMENT.md`, `CONTACT_VERIFICATION.md`, `ENTITLEMENTS.md`) remain accurate for Clothing
@@ -282,10 +283,11 @@ and are the reference material for the tasks above.
 
 ## 10. Recommended next task
 
-**Task 11 (universal import)**, which was waiting for task 10, then **task 14** (PDF/print of
-reports), which was waiting for task 13.
+**Task 14 — PDF/print of reports**, the last one on the list. Task 13 put the shared metrics under
+it, which is what it was waiting for.
 
-Task 11 now has a category list per vertical to validate an imported column against
-(`docs/CATEGORIES.md`), which is what it needed.
+Thirteen of the fourteen are done. What remains outside this list: folding Clothing's
+exchange/loyalty engine into the shared returns engine, and staff performance in Super Shop and
+Pharmacy analytics - both noted where they were left.
 
-Waiting for an explicit instruction before starting either.
+Waiting for an explicit instruction before starting.

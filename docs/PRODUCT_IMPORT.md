@@ -221,3 +221,55 @@ still refused, so the flag stays genuinely enforceable.
 - **Duplicate detection is by exact product name** (case-insensitive) within the branch; two genuinely
   different products that share a name cannot both be imported.
 - A file over 2,000 rows must be split.
+
+---
+
+## Import in the other three POS types (task 11)
+
+Scope changed: import is no longer Clothing-only. Super Shop, Pharmacy and Restaurant import their
+catalogues through the **same engine**, at `POST /api/<vertical>/imports/preview` and
+`/imports/:id/commit`, with the same two steps — validate & preview writes nothing, confirm creates
+each item through that vertical's **own create service**, so plan limits, name and barcode
+uniqueness, the category list and the opening-stock ledger behave exactly as they do for an item
+typed in by hand. Ownership never comes from the file: id columns are ignored, and tenant and branch
+come from the authenticated context.
+
+The entitlement `productImport` is now on every vertical, on every plan, for the same reason it was
+always on every Clothing plan: import is how a catalogue gets in, not an upgrade.
+
+### What is shared, and what is not
+
+| Shared (`services/import/`) | Per vertical |
+|---|---|
+| `sheet.parse.ts` — finding the header row inside an export's title block, formula-guard unwrapping, duplicate-column refusal, the row ceiling | the **column registry** |
+| `sheet.columns.ts` — header normalising, alias lookup, ignored/ownership columns | what a row *means* |
+| `posImport.service.ts` — the pending job, the preview, the commit loop, per-row failures, the history | how an item is **created** |
+
+Clothing's own module now uses the shared parser too; its columns (products **and** variants,
+attributes, SKUs) stay where they were.
+
+### The columns
+
+- **Super Shop** — `Product`*, `Price`*, Barcode, Department, Brand, Sold by (Piece/Weight), VAT
+  rate, Reorder level, Opening stock, Cost price, Active. Opening stock is received into the current
+  branch as a movement, and needs a cost price — without one the shop could not report profit.
+- **Pharmacy** — `Medicine`*, `Price`*, Generic name, Strength, Form, Manufacturer, Category,
+  Barcode, Prescription, Reorder level, Batch, Expiry, Quantity, Cost price, Active. Opening stock
+  is **all-or-nothing**: units must be attributable to a real, dated, unexpired batch, exactly as the
+  Receive stock form insists, so a row with a batch but no expiry is an error rather than a silent
+  medicine with no stock.
+- **Restaurant** — `Dish`*, `Price`*, Section, Description, Order, Available.
+
+(* required.)
+
+A category the file names that the workspace does not have is created with the item, through the
+shared catalogue (`docs/CATEGORIES.md`) — which is why task 11 waited for task 10. A hidden category
+is refused, as it is everywhere else.
+
+### Errors belong to rows
+
+A row that cannot be imported is reported with its **line number in the uploaded file** and the
+column at fault, and the file still imports if the user confirms "import the valid rows only". The
+same name twice inside one file is caught at preview, pointing at the row that claimed it first; a
+name that already exists in the catalogue fails as one row at commit, with the vertical's own
+message ("A product with this name and brand already exists").

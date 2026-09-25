@@ -1,3 +1,5 @@
+import type { ImportColumnSpec } from '../../services/import/sheet.columns';
+
 /**
  * The import column contract.
  *
@@ -23,24 +25,10 @@ export type ImportField =
   | 'description'
   | 'isActive';
 
-export interface ImportColumn {
-  field: ImportField;
-  /** The header the product export writes. */
-  label: string;
-  required: boolean;
-  /** Accepted headers, normalised (lower case, single spaces). The label is always accepted. */
-  aliases: string[];
-  hint: string;
-}
+/** Clothing's own registry entry; the shape is the shared one. */
+export type ImportColumn = ImportColumnSpec<ImportField>;
 
-/** Lower case, trimmed, runs of whitespace collapsed, surrounding quotes dropped. */
-export const normalizeHeader = (value: string): string =>
-  value
-    .replace(/^\uFEFF/, '')
-    .trim()
-    .replace(/^"(.*)"$/s, '$1')
-    .replace(/\s+/g, ' ')
-    .toLowerCase();
+export { normalizeHeader } from '../../services/import/sheet.columns';
 
 export const IMPORT_COLUMNS: ImportColumn[] = [
   {
@@ -81,69 +69,3 @@ export const IMPORT_COLUMNS: ImportColumn[] = [
   { field: 'description', label: 'Description', required: false, aliases: ['product description'], hint: 'Optional product description.' },
   { field: 'isActive', label: 'Active', required: false, aliases: ['status', 'is active'], hint: 'Yes/No (or Active/Inactive). Defaults to Yes.' },
 ];
-
-export const REQUIRED_FIELDS = IMPORT_COLUMNS.filter((column) => column.required).map((column) => column.field);
-export const REQUIRED_LABELS = IMPORT_COLUMNS.filter((column) => column.required).map((column) => column.label);
-
-/** header (normalised) -> field. Built once; an alias may not be claimed twice. */
-const HEADER_LOOKUP = new Map<string, ImportField>();
-for (const column of IMPORT_COLUMNS) {
-  for (const header of [column.label, ...column.aliases]) {
-    const key = normalizeHeader(header);
-    if (HEADER_LOOKUP.has(key) && HEADER_LOOKUP.get(key) !== column.field) {
-      throw new Error(`Ambiguous import header "${header}"`);
-    }
-    HEADER_LOOKUP.set(key, column.field);
-  }
-}
-
-/**
- * Columns the export writes that this import deliberately ignores, plus the
- * ownership columns that must never be trusted from a file. Ignored headers do
- * not make a file invalid - a user should be able to upload the sheet they
- * have.
- */
-const IGNORED_HEADERS = new Set(
-  [
-    'product id',
-    'productid',
-    'variant id',
-    'variantid',
-    'id',
-    '_id',
-    'tenant id',
-    'tenantid',
-    'workspace id',
-    'workspaceid',
-    'store id',
-    'storeid',
-    'branch id',
-    'account id',
-    'category id',
-    'categoryid',
-    'brand id',
-    'supplier id',
-    'created',
-    'created at',
-    'updated',
-    'updated at',
-  ].map(normalizeHeader),
-);
-
-export const isIgnoredHeader = (header: string): boolean => IGNORED_HEADERS.has(normalizeHeader(header));
-
-/** The field a header maps to, or null when it is not one of ours. */
-export const fieldForHeader = (header: string): ImportField | null => HEADER_LOOKUP.get(normalizeHeader(header)) ?? null;
-
-/**
- * How many of a row's cells look like import headers. Used to find the header
- * row inside a file that starts with the export's title block.
- */
-export const headerScore = (cells: string[]): number => {
-  const fields = new Set<ImportField>();
-  for (const cell of cells) {
-    const field = fieldForHeader(cell);
-    if (field) fields.add(field);
-  }
-  return fields.size;
-};

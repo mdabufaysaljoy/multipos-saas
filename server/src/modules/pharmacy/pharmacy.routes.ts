@@ -25,6 +25,7 @@ import {
 } from './pharmacy.validators';
 import { posLedgerQuerySchema } from '../../services/inventory/posLedger';
 import { stockLedger } from '../inventory/stockLedger.controller';
+import { posImportRouter } from '../posImports/posImports.routes';
 import { createCategory, listCategories, removeCategory, updateCategory } from '../posCategories/posCategories.controller';
 import { createPosCategorySchema, listPosCategoriesSchema, updatePosCategorySchema } from '../../services/catalogue/posCategories.service';
 
@@ -108,5 +109,8 @@ router.get(
   validate({ query: analyticsRangeSchema }),
   controller.reports,
 );
+
+// Bulk import of this vertical's catalogue; the same two-step flow Clothing has.
+router.use('/imports', posImportRouter());
 
 export default router;

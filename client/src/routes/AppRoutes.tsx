@@ -56,6 +56,9 @@ const ShopProductsPage = lazyPage(() => import('@/pages/supershop/ShopProductsPa
 const ShopInventoryPage = lazyPage(() => import('@/pages/supershop/ShopInventoryPage'), 'ShopInventoryPage');
 const ShopReturnsPage = lazyPage(() => import('@/pages/supershop/ShopReturnsPage'), 'ShopReturnsPage');
 const ShopCategoriesPage = lazyPage(() => import('@/pages/supershop/ShopCategoriesPage'), 'ShopCategoriesPage');
+const ShopImportPage = lazyPage(() => import('@/pages/supershop/ShopImportPage'), 'ShopImportPage');
+const PharmacyImportPage = lazyPage(() => import('@/pages/pharmacy/PharmacyImportPage'), 'PharmacyImportPage');
+const MenuImportPage = lazyPage(() => import('@/pages/restaurant/MenuImportPage'), 'MenuImportPage');
 const PharmacyCategoriesPage = lazyPage(() => import('@/pages/pharmacy/PharmacyCategoriesPage'), 'PharmacyCategoriesPage');
 const MenuCategoriesPage = lazyPage(() => import('@/pages/restaurant/MenuCategoriesPage'), 'MenuCategoriesPage');
 const PharmacyReturnsPage = lazyPage(() => import('@/pages/pharmacy/PharmacyReturnsPage'), 'PharmacyReturnsPage');
@@ -248,6 +251,30 @@ export function AppRoutes() {
           element={
             <ProtectedRoute anyOf={['inventory.view']}>
               <ShopInventoryPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/shop-import"
+          element={
+            <ProtectedRoute anyOf={['products.import']}>
+              <ShopImportPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/pharmacy-import"
+          element={
+            <ProtectedRoute anyOf={['products.import']}>
+              <PharmacyImportPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/menu-import"
+          element={
+            <ProtectedRoute anyOf={['products.import']}>
+              <MenuImportPage />
             </ProtectedRoute>
           }
         />

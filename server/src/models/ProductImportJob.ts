@@ -16,6 +16,8 @@ export type ProductImportStatus = (typeof IMPORT_STATUSES)[number];
 export interface ProductImportJobDoc extends BaseDoc {
   tenantId: Types.ObjectId;
   storeId: Types.ObjectId;
+  /** Which POS type's catalogue this import filled. Older rows are Clothing's. */
+  vertical: string;
   filename: string;
   format: 'xlsx' | 'csv';
   status: ProductImportStatus;
@@ -44,6 +46,7 @@ const productImportJobSchema = new Schema<ProductImportJobDoc>(
   {
     tenantId: { type: Schema.Types.ObjectId, ref: 'Tenant', required: true },
     storeId: { type: Schema.Types.ObjectId, ref: 'Store', required: true },
+    vertical: { type: String, default: 'clothing' },
     filename: { type: String, default: '', maxlength: 260 },
     format: { type: String, enum: ['xlsx', 'csv'], required: true },
     status: { type: String, enum: IMPORT_STATUSES, required: true },

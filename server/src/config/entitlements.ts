@@ -57,7 +57,8 @@ export const ENTITLEMENT_FEATURES = {
   // The tills that run a card program; a POS type not listed here never receives it.
   loyalty: { label: 'Loyalty program', planFeature: 'loyaltyProgram', verticals: ['clothing', 'supershop', 'pharmacy', 'restaurant'] },
   // Separate from `dataExport` on purpose: import is on every plan, export is not.
-  productImport: { label: 'Bulk product import', planFeature: 'productImport', verticals: ['clothing'] },
+  // Import is how a catalogue gets in, so every POS type has it on every plan.
+  productImport: { label: 'Bulk product import', planFeature: 'productImport' },
   supplierManagement: { label: 'Supplier management', planFeature: 'supplierManagement', verticals: ['clothing'] },
 } as const satisfies Record<string, FeatureDefinition>;
 
