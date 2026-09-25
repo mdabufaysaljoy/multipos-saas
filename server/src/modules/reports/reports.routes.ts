@@ -35,6 +35,10 @@ const multiBranch = requireEntitlement('multiBranch');
 
 // Legacy combined endpoint: carries staff, category and variant breakdowns.
 router.get('/dashboard', advanced, canView, validate({ query: reportRangeSchema }), controller.dashboard);
+// The same report as a PDF. Printing what the page already shows is part of the
+// report, so it is gated by the report's own permission and plan feature - not
+// by Data export, which hands over the underlying rows and is sold apart.
+router.get('/print', advanced, canView, validate({ query: reportRangeSchema }), controller.printReport);
 router.get('/sales', advanced, canView, validate({ query: reportRangeSchema }), controller.salesAndProfit);
 router.get('/breakdown', advanced, canView, validate({ query: breakdownSchema }), controller.breakdown);
 router.get('/payments', advanced, canView, validate({ query: reportRangeSchema }), controller.payments);

@@ -4,11 +4,21 @@ import { ok } from '../../utils/apiResponse';
 import { query } from '../../middleware/validate';
 import { getContext } from '../../middleware/tenant';
 import { reportService } from './reports.service';
+import { streamReportPdf } from '../../services/reports/reportPrint';
+import { clothingReportView } from '../../services/reports/reportViews';
+import { storeCurrency } from '../../services/reports/storeCurrency';
 import { entitlementService } from '../../services/subscription/entitlement.service';
 import type { BreakdownInput, InventoryReportInput, ReportRangeInput } from './reports.validators';
 
 export const dashboard = asyncHandler(async (req: Request, res: Response) => {
   ok(res, await reportService.dashboard(getContext(req), query<ReportRangeInput>(req)));
+});
+
+/** The same report as a PDF: what the screen shows, printed. */
+export const printReport = asyncHandler(async (req: Request, res: Response) => {
+  const ctx = getContext(req);
+  const data = await reportService.dashboard(ctx, query<ReportRangeInput>(req));
+  await streamReportPdf(ctx, res, clothingReportView(data as unknown as Record<string, unknown>, await storeCurrency(ctx)));
 });
 
 export const overview = asyncHandler(async (req: Request, res: Response) => {

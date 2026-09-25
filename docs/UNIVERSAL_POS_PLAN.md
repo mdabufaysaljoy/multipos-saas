@@ -201,7 +201,7 @@ Each is independently executable, independently testable, and leaves the tree gr
 | **11** Universal import ✅ **done** | Column registry per vertical behind the shared engine; `/<vertical>/imports` preview + commit, opening stock (Super Shop) and dated batches (Pharmacy), per-row errors, `productImport` now on every vertical | 10 | M | Medium |
 | **12** Dashboard date ranges ✅ **done** | One `dashboardRangeSchema` and `resolveDashboardWindow` (range, previous period, bucket, timezone) behind all four dashboards; `RangePicker` + shared `DashboardKpi` on the Pharmacy and Super Shop pages; risk 5 settled | — | S | Low |
 | **13** Analytics parity ✅ **done** | `services/reports/posMetrics.ts` contract (gross/returns/net/cost/profit); all three newer verticals report net of refunds on dashboard AND analytics, with a returns card; Restaurant gained the payment breakdown it never had. Left: staff performance in Super Shop and Pharmacy | 12 | M | Medium |
-| **14** PDF/print of reports | Serialise the current report view through `export.formats.ts` (already writes PDF) | 13 | M | Medium |
+| **14** PDF/print of reports ✅ **done** | `services/reports/reportPrint.ts` + a view per vertical, streamed through the export module's own `writePdf`; `GET /<vertical>/reports/print` gated by the report's own permission and plan feature, not by Data export | 13 | M | Medium |
 
 Recommended sequencing: **01 ✅ → 12 ✅ → 05 ✅ → 02 ✅ → 04 ✅ → 06 ✅ → 07 ✅ → 03 ✅ → 08 ✅ → 13 ✅ → 09 → 10 → 11 → 14.**
 That front-loads the visible wins that carry almost no risk, and defers the two schema-wide changes
@@ -274,6 +274,7 @@ must pass unchanged, and the Clothing sections must not be edited to accommodate
 - `docs/LOYALTY_UNIVERSAL.md` — the card program in all four POS types, delivered by task 09.
 - `docs/CATEGORIES.md` — two shapes of category and the shared catalogue, delivered by task 10.
 - `docs/PRODUCT_IMPORT.md` — Clothing's import, and (task 11) the shared engine behind the other three.
+- `docs/REPORT_PRINTING.md` — printing a report, and why that is not exporting, delivered by task 14.
 
 Feature docs (`PRINTING_ARCHITECTURE.md`, `PRODUCT_IMPORT.md`, `DATA_EXPORT.md`,
 `SUPPLIER_MANAGEMENT.md`, `CONTACT_VERIFICATION.md`, `ENTITLEMENTS.md`) remain accurate for Clothing
@@ -283,11 +284,15 @@ and are the reference material for the tasks above.
 
 ## 10. Recommended next task
 
-**Task 14 — PDF/print of reports**, the last one on the list. Task 13 put the shared metrics under
-it, which is what it was waiting for.
+**All fourteen tasks are done.** What this plan set out to make universal - printing, payments,
+customers, loyalty, inventory, returns, analytics, categories, import, report printing - is
+universal.
 
-Thirteen of the fourteen are done. What remains outside this list: folding Clothing's
-exchange/loyalty engine into the shared returns engine, and staff performance in Super Shop and
-Pharmacy analytics - both noted where they were left.
+What is deliberately left, each noted where it was decided:
 
-Waiting for an explicit instruction before starting.
+- folding Clothing's exchange/loyalty engine into the shared returns engine (task 08);
+- staff performance in Super Shop and Pharmacy analytics (task 13);
+- Clothing's refunds do not apportion a sale discount the way the shared engine does (task 08);
+- Data export is still Clothing-only: its dataset registry is built from Clothing collections.
+
+Waiting for an explicit instruction before starting any of them.

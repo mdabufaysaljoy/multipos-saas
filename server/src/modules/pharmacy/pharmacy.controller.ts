@@ -10,6 +10,9 @@ import { pharmacySaleReturnAdapter } from '../../services/returns/adapters/pharm
 import { recordAudit } from '../../services/audit/audit.service';
 import { pharmacyService } from './pharmacy.service';
 import { pharmacyReportsService } from './pharmacyReports.service';
+import { streamReportPdf } from '../../services/reports/reportPrint';
+import { pharmacyReportView } from '../../services/reports/reportViews';
+import { storeCurrency } from '../../services/reports/storeCurrency';
 import type { AnalyticsRangeInput, DashboardRangeInput } from '../reports/reports.validators';
 import type {
   AdjustBatchInput,
@@ -153,4 +156,11 @@ export const dashboard = asyncHandler(async (req: Request, res: Response) => {
 
 export const reports = asyncHandler(async (req: Request, res: Response) => {
   ok(res, await pharmacyReportsService.report(getContext(req), query<AnalyticsRangeInput>(req)));
+});
+
+/** The same report as a PDF: what the screen shows, printed. */
+export const printReports = asyncHandler(async (req: Request, res: Response) => {
+  const ctx = getContext(req);
+  const data = await pharmacyReportsService.report(ctx, query<AnalyticsRangeInput>(req));
+  await streamReportPdf(ctx, res, pharmacyReportView(data as unknown as Record<string, unknown>, await storeCurrency(ctx)));
 });

@@ -10,6 +10,9 @@ import { restaurantSaleReturnAdapter } from '../../services/returns/adapters/res
 import { recordAudit } from '../../services/audit/audit.service';
 import { restaurantService } from './restaurant.service';
 import { restaurantReportsService } from './restaurantReports.service';
+import { streamReportPdf } from '../../services/reports/reportPrint';
+import { restaurantReportView } from '../../services/reports/reportViews';
+import { storeCurrency } from '../../services/reports/storeCurrency';
 import { shiftService } from './shifts.service';
 import type {
   CashMovementInput,
@@ -224,6 +227,13 @@ export const getShift = asyncHandler(async (req: Request, res: Response) => {
 
 export const reports = asyncHandler(async (req: Request, res: Response) => {
   ok(res, await restaurantReportsService.report(getContext(req), query<DashboardInput>(req)));
+});
+
+/** The same report as a PDF: what the screen shows, printed. */
+export const printReports = asyncHandler(async (req: Request, res: Response) => {
+  const ctx = getContext(req);
+  const data = await restaurantReportsService.report(ctx, query<DashboardInput>(req));
+  await streamReportPdf(ctx, res, restaurantReportView(data as unknown as Record<string, unknown>, await storeCurrency(ctx)));
 });
 
 export const summary = asyncHandler(async (req: Request, res: Response) => {

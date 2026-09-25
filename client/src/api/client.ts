@@ -146,6 +146,14 @@ export async function postDownload(url: string, body?: unknown): Promise<{ blob:
   return { blob: res.data, filename: match?.[1] ?? 'export' };
 }
 
+/** A GET that returns a file (a printed report), with the server's filename. */
+export async function getDownload(url: string, params?: Record<string, unknown>): Promise<{ blob: Blob; filename: string }> {
+  const res = await http.get<Blob>(url, { params, responseType: 'blob' });
+  const disposition = String(res.headers['content-disposition'] ?? '');
+  const match = /filename="?([^"]+)"?/.exec(disposition);
+  return { blob: res.data, filename: match?.[1] ?? 'report.pdf' };
+}
+
 export async function post<T>(url: string, body?: unknown): Promise<T> {
   const res = await http.post<ApiEnvelope<T>>(url, body);
   return res.data.data;

@@ -8,6 +8,7 @@ import { EmptyState, LoadingState } from '@/components/states';
 import { PageHeader } from '@/components/PageHeader';
 import { ReturnsCardBody } from '@/features/reports/ReturnsCard';
 import { AdvancedAnalyticsLocked } from '@/features/reports/AdvancedAnalyticsLocked';
+import { PrintReportButton } from '@/features/reports/PrintReportButton';
 import { REPORT_PRESETS, RangePicker, isRangeReady, rangeParams, type RangeValue } from '@/features/reports/RangePicker';
 import { Variance } from '@/pages/restaurant/ShiftsPage';
 import { ApiError } from '@/api/client';
@@ -56,6 +57,7 @@ export function RestaurantReportsPage() {
             ? `${data.range.label} · ${format(parseISO(data.range.from), 'dd MMM')} – ${format(parseISO(data.range.to), 'dd MMM yyyy')}`
             : 'Menu, voids, kitchen and cash drawer analysis'
         }
+        actions={<PrintReportButton path="/restaurant/reports/print" params={rangeParams(range)} disabled={!data} />}
       />
       <RangePicker value={range} onChange={setRange} presets={REPORT_PRESETS} />
 

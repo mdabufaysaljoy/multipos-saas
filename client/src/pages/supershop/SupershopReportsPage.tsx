@@ -7,6 +7,7 @@ import { PageHeader } from '@/components/PageHeader';
 import { AdvancedAnalyticsLocked } from '@/features/reports/AdvancedAnalyticsLocked';
 import { ReturnsCardBody, ReturnsCardIcon } from '@/features/reports/ReturnsCard';
 import { AnalyticsCard, AnalyticsStat, BarList, PAYMENT_LABELS, formatBps } from '@/features/reports/AnalyticsParts';
+import { PrintReportButton } from '@/features/reports/PrintReportButton';
 import { REPORT_PRESETS, RangePicker, isRangeReady, rangeParams, type RangeValue } from '@/features/reports/RangePicker';
 import { ApiError } from '@/api/client';
 import { supershopApi } from '@/api/supershop';
@@ -51,6 +52,7 @@ export function SupershopReportsPage() {
             ? `${data.range.label} · ${format(parseISO(data.range.from), 'dd MMM')} – ${format(parseISO(data.range.to), 'dd MMM yyyy')}`
             : 'Margin, VAT, best sellers, busy hours and dead stock'
         }
+        actions={<PrintReportButton path="/supershop/reports/print" params={rangeParams(range)} disabled={!data} />}
       />
       <RangePicker value={range} onChange={setRange} presets={REPORT_PRESETS} />
 

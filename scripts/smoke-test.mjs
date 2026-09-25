@@ -47,6 +47,28 @@ async function api(path, { method = 'GET', token, body, storeId, headers: extraH
  * Requests a file download (data export). Returns the raw bytes, so the tests
  * can check real file signatures rather than a JSON stand-in.
  */
+/** Requests a file from a GET endpoint (a printed report). Returns the raw bytes. */
+async function fetchFile(path, { token, storeId } = {}) {
+  const res = await fetch(`${BASE}${path}`, {
+    headers: {
+      ...(token ? { authorization: `Bearer ${token}` } : {}),
+      ...(storeId ? { 'x-store-id': storeId } : {}),
+    },
+  });
+  const buffer = Buffer.from(await res.arrayBuffer());
+  const contentType = res.headers.get('content-type') ?? '';
+  const json = contentType.includes('application/json') ? JSON.parse(buffer.toString('utf8') || '{}') : null;
+  return {
+    status: res.status,
+    contentType,
+    disposition: res.headers.get('content-disposition') ?? '',
+    cacheControl: res.headers.get('cache-control') ?? '',
+    buffer,
+    text: buffer.toString('latin1'),
+    error: json?.error,
+  };
+}
+
 async function download(path, { token, storeId, body } = {}) {
   const res = await fetch(`${BASE}${path}`, {
     method: 'POST',
@@ -9653,6 +9675,48 @@ async function main() {
     const exEnterprise = await download('/exports', { token: exOwner, ...A, body: { type: 'customers', format: 'csv' } });
     check('Enterprise keeps everything Professional has: export works again', exEnterprise.status === 200 && exEnterprise.text.includes(`রহিম উদ্দিন ${exStamp}`), exEnterprise.error);
   }
+
+  // --- Printing a report --------------------------------------------------------
+  // The report on screen, as a PDF, through the export module's own writer - so
+  // a printed report and an exported dataset look like the same product. It is
+  // NOT the data export: it is gated by the report's own permission and plan
+  // feature, and it produces no other format.
+  section('Printing reports (all verticals)');
+
+  const isPdf = (file) => file.buffer.subarray(0, 5).toString('latin1') === '%PDF-' && file.buffer.length > 800;
+
+  const ssPrint = await fetchFile('/supershop/reports/print?preset=last30', { token: ssToken });
+  check('Super Shop: the report prints as a PDF', ssPrint.status === 200 && isPdf(ssPrint), { status: ssPrint.status, type: ssPrint.contentType, bytes: ssPrint.buffer.length });
+  check('Super Shop: it is sent as a download, named and uncacheable', /attachment; filename="advanced-analytics-\d{4}-\d{2}-\d{2}\.pdf"/.test(ssPrint.disposition) && ssPrint.cacheControl === 'no-store', {
+    disposition: ssPrint.disposition,
+    cache: ssPrint.cacheControl,
+  });
+  const ssPrintAgain = await fetchFile('/supershop/reports/print?preset=last30', { token: ssToken });
+  check('Super Shop: printing the same report twice gives the same document', ssPrintAgain.buffer.length === ssPrint.buffer.length, {
+    first: ssPrint.buffer.length,
+    second: ssPrintAgain.buffer.length,
+  });
+
+  const phPrint = await fetchFile('/pharmacy/reports/print?preset=last30', { token: phToken });
+  check('Pharmacy: the report prints as a PDF', phPrint.status === 200 && isPdf(phPrint), { status: phPrint.status, bytes: phPrint.buffer.length });
+  const rvPrint = await fetchFile('/restaurant/reports/print?preset=last30', { token: rvToken });
+  check('Restaurant: the report prints as a PDF', rvPrint.status === 200 && isPdf(rvPrint), { status: rvPrint.status, bytes: rvPrint.buffer.length });
+  const clPrint = await fetchFile('/reports/print?preset=last30', { token: admin.token, storeId: admin.session?.store?._id });
+  check('Clothing: the report prints as a PDF', clPrint.status === 200 && isPdf(clPrint), { status: clPrint.status, bytes: clPrint.buffer.length });
+
+  // A different range is a different report, not the same bytes again.
+  const ssToday = await fetchFile('/supershop/reports/print?preset=today', { token: ssToken });
+  check('The printed report follows the range that was asked for', ssToday.status === 200 && ssToday.buffer.length !== ssPrint.buffer.length, {
+    last30: ssPrint.buffer.length,
+    today: ssToday.buffer.length,
+  });
+  check('An invalid range is refused rather than printed', (await fetchFile('/supershop/reports/print?preset=never', { token: ssToken })).status === 422);
+
+  // The same gates as the report itself, and no more.
+  check('Printing needs a signed-in user', (await fetchFile('/supershop/reports/print?preset=today')).status === 401);
+  check('Another workspace cannot print this one’s report', (await fetchFile('/supershop/reports/print?preset=today', { token: phToken })).status === 403);
+  check('Printing needs reports.view', (await fetchFile('/supershop/reports/print?preset=today', { token: ssTill.session.token })).status === 403);
+
 
   // --- Import in the other three POS types --------------------------------------
   // The same two steps and the same engine as Clothing: validate & preview

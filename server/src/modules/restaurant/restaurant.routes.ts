@@ -138,6 +138,17 @@ router.get(
   controller.reports,
 );
 
+// The same report as a PDF. Printing what the page already shows is part of
+// the report, so it is gated by the report's own permission and plan feature -
+// not by Data export, which hands over the underlying rows and is sold apart.
+router.get(
+  '/reports/print',
+  requirePermission(PERMISSIONS.REPORTS_VIEW),
+  requireEntitlement('advancedAnalytics'),
+  validate({ query: restaurantReportsSchema }),
+  controller.printReports,
+);
+
 // A restaurant keeps no stock, so this always answers with an empty page -
 // the same route and the same shape as every other vertical.
 router.get('/stock-ledger', requirePermission(PERMISSIONS.INVENTORY_VIEW), validate({ query: posLedgerQuerySchema }), stockLedger);

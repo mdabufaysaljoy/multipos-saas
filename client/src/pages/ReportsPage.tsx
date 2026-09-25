@@ -12,6 +12,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { EmptyState, LoadingState } from '@/components/states';
 import { PageHeader } from '@/components/PageHeader';
+import { PrintReportButton } from '@/features/reports/PrintReportButton';
 import { RangePicker, isRangeReady, rangeParams, type RangeValue } from '@/features/reports/RangePicker';
 import { reportApi } from '@/api/endpoints';
 import { ApiError } from '@/api/client';
@@ -55,7 +56,11 @@ export function ReportsPage() {
 
   return (
     <div className="space-y-5 p-4 lg:p-6">
-      <PageHeader title="Advanced Analytics" description="Deeper sales, profit, product and customer analysis." />
+      <PageHeader
+        title="Advanced Analytics"
+        description="Deeper sales, profit, product and customer analysis."
+        actions={<PrintReportButton path="/reports/print" params={params} />}
+      />
 
       <Card>
         <CardContent className="p-4">

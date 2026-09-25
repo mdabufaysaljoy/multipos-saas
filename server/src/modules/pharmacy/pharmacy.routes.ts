@@ -110,6 +110,17 @@ router.get(
   controller.reports,
 );
 
+// The same report as a PDF. Printing what the page already shows is part of
+// the report, so it is gated by the report's own permission and plan feature -
+// not by Data export, which hands over the underlying rows and is sold apart.
+router.get(
+  '/reports/print',
+  requirePermission(PERMISSIONS.REPORTS_VIEW),
+  requireEntitlement('advancedAnalytics'),
+  validate({ query: analyticsRangeSchema }),
+  controller.printReports,
+);
+
 // Bulk import of this vertical's catalogue; the same two-step flow Clothing has.
 router.use('/imports', posImportRouter());
 
