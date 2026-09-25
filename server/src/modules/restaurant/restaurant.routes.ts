@@ -9,6 +9,8 @@ import { requireVertical } from '../../middleware/vertical';
 import { validate } from '../../middleware/validate';
 import { posLedgerQuerySchema } from '../../services/inventory/posLedger';
 import { stockLedger } from '../inventory/stockLedger.controller';
+import { createCategory, listCategories, removeCategory, updateCategory } from '../posCategories/posCategories.controller';
+import { createPosCategorySchema, listPosCategoriesSchema, updatePosCategorySchema } from '../../services/catalogue/posCategories.service';
 import { idParam } from '../common/common.validators';
 import * as controller from './restaurant.controller';
 import {
@@ -49,6 +51,31 @@ const router = Router();
 router.use(authenticate, resolveTenant, requireVertical('restaurant'), requireSubscribedAccess);
 
 // ------------------------------------------------------------------ menu
+// The departments this workspace sells under; the same four routes in every POS
+// type whose items carry the category as a name (see services/catalogue).
+router.get('/categories', requirePermission(PERMISSIONS.PRODUCTS_VIEW), validate({ query: listPosCategoriesSchema }), listCategories);
+router.post(
+  '/categories',
+  requireActiveSubscription,
+  requirePermission(PERMISSIONS.CATEGORIES_CREATE),
+  validate({ body: createPosCategorySchema }),
+  createCategory,
+);
+router.patch(
+  '/categories/:id',
+  requireActiveSubscription,
+  requirePermission(PERMISSIONS.CATEGORIES_EDIT),
+  validate({ params: idParam, body: updatePosCategorySchema }),
+  updateCategory,
+);
+router.delete(
+  '/categories/:id',
+  requireActiveSubscription,
+  requirePermission(PERMISSIONS.CATEGORIES_DELETE),
+  validate({ params: idParam }),
+  removeCategory,
+);
+
 router.get('/menu', requirePermission(PERMISSIONS.PRODUCTS_VIEW), validate({ query: listMenuSchema }), controller.listMenu);
 router.post('/menu', requireActiveSubscription, requirePermission(PERMISSIONS.PRODUCTS_CREATE), validate({ body: createMenuItemSchema }), controller.createMenuItem);
 router.patch('/menu/:id', requireActiveSubscription, requirePermission(PERMISSIONS.PRODUCTS_EDIT), validate({ params: idParam, body: updateMenuItemSchema }), controller.updateMenuItem);

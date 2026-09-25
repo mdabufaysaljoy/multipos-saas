@@ -34,7 +34,6 @@ export const supershopApi = {
   products: (params?: Query) => getPaginated<ShopProduct>('/supershop/products', params),
   product: (id: string) => get<ShopProductDetail>(`/supershop/products/${id}`),
   lookup: (barcode: string) => get<ShopProduct>('/supershop/products/lookup', { barcode }),
-  categories: () => get<string[]>('/supershop/categories'),
   createProduct: (body: ShopProductInput) => post<ShopProduct>('/supershop/products', body),
   updateProduct: (id: string, body: Partial<Omit<ShopProductInput, 'unitType'>>) => patch<ShopProduct>(`/supershop/products/${id}`, body),
   removeProduct: (id: string) => del<{ id: string }>(`/supershop/products/${id}`),

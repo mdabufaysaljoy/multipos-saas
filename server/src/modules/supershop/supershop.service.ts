@@ -12,6 +12,7 @@ import { formatDocumentNumber, nextSequence } from '../../utils/counters';
 import { resolvePage, searchRegex } from '../../utils/pagination';
 import { entitlementService } from '../../services/subscription/entitlement.service';
 import { customerService } from '../customers/customers.service';
+import { posCategoryService } from '../../services/catalogue/posCategories.service';
 import { loyaltyService } from '../loyalty/loyalty.service';
 import { pointsForSpend } from '../loyalty/loyalty.math';
 import { logger } from '../../utils/logger';
@@ -94,11 +95,6 @@ class SupershopService {
     return this.withStock(product, await this.stockFor(ctx, [product._id]));
   }
 
-  async categories(ctx: TenantContext) {
-    const categories = await ShopProductModel.distinct('category', { tenantId: ctx.tenantId, deletedAt: null });
-    return (categories as string[]).sort((a, b) => a.localeCompare(b));
-  }
-
   async getProduct(ctx: TenantContext, id: Types.ObjectId) {
     const product = await this.findProduct(ctx, id);
     const [stock, movements] = await Promise.all([
@@ -113,12 +109,16 @@ class SupershopService {
     await entitlementService.assertCanAddProduct(ctx.tenantId, entitlement, 'supershop');
     const values = { ...input, category: input.category || 'General' };
     await this.assertUnique(ctx, values);
+    // A department the shop has retired cannot take new goods; a new name joins
+    // the catalogue so it can be managed like the rest.
+    await posCategoryService.assertUsable(ctx, 'supershop', values.category);
     const product = await ShopProductModel.create({ tenantId: ctx.tenantId, ...values, createdBy: ctx.userId });
     return product.toObject();
   }
 
   async updateProduct(ctx: TenantContext, id: Types.ObjectId, input: UpdateProductInput) {
     const before = await this.findProduct(ctx, id);
+    if (input.category) await posCategoryService.assertUsable(ctx, 'supershop', input.category);
     await this.assertUnique(ctx, { name: input.name ?? before.name, brand: input.brand ?? before.brand, barcode: input.barcode ?? before.barcode }, id);
     const after = await ShopProductModel.findOneAndUpdate({ _id: id, tenantId: ctx.tenantId, deletedAt: null }, { $set: input }, { new: true, runValidators: true }).lean<ProductRecord>();
     if (!after) throw ApiError.notFound('Product not found');

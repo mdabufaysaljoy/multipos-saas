@@ -21,6 +21,8 @@ import { LoadingState } from '@/components/states';
 import { ApiError } from '@/api/client';
 import { BarcodePrintDialog } from '@/features/barcode/BarcodePrintDialog';
 import { pharmacyApi } from '@/api/pharmacy';
+import { pharmacyCategoriesApi } from '@/api/posCategories';
+import { CategoryInput } from '@/features/catalogue/CategoryInput';
 import { formatMoney } from '@/lib/money';
 import { DOSAGE_FORM_LABELS, expiryTone, formatExpiry, todayInputValue } from '@/lib/pharmacy';
 import { useAuth } from '@/hooks/useAuth';
@@ -328,7 +330,7 @@ function MedicineDialog({
             </Select>
           </div>
           <Field id="med-maker" label="Manufacturer" value={draft.manufacturer} max={120} onChange={(v) => set('manufacturer', v)} />
-          <Field id="med-category" label="Category" value={draft.category} max={60} onChange={(v) => set('category', v)} />
+          <CategoryInput id="med-category" label="Category" value={draft.category} onChange={(v) => set('category', v)} api={pharmacyCategoriesApi} queryKey="pharmacy" />
           <Field id="med-barcode" label="Barcode" value={draft.barcode} max={64} onChange={(v) => set('barcode', v)} placeholder="Optional" />
           <div className="space-y-1.5">
             <Label>Selling price (per unit)</Label>

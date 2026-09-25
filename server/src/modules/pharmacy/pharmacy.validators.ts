@@ -56,6 +56,7 @@ export const updateMedicineSchema = z
   .refine((input) => Object.keys(input).length > 0, 'Nothing to update');
 
 export const listMedicinesSchema = searchSchema.extend({
+  category: z.string().trim().max(60).optional(),
   activeOnly: queryFlag,
   /** Only medicines with unexpired stock in the current branch. */
   inStockOnly: queryFlag,

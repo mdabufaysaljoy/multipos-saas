@@ -55,6 +55,9 @@ const PharmacySalesPage = lazyPage(() => import('@/pages/pharmacy/PharmacySalesP
 const ShopProductsPage = lazyPage(() => import('@/pages/supershop/ShopProductsPage'), 'ShopProductsPage');
 const ShopInventoryPage = lazyPage(() => import('@/pages/supershop/ShopInventoryPage'), 'ShopInventoryPage');
 const ShopReturnsPage = lazyPage(() => import('@/pages/supershop/ShopReturnsPage'), 'ShopReturnsPage');
+const ShopCategoriesPage = lazyPage(() => import('@/pages/supershop/ShopCategoriesPage'), 'ShopCategoriesPage');
+const PharmacyCategoriesPage = lazyPage(() => import('@/pages/pharmacy/PharmacyCategoriesPage'), 'PharmacyCategoriesPage');
+const MenuCategoriesPage = lazyPage(() => import('@/pages/restaurant/MenuCategoriesPage'), 'MenuCategoriesPage');
 const PharmacyReturnsPage = lazyPage(() => import('@/pages/pharmacy/PharmacyReturnsPage'), 'PharmacyReturnsPage');
 const RestaurantRefundsPage = lazyPage(() => import('@/pages/restaurant/RestaurantRefundsPage'), 'RestaurantRefundsPage');
 const ShopSalesPage = lazyPage(() => import('@/pages/supershop/ShopSalesPage'), 'ShopSalesPage');
@@ -245,6 +248,30 @@ export function AppRoutes() {
           element={
             <ProtectedRoute anyOf={['inventory.view']}>
               <ShopInventoryPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/shop-categories"
+          element={
+            <ProtectedRoute anyOf={['products.view', 'categories.view']}>
+              <ShopCategoriesPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/pharmacy-categories"
+          element={
+            <ProtectedRoute anyOf={['products.view', 'categories.view']}>
+              <PharmacyCategoriesPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/menu-categories"
+          element={
+            <ProtectedRoute anyOf={['products.view', 'categories.view']}>
+              <MenuCategoriesPage />
             </ProtectedRoute>
           }
         />

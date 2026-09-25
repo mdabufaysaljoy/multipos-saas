@@ -13,6 +13,7 @@ import { resolvePage, searchRegex } from '../../utils/pagination';
 import { entitlementService } from '../../services/subscription/entitlement.service';
 import { resolveDashboardWindow } from '../reports/reports.service';
 import { customerService } from '../customers/customers.service';
+import { posCategoryService } from '../../services/catalogue/posCategories.service';
 import { loyaltyService } from '../loyalty/loyalty.service';
 import { pointsForSpend } from '../loyalty/loyalty.math';
 import { logger } from '../../utils/logger';
@@ -76,6 +77,9 @@ class RestaurantService {
     const entitlement = await entitlementService.forTenant(ctx.tenantId);
     entitlementService.assertWithinLimit(entitlement, 'maxProducts', await this.countMenuItems(ctx.tenantId), 'menu items');
     await this.assertMenuNameFree(ctx, input.name);
+    // A section the kitchen has retired cannot take new dishes; a new name joins
+    // the catalogue so it can be managed like the rest.
+    await posCategoryService.assertUsable(ctx, 'restaurant', input.category);
 
     const item = await MenuItemModel.create({ ...input, tenantId: ctx.tenantId, createdBy: ctx.userId });
 
@@ -94,6 +98,7 @@ class RestaurantService {
     const item = await MenuItemModel.findOne({ _id: id, tenantId: ctx.tenantId, deletedAt: null });
     if (!item) throw ApiError.notFound('Menu item not found');
     if (input.name && input.name.toLowerCase() !== item.name.toLowerCase()) await this.assertMenuNameFree(ctx, input.name, id);
+    if (input.category) await posCategoryService.assertUsable(ctx, 'restaurant', input.category);
 
     // Explicit fields only: the validator already rejects anything else.
     const fields = ['name', 'category', 'description', 'priceMinor', 'isAvailable', 'sortOrder'] as const;

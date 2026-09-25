@@ -12,6 +12,7 @@ import { formatDocumentNumber, nextSequence } from '../../utils/counters';
 import { resolvePage, searchRegex } from '../../utils/pagination';
 import { entitlementService } from '../../services/subscription/entitlement.service';
 import { customerService } from '../customers/customers.service';
+import { posCategoryService } from '../../services/catalogue/posCategories.service';
 import { loyaltyService } from '../loyalty/loyalty.service';
 import { pointsForSpend } from '../loyalty/loyalty.math';
 import { logger } from '../../utils/logger';
@@ -77,6 +78,7 @@ class PharmacyService {
     const { page, limit, skip } = resolvePage(input);
     const filter: Record<string, unknown> = { tenantId: ctx.tenantId, deletedAt: null };
     if (input.activeOnly) filter.isActive = true;
+    if (input.category) filter.category = input.category;
     if (input.search) {
       const rx = searchRegex(input.search);
       filter.$or = [{ name: rx }, { genericName: rx }, { barcode: rx }, { manufacturer: rx }];
@@ -124,11 +126,15 @@ class PharmacyService {
 
     const values = { ...input, category: input.category || 'General' };
     await this.assertUnique(ctx, values);
+    // A category the pharmacy has retired cannot take new medicines; a new name
+    // joins the catalogue so it can be managed like the rest.
+    await posCategoryService.assertUsable(ctx, 'pharmacy', values.category);
     const medicine = await MedicineModel.create({ tenantId: ctx.tenantId, ...values, createdBy: ctx.userId });
     return medicine.toObject();
   }
 
   async updateMedicine(ctx: TenantContext, id: Types.ObjectId, input: UpdateMedicineInput) {
+    if (input.category) await posCategoryService.assertUsable(ctx, 'pharmacy', input.category);
     const before = await this.findMedicine(ctx, id);
     const identity = {
       name: input.name ?? before.name,

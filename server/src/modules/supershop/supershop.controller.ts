@@ -35,10 +35,6 @@ export const lookupBarcode = asyncHandler(async (req: Request, res: Response) =>
   ok(res, await supershopService.lookupBarcode(getContext(req), query<{ barcode: string }>(req).barcode));
 });
 
-export const categories = asyncHandler(async (req: Request, res: Response) => {
-  ok(res, await supershopService.categories(getContext(req)));
-});
-
 export const getProduct = asyncHandler(async (req: Request, res: Response) => {
   ok(res, await supershopService.getProduct(getContext(req), params<IdParams>(req).id));
 });

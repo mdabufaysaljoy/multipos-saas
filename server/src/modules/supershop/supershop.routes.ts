@@ -25,6 +25,8 @@ import {
 } from './supershop.validators';
 import { posLedgerQuerySchema } from '../../services/inventory/posLedger';
 import { stockLedger } from '../inventory/stockLedger.controller';
+import { createCategory, listCategories, removeCategory, updateCategory } from '../posCategories/posCategories.controller';
+import { createPosCategorySchema, listPosCategoriesSchema, updatePosCategorySchema } from '../../services/catalogue/posCategories.service';
 
 const router = Router();
 
@@ -42,7 +44,30 @@ router.use(authenticate, resolveTenant, requireVertical('supershop'), requireSub
 router.get('/products', requirePermission(PERMISSIONS.PRODUCTS_VIEW), validate({ query: listProductsSchema }), controller.listProducts);
 // Registered before `/products/:id` so "lookup" is never read as an id.
 router.get('/products/lookup', requirePermission(PERMISSIONS.PRODUCTS_VIEW), validate({ query: barcodeQuerySchema }), controller.lookupBarcode);
-router.get('/categories', requirePermission(PERMISSIONS.PRODUCTS_VIEW), controller.categories);
+// The departments this workspace sells under; the same four routes in every POS
+// type whose items carry the category as a name (see services/catalogue).
+router.get('/categories', requirePermission(PERMISSIONS.PRODUCTS_VIEW), validate({ query: listPosCategoriesSchema }), listCategories);
+router.post(
+  '/categories',
+  requireActiveSubscription,
+  requirePermission(PERMISSIONS.CATEGORIES_CREATE),
+  validate({ body: createPosCategorySchema }),
+  createCategory,
+);
+router.patch(
+  '/categories/:id',
+  requireActiveSubscription,
+  requirePermission(PERMISSIONS.CATEGORIES_EDIT),
+  validate({ params: idParam, body: updatePosCategorySchema }),
+  updateCategory,
+);
+router.delete(
+  '/categories/:id',
+  requireActiveSubscription,
+  requirePermission(PERMISSIONS.CATEGORIES_DELETE),
+  validate({ params: idParam }),
+  removeCategory,
+);
 router.post('/products', requireActiveSubscription, requirePermission(PERMISSIONS.PRODUCTS_CREATE), validate({ body: createProductSchema }), controller.createProduct);
 router.get('/products/:id', requirePermission(PERMISSIONS.PRODUCTS_VIEW), validate({ params: idParam }), controller.getProduct);
 router.patch('/products/:id', requireActiveSubscription, requirePermission(PERMISSIONS.PRODUCTS_EDIT), validate({ params: idParam, body: updateProductSchema }), controller.updateProduct);

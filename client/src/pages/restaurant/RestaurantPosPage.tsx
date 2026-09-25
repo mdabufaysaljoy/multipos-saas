@@ -29,8 +29,10 @@ import { LoyaltyCardDialog } from '@/features/loyalty/LoyaltyCardDialog';
 import { LoyaltyStrip } from '@/features/loyalty/LoyaltyStrip';
 import { maxRedeemablePoints, pointsForSpend } from '@/features/loyalty/loyaltyMath';
 import { useLoyaltyAccess } from '@/features/loyalty/useLoyaltyAccess';
+import { CategoryFilter } from '@/features/catalogue/CategoryFilter';
 import { loyaltyApi, storeApi } from '@/api/endpoints';
 import { restaurantApi } from '@/api/restaurant';
+import { restaurantCategoriesApi } from '@/api/posCategories';
 import { formatMoney } from '@/lib/money';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/hooks/useAuth';
@@ -65,7 +67,7 @@ export function RestaurantPosPage() {
 
   const [draft, setDraft] = React.useState<Draft | null>(null);
   const [orderId, setOrderId] = React.useState<string | null>(null);
-  const [category, setCategory] = React.useState('All');
+  const [category, setCategory] = React.useState('all');
   const [search, setSearch] = React.useState('');
   const [paying, setPaying] = React.useState(false);
   const [cancelling, setCancelling] = React.useState(false);
@@ -157,10 +159,13 @@ export function RestaurantPosPage() {
     onError: (err) => toast.error(errorMessage(err, 'Could not change the line')),
   });
 
-  const categories = React.useMemo(() => ['All', ...new Set((menu?.items ?? []).map((item) => item.category))], [menu]);
+  // The sections the kitchen offers, in the order the owner put them, and
+  // without the ones they hid - the same list the Menu sections screen manages.
+  const { data: sections } = useQuery({ queryKey: ['restaurant', 'categories', 'filter'], queryFn: () => restaurantCategoriesApi.list() });
+  const categories = React.useMemo(() => (sections ?? []).map((row) => row.name), [sections]);
   const visibleMenu = (menu?.items ?? []).filter(
     (item) =>
-      (category === 'All' || item.category === category) &&
+      (category === 'all' || item.category === category) &&
       (!search.trim() || item.name.toLowerCase().includes(search.trim().toLowerCase())),
   );
 
@@ -265,13 +270,7 @@ export function RestaurantPosPage() {
       <Card className="flex min-h-0 flex-col">
         <CardHeader className="space-y-3 pb-2">
           <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search dishes…" />
-          <div className="scrollbar-thin flex gap-1.5 overflow-x-auto pb-1">
-            {categories.map((name) => (
-              <Button key={name} size="sm" variant={category === name ? 'default' : 'outline'} className="shrink-0" onClick={() => setCategory(name)}>
-                {name}
-              </Button>
-            ))}
-          </div>
+          <CategoryFilter categories={categories} value={category} onChange={setCategory} className="pb-1" />
         </CardHeader>
         <CardContent className="scrollbar-thin min-h-0 flex-1 overflow-y-auto">
           {menuLoading && <LoadingState label="Loading the menu…" />}

@@ -25,6 +25,8 @@ import {
 } from './pharmacy.validators';
 import { posLedgerQuerySchema } from '../../services/inventory/posLedger';
 import { stockLedger } from '../inventory/stockLedger.controller';
+import { createCategory, listCategories, removeCategory, updateCategory } from '../posCategories/posCategories.controller';
+import { createPosCategorySchema, listPosCategoriesSchema, updatePosCategorySchema } from '../../services/catalogue/posCategories.service';
 
 const router = Router();
 
@@ -39,6 +41,31 @@ const router = Router();
 router.use(authenticate, resolveTenant, requireVertical('pharmacy'), requireSubscribedAccess);
 
 // ------------------------------------------------------------- medicines
+// The departments this workspace sells under; the same four routes in every POS
+// type whose items carry the category as a name (see services/catalogue).
+router.get('/categories', requirePermission(PERMISSIONS.PRODUCTS_VIEW), validate({ query: listPosCategoriesSchema }), listCategories);
+router.post(
+  '/categories',
+  requireActiveSubscription,
+  requirePermission(PERMISSIONS.CATEGORIES_CREATE),
+  validate({ body: createPosCategorySchema }),
+  createCategory,
+);
+router.patch(
+  '/categories/:id',
+  requireActiveSubscription,
+  requirePermission(PERMISSIONS.CATEGORIES_EDIT),
+  validate({ params: idParam, body: updatePosCategorySchema }),
+  updateCategory,
+);
+router.delete(
+  '/categories/:id',
+  requireActiveSubscription,
+  requirePermission(PERMISSIONS.CATEGORIES_DELETE),
+  validate({ params: idParam }),
+  removeCategory,
+);
+
 router.get('/medicines', requirePermission(PERMISSIONS.PRODUCTS_VIEW), validate({ query: listMedicinesSchema }), controller.listMedicines);
 router.post('/medicines', requireActiveSubscription, requirePermission(PERMISSIONS.PRODUCTS_CREATE), validate({ body: createMedicineSchema }), controller.createMedicine);
 router.get('/medicines/:id', requirePermission(PERMISSIONS.PRODUCTS_VIEW), validate({ params: idParam }), controller.getMedicine);

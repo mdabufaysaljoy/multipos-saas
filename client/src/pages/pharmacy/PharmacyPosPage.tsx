@@ -19,9 +19,11 @@ import { LoyaltyCardDialog } from '@/features/loyalty/LoyaltyCardDialog';
 import { LoyaltyStrip } from '@/features/loyalty/LoyaltyStrip';
 import { isLoyaltyCardCode, maxRedeemablePoints, pointsForSpend } from '@/features/loyalty/loyaltyMath';
 import { useLoyaltyAccess } from '@/features/loyalty/useLoyaltyAccess';
+import { CategoryFilter } from '@/features/catalogue/CategoryFilter';
 import { ApiError } from '@/api/client';
 import { loyaltyApi, storeApi } from '@/api/endpoints';
 import { pharmacyApi } from '@/api/pharmacy';
+import { pharmacyCategoriesApi } from '@/api/posCategories';
 import { formatMoney } from '@/lib/money';
 import { DOSAGE_FORM_LABELS, formatExpiry } from '@/lib/pharmacy';
 import { cn } from '@/lib/utils';
@@ -64,9 +66,15 @@ export function PharmacyPosPage() {
   const canSellOutOfStock = can('sales.sellOutOfStock');
   const [receiptFor, setReceiptFor] = React.useState<string | null>(null);
 
+  // The categories this pharmacy groups its shelves by, in the owner's order
+  // and without the ones they hid.
+  const { data: shelves } = useQuery({ queryKey: ['pharmacy', 'categories', 'filter'], queryFn: () => pharmacyCategoriesApi.list() });
+  const [category, setCategory] = React.useState('all');
+
   const { data: results, isLoading } = useQuery({
-    queryKey: ['pharmacy', 'medicines', 'pos', search],
-    queryFn: () => pharmacyApi.medicines({ limit: 30, activeOnly: 'true', ...(search ? { search } : {}) }),
+    queryKey: ['pharmacy', 'medicines', 'pos', search, category],
+    queryFn: () =>
+      pharmacyApi.medicines({ limit: 30, activeOnly: 'true', ...(search ? { search } : {}), ...(category !== 'all' ? { category } : {}) }),
   });
 
   const subtotal = cart.reduce((sum, line) => sum + line.medicine.sellingPriceMinor * line.quantity, 0);
@@ -205,6 +213,7 @@ export function PharmacyPosPage() {
               aria-label="Search medicines"
             />
           </div>
+          <CategoryFilter categories={(shelves ?? []).map((row) => row.name)} value={category} onChange={setCategory} />
           <LimitAlert resource="monthlySales" />
         </CardHeader>
         <CardContent className="scrollbar-thin min-h-0 flex-1 overflow-y-auto">

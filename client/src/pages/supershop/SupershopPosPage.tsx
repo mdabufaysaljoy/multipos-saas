@@ -17,6 +17,7 @@ import { LoyaltyCardDialog } from '@/features/loyalty/LoyaltyCardDialog';
 import { LoyaltyStrip } from '@/features/loyalty/LoyaltyStrip';
 import { isLoyaltyCardCode, maxRedeemablePoints, pointsForSpend } from '@/features/loyalty/loyaltyMath';
 import { useLoyaltyAccess } from '@/features/loyalty/useLoyaltyAccess';
+import { CategoryFilter } from '@/features/catalogue/CategoryFilter';
 import { loyaltyApi } from '@/api/endpoints';
 import type { LoyaltyLookup } from '@/types/domain';
 import { PaymentPanel } from '@/features/payments/PaymentPanel';
@@ -26,6 +27,7 @@ import { ShopReceiptDialog } from '@/features/supershop/ShopReceiptDialog';
 import { ApiError } from '@/api/client';
 import { storeApi } from '@/api/endpoints';
 import { supershopApi } from '@/api/supershop';
+import { shopCategoriesApi } from '@/api/posCategories';
 import { formatMoney } from '@/lib/money';
 import { formatQuantity, gramsToKgText, lineAmount, parseKgToGrams } from '@/lib/supershop';
 import { cn } from '@/lib/utils';
@@ -66,10 +68,17 @@ export function SupershopPosPage() {
   const canSellOutOfStock = can('sales.sellOutOfStock');
   const [receiptFor, setReceiptFor] = React.useState<string | null>(null);
 
+  // The departments this shop sells under, in the owner's order and without the
+  // ones they hid; picking one browses it without typing anything.
+  const { data: departments } = useQuery({ queryKey: ['supershop', 'categories', 'filter'], queryFn: () => shopCategoriesApi.list() });
+  const [department, setDepartment] = React.useState('all');
+  const browsing = search.length > 0 || department !== 'all';
+
   const { data: results, isLoading } = useQuery({
-    queryKey: ['supershop', 'products', 'pos', search],
-    queryFn: () => supershopApi.products({ limit: 30, activeOnly: 'true', ...(search ? { search } : {}) }),
-    enabled: search.length > 0,
+    queryKey: ['supershop', 'products', 'pos', search, department],
+    queryFn: () =>
+      supershopApi.products({ limit: 30, activeOnly: 'true', ...(search ? { search } : {}), ...(department !== 'all' ? { category: department } : {}) }),
+    enabled: browsing,
   });
 
   const subtotal = cart.reduce((sum, line) => sum + lineAmount(line.product.priceMinor, line.quantity, line.product.unitType), 0);
@@ -226,11 +235,12 @@ export function SupershopPosPage() {
               aria-label="Scan or search"
             />
           </form>
+          <CategoryFilter categories={(departments ?? []).map((row) => row.name)} value={department} onChange={setDepartment} />
           <LimitAlert resource="monthlySales" />
         </CardHeader>
         <CardContent className="scrollbar-thin min-h-0 flex-1 overflow-y-auto">
-          {!search ? (
-            <EmptyState title="Ready to scan" description="Scanned items go straight into the basket. Weighed goods ask for the weight." />
+          {!browsing ? (
+            <EmptyState title="Ready to scan" description="Scan, type a name, or pick a department to browse it." />
           ) : isLoading ? (
             <LoadingState label="Searching…" />
           ) : (results?.items ?? []).length === 0 ? (

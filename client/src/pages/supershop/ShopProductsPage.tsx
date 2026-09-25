@@ -20,6 +20,8 @@ import { SearchInput, useDebounced } from '@/components/SearchInput';
 import { LoadingState } from '@/components/states';
 import { BarcodePrintDialog } from '@/features/barcode/BarcodePrintDialog';
 import { supershopApi } from '@/api/supershop';
+import { shopCategoriesApi } from '@/api/posCategories';
+import { CategoryInput } from '@/features/catalogue/CategoryInput';
 import { formatMoney } from '@/lib/money';
 import { formatQuantity, formatVatRate, gramsToKgText, parseVatPercent, vatPercentText } from '@/lib/supershop';
 import { useAuth } from '@/hooks/useAuth';
@@ -51,7 +53,8 @@ export function ShopProductsPage() {
   const [deleting, setDeleting] = React.useState<ShopProduct | null>(null);
   const [labelling, setLabelling] = React.useState<ShopProduct | null>(null);
 
-  const { data: categories } = useQuery({ queryKey: ['supershop', 'categories'], queryFn: supershopApi.categories });
+  // The department list is managed on its own screen; hidden ones are not offered.
+  const { data: categories } = useQuery({ queryKey: ['supershop', 'categories'], queryFn: () => shopCategoriesApi.list() });
   const { data, isLoading, error, refetch } = useQuery({
     queryKey: ['supershop', 'products', search, category, lowOnly, page],
     queryFn: () =>
@@ -192,9 +195,9 @@ export function ShopProductsPage() {
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="all">All departments</SelectItem>
-              {(categories ?? []).map((name) => (
-                <SelectItem key={name} value={name}>
-                  {name}
+              {(categories ?? []).map((row) => (
+                <SelectItem key={row.slug} value={row.name}>
+                  {row.name}
                 </SelectItem>
               ))}
             </SelectContent>
@@ -353,7 +356,7 @@ function ProductDialog({
         <div className="grid gap-3 sm:grid-cols-2">
           <TextField id="shop-name" label="Name" value={name} max={120} onChange={setName} placeholder="Miniket rice" />
           <TextField id="shop-brand" label="Brand" value={brand} max={80} onChange={setBrand} placeholder="Optional" />
-          <TextField id="shop-category" label="Department" value={category} max={60} onChange={setCategory} />
+          <CategoryInput id="shop-category" label="Department" value={category} onChange={setCategory} api={shopCategoriesApi} queryKey="supershop" />
           <TextField id="shop-barcode" label="Barcode" value={barcode} max={64} onChange={setBarcode} placeholder="Scan or type" />
           <div className="space-y-1.5">
             <Label>Sold</Label>

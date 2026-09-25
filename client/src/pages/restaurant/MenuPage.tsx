@@ -25,6 +25,8 @@ import { PermissionGate } from '@/components/PermissionGate';
 import { SearchInput, useDebounced } from '@/components/SearchInput';
 import { ApiError } from '@/api/client';
 import { restaurantApi } from '@/api/restaurant';
+import { restaurantCategoriesApi } from '@/api/posCategories';
+import { CategoryInput } from '@/features/catalogue/CategoryInput';
 import { formatMoney } from '@/lib/money';
 import { useAuth } from '@/hooks/useAuth';
 import type { MenuItem } from '@/types/restaurant';
@@ -249,10 +251,14 @@ function MenuItemDialog({
             <Input id="menu-name" value={draft.name} maxLength={120} onChange={(e) => setDraft({ ...draft, name: e.target.value })} />
           </div>
           <div className="grid gap-3 sm:grid-cols-2">
-            <div className="space-y-1.5">
-              <Label htmlFor="menu-category">Category</Label>
-              <Input id="menu-category" value={draft.category} maxLength={60} onChange={(e) => setDraft({ ...draft, category: e.target.value })} />
-            </div>
+            <CategoryInput
+              id="menu-category"
+              label="Section"
+              value={draft.category}
+              onChange={(category) => setDraft({ ...draft, category })}
+              api={restaurantCategoriesApi}
+              queryKey="restaurant"
+            />
             <div className="space-y-1.5">
               <Label>Price</Label>
               <MoneyInput value={draft.priceMinor} onChange={(priceMinor) => setDraft({ ...draft, priceMinor })} ariaLabel="Price" />

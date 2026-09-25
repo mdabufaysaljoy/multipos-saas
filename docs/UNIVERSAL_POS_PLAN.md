@@ -57,7 +57,7 @@ Legend: **mature** = reference implementation · **partial** = works but narrowe
 | 4b | Loyalty (card, points, scan) | **mature** | **done** (task 09 pt 2) | **done** (task 09 pt 2) | **done** (task 09 pt 1) | `loyaltyService` takes the sale model as a parameter; the return engine calls an optional `reverseLoyalty` on the sale adapter | earn base differs: Clothing subtotal, Super Shop ex-VAT, Pharmacy excludes prescription medicines, Restaurant earns on the settled bill | ✅ complete | **Medium** |
 | 5 | Return / exchange / refund / cancel | **mature** | **done** (task 08) | **done** (task 08) | **done** (task 08) | `services/returns/` engine + a sale adapter per vertical, on top of the inventory adapter | a restaurant refunds money only; Pharmacy returns to the *batch* it came from; Clothing keeps its exchange/loyalty engine | folding Clothing in, one day | **High** |
 | 6 | Bulk product import | **mature** (registry, preview, row errors, streamed) | missing | missing | missing | `import.parse.ts` (xlsx/csv, header detection) is already generic | mandatory columns differ per model: Clothing needs Product+Variant+Price; Super Shop barcode+price+qty; Pharmacy name+price(+batch); Restaurant name+price | Extract a column registry per vertical behind one engine | **Medium** |
-| 7 | Category management + POS filter | **mature** (`Category` model, page, POS filter) | string field + client-side chip filter | string field, no filter | string field, no filter | none | a real category entity is only worth it where products are managed in bulk | Either promote the string to `Category` per vertical, or keep strings and add a shared filter API | **Medium** |
+| 7 | Category management + POS filter | **mature** (`Category` model, page, POS filter) | **done** (task 10) | **done** (task 10) | **done** (task 10) | `PosCategory` + `services/catalogue/posCategories.service.ts` + one screen and one filter component | Clothing keeps entities with ids and parents; the other three keep the name on the item, so the name IS the link | ✅ complete (no migration: names in use are listed whether or not a row exists) | **Medium** |
 | 8 | Authorized out-of-stock sale | **mature** (`sales.sellOutOfStock`, ledger flag, negative stock allowed) | n/a (no stock) | **missing** (batch quantity is hard-blocked) | **missing** (`ShopStock.quantityOnHand` has `min: 0`) | the permission exists platform-wide | Pharmacy must never sell *expired* stock, override or not; negative batch quantity is meaningless | Per-vertical override path + ledger flag | **High** |
 | 9 | Inventory management + ledger | **mature** (`InventoryTransaction`, before/after, actor, reference) | n/a | partial (`PharmacyStockMovement`) | partial (`ShopStockMovement`) | three parallel ledgers with the same shape | batch/expiry (Pharmacy), weighted-average cost (Super Shop), variants (Clothing) | Unify the *read* API and the movement contract, not the storage | **Medium** |
 | 10 | Dashboard date ranges | **mature** (`RangePicker`, presets + custom) | **mature** (same picker) | **done** (task 12) | **done** (task 12) | one `dashboardRangeSchema` + `resolveDashboardWindow`; `RangePicker` + `DashboardKpi` on every page | metric names differ (orders vs sales) - task 13 | ✅ complete | — |
@@ -197,7 +197,7 @@ Each is independently executable, independently testable, and leaves the tree gr
 | **07** Out-of-stock override ✅ **done** | `allowOutOfStock` honoured by Super Shop (stock row below zero) and Pharmacy (latest unexpired batch below zero; never expired, never without a batch); narrow rule - covers "none", not "not enough"; ledger + sale-line flags | 06 | M | High |
 | **08** Universal return/exchange/refund ✅ **done** | `services/returns/` engine + a sale adapter for all three new verticals, partial returns, discount-aware refunds, restock switch, shared till dialog; a restaurant refunds money only. Left as a separate decision: folding Clothing's exchange/loyalty engine in | 03, 06 | **L** | High |
 | **09** Universal loyalty | Generalise the sale hooks; widen the entitlement's verticals; card scan selects the customer in every POS | 05 | M | Medium |
-| **10** Category management | Decide per vertical: promote to `Category` (Super Shop, Pharmacy) or keep strings (Restaurant); shared POS filter API | — | M | Medium |
+| **10** Category management ✅ **done** | `PosCategory` (tenant + vertical), shared list/create/rename/hide/remove behind `/<vertical>/categories` in the three name-based verticals; rename rewrites the items, hide retires a department, remove refused while in use; till chips and an item-form picker; Clothing untouched | — | M | Medium |
 | **11** Universal import | Column registry per vertical behind the existing engine | 10 | M | Medium |
 | **12** Dashboard date ranges ✅ **done** | One `dashboardRangeSchema` and `resolveDashboardWindow` (range, previous period, bucket, timezone) behind all four dashboards; `RangePicker` + shared `DashboardKpi` on the Pharmacy and Super Shop pages; risk 5 settled | — | S | Low |
 | **13** Analytics parity ✅ **done** | `services/reports/posMetrics.ts` contract (gross/returns/net/cost/profit); all three newer verticals report net of refunds on dashboard AND analytics, with a returns card; Restaurant gained the payment breakdown it never had. Left: staff performance in Super Shop and Pharmacy | 12 | M | Medium |
@@ -272,6 +272,7 @@ must pass unchanged, and the Clothing sections must not be edited to accommodate
 - `docs/RETURNS.md` — taking goods back, delivered by task 08.
 - `docs/ANALYTICS_PARITY.md` — the shared metric vocabulary, delivered by task 13.
 - `docs/LOYALTY_UNIVERSAL.md` — the card program in all four POS types, delivered by task 09.
+- `docs/CATEGORIES.md` — two shapes of category and the shared catalogue, delivered by task 10.
 
 Feature docs (`PRINTING_ARCHITECTURE.md`, `PRODUCT_IMPORT.md`, `DATA_EXPORT.md`,
 `SUPPLIER_MANAGEMENT.md`, `CONTACT_VERIFICATION.md`, `ENTITLEMENTS.md`) remain accurate for Clothing
@@ -281,11 +282,10 @@ and are the reference material for the tasks above.
 
 ## 10. Recommended next task
 
-**Task 10 (category management), then 11 (universal import, which wants 10 first), then 14
-(PDF/print of reports).**
+**Task 11 (universal import)**, which was waiting for task 10, then **task 14** (PDF/print of
+reports), which was waiting for task 13.
 
-Task 09 is complete in all four POS types (`docs/LOYALTY_UNIVERSAL.md`). What remains is catalogue
-work and reporting: task 14 now has task 13's shared metrics under it, which is what it was waiting
-for.
+Task 11 now has a category list per vertical to validate an imported column against
+(`docs/CATEGORIES.md`), which is what it needed.
 
-Waiting for an explicit instruction before starting any of them.
+Waiting for an explicit instruction before starting either.

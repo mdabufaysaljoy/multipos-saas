@@ -5641,7 +5641,14 @@ async function main() {
   const scanned = await ssApi('/products/lookup?barcode=8941100500019');
   check('A scanned barcode finds the product with its stock', scanned.status === 200 && scanned.data?._id === soap.data._id && scanned.data?.stock?.quantityOnHand === 40, scanned.data ?? scanned.error);
   check('An unknown barcode is 404', (await ssApi('/products/lookup?barcode=0000000')).status === 404);
-  check('Departments are listed', JSON.stringify((await ssApi('/categories')).data) === JSON.stringify(['Grocery', 'Household', 'Personal care']));
+  // The department list is the shared catalogue now: rows with counts, in the
+  // owner's order, including names that only exist because products use them.
+  const ssDepartments = (await ssApi('/categories')).data ?? [];
+  check(
+    'Departments are listed with what is in them',
+    JSON.stringify(ssDepartments.map((row) => row.name)) === JSON.stringify(['Grocery', 'Household', 'Personal care']) && ssDepartments.every((row) => row.itemCount > 0),
+    ssDepartments,
+  );
 
   const ssSale = (body) => ssApi('/sales', { method: 'POST', body });
   const basket = await ssSale({ items: [{ productId: soap.data._id, quantity: 3 }, { productId: rice.data._id, quantity: 1500 }], payments: [{ method: 'cash', amountMinor: 30_000 }] });
@@ -8785,6 +8792,73 @@ async function main() {
   check('Restaurant: refunding takes the points that bill earned', (await rvBalance()) === -1, 'earned 4 on that bill, off a balance of 3');
 
   check('Restaurant: a card from another workspace cannot be used', (await rvPay((await rvOrder({ type: 'takeaway', items: [{ menuItemId: borhani.data._id, quantity: 1 }] })).data._id, { payments: [{ method: 'cash', amountMinor: 8_000 }], rev: 0, loyaltyMembershipId: ssMembershipId })).status === 400);
+
+
+  // --- The departments a workspace sells under ---------------------------------
+  // Super Shop, Pharmacy and Restaurant keep the category as a NAME on the item,
+  // so the catalogue is the list of names: what exists, what is still offered,
+  // and in what order. Nothing was migrated for this - a name items already use
+  // is part of the list whether or not a row was ever written for it.
+  section('Category management (three verticals)');
+
+  const catStamp = String(Date.now()).slice(-7);
+  const posCats = async (path, token, params = '') => (await api(`${path}/categories${params}`, { token })).data ?? [];
+
+  // What the shops already sell shows up without anything being created.
+  const ssCats = await posCats('/supershop', ssToken);
+  check('Super Shop: names already in use are listed with their counts', ssCats.length > 0 && ssCats.every((row) => typeof row.itemCount === 'number'), ssCats.slice(0, 3));
+  check('Super Shop: a name never written down still appears, with no id', ssCats.some((row) => row.itemCount > 0), ssCats.slice(0, 3));
+
+  const catCreate = await api('/supershop/categories', { method: 'POST', token: ssToken, body: { name: `Bakery ${catStamp}`, sortOrder: 5 } });
+  check('Super Shop: a department can be created empty', catCreate.status === 201 && catCreate.data?.name === `Bakery ${catStamp}`, catCreate.error);
+  check('Super Shop: the same name twice is refused', (await api('/supershop/categories', { method: 'POST', token: ssToken, body: { name: `bakery ${catStamp}` } })).status === 409);
+
+  // A product put into it, then the department renamed: the product follows.
+  const catProduct = await ssProduct({ name: `Bakery Bun ${catStamp}`, category: `Bakery ${catStamp}`, priceMinor: 3_000 });
+  check('Super Shop: a product can be put into it', catProduct.status === 201, catProduct.error);
+  const catRenamed = await api(`/supershop/categories/${catCreate.data._id}`, { method: 'PATCH', token: ssToken, body: { name: `Patisserie ${catStamp}` } });
+  check('Super Shop: it can be renamed', catRenamed.status === 200 && catRenamed.data?.name === `Patisserie ${catStamp}`, catRenamed.error);
+  check('Super Shop: renaming moves the products that carried it', (await ssApi(`/products/${catProduct.data._id}`)).data?.product?.category === `Patisserie ${catStamp}`);
+  check('Super Shop: and the list counts them under the new name', (await posCats('/supershop', ssToken)).find((row) => row.name === `Patisserie ${catStamp}`)?.itemCount === 1);
+
+  // Hiding retires a department without touching what sits in it.
+  const catHidden = await api(`/supershop/categories/${catCreate.data._id}`, { method: 'PATCH', token: ssToken, body: { isActive: false } });
+  check('Super Shop: a department can be hidden', catHidden.status === 200 && catHidden.data?.isActive === false, catHidden.error);
+  check('Super Shop: the till is not offered a hidden department', (await posCats('/supershop', ssToken)).every((row) => row.name !== `Patisserie ${catStamp}`));
+  check('Super Shop: the owner still sees it when asking for everything', (await posCats('/supershop', ssToken, '?includeInactive=true')).some((row) => row.name === `Patisserie ${catStamp}`));
+  const catIntoHidden = await ssProduct({ name: `Late Bun ${catStamp}`, category: `Patisserie ${catStamp}`, priceMinor: 3_000 });
+  check('Super Shop: no new goods can go into a hidden department', catIntoHidden.status === 400 && catIntoHidden.error?.details?.reason === 'CATEGORY_HIDDEN', catIntoHidden.error);
+  check('Super Shop: what is already in it is untouched', (await ssApi(`/products/${catProduct.data._id}`)).data?.product?.category === `Patisserie ${catStamp}`);
+
+  // Removing is refused while anything still carries the name.
+  const catBusy = await api(`/supershop/categories/${catCreate.data._id}`, { method: 'DELETE', token: ssToken });
+  check('Super Shop: a department in use cannot be removed', catBusy.status === 409 && catBusy.error?.details?.reason === 'CATEGORY_IN_USE', catBusy.error);
+  await ssApi(`/products/${catProduct.data._id}`, { method: 'PATCH', body: { category: 'General' } });
+  const catGone = await api(`/supershop/categories/${catCreate.data._id}`, { method: 'DELETE', token: ssToken });
+  check('Super Shop: an empty one can be removed', catGone.status === 200, catGone.error);
+  check('Super Shop: and it is gone from the list', (await posCats('/supershop', ssToken, '?includeInactive=true')).every((row) => row.name !== `Patisserie ${catStamp}`));
+
+  // The same four routes, the same behaviour, in the other two.
+  const phCat = await api('/pharmacy/categories', { method: 'POST', token: phToken, body: { name: `Vitamins ${catStamp}` } });
+  check('Pharmacy: the same routes are there', phCat.status === 201, phCat.error);
+  const phCatMed = await phMedicine({ name: `Vita C ${catStamp}`, strength: '500 mg', dosageForm: 'tablet', sellingPriceMinor: 2_000, category: `Vitamins ${catStamp}` });
+  await api(`/pharmacy/categories/${phCat.data._id}`, { method: 'PATCH', token: phToken, body: { name: `Supplements ${catStamp}` } });
+  check('Pharmacy: renaming moves the medicines', (await phApi(`/medicines/${phCatMed.data._id}`)).data?.medicine?.category === `Supplements ${catStamp}`, (await phApi(`/medicines/${phCatMed.data._id}`)).data?.medicine?.category);
+  check('Pharmacy: the till can filter its list by category', ((await phApi(`/medicines?category=Supplements ${catStamp}`)).data ?? []).every((row) => row.category === `Supplements ${catStamp}`));
+
+  const rvCat = await api('/restaurant/categories', { method: 'POST', token: rvToken, body: { name: `Desserts ${catStamp}`, sortOrder: 3 } });
+  check('Restaurant: the same routes are there', rvCat.status === 201, rvCat.error);
+  check('Restaurant: a dish can be put into a new section', (await rvMenu({ name: `Payesh ${catStamp}`, category: `Desserts ${catStamp}`, priceMinor: 12_000 })).status === 201);
+  await api(`/restaurant/categories/${rvCat.data._id}`, { method: 'PATCH', token: rvToken, body: { name: `Sweets ${catStamp}` } });
+  const rvCatItem = (await api(`/restaurant/menu?search=Payesh ${catStamp}`, { token: rvToken })).data ?? [];
+  check('Restaurant: renaming moves the dishes', rvCatItem[0]?.category === `Sweets ${catStamp}`, rvCatItem[0]?.category);
+  check('Restaurant: sections come back in the order the owner set', (await posCats('/restaurant', rvToken)).some((row) => row.name === `Sweets ${catStamp}` && row.sortOrder === 3));
+
+  // Tenancy and permissions.
+  check('A category cannot be renamed from another workspace', (await api(`/restaurant/categories/${rvCat.data._id}`, { method: 'PATCH', token: ssToken, body: { name: 'Mine now' } })).status === 403);
+  check('Reading the list needs a session', (await api('/supershop/categories')).status === 401);
+  check('A till without categories.create cannot add one', (await api('/supershop/categories', { method: 'POST', token: ssTill.session.token, body: { name: `Nope ${catStamp}` } })).status === 403);
+  check('Clothing keeps its own category module, which this one never answers for', (await api('/supershop/categories', { token: admin.token })).status === 403);
 
   // ------------------------------------------------ cash received, change and receipt
   section('Clothing POS: cash received, change and receipt');
