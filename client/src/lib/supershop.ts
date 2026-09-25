@@ -8,15 +8,25 @@ export function gramsToKgText(grams: number): string {
 }
 
 /**
- * Parses a kilogram amount typed by a person ("1.25", "0.5", "3") into grams,
+ * The same two ceilings the server applies (`server/src/models/shopUnits.ts`).
+ * Kept in step deliberately: a till that lets someone type an amount the API
+ * will refuse turns a clear limit into an unexplained failure.
+ */
+export const MAX_PIECES = 1_000_000;
+/** 100 tonnes, in grams. */
+export const MAX_GRAMS = 100_000_000;
+
+/**
+ * Parses a kilogram amount typed by a person ("1.25", "0.5", "1500") into grams,
  * by splitting the string - no floating point, so 0.1 kg is exactly 100 g.
- * Returns null for anything that is not a positive amount with at most 3 decimals.
+ * Returns null for anything that is not a positive amount with at most 3
+ * decimals, or for more than the server will accept.
  */
 export function parseKgToGrams(raw: string): number | null {
-  const match = /^(\d{1,4})(?:\.(\d{0,3}))?$/.exec(raw.trim());
+  const match = /^(\d{1,6})(?:\.(\d{0,3}))?$/.exec(raw.trim());
   if (!match) return null;
   const grams = Number(match[1]) * 1000 + Number((match[2] ?? '').padEnd(3, '0'));
-  return grams > 0 ? grams : null;
+  return grams > 0 && grams <= MAX_GRAMS ? grams : null;
 }
 
 /** "3" or "1.25 kg" */

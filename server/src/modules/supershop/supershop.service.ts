@@ -42,7 +42,7 @@ const isDuplicateKey = (error: unknown) => (error as { code?: number } | null)?.
 
 // The unit maths lives beside the model, so the inventory adapter can use it
 // without importing this module.
-import { describeQuantity, includedVat, lineAmount } from '../../models/shopUnits';
+import { describeMaxQuantity, describeQuantity, includedVat, lineAmount, maxQuantityFor } from '../../models/shopUnits';
 
 export { describeQuantity, includedVat, lineAmount };
 
@@ -108,6 +108,8 @@ class SupershopService {
     const entitlement = await entitlementService.forTenant(ctx.tenantId);
     await entitlementService.assertCanAddProduct(ctx.tenantId, entitlement, 'supershop');
     const values = { ...input, category: input.category || 'General' };
+    // A reorder level is a quantity too, so the same unit ceiling applies.
+    this.assertWithinUnitMax(values.reorderLevel, { name: values.name, unitType: values.unitType }, 'reorder level');
     await this.assertUnique(ctx, values);
     // A department the shop has retired cannot take new goods; a new name joins
     // the catalogue so it can be managed like the rest.
@@ -118,6 +120,7 @@ class SupershopService {
 
   async updateProduct(ctx: TenantContext, id: Types.ObjectId, input: UpdateProductInput) {
     const before = await this.findProduct(ctx, id);
+    if (input.reorderLevel !== undefined) this.assertWithinUnitMax(input.reorderLevel, before, 'reorder level');
     if (input.category) await posCategoryService.assertUsable(ctx, 'supershop', input.category);
     await this.assertUnique(ctx, { name: input.name ?? before.name, brand: input.brand ?? before.brand, barcode: input.barcode ?? before.barcode }, id);
     const after = await ShopProductModel.findOneAndUpdate({ _id: id, tenantId: ctx.tenantId, deletedAt: null }, { $set: input }, { new: true, runValidators: true }).lean<ProductRecord>();
@@ -147,6 +150,7 @@ class SupershopService {
    */
   async receiveStock(ctx: TenantContext, productId: Types.ObjectId, input: ReceiveStockInput) {
     const product = await this.findProduct(ctx, productId);
+    this.assertWithinUnitMax(input.quantity, product);
     const key = { tenantId: ctx.tenantId, storeId: ctx.storeId, productId: product._id };
     const receive = () =>
       ShopStockModel.findOneAndUpdate(
@@ -197,6 +201,7 @@ class SupershopService {
   /** A counted correction or a write-off. Never below zero. */
   async adjustStock(ctx: TenantContext, productId: Types.ObjectId, input: AdjustStockInput) {
     const product = await this.findProduct(ctx, productId);
+    this.assertWithinUnitMax(input.quantityDelta, product, 'change');
     const delta = input.quantityDelta;
     const updated = await ShopStockModel.findOneAndUpdate(
       { tenantId: ctx.tenantId, storeId: ctx.storeId, productId: product._id, ...(delta < 0 ? { quantityOnHand: { $gte: -delta } } : {}) },
@@ -308,6 +313,7 @@ class SupershopService {
       const product = products.find((entry) => entry._id.equals(item.productId));
       if (!product) throw ApiError.badRequest('One of the items is not in this shop');
       if (!product.isActive) throw ApiError.badRequest(`${product.name} is not for sale right now`);
+      this.assertWithinUnitMax(item.quantity, product);
       const lineTotalMinor = lineAmount(product.priceMinor, item.quantity, product.unitType);
       if (!Number.isSafeInteger(lineTotalMinor)) throw ApiError.badRequest('That line is too large');
       return { product, quantity: item.quantity, lineTotalMinor, vatMinor: includedVat(lineTotalMinor, product.vatRateBps) };
@@ -687,6 +693,23 @@ class SupershopService {
 
   private withStock(product: ProductRecord, stock: Map<string, { quantityOnHand: number; costPriceMinor: number }>) {
     return { ...product, stock: stock.get(String(product._id)) ?? { quantityOnHand: 0, costPriceMinor: 0 } };
+  }
+
+  /**
+   * The quantity ceiling that actually applies to this product.
+   *
+   * The schema bounds every quantity by the widest any unit type allows,
+   * because it cannot see the product. Pieces are capped lower than grams, so
+   * the real limit is applied here, where `unitType` is known - and reported in
+   * the unit the person typed, not in grams.
+   */
+  private assertWithinUnitMax(quantity: number, product: { name: string; unitType: ShopUnitType }, what = 'quantity') {
+    if (Math.abs(quantity) > maxQuantityFor(product.unitType)) {
+      throw ApiError.badRequest(
+        `That ${what} is too large for ${product.name}. The most in one go is ${describeMaxQuantity(product.unitType)}.`,
+        { max: maxQuantityFor(product.unitType), unitType: product.unitType },
+      );
+    }
   }
 
   private async findProduct(ctx: TenantContext, id: Types.ObjectId) {

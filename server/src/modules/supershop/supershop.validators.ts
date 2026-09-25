@@ -1,13 +1,20 @@
 import { z } from 'zod';
 import { SHOP_UNIT_TYPES } from '../../models/ShopProduct';
+import { MAX_BASE_QUANTITY } from '../../models/shopUnits';
 import { SHOP_SALE_STATUSES } from '../../models/ShopSale';
 import { objectId, paginationSchema, searchSchema, paymentMethodKey } from '../common/common.validators';
 import { posCustomerSchema } from '../customers/customers.validators';
 
 const amount = z.number().int().min(0).max(100_000_000);
 const text = (max: number) => z.string().trim().max(max);
-/** Pieces, or grams for weighed goods: up to 1,000,000 (1 tonne). */
-const baseQuantity = z.number().int().min(1).max(1_000_000);
+/**
+ * Pieces, or grams for weighed goods.
+ *
+ * This is only the outer bound - the widest any unit type allows. The real
+ * ceiling depends on the product's `unitType`, which the schema cannot see, so
+ * the service applies it once the product has been read (`assertWithinUnitMax`).
+ */
+const baseQuantity = z.number().int().min(1).max(MAX_BASE_QUANTITY);
 
 /** "true"/"false" from a query string. `z.coerce.boolean` would read "false" as true. */
 const queryFlag = z.enum(['true', 'false']).optional().transform((value) => value === 'true');
@@ -30,7 +37,7 @@ export const createProductSchema = z
     unitType: z.enum(SHOP_UNIT_TYPES).default('each'),
     priceMinor: amount,
     vatRateBps: z.number().int().min(0).max(10_000).default(0),
-    reorderLevel: z.number().int().min(0).max(1_000_000).default(0),
+    reorderLevel: z.number().int().min(0).max(MAX_BASE_QUANTITY).default(0),
     isActive: z.boolean().default(true),
   })
   .strict();
@@ -44,7 +51,7 @@ export const updateProductSchema = z
     barcode: z.string().trim().max(64).regex(/^[A-Za-z0-9-]*$/, 'A barcode may only contain letters, numbers and -'),
     priceMinor: amount,
     vatRateBps: z.number().int().min(0).max(10_000),
-    reorderLevel: z.number().int().min(0).max(1_000_000),
+    reorderLevel: z.number().int().min(0).max(MAX_BASE_QUANTITY),
     isActive: z.boolean(),
   })
   .partial()
@@ -76,8 +83,8 @@ export const adjustStockSchema = z
     quantityDelta: z
       .number()
       .int()
-      .min(-1_000_000)
-      .max(1_000_000)
+      .min(-MAX_BASE_QUANTITY)
+      .max(MAX_BASE_QUANTITY)
       .refine((value) => value !== 0, 'The change cannot be zero'),
     reason: z.string().trim().min(3, 'Give a reason').max(200),
   })
@@ -129,7 +136,7 @@ export const createReturnSchema = z
         z
           .object({
             saleItemId: objectId,
-            quantity: z.number().int().min(1).max(1_000_000),
+            quantity: z.number().int().min(1).max(MAX_BASE_QUANTITY),
             /** False leaves the goods out of stock: damaged, opened, expired. */
             restock: z.boolean().default(true),
           })

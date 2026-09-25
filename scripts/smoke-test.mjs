@@ -5660,6 +5660,76 @@ async function main() {
   check('A zero quantity is rejected', (await ssReceive(soap.data._id, { quantity: 0, costPriceMinor: 1 })).status === 422);
   check('A fractional quantity is rejected (weights are whole grams)', (await ssReceive(rice.data._id, { quantity: 1.5, costPriceMinor: 1 })).status === 422);
 
+  // ---- How much of one product a branch may hold ------------------------------
+  // Two unit systems share one `quantity` field, so a single ceiling cannot
+  // serve both: 1,000,000 is a million pieces, but for weighed goods it is
+  // 1,000,000 GRAMS - exactly 1000 kg, which a supershop passes in one delivery
+  // of rice. The schema now bounds by the widest unit and the service narrows it
+  // once the product's `unitType` is known.
+  //
+  // Each delivery is counted back off afterwards, so the fixture never holds a
+  // balance larger than one correction can clear, and the plan meter and the
+  // dead-stock report (both asserted by exact value below) see it retired.
+  const ssQtyKg = await ssProduct({ name: `Ceiling Rice ${Date.now()}`, category: 'Grocery', unitType: 'weight', priceMinor: 8000 });
+  const ssQtyPieces = await ssProduct({ name: `Ceiling Straws ${Date.now()}`, category: 'Household', unitType: 'each', priceMinor: 100 });
+  const ssQtyOnHand = async (id) => (await ssApi(`/products/${id}`)).data?.product?.stock?.quantityOnHand ?? 0;
+  const ssQtyReset = async (id) => {
+    const onHand = await ssQtyOnHand(id);
+    if (onHand !== 0) await ssApi(`/products/${id}/adjust`, { method: 'POST', body: { type: 'adjust', quantityDelta: -onHand, reason: 'Ceiling fixture reset' } });
+  };
+  /** Receives a quantity on its own, then leaves the shelf empty again. */
+  const ssQtyTake = async (fixture, quantity) => {
+    const res = await ssReceive(fixture.data._id, { quantity, costPriceMinor: 500 });
+    const onHand = await ssQtyOnHand(fixture.data._id);
+    await ssQtyReset(fixture.data._id);
+    return { status: res.status, onHand, error: res.error };
+  };
+
+  const ssQtyAt1000 = await ssQtyTake(ssQtyKg, 1_000_000);
+  check('Exactly 1000 kg can be received', ssQtyAt1000.status === 201 && ssQtyAt1000.onHand === 1_000_000, ssQtyAt1000);
+  const ssQtyAbove = await ssQtyTake(ssQtyKg, 1_500_000);
+  check('More than 1000 kg can be received (1500 kg)', ssQtyAbove.status === 201 && ssQtyAbove.onHand === 1_500_000, ssQtyAbove);
+  const ssQtyOldClientWall = await ssQtyTake(ssQtyKg, 10_000_000);
+  check('And 10 tonnes, past the old 9999 kg the till would accept', ssQtyOldClientWall.status === 201 && ssQtyOldClientWall.onHand === 10_000_000, ssQtyOldClientWall);
+  const ssQtyDecimal = await ssQtyTake(ssQtyKg, 1250);
+  check('A part-kilogram is still exact (1.25 kg = 1250 g)', ssQtyDecimal.status === 201 && ssQtyDecimal.onHand === 1250, ssQtyDecimal);
+  const ssQtyCeiling = await ssQtyTake(ssQtyKg, 100_000_000);
+  check('100 tonnes is accepted at the ceiling', ssQtyCeiling.status === 201 && ssQtyCeiling.onHand === 100_000_000, ssQtyCeiling);
+  check('Past the ceiling is refused', (await ssQtyTake(ssQtyKg, 100_000_001)).status === 422);
+
+  // Pieces keep the lower ceiling: the schema would take it, the service does not.
+  check('A million pieces is accepted', (await ssQtyTake(ssQtyPieces, 1_000_000)).status === 201);
+  const ssQtyPiecesTooMany = await ssQtyTake(ssQtyPieces, 1_000_001);
+  check('More than a million PIECES is refused in the unit the till typed', ssQtyPiecesTooMany.status === 400 && /1000000/.test(ssQtyPiecesTooMany.error?.message ?? ''), ssQtyPiecesTooMany.error);
+
+  // Genuinely invalid numbers are still refused, whatever the unit.
+  check('A negative quantity is refused', (await ssQtyTake(ssQtyKg, -5)).status === 422);
+  const ssQtyRawReceive = (json) =>
+    fetch(`${BASE}/supershop/products/${ssQtyKg.data._id}/stock`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${ssToken}` },
+      body: json,
+    }).then((res) => res.status);
+  check('NaN is refused', (await ssQtyRawReceive('{"quantity":"NaN","costPriceMinor":100}')) === 422);
+  check('Infinity is refused', (await ssQtyRawReceive('{"quantity":1e999,"costPriceMinor":100}')) === 422);
+  check('A null quantity is refused', (await ssQtyRawReceive('{"quantity":null,"costPriceMinor":100}')) === 422);
+
+  // A count correction and a reorder level are quantities too.
+  check('A branch can count more than 1000 kg in one correction', (await ssApi(`/products/${ssQtyKg.data._id}/adjust`, { method: 'POST', body: { type: 'adjust', quantityDelta: 2_000_000, reason: 'Counted the whole godown' } })).status === 200);
+  await ssQtyReset(ssQtyKg.data._id);
+  check('A reorder level above 1000 kg is allowed on a weighed product', (await ssApi(`/products/${ssQtyKg.data._id}`, { method: 'PATCH', body: { reorderLevel: 5_000_000 } })).status === 200);
+  const ssQtyReorderTooBig = await ssApi(`/products/${ssQtyPieces.data._id}`, { method: 'PATCH', body: { reorderLevel: 1_000_001 } });
+  check('But not on a product sold by the piece', ssQtyReorderTooBig.status === 400, ssQtyReorderTooBig.error);
+
+  // Retire the fixtures: the plan meter counts products and the dead-stock
+  // report lists them by exact value, both asserted further down.
+  for (const fixture of [ssQtyKg, ssQtyPieces]) {
+    await ssQtyReset(fixture.data._id);
+    await ssApi(`/products/${fixture.data._id}`, { method: 'DELETE' });
+  }
+  const ssQtyGone = await Promise.all([ssApi(`/products/${ssQtyKg.data._id}`), ssApi(`/products/${ssQtyPieces.data._id}`)]);
+  check('The quantity-ceiling fixtures are retired', ssQtyGone.every((res) => res.status === 404), ssQtyGone.map((r) => r.status));
+
   const scanned = await ssApi('/products/lookup?barcode=8941100500019');
   check('A scanned barcode finds the product with its stock', scanned.status === 200 && scanned.data?._id === soap.data._id && scanned.data?.stock?.quantityOnHand === 40, scanned.data ?? scanned.error);
   check('An unknown barcode is 404', (await ssApi('/products/lookup?barcode=0000000')).status === 404);
@@ -8251,14 +8321,40 @@ async function main() {
   const ssNotEnough = await ssSellAs(ssTill.session.token, 4);
   check('Super Shop: the override does not cover "not enough", even with the permission', ssNotEnough.status === 400, ssNotEnough.error?.message);
 
-  // A product never received into this branch has no stock row and no cost basis.
+  // A product NEVER RECEIVED into this branch has no stock row at all, which is
+  // a different state from a row that has run down to zero. The override used to
+  // miss it: the guarded update matched no document, so the till was refused
+  // even holding the permission. That is the state a bulk import with no
+  // opening-stock column leaves behind, and equally a product added by hand and
+  // not yet delivered. It now behaves like any other out-of-stock product.
   const ssNever = await ssProduct({ name: `Never Received ${oosStamp}`, priceMinor: 1000 });
-  const ssNeverSold = await api('/supershop/sales', {
-    method: 'POST',
-    token: ssTill.session.token,
-    body: { items: [{ productId: ssNever.data._id, quantity: 1 }], payments: [{ method: 'cash', amountMinor: 1000 }] },
-  });
-  check('Super Shop: a product never received here is still refused', ssNeverSold.status === 400, ssNeverSold.error?.message);
+  const ssNeverSell = (token, quantity = 1) =>
+    api('/supershop/sales', {
+      method: 'POST',
+      token,
+      body: { items: [{ productId: ssNever.data._id, quantity }], payments: [{ method: 'cash', amountMinor: 10_000 }] },
+    });
+  const ssNeverStock = async () => (await ssApi(`/products/${ssNever.data._id}`)).data?.product?.stock;
+
+  // Without the permission it is refused, and no stock row is conjured up.
+  await api(`/staff/${ssTill.id}`, { method: 'PATCH', token: ssToken, body: { extraPermissions: TILL_PERMISSIONS } });
+  const ssNeverRefused = await ssNeverSell(ssTill.session.token);
+  check('Super Shop: a never-received product is refused without the permission', ssNeverRefused.status === 400, ssNeverRefused.error?.message);
+  check('Super Shop: and a refused sale creates no stock row', ((await ssNeverStock())?.quantityOnHand ?? 0) === 0, await ssNeverStock());
+
+  // With it, the sale goes through and the branch is left owing the goods.
+  await api(`/staff/${ssTill.id}`, { method: 'PATCH', token: ssToken, body: { extraPermissions: [...TILL_PERMISSIONS, 'sales.sellOutOfStock'] } });
+  const ssNeverSold = await ssNeverSell(ssTill.session.token, 3);
+  check('Super Shop: with the permission a never-received product CAN be sold', ssNeverSold.status === 201, ssNeverSold.error);
+  check('Super Shop: the line is flagged as an out-of-stock sale', ssNeverSold.data?.items?.[0]?.outOfStockOverride === true, ssNeverSold.data?.items?.[0]);
+  check('Super Shop: the stock row is created at the negative balance', (await ssNeverStock())?.quantityOnHand === -3, await ssNeverStock());
+  check('Super Shop: a branch that never bought the goods has no cost basis for them', ssNeverSold.data?.costMinor === 0, ssNeverSold.data?.costMinor);
+  const ssNeverLedger = (await api(`/supershop/stock-ledger?itemId=${ssNever.data._id}&limit=5`, { token: ssToken })).data ?? [];
+  check('Super Shop: the movement is in the ledger with the negative balance', ssNeverLedger[0]?.balanceAfter === -3 && ssNeverLedger[0]?.quantityChange === -3, ssNeverLedger[0]);
+  // The first delivery pays off the debt and sets the real average cost.
+  const ssNeverReceived = await ssReceive(ssNever.data._id, { quantity: 10, costPriceMinor: 400 });
+  check('Super Shop: the first delivery pays off what was already sold', ssNeverReceived.data?.quantityOnHand === 7, ssNeverReceived.data);
+  check('Super Shop: and sets the cost basis it never had', ssNeverReceived.data?.costPriceMinor === 400, ssNeverReceived.data);
 
   // --- Pharmacy ----------------------------------------------------------------
   const phStoreId = (await api('/stores', { token: phToken })).data?.[0]?._id;
@@ -9759,6 +9855,33 @@ async function main() {
   check('Super Shop: the opening stock was received into this branch', ssImported?.stock?.quantityOnHand === 20 && ssImported?.stock?.costPriceMinor === 15_000, ssImported?.stock);
   check('Super Shop: the opening stock is in the ledger, not a raw field write', ((await api(`/supershop/stock-ledger?itemId=${ssImported?._id}&limit=5`, { token: ssToken })).data ?? []).some((row) => row.quantityChange === 20));
   check('Super Shop: a weighed row is created as weighed', ((await ssApi(`/products?search=Imported Dal ${impStamp}`)).data ?? [])[0]?.unitType === 'weight');
+
+  // An imported product must behave exactly like one typed in by hand, and the
+  // interesting case is the row with NO opening stock: it is created with no
+  // stock record in this branch at all. The authorised out-of-stock sale used to
+  // miss precisely those products, which is how a shop could import its whole
+  // catalogue and then not be able to sell any of it.
+  const ssImpDal = ((await ssApi(`/products?search=Imported Dal ${impStamp}`)).data ?? [])[0];
+  check('Super Shop: a row with no opening stock has no stock in this branch', (ssImpDal?.stock?.quantityOnHand ?? 0) === 0, ssImpDal?.stock);
+  const ssImpSell = (token, quantity) =>
+    api('/supershop/sales', {
+      method: 'POST',
+      token,
+      body: { items: [{ productId: ssImpDal?._id, quantity }], payments: [{ method: 'cash', amountMinor: 50_000 }] },
+    });
+
+  await api(`/staff/${ssTill.id}`, { method: 'PATCH', token: ssToken, body: { extraPermissions: TILL_PERMISSIONS } });
+  const ssImpBlocked = await ssImpSell(ssTill.session.token, 500);
+  check('Super Shop: an imported product out of stock is blocked without the permission', ssImpBlocked.status === 400, ssImpBlocked.error?.message);
+
+  await api(`/staff/${ssTill.id}`, { method: 'PATCH', token: ssToken, body: { extraPermissions: [...TILL_PERMISSIONS, 'sales.sellOutOfStock'] } });
+  const ssImpAllowed = await ssImpSell(ssTill.session.token, 500);
+  check('Super Shop: an authorised till CAN sell an imported product that is out of stock', ssImpAllowed.status === 201, ssImpAllowed.error);
+  check('Super Shop: the imported line is flagged as an out-of-stock sale', ssImpAllowed.data?.items?.[0]?.outOfStockOverride === true, ssImpAllowed.data?.items?.[0]);
+  check('Super Shop: and an admin can too', (await ssImpSell(ssToken, 250)).status === 201);
+  const ssImpStock = (await ssApi(`/products/${ssImpDal?._id}`)).data?.product?.stock;
+  check('Super Shop: the branch now owes the goods it sold (750 g)', ssImpStock?.quantityOnHand === -750, ssImpStock);
+  check('Super Shop: the imported sale is in the stock ledger', ((await api(`/supershop/stock-ledger?itemId=${ssImpDal?._id}&limit=5`, { token: ssToken })).data ?? []).some((row) => row.quantityChange === -500));
   check('Super Shop: the new department joined the catalogue', ((await ssApi('/categories')).data ?? []).some((row) => row.name === `Imported ${impStamp}`));
   check('Super Shop: the same import cannot be committed twice', (await api(`/supershop/imports/${ssImpPreview.data.importId}/commit`, { method: 'POST', token: ssToken, body: { skipInvalidRows: true } })).status === 400);
   check('Super Shop: the history records what it created, never the file', ((await api('/supershop/imports', { token: ssToken })).data ?? []).some((row) => row.rowsImported === 2 && !('plan' in row)));
