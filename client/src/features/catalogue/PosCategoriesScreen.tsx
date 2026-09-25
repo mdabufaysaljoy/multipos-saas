@@ -25,6 +25,14 @@ interface PosCategoriesScreenProps {
   api: ReturnType<typeof posCategoriesApi>;
   /** Query keys to refresh when a name changes; renaming rewrites the items too. */
   invalidate: string[];
+  /**
+   * What one of these names IS, in the wording of the screen: "category" by
+   * default, "brand" for Super Shop's brand list. Optional so every existing
+   * caller reads exactly as it did.
+   */
+  entityLabel?: string;
+  /** The server's own limit on the name. 60 for a category, 80 for a brand. */
+  maxNameLength?: number;
 }
 
 /**
@@ -35,7 +43,7 @@ interface PosCategoriesScreenProps {
  * name they were sold under. A name still in use cannot be removed - hiding it
  * is how a department is retired without touching what already sits in it.
  */
-export function PosCategoriesScreen({ title, description, noun, api, invalidate }: PosCategoriesScreenProps) {
+export function PosCategoriesScreen({ title, description, noun, api, invalidate, entityLabel = 'category', maxNameLength = 60 }: PosCategoriesScreenProps) {
   const queryClient = useQueryClient();
   const [editing, setEditing] = React.useState<PosCategoryRow | 'new' | null>(null);
   const [deleting, setDeleting] = React.useState<PosCategoryRow | null>(null);
@@ -153,6 +161,8 @@ export function PosCategoriesScreen({ title, description, noun, api, invalidate 
           category={editing === 'new' ? null : editing}
           noun={noun}
           api={api}
+          entityLabel={entityLabel}
+          maxNameLength={maxNameLength}
           onClose={() => setEditing(null)}
           onSaved={() => {
             setEditing(null);
@@ -164,7 +174,7 @@ export function PosCategoriesScreen({ title, description, noun, api, invalidate 
       <ConfirmDialog
         open={Boolean(deleting)}
         onOpenChange={(open) => !open && setDeleting(null)}
-        title={`Remove ${deleting?.name ?? 'category'}?`}
+        title={`Remove ${deleting?.name ?? entityLabel}?`}
         description={`Only possible while no ${noun.one} uses it. Past sales keep the name they were sold under.`}
         confirmLabel="Remove"
         destructive
@@ -188,12 +198,16 @@ function CategoryDialog({
   api,
   onClose,
   onSaved,
+  entityLabel = 'category',
+  maxNameLength = 60,
 }: {
   category: PosCategoryRow | null;
   noun: { one: string; many: string };
   api: ReturnType<typeof posCategoriesApi>;
   onClose: () => void;
   onSaved: () => void;
+  entityLabel?: string;
+  maxNameLength?: number;
 }) {
   const [name, setName] = React.useState(category?.name ?? '');
   const [sortOrder, setSortOrder] = React.useState(String(category?.sortOrder ?? 0));
@@ -203,27 +217,27 @@ function CategoryDialog({
       const order = Number(sortOrder) || 0;
       if (!category) return api.create({ name: name.trim(), sortOrder: order });
       const id = category.id ?? (await api.create({ name: category.name, sortOrder: category.sortOrder })).id;
-      if (!id) throw new ApiError('UNKNOWN', 'Could not save the category', 500);
+      if (!id) throw new ApiError('UNKNOWN', `Could not save the ${entityLabel}`, 500);
       return api.update(id, { name: name.trim(), sortOrder: order });
     },
     onSuccess: () => {
       toast.success(category ? `Renamed to ${name.trim()}` : `${name.trim()} added`);
       onSaved();
     },
-    onError: (err) => toast.error(errorMessage(err, 'Could not save the category')),
+    onError: (err) => toast.error(errorMessage(err, `Could not save the ${entityLabel}`)),
   });
 
-  const valid = name.trim().length > 0 && name.trim().length <= 60;
+  const valid = name.trim().length > 0 && name.trim().length <= maxNameLength;
 
   return (
     <Dialog open onOpenChange={(open) => !open && onClose()}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>{category ? `Rename ${category.name}` : 'Add category'}</DialogTitle>
+          <DialogTitle>{category ? `Rename ${category.name}` : `Add ${entityLabel}`}</DialogTitle>
           <DialogDescription>
             {category && category.itemCount > 0
               ? `${category.itemCount} ${category.itemCount === 1 ? noun.one : noun.many} will be moved to the new name. Past sales keep the old one.`
-              : `Categories group the ${noun.many} on the till.`}
+              : `A ${entityLabel} groups the ${noun.many} on the till.`}
           </DialogDescription>
         </DialogHeader>
         <div className="grid gap-3 sm:grid-cols-[1fr_7rem]">

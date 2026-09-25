@@ -13,6 +13,7 @@ import { resolvePage, searchRegex } from '../../utils/pagination';
 import { entitlementService } from '../../services/subscription/entitlement.service';
 import { customerService } from '../customers/customers.service';
 import { posCategoryService } from '../../services/catalogue/posCategories.service';
+import { shopBrandService } from '../../services/catalogue/shopBrands.service';
 import { loyaltyService } from '../loyalty/loyalty.service';
 import { pointsForSpend } from '../loyalty/loyalty.math';
 import { logger } from '../../utils/logger';
@@ -89,21 +90,6 @@ class SupershopService {
     return { items: items.map((item) => this.withStock(item, stock)), page, limit, total };
   }
 
-  /**
-   * The brands this workspace actually sells under.
-   *
-   * A brand is free text on the product today (there is no Brand catalogue yet),
-   * so the list is the distinct values in use rather than a managed set. Blanks
-   * are dropped: "no brand" is not a brand to filter by. Sorted the way a person
-   * reads a dropdown, and tenant-scoped like everything else.
-   */
-  async listBrands(ctx: TenantContext) {
-    const brands = await ShopProductModel.distinct('brand', { tenantId: ctx.tenantId, deletedAt: null });
-    return brands
-      .filter((brand): brand is string => typeof brand === 'string' && brand.trim() !== '')
-      .sort((a, b) => a.localeCompare(b));
-  }
-
   /** The scanner path: one exact barcode in this workspace, with this branch's stock. */
   async lookupBarcode(ctx: TenantContext, barcode: string) {
     const product = await ShopProductModel.findOne({ tenantId: ctx.tenantId, deletedAt: null, barcode }).lean<ProductRecord>();
@@ -130,6 +116,9 @@ class SupershopService {
     // A department the shop has retired cannot take new goods; a new name joins
     // the catalogue so it can be managed like the rest.
     await posCategoryService.assertUsable(ctx, 'supershop', values.category);
+    // The same for the brand, which is independent of the department and
+    // optional: unbranded goods are most of a supershop's shelf.
+    await shopBrandService.assertUsable(ctx, values.brand);
     const product = await ShopProductModel.create({ tenantId: ctx.tenantId, ...values, createdBy: ctx.userId });
     return product.toObject();
   }
@@ -138,6 +127,7 @@ class SupershopService {
     const before = await this.findProduct(ctx, id);
     if (input.reorderLevel !== undefined) this.assertWithinUnitMax(input.reorderLevel, before, 'reorder level');
     if (input.category) await posCategoryService.assertUsable(ctx, 'supershop', input.category);
+    if (input.brand !== undefined) await shopBrandService.assertUsable(ctx, input.brand);
     await this.assertUnique(ctx, { name: input.name ?? before.name, brand: input.brand ?? before.brand, barcode: input.barcode ?? before.barcode }, id);
     const after = await ShopProductModel.findOneAndUpdate({ _id: id, tenantId: ctx.tenantId, deletedAt: null }, { $set: input }, { new: true, runValidators: true }).lean<ProductRecord>();
     if (!after) throw ApiError.notFound('Product not found');

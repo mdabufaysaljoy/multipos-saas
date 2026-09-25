@@ -9,6 +9,12 @@ import { listPosReturns } from '../../services/returns/posReturns.list';
 import { supershopSaleReturnAdapter } from '../../services/returns/adapters/supershop.saleAdapter';
 import { recordAudit } from '../../services/audit/audit.service';
 import { supershopService } from './supershop.service';
+import {
+  shopBrandService,
+  type CreateShopBrandInput,
+  type ListShopBrandsInput,
+  type UpdateShopBrandInput,
+} from '../../services/catalogue/shopBrands.service';
 import { supershopReportsService } from './supershopReports.service';
 import { streamReportPdf } from '../../services/reports/reportPrint';
 import { supershopReportView } from '../../services/reports/reportViews';
@@ -35,9 +41,23 @@ export const listProducts = asyncHandler(async (req: Request, res: Response) => 
   paginated(res, result.items, buildPageMeta(result.page, result.limit, result.total));
 });
 
-/** The brands in use, for the till's brand filter. */
+// ---------------------------------------------------------------- brands
+// The same four routes a department has, on the same design: the product keeps
+// the name, this is the list of names, and renaming one rewrites the products.
 export const listBrands = asyncHandler(async (req: Request, res: Response) => {
-  ok(res, await supershopService.listBrands(getContext(req)));
+  ok(res, await shopBrandService.list(getContext(req), query<ListShopBrandsInput>(req)));
+});
+
+export const createBrand = asyncHandler(async (req: Request, res: Response) => {
+  created(res, await shopBrandService.create(getContext(req), body<CreateShopBrandInput>(req)));
+});
+
+export const updateBrand = asyncHandler(async (req: Request, res: Response) => {
+  ok(res, await shopBrandService.update(getContext(req), params<IdParams>(req).id, body<UpdateShopBrandInput>(req)));
+});
+
+export const removeBrand = asyncHandler(async (req: Request, res: Response) => {
+  ok(res, await shopBrandService.remove(getContext(req), params<IdParams>(req).id));
 });
 
 export const lookupBarcode = asyncHandler(async (req: Request, res: Response) => {

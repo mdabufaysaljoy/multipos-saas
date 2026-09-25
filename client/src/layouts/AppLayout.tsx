@@ -110,6 +110,7 @@ const NAV_SECTIONS: { heading: string; items: NavItem[] }[] = [
       { to: '/stock', label: 'Stock & expiry', icon: Boxes, anyOf: ['inventory.view'], verticals: ['pharmacy'] },
       { to: '/shop-products', label: 'Products & stock', icon: ShoppingBasket, anyOf: ['products.view'], verticals: ['supershop'] },
       { to: '/shop-categories', label: 'Departments', icon: FolderTree, anyOf: ['categories.view'], verticals: ['supershop'] },
+      { to: '/shop-brands', label: 'Brands', icon: Tags, anyOf: ['categories.view'], verticals: ['supershop'] },
       { to: '/shop-import', label: 'Import products', icon: FileUp, anyOf: ['products.import'], feature: 'productImport', verticals: ['supershop'] },
       { to: '/shop-inventory', label: 'Inventory', icon: Boxes, anyOf: ['inventory.view'], verticals: ['supershop'] },
     ],

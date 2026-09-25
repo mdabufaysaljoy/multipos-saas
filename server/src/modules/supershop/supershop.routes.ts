@@ -29,6 +29,7 @@ import { stockLedger } from '../inventory/stockLedger.controller';
 import { posImportRouter } from '../posImports/posImports.routes';
 import { createCategory, listCategories, removeCategory, updateCategory } from '../posCategories/posCategories.controller';
 import { createPosCategorySchema, listPosCategoriesSchema, updatePosCategorySchema } from '../../services/catalogue/posCategories.service';
+import { createShopBrandSchema, listShopBrandsSchema, updateShopBrandSchema } from '../../services/catalogue/shopBrands.service';
 
 const router = Router();
 
@@ -46,9 +47,31 @@ router.use(authenticate, resolveTenant, requireVertical('supershop'), requireSub
 router.get('/products', requirePermission(PERMISSIONS.PRODUCTS_VIEW), validate({ query: listProductsSchema }), controller.listProducts);
 // Registered before `/products/:id` so "lookup" is never read as an id.
 router.get('/products/lookup', requirePermission(PERMISSIONS.PRODUCTS_VIEW), validate({ query: barcodeQuerySchema }), controller.lookupBarcode);
-// The brands the shop's products carry, for the till's brand filter. Reading
-// needs only `products.view`, like the department list beside it.
-router.get('/brands', requirePermission(PERMISSIONS.PRODUCTS_VIEW), controller.listBrands);
+// The brands the shop sells under. Independent of the department: a product
+// has both, either or neither. Managed with the same permissions a department
+// is, because it is the same kind of setting.
+router.get('/brands', requirePermission(PERMISSIONS.PRODUCTS_VIEW), validate({ query: listShopBrandsSchema }), controller.listBrands);
+router.post(
+  '/brands',
+  requireActiveSubscription,
+  requirePermission(PERMISSIONS.CATEGORIES_CREATE),
+  validate({ body: createShopBrandSchema }),
+  controller.createBrand,
+);
+router.patch(
+  '/brands/:id',
+  requireActiveSubscription,
+  requirePermission(PERMISSIONS.CATEGORIES_EDIT),
+  validate({ params: idParam, body: updateShopBrandSchema }),
+  controller.updateBrand,
+);
+router.delete(
+  '/brands/:id',
+  requireActiveSubscription,
+  requirePermission(PERMISSIONS.CATEGORIES_DELETE),
+  validate({ params: idParam }),
+  controller.removeBrand,
+);
 // The departments this workspace sells under; the same four routes in every POS
 // type whose items carry the category as a name (see services/catalogue).
 router.get('/categories', requirePermission(PERMISSIONS.PRODUCTS_VIEW), validate({ query: listPosCategoriesSchema }), listCategories);

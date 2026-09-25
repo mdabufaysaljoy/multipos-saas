@@ -56,6 +56,7 @@ const ShopProductsPage = lazyPage(() => import('@/pages/supershop/ShopProductsPa
 const ShopInventoryPage = lazyPage(() => import('@/pages/supershop/ShopInventoryPage'), 'ShopInventoryPage');
 const ShopReturnsPage = lazyPage(() => import('@/pages/supershop/ShopReturnsPage'), 'ShopReturnsPage');
 const ShopCategoriesPage = lazyPage(() => import('@/pages/supershop/ShopCategoriesPage'), 'ShopCategoriesPage');
+const ShopBrandsPage = lazyPage(() => import('@/pages/supershop/ShopBrandsPage'), 'ShopBrandsPage');
 const ShopImportPage = lazyPage(() => import('@/pages/supershop/ShopImportPage'), 'ShopImportPage');
 const PharmacyImportPage = lazyPage(() => import('@/pages/pharmacy/PharmacyImportPage'), 'PharmacyImportPage');
 const MenuImportPage = lazyPage(() => import('@/pages/restaurant/MenuImportPage'), 'MenuImportPage');
@@ -283,6 +284,14 @@ export function AppRoutes() {
           element={
             <ProtectedRoute anyOf={['products.view', 'categories.view']}>
               <ShopCategoriesPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/shop-brands"
+          element={
+            <ProtectedRoute anyOf={['products.view', 'categories.view']}>
+              <ShopBrandsPage />
             </ProtectedRoute>
           }
         />

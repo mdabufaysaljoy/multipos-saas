@@ -872,3 +872,121 @@ return, the credit, what came back, the branch, the date and the tender.
 
 **Not touched:** Clothing, Restaurant, Pharmacy. **Still open:** CI (audit Issue
 10), the ordinary return path's N1 ordering, and the browser pass.
+
+## 2026-09-26 — Phase 5: Brand management (Super Shop)
+
+Audit Issue 6. Super Shop only; **no shared server code changed at all**.
+
+### The existing architecture, audited first
+
+`posCategories.service` is the precedent, and the design is worth restating
+because Brand copies it deliberately:
+
+- the **item carries the NAME**, so the collection is the LIST of names —
+  what exists, what is still offered, in what order;
+- the list is **everything written down plus everything items actually use**,
+  which is why it needed no migration and loses nothing;
+- a **slug** decides duplicates, so "PRAN", "pran" and " Pran " are one name;
+- **renaming rewrites the live items**; sales keep the name they were sold
+  under, so last month's report still reads as it did;
+- **removing is refused while in use**; hiding (`isActive`) is how something
+  still on the shelf is retired;
+- `assertUsable` **auto-registers** an unknown name and **refuses a hidden one**.
+
+Brand now works identically, on `ShopProduct.brand`.
+
+### Why a separate model rather than extending `PosCategory`
+
+`PosCategory` is shared by Super Shop, Pharmacy and Restaurant, and its unique
+index is `(tenantId, vertical, slug)`. Adding brands to it would have meant a new
+`kind` discriminator, a changed unique index and a migration — on a collection
+three verticals depend on. `ShopBrand` is its own Super Shop-scoped collection
+instead: zero blast radius, and Clothing keeps brand as free text, Pharmacy calls
+the equivalent `manufacturer`, and a restaurant has none, so there was nothing to
+share yet. If another vertical ever needs brands, `shopBrands.service` is the one
+to generalise the way `posCategories` already is.
+
+### One real difference from a category
+
+**A brand is optional.** Most of a supershop's shelf is unbranded, so an empty
+name is never a row, never counted and never refused. Existing products without a
+brand stay exactly as valid as they were — asserted.
+
+### What was built
+
+- `models/ShopBrand.ts` — unique live row per name per workspace
+  (`{tenantId, slug}` partial on `deletedAt: null`), plus a list index
+  `{tenantId, deletedAt, sortOrder, name}`.
+- `services/catalogue/shopBrands.service.ts` — create, list (with `search` and
+  `includeInactive`), rename-with-cascade, hide/show, remove-when-unused,
+  `assertUsable`.
+- `ShopProduct` already had `{tenantId, deletedAt, brand, name}` from Phase 2,
+  which serves the filter and the list.
+- Routes at `/supershop/brands`: reading needs `products.view` (every till must
+  know what it may filter by), writing needs `categories.create/edit/delete`.
+  **Reusing the category permissions deliberately** — it is the same class of
+  catalogue setting, and new keys would have meant a roles migration across all
+  four verticals.
+- `createProduct` / `updateProduct` call `shopBrandService.assertUsable`, so a
+  brand typed into the product form joins the list and a hidden one is refused.
+- **Import**: the `Brand` column already existed and goes through `createProduct`,
+  so a brand named in a sheet registers itself. Existing imports are unaffected —
+  a sheet with no brand column still imports exactly as before. (The preview's
+  `newCategories` summary has no `newBrands` counterpart; that would touch the
+  shared import service used by three verticals, so it was left alone.)
+
+### Client
+
+- `ShopBrandsPage` reuses the shared `PosCategoriesScreen` — full CRUD,
+  hide/show, rename-with-warning and delete-guard for free. The screen gained
+  two **optional, defaulted** props (`entityLabel`, `maxNameLength`) purely for
+  wording and the 80-character limit; every existing caller renders exactly as
+  before.
+- The product form's brand field is now the shared `CategoryInput` combobox,
+  which gained optional `kind` / `maxLength` / `placeholder`. It still accepts a
+  new name typed free-hand.
+- The till's brand filter now reads the **managed** list, so a hidden brand
+  disappears from it.
+
+### A semantic change worth knowing
+
+Phase 2's brand endpoint was a `distinct` over live products, so a brand vanished
+when its last product did. It is now a catalogue: **a brand survives its
+products**, and what drops to zero is the count carrying it. Two Phase-2
+assertions were updated to the new meaning.
+
+### ⚠️ On "Department, Category and Brand independently"
+
+Super Shop has **one** such axis today, not two: the field is `category` and the
+UI calls it "Department". Brand is now genuinely independent of it — a product
+has either, both or neither, and the till filters by each separately, which is
+asserted.
+
+Splitting Department and Category into two separate axes would be a schema change
+to every product, the import, the filters and the reports. It is not what
+"implement Brand management" asked for, and "do not replace Department or
+Category" pointed the other way, so **it was not done**. If two axes are wanted,
+say so and it is its own task.
+
+### Verification
+
+- `npm run lint` ✅ · `npm run typecheck` ✅ · `npm run build` ✅
+- `npm test` — **3396 passed, 0 failed** (was 3351; **45 net new assertions**),
+  green on the first run.
+
+Covering: create; duplicate refused, including the same name in different case
+and spacing; nameless and over-length refused; unknown fields refused; listed
+with its product count; search, and a search that matches nothing; assigning to a
+product and filtering by it; a brand typed straight onto a product joining the
+list; **a product with no brand still valid**, and "no brand" never becoming a
+brand; rename moving every product while **the sale keeps the name it was sold
+under**; rename onto a taken name refused; hide, dropping out of the till list
+but not the owner's; new goods refused under a hidden brand while existing ones
+are untouched; show again; **remove refused while in use**, allowed when unused,
+and the name free afterwards; 404 on an unknown id; **brand and department
+independent**, separately and together; the import path; and isolation and
+permissions — no session, another workspace reading/creating/renaming, and a till
+that may read but not create, rename or remove.
+
+**Not touched:** Clothing, Restaurant, Pharmacy. **Still open:** CI (audit Issue
+10), N1 on the ordinary return path, and the browser pass.

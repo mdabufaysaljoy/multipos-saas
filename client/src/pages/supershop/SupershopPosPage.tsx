@@ -28,6 +28,7 @@ import { ApiError } from '@/api/client';
 import { storeApi } from '@/api/endpoints';
 import { supershopApi } from '@/api/supershop';
 import { shopCategoriesApi } from '@/api/posCategories';
+import { shopBrandsApi } from '@/api/shopBrands';
 import { formatMoney } from '@/lib/money';
 import { formatQuantity, gramsToKgText, lineAmount, parseKgToGrams } from '@/lib/supershop';
 import { cn } from '@/lib/utils';
@@ -71,7 +72,9 @@ export function SupershopPosPage() {
   // The departments this shop sells under, in the owner's order and without the
   // ones they hid, and the brands its products actually carry.
   const { data: departments } = useQuery({ queryKey: ['supershop', 'categories', 'filter'], queryFn: () => shopCategoriesApi.list(), staleTime: 60_000 });
-  const { data: brands } = useQuery({ queryKey: ['supershop', 'brands'], queryFn: () => supershopApi.brands(), staleTime: 60_000 });
+  // The managed brand list, minus any the owner has hidden.
+  const { data: brandRows } = useQuery({ queryKey: ['supershop', 'brands', 'filter'], queryFn: () => shopBrandsApi.list(), staleTime: 60_000 });
+  const brands = React.useMemo(() => (brandRows ?? []).map((row) => row.name), [brandRows]);
   const [department, setDepartment] = React.useState(ANY);
   const [brand, setBrand] = React.useState(ANY);
 
@@ -82,8 +85,8 @@ export function SupershopPosPage() {
     if (department !== ANY && departments && !departments.some((row) => row.name === department)) setDepartment(ANY);
   }, [departments, department]);
   React.useEffect(() => {
-    if (brand !== ANY && brands && !brands.includes(brand)) setBrand(ANY);
-  }, [brands, brand]);
+    if (brand !== ANY && brandRows && !brands.includes(brand)) setBrand(ANY);
+  }, [brandRows, brands, brand]);
 
   const listRef = React.useRef<HTMLDivElement>(null);
   const sentinelRef = React.useRef<HTMLDivElement>(null);
@@ -316,7 +319,7 @@ export function SupershopPosPage() {
           </form>
           <PosFilters
             categories={(departments ?? []).map((row) => row.name)}
-            brands={brands ?? []}
+            brands={brands}
             category={department}
             brand={brand}
             onCategory={setDepartment}

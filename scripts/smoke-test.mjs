@@ -5779,10 +5779,13 @@ async function main() {
   check('Out-of-stock products are listed, not hidden', (ssPage1.data ?? []).some((row) => (row.stock?.quantityOnHand ?? 0) === 0));
 
   // ---- the brand list the dropdown is built from -----------------------------
+  // The brand list is the managed catalogue: rows, with what carries each one.
   const ssBrands = (await ssApi('/brands')).data ?? [];
-  check('The brand list offers the brands in use', ['Fresh', 'Pran', 'Lux'].every((name) => ssBrands.includes(name)), ssBrands);
-  check('...never a blank one', !ssBrands.includes('') && !ssBrands.some((name) => name.trim() === ''), ssBrands);
-  check('...and is sorted for a dropdown', JSON.stringify(ssBrands) === JSON.stringify([...ssBrands].sort((a, b) => a.localeCompare(b))), ssBrands);
+  const ssBrandNames = ssBrands.map((row) => row.name);
+  check('The brand list offers the brands in use', ['Fresh', 'Pran', 'Lux'].every((name) => ssBrandNames.includes(name)), ssBrandNames);
+  check('...never a blank one', !ssBrandNames.some((name) => !name || !name.trim()), ssBrandNames);
+  check('...and reports how many products carry each', (ssBrands.find((row) => row.name === 'Fresh')?.productCount ?? 0) === 15, ssBrands.find((row) => row.name === 'Fresh'));
+  check('...sorted for a dropdown', JSON.stringify(ssBrandNames) === JSON.stringify([...ssBrandNames].sort((a, b) => a.localeCompare(b))), ssBrandNames);
 
   // ---- one filter at a time --------------------------------------------------
   const ssByCategory = await ssPosList({ limit: 100, category: 'Grocery' });
@@ -5822,7 +5825,10 @@ async function main() {
   // products by exact value. They hold no stock, so they delete cleanly.
   for (const id of ssFilterIds) await ssApi(`/products/${id}`, { method: 'DELETE' });
   check('The filter fixtures are retired', (await ssPosList({ limit: 1 })).meta?.total === ssBaseline, (await ssPosList({ limit: 1 })).meta);
-  check('...and their brands leave the dropdown with them', !((await ssApi('/brands')).data ?? []).includes('Fresh'));
+  // The brand itself SURVIVES its products: a name the shop has used is part of
+  // the catalogue until it is removed on purpose. What drops to zero is the
+  // count of products carrying it.
+  check('...while the brand itself stays in the catalogue, now carrying nothing', ((await ssApi('/brands')).data ?? []).find((row) => row.name === 'Fresh')?.productCount === 0);
 
   const ssSale = (body) => ssApi('/sales', { method: 'POST', body });
   const basket = await ssSale({ items: [{ productId: soap.data._id, quantity: 3 }, { productId: rice.data._id, quantity: 1500 }], payments: [{ method: 'cash', amountMinor: 30_000 }] });
@@ -6264,6 +6270,116 @@ async function main() {
     const onHand = await exOnHand(id);
     if (onHand !== 0) await ssApi(`/products/${id}/adjust`, { method: 'POST', body: { type: 'adjust', quantityDelta: -onHand, reason: 'Exchange fixture' } });
     await ssApi(`/products/${id}`, { method: 'DELETE' });
+  }
+
+  // --- Brands -------------------------------------------------------------------
+  // Built the same way departments are: the product carries the NAME, the
+  // collection is the list of names, and the list is everything written down
+  // plus everything products actually use. Brand is INDEPENDENT of the
+  // department - a product has either, both or neither.
+  section('Supershop brands');
+
+  const brStamp = String(Date.now()).slice(-6);
+  const brApi = (path, opts = {}) => ssApi(`/brands${path}`, opts);
+  const brName = `Pusti ${brStamp}`;
+
+  const brCreated = await brApi('', { method: 'POST', body: { name: brName, sortOrder: 5 } });
+  check('A brand can be created', brCreated.status === 201 && brCreated.data?.name === brName, brCreated.error);
+  check('The same name again is refused', (await brApi('', { method: 'POST', body: { name: brName } })).status === 409);
+  check('...and so is the same name in different clothes', (await brApi('', { method: 'POST', body: { name: `  ${brName.toUpperCase()}  ` } })).status === 409);
+  check('A nameless brand is refused', (await brApi('', { method: 'POST', body: { name: '   ' } })).status === 422);
+  check('A brand name over 80 characters is refused', (await brApi('', { method: 'POST', body: { name: 'x'.repeat(81) } })).status === 422);
+  check('Unknown fields are refused', (await brApi('', { method: 'POST', body: { name: `Other ${brStamp}`, colour: 'red' } })).status === 422);
+
+  const brRow = () => brApi('?includeInactive=true').then((res) => (res.data ?? []).find((row) => row.name === brName));
+  check('It is listed, carrying nothing yet', (await brRow())?.productCount === 0);
+  check('The list can be searched', ((await brApi(`?search=${encodeURIComponent(`Pusti ${brStamp}`)}`)).data ?? []).some((row) => row.name === brName));
+  check('...and a search that matches nothing comes back empty', ((await brApi(`?search=nothinglikethis${brStamp}`)).data ?? []).length === 0);
+
+  // ---- assigning it to a product ---------------------------------------------
+  const brProduct = await ssProduct({ name: `Branded Biscuit ${brStamp}`, brand: brName, category: 'Household', priceMinor: 5000 });
+  check('A product can be created under the brand', brProduct.status === 201 && brProduct.data?.brand === brName, brProduct.error);
+  check('...and the brand now says one product carries it', (await brRow())?.productCount === 1);
+  check('Filtering products by the brand finds it', ((await ssApi(`/products?brand=${encodeURIComponent(brName)}&limit=50`)).meta?.total) === 1);
+
+  // A brand nobody wrote down first still joins the list when a product uses it.
+  const brTyped = `Typed ${brStamp}`;
+  const brTypedProduct = await ssProduct({ name: `Typed Brand Item ${brStamp}`, brand: brTyped, category: 'Household', priceMinor: 4000 });
+  check('A brand typed straight onto a product joins the list', brTypedProduct.status === 201 && ((await brApi('')).data ?? []).some((row) => row.name === brTyped));
+
+  // ---- a product with NO brand is still perfectly valid ----------------------
+  const brNone = await ssProduct({ name: `Unbranded Rice ${brStamp}`, category: 'Household', priceMinor: 3000 });
+  check('A product with no brand is still valid', brNone.status === 201 && (brNone.data?.brand ?? '') === '');
+  check('...and "no brand" never becomes a brand in the list', !((await brApi('?includeInactive=true')).data ?? []).some((row) => !row.name || !row.name.trim()));
+
+  // ---- renaming moves the products, but never the sales ----------------------
+  const brSale = await ssSale({ items: [{ productId: brProduct.data._id, quantity: 1 }], payments: [{ method: 'cash', amountMinor: 5000 }] });
+  check('A sale under the brand records it', brSale.status === 201 && brSale.data?.items?.[0]?.brandSnapshot === brName, brSale.data?.items?.[0]);
+  const brRenamed = `Pusti Foods ${brStamp}`;
+  const brUpdate = await brApi(`/${brCreated.data._id}`, { method: 'PATCH', body: { name: brRenamed } });
+  check('A brand can be renamed', brUpdate.status === 200 && brUpdate.data?.name === brRenamed, brUpdate.error);
+  check('...every product carrying it moved', ((await ssApi(`/products/${brProduct.data._id}`)).data?.product?.brand) === brRenamed);
+  check('...and the sale keeps the name it was sold under', ((await ssApi(`/sales/${brSale.data._id}`)).data?.items?.[0]?.brandSnapshot) === brName);
+  check('...renaming onto a name already taken is refused', (await brApi(`/${brCreated.data._id}`, { method: 'PATCH', body: { name: brTyped } })).status === 409);
+
+  // ---- hiding and showing ------------------------------------------------------
+  const brHide = await brApi(`/${brCreated.data._id}`, { method: 'PATCH', body: { isActive: false } });
+  check('A brand can be hidden', brHide.status === 200 && brHide.data?.isActive === false, brHide.error);
+  check('...it drops out of the till list', !((await brApi('')).data ?? []).some((row) => row.name === brRenamed));
+  check('...but is still there when the owner asks for everything', ((await brApi('?includeInactive=true')).data ?? []).some((row) => row.name === brRenamed));
+  const brHiddenUse = await ssProduct({ name: `Late Arrival ${brStamp}`, brand: brRenamed, category: 'Household', priceMinor: 1000 });
+  check('...new goods cannot be put under a hidden brand', brHiddenUse.status === 400 && brHiddenUse.error?.details?.reason === 'BRAND_HIDDEN', brHiddenUse.error);
+  check('...while the products already carrying it are untouched', ((await ssApi(`/products/${brProduct.data._id}`)).data?.product?.brand) === brRenamed);
+  await brApi(`/${brCreated.data._id}`, { method: 'PATCH', body: { isActive: true } });
+  check('Showing it again makes it usable', (await ssProduct({ name: `Back On Sale ${brStamp}`, brand: brRenamed, category: 'Household', priceMinor: 1000 })).status === 201);
+
+  // ---- removing ----------------------------------------------------------------
+  const brInUse = await brApi(`/${brCreated.data._id}`, { method: 'DELETE' });
+  check('A brand still on products cannot be removed', brInUse.status === 409 && brInUse.error?.details?.reason === 'BRAND_IN_USE', brInUse.error);
+  const brSpare = await brApi('', { method: 'POST', body: { name: `Spare ${brStamp}` } });
+  check('A brand nothing carries can be removed', (await brApi(`/${brSpare.data._id}`, { method: 'DELETE' })).status === 200);
+  check('...and its name is free again', (await brApi('', { method: 'POST', body: { name: `Spare ${brStamp}` } })).status === 201);
+  check('An unknown brand id is 404', (await brApi(`/${brProduct.data._id}`, { method: 'DELETE' })).status === 404);
+
+  // ---- departments are untouched by any of it ---------------------------------
+  check(
+    'Brand and department are independent: the product has both',
+    (await ssApi(`/products/${brProduct.data._id}`)).data?.product?.category === 'Household' &&
+      (await ssApi(`/products/${brProduct.data._id}`)).data?.product?.brand === brRenamed,
+  );
+  check('Filtering by department still ignores the brand', ((await ssApi('/products?category=Household&limit=100')).meta?.total ?? 0) > 1);
+  check('Both together narrow further', ((await ssApi(`/products?category=Household&brand=${encodeURIComponent(brRenamed)}&limit=50`)).meta?.total) === 2);
+
+  // ---- import ------------------------------------------------------------------
+  const brSheet = await uploadSheet('/supershop/imports/preview', {
+    token: ssToken,
+    // `productCsv` directly: the import section's own `sheetFor` wrapper is
+    // declared further down the file and is not in scope here.
+    bytes: productCsv([[`Imported Brandy ${brStamp}`, '90', '', 'Household', `Sheet Brand ${brStamp}`, 'Piece', '0', '0', '', '']], {
+      headers: ['Product', 'Price', 'Barcode', 'Department', 'Brand', 'Sold by', 'VAT rate', 'Reorder level', 'Opening stock', 'Cost price'],
+    }),
+  });
+  const brSheetRun = await api(`/supershop/imports/${brSheet.data?.importId}/commit`, { method: 'POST', token: ssToken, body: { skipInvalidRows: false } });
+  check('A brand column in a sheet still imports', brSheetRun.status === 200 && brSheetRun.data?.summary?.itemsCreated === 1, brSheetRun.data?.summary ?? brSheetRun.error);
+  check('...and the brand it named joined the list', ((await brApi('')).data ?? []).some((row) => row.name === `Sheet Brand ${brStamp}`));
+  check('...with the product carrying it', ((await ssApi(`/products?brand=${encodeURIComponent(`Sheet Brand ${brStamp}`)}&limit=10`)).meta?.total) === 1);
+
+  // ---- who may manage them -----------------------------------------------------
+  check('The brand list needs a session', (await api('/supershop/brands')).status === 401);
+  check("Another workspace cannot read this one's brands", (await api('/supershop/brands', { token: phToken })).status === 403);
+  check("Another workspace cannot create one here", (await api('/supershop/brands', { method: 'POST', token: phToken, body: { name: 'Sneaky' } })).status === 403);
+  check("Another workspace cannot rename this one's brand", (await api(`/supershop/brands/${brCreated.data._id}`, { method: 'PATCH', token: phToken, body: { name: 'Stolen' } })).status === 403);
+  // The exchange till holds products.view but no categories.* permission.
+  check('A till may READ the brands', (await api('/supershop/brands', { token: exTill.token })).status === 200);
+  check('...but not create one', (await api('/supershop/brands', { method: 'POST', token: exTill.token, body: { name: `Nope ${brStamp}` } })).status === 403);
+  check('...nor rename one', (await api(`/supershop/brands/${brCreated.data._id}`, { method: 'PATCH', token: exTill.token, body: { name: 'Nope' } })).status === 403);
+  check('...nor remove one', (await api(`/supershop/brands/${brCreated.data._id}`, { method: 'DELETE', token: exTill.token })).status === 403);
+
+  // Retire the products these checks made; the brands stay, as a catalogue does.
+  for (const row of (await ssApi(`/products?search=${brStamp}&limit=100`)).data ?? []) {
+    const onHand = row.stock?.quantityOnHand ?? 0;
+    if (onHand !== 0) await ssApi(`/products/${row._id}/adjust`, { method: 'POST', body: { type: 'adjust', quantityDelta: -onHand, reason: 'Brand fixture' } });
+    await ssApi(`/products/${row._id}`, { method: 'DELETE' });
   }
 
 
