@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { PackagePlus, Pencil, Pill, Plus, Trash2 } from 'lucide-react';
+import { Barcode, PackagePlus, Pencil, Pill, Plus, Trash2 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
@@ -19,6 +19,7 @@ import { PermissionGate } from '@/components/PermissionGate';
 import { SearchInput, useDebounced } from '@/components/SearchInput';
 import { LoadingState } from '@/components/states';
 import { ApiError } from '@/api/client';
+import { BarcodePrintDialog } from '@/features/barcode/BarcodePrintDialog';
 import { pharmacyApi } from '@/api/pharmacy';
 import { formatMoney } from '@/lib/money';
 import { DOSAGE_FORM_LABELS, expiryTone, formatExpiry, todayInputValue } from '@/lib/pharmacy';
@@ -39,6 +40,7 @@ export function MedicinesPage() {
   const [receiving, setReceiving] = React.useState<Medicine | null>(null);
   const [viewing, setViewing] = React.useState<Medicine | null>(null);
   const [deleting, setDeleting] = React.useState<Medicine | null>(null);
+  const [labelling, setLabelling] = React.useState<Medicine | null>(null);
 
   const { data, isLoading, error, refetch } = useQuery({
     queryKey: ['pharmacy', 'medicines', search, page],
@@ -117,6 +119,11 @@ export function MedicinesPage() {
               <PackagePlus />
             </Button>
           </PermissionGate>
+          {row.barcode && (
+            <Button variant="ghost" size="icon-sm" onClick={() => setLabelling(row)} aria-label={`Print a label for ${row.name}`}>
+              <Barcode />
+            </Button>
+          )}
           <PermissionGate anyOf={['products.edit']}>
             <Button variant="ghost" size="icon-sm" onClick={() => setEditing(row)} aria-label={`Edit ${row.name}`}>
               <Pencil />
@@ -200,6 +207,24 @@ export function MedicinesPage() {
         />
       )}
       <BatchesDialog medicine={viewing} currency={currency} onClose={() => setViewing(null)} />
+
+      {/* The same label printer the other verticals use; the strength stands in for a variant. */}
+      <BarcodePrintDialog
+        label={
+          labelling
+            ? {
+                barcode: labelling.barcode,
+                productName: labelling.name,
+                variantName: labelling.strength,
+                sku: labelling.genericName,
+                priceMinor: labelling.sellingPriceMinor,
+              }
+            : null
+        }
+        currency={currency}
+        storeName={activeStore?.name}
+        onClose={() => setLabelling(null)}
+      />
 
       <ConfirmDialog
         open={Boolean(deleting)}

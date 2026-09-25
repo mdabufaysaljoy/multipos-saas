@@ -12,7 +12,7 @@ interface LabelSettingsCardProps {
   readOnly: boolean;
   /** The store's VAT switch, so the preview matches what is printed. */
   vatEnabled: boolean;
-  /** Loyalty card size is only relevant where the loyalty program exists (Clothing). */
+  /** Loyalty card size is only relevant where the loyalty program exists. */
   showLoyaltyCard: boolean;
   onChange: (labels: LabelSettings) => void;
 }

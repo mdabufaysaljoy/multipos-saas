@@ -338,3 +338,20 @@ and by setting **Print mode → Browser** on that computer.
 passes, treat printer-specific behaviour (ESC/POS raster support, driver raw pass-through, feed and cutter) as
 unverified.
 
+
+## Printer and label settings, in every POS
+
+Direct (QZ Tray) printing has been universal since task 01, but its settings screen was not: the
+**Printer** tab in Settings was rendered for Clothing only, so a Super Shop, Pharmacy or Restaurant
+could print through QZ Tray without being able to choose the printer, its language, the printable
+width or the feed. That tab is now shown in every vertical — the settings are per computer and were
+always vertical-agnostic.
+
+The **Labels** tab is shown wherever the goods carry a barcode: Clothing, Super Shop and Pharmacy. A
+restaurant has no barcodes on its menu, so it does not get the tab. The loyalty card size inside it
+follows the loyalty program's own verticals (`isLoyaltyVertical`), not a hardcoded list.
+
+Printing a label is the same dialog everywhere (`features/barcode/BarcodePrintDialog`): Super Shop
+products and Pharmacy medicines have a label button beside the row's other actions, shown only when
+that product actually has a barcode. A shop product has no variant or SKU, so the brand and the
+department stand in; a medicine uses its strength and generic name.

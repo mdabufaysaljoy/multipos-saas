@@ -72,3 +72,24 @@ been in use.
 but the Super Shop, Pharmacy and Restaurant dashboards and analytics still sum what was charged, not
 what was kept. Clothing's reports do subtract returns. Bringing the other three into line belongs
 with task 13 (analytics parity), and is the first thing to do there.
+
+## The Returns screen
+
+Taking something back used to be reachable only from inside a sale, which meant knowing which sale
+it was before you could start. Every vertical now has a screen of its own, all of them one shared
+component (`client/src/features/returns/PosReturnsScreen.tsx`):
+
+| POS | Path | Called |
+|---|---|---|
+| Clothing | `/returns` | Returns (its own screen, with exchanges) |
+| Super Shop | `/shop-returns` | Returns |
+| Pharmacy | `/pharmacy-returns` | Returns |
+| Restaurant | `/refunds` | Refunds — money only, nothing restocks |
+
+The screen lists what has come back, and starts a new one the way the engine requires: find the sale
+first, then choose the lines. The vertical supplies its own endpoints and says how to read one of
+its sales (its number, its date, its second line and its returnable lines); the behaviour is the
+same everywhere because it is the same engine underneath.
+
+A Super Shop sale can now also be found by the customer who bought it, not only by its number or an
+item on it — the first thing a shopkeeper knows is usually the person standing in front of them.

@@ -518,7 +518,7 @@ class SupershopService {
     }
     if (input.search) {
       const rx = searchRegex(input.search);
-      filter.$or = [{ saleNumber: rx }, { 'items.nameSnapshot': rx }, { 'items.barcodeSnapshot': rx }];
+      filter.$or = [{ saleNumber: rx }, { 'items.nameSnapshot': rx }, { 'items.barcodeSnapshot': rx }, { customerNameSnapshot: rx }];
     }
     const [items, total] = await Promise.all([
       ShopSaleModel.find(filter).sort({ soldAt: -1 }).skip(skip).limit(limit).lean(),

@@ -8,9 +8,9 @@
 const VERTICAL_ONLY_PATHS: Record<string, string[]> = {
   // `/dashboard`, `/analytics` and `/pos` are shared: each vertical renders its own there.
   clothing: ['/sales', '/returns', '/catalogue', '/categories', '/inventory'],
-  restaurant: ['/menu', '/tables', '/orders', '/kitchen', '/shifts'],
-  pharmacy: ['/medicines', '/stock', '/pharmacy-sales'],
-  supershop: ['/shop-products', '/shop-inventory', '/shop-sales'],
+  restaurant: ['/menu', '/tables', '/orders', '/kitchen', '/shifts', '/refunds'],
+  pharmacy: ['/medicines', '/stock', '/pharmacy-sales', '/pharmacy-returns'],
+  supershop: ['/shop-products', '/shop-inventory', '/shop-sales', '/shop-returns'],
 };
 
 const matches = (pathname: string, prefix: string) => pathname === prefix || pathname.startsWith(`${prefix}/`);

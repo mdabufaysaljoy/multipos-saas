@@ -54,6 +54,9 @@ const PharmacySalesPage = lazyPage(() => import('@/pages/pharmacy/PharmacySalesP
 // Supershop POS
 const ShopProductsPage = lazyPage(() => import('@/pages/supershop/ShopProductsPage'), 'ShopProductsPage');
 const ShopInventoryPage = lazyPage(() => import('@/pages/supershop/ShopInventoryPage'), 'ShopInventoryPage');
+const ShopReturnsPage = lazyPage(() => import('@/pages/supershop/ShopReturnsPage'), 'ShopReturnsPage');
+const PharmacyReturnsPage = lazyPage(() => import('@/pages/pharmacy/PharmacyReturnsPage'), 'PharmacyReturnsPage');
+const RestaurantRefundsPage = lazyPage(() => import('@/pages/restaurant/RestaurantRefundsPage'), 'RestaurantRefundsPage');
 const ShopSalesPage = lazyPage(() => import('@/pages/supershop/ShopSalesPage'), 'ShopSalesPage');
 
 // Shared workspace screens
@@ -242,6 +245,30 @@ export function AppRoutes() {
           element={
             <ProtectedRoute anyOf={['inventory.view']}>
               <ShopInventoryPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/shop-returns"
+          element={
+            <ProtectedRoute anyOf={['returns.view']}>
+              <ShopReturnsPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/pharmacy-returns"
+          element={
+            <ProtectedRoute anyOf={['returns.view']}>
+              <PharmacyReturnsPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/refunds"
+          element={
+            <ProtectedRoute anyOf={['returns.view']}>
+              <RestaurantRefundsPage />
             </ProtectedRoute>
           }
         />

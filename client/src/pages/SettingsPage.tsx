@@ -31,6 +31,9 @@ import { useAuth } from '@/hooks/useAuth';
 import { DEFAULT_LABEL_SETTINGS, type ReceiptPayload, type StoreSettings } from '@/types/domain';
 import { SUPPORTED_WIDTHS } from '@/features/receipt/ThermalReceipt';
 
+/** The POS types whose goods carry a barcode, and so can have labels printed. */
+const LABEL_VERTICALS = ['clothing', 'supershop', 'pharmacy'];
+
 export function SettingsPage() {
   const queryClient = useQueryClient();
   const { can, refresh, session } = useAuth();
@@ -194,8 +197,9 @@ export function SettingsPage() {
           <TabsTrigger value="store">Store</TabsTrigger>
           <TabsTrigger value="receipt">Receipt</TabsTrigger>
           <TabsTrigger value="tax">Tax &amp; payments</TabsTrigger>
-          {(session?.tenant?.vertical ?? 'clothing') === 'clothing' && <TabsTrigger value="labels">Labels</TabsTrigger>}
-          {(session?.tenant?.vertical ?? 'clothing') === 'clothing' && <TabsTrigger value="printer">Printer</TabsTrigger>}
+          {/* Labels: wherever the goods carry a barcode. Printing itself is shared by every POS. */}
+          {LABEL_VERTICALS.includes(session?.tenant?.vertical ?? 'clothing') && <TabsTrigger value="labels">Labels</TabsTrigger>}
+          <TabsTrigger value="printer">Printer</TabsTrigger>
           {isLoyaltyVertical(session?.tenant?.vertical) && <TabsTrigger value="loyalty">Loyalty</TabsTrigger>}
           <TabsTrigger value="account">My account</TabsTrigger>
         </TabsList>
@@ -447,7 +451,7 @@ export function SettingsPage() {
             currency={draft.currency}
             readOnly={readOnly}
             vatEnabled={draft.tax.enabled}
-            showLoyaltyCard={(session?.tenant?.vertical ?? 'clothing') === 'clothing'}
+            showLoyaltyCard={isLoyaltyVertical(session?.tenant?.vertical)}
             onChange={(labels) => patch({ labels })}
           />
         </TabsContent>

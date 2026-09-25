@@ -8367,6 +8367,18 @@ async function main() {
   check('Super Shop: nothing more can come back', (await ssReturn({ items: [{ saleItemId: retLineId, quantity: 1 }], reason: 'Again' })).status === 400);
   check('Super Shop: the returns are listed', ((await ssApi('/returns')).data ?? []).length >= 2 && ((await ssApi('/returns')).data ?? [])[0]?.returnNumber);
 
+  // The Returns screen starts by FINDING the sale, so a sale has to be findable
+  // by the person who bought it, not only by its number.
+  const retNamedSale = await ssSale({
+    items: [{ productId: retSoap.data._id, quantity: 1 }],
+    payments: [{ method: 'cash', amountMinor: 10_000 }],
+    customer: { name: `Findable Shopper ${retStamp}`, phone: `0179${String(retStamp).slice(-7)}` },
+  });
+  check('Super Shop: a sale for a named customer is recorded', retNamedSale.status === 201, retNamedSale.error);
+  check('Super Shop: a sale can be found by its number', ((await ssApi(`/sales?search=${retNamedSale.data?.saleNumber}&status=completed`)).data ?? []).some((row) => row._id === retNamedSale.data?._id));
+  const retByName = await ssApi(`/sales?search=Findable Shopper ${retStamp}&status=completed`);
+  check('Super Shop: and by the customer who bought it', (retByName.data ?? []).some((row) => row._id === retNamedSale.data?._id), retByName.data?.length);
+
   // Goods that should not go back on the shelf.
   const retNoRestock = await ssProduct({ name: `Broken Jar ${retStamp}`, priceMinor: 5000 });
   await ssApi(`/products/${retNoRestock.data._id}/stock`, { method: 'POST', body: { quantity: 4, costPriceMinor: 2000 } });

@@ -2,7 +2,7 @@ import * as React from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { format } from 'date-fns';
 import { toast } from 'sonner';
-import { PackagePlus, Pencil, Plus, ShoppingBasket, SlidersHorizontal, Trash2 } from 'lucide-react';
+import { Barcode, PackagePlus, Pencil, Plus, ShoppingBasket, SlidersHorizontal, Trash2 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
@@ -18,6 +18,7 @@ import { LimitAlert } from '@/components/LimitAlert';
 import { PermissionGate } from '@/components/PermissionGate';
 import { SearchInput, useDebounced } from '@/components/SearchInput';
 import { LoadingState } from '@/components/states';
+import { BarcodePrintDialog } from '@/features/barcode/BarcodePrintDialog';
 import { supershopApi } from '@/api/supershop';
 import { formatMoney } from '@/lib/money';
 import { formatQuantity, formatVatRate, gramsToKgText, parseVatPercent, vatPercentText } from '@/lib/supershop';
@@ -48,6 +49,7 @@ export function ShopProductsPage() {
   const [adjusting, setAdjusting] = React.useState<ShopProduct | null>(null);
   const [viewing, setViewing] = React.useState<ShopProduct | null>(null);
   const [deleting, setDeleting] = React.useState<ShopProduct | null>(null);
+  const [labelling, setLabelling] = React.useState<ShopProduct | null>(null);
 
   const { data: categories } = useQuery({ queryKey: ['supershop', 'categories'], queryFn: supershopApi.categories });
   const { data, isLoading, error, refetch } = useQuery({
@@ -131,6 +133,11 @@ export function ShopProductsPage() {
               <SlidersHorizontal />
             </Button>
           </PermissionGate>
+          {row.barcode && (
+            <Button variant="ghost" size="icon-sm" onClick={() => setLabelling(row)} aria-label={`Print a label for ${row.name}`}>
+              <Barcode />
+            </Button>
+          )}
           <PermissionGate anyOf={['products.edit']}>
             <Button variant="ghost" size="icon-sm" onClick={() => setEditing(row)} aria-label={`Edit ${row.name}`}>
               <Pencil />
@@ -254,6 +261,18 @@ export function ShopProductsPage() {
         />
       )}
       <ProductHistoryDialog product={viewing} currency={currency} onClose={() => setViewing(null)} />
+
+      {/* The same label printer Clothing uses; a shop product has no variant or SKU. */}
+      <BarcodePrintDialog
+        label={
+          labelling
+            ? { barcode: labelling.barcode, productName: labelling.name, variantName: labelling.brand, sku: labelling.category, priceMinor: labelling.priceMinor }
+            : null
+        }
+        currency={currency}
+        storeName={activeStore?.name}
+        onClose={() => setLabelling(null)}
+      />
 
       <ConfirmDialog
         open={Boolean(deleting)}
