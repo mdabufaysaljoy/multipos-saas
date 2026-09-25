@@ -64,4 +64,10 @@ export interface SaleReturnAdapter {
   release(ctx: TenantContext, saleId: Types.ObjectId, lines: { saleItemId: Types.ObjectId; quantity: number }[]): Promise<void>;
   /** Records the money that went back, and whether anything is left to return. */
   applyReturnTotals(ctx: TenantContext, saleId: Types.ObjectId, refundedMinor: number): Promise<void>;
+  /**
+   * Takes back the points the returned goods earned, and gives back the points
+   * that were spent on them. Only the verticals that run a loyalty program
+   * implement it; the engine calls it if it is there.
+   */
+  reverseLoyalty?(ctx: TenantContext, saleId: Types.ObjectId, reason: string): Promise<void>;
 }

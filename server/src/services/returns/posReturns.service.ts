@@ -157,6 +157,10 @@ class PosReturnService {
 
       await adapter.applyReturnTotals(ctx, sale.saleId, totalMinor);
 
+      // Points follow the goods: what the returned items earned is taken back,
+      // and what was spent on them is given back as points rather than money.
+      await adapter.reverseLoyalty?.(ctx, sale.saleId, input.reason);
+
       // A refund is not a purchase: take it back off the customer's lifetime value.
       if (sale.customerId) {
         await customerService.applySaleStats(ctx, sale.customerId, { amountMinor: -totalMinor, orderDelta: 0 });

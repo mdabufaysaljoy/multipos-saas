@@ -57,6 +57,22 @@ interface LedgerRef {
  * adjustment moves points at most once and the balance always equals the sum
  * of its ledger.
  */
+
+/**
+ * The shape a sale must have for loyalty to work with it: the snapshot, the
+ * subtotal it was earned on, and lines that know how much has come back.
+ *
+ * Clothing's `Sale` and Super Shop's `ShopSale` both have exactly these field
+ * names, which is why the same queries serve both. A vertical whose sale is
+ * shaped differently would need a mapper rather than this.
+ */
+type LoyaltySaleModel = {
+  findOne(filter: Record<string, unknown>): {
+    select(fields: string): { lean(): Promise<{ loyalty?: unknown; items: { unitPriceMinor: number; returnedQuantity?: number }[]; subtotalMinor: number } | null> };
+  };
+  updateOne(filter: Record<string, unknown>, update: Record<string, unknown>): Promise<{ modifiedCount: number }>;
+};
+
 class LoyaltyService {
   private scope(ctx: TenantContext) {
     return { tenantId: ctx.tenantId, storeId: ctx.storeId };
@@ -519,14 +535,14 @@ class LoyaltyService {
    * the sale's running totals, so concurrent returns never both claim the same
    * points. Returns null for a sale without a card.
    */
-  async claimReturn(ctx: TenantContext, saleId: Types.ObjectId) {
+  async claimReturn(ctx: TenantContext, saleId: Types.ObjectId, model: LoyaltySaleModel = SaleModel as unknown as LoyaltySaleModel) {
     for (let attempt = 0; attempt < 5; attempt += 1) {
-      const sale = await SaleModel.findOne({ _id: saleId, tenantId: ctx.tenantId }).select('loyalty items subtotalMinor').lean();
+      const sale = await model.findOne({ _id: saleId, tenantId: ctx.tenantId }).select('loyalty items subtotalMinor').lean();
       const loyalty = sale?.loyalty as SaleLoyalty | null | undefined;
       if (!sale || !loyalty) return null;
 
       // Returned so far, INCLUDING the quantities this return has just reserved.
-      const returnedValue = sale.items.reduce((sum, item) => sum + item.unitPriceMinor * item.returnedQuantity, 0);
+      const returnedValue = sale.items.reduce((sum, item) => sum + item.unitPriceMinor * (item.returnedQuantity ?? 0), 0);
       const targets = returnTargets(loyalty, sale.subtotalMinor, returnedValue);
       const earnDelta = targets.earnReversedTarget - loyalty.pointsEarnedReversed;
       const restoreDelta = targets.redeemRestoredTarget - loyalty.pointsRedeemedRestored;
@@ -535,7 +551,7 @@ class LoyaltyService {
         return { membershipId: loyalty.membershipId, pointsEarnedReversed: 0, pointsRedeemedRestored: 0, valueMinor: 0 };
       }
 
-      const claimed = await SaleModel.updateOne(
+      const claimed = await model.updateOne(
         {
           _id: saleId,
           tenantId: ctx.tenantId,
@@ -594,7 +610,12 @@ class LoyaltyService {
   }
 
   /** A cancelled sale takes back everything it earned and gives back everything it redeemed. */
-  async applyCancellation(ctx: TenantContext, sale: { _id: Types.ObjectId; saleNumber: string; loyalty?: SaleLoyalty | null }, reason: string) {
+  async applyCancellation(
+    ctx: TenantContext,
+    sale: { _id: Types.ObjectId; saleNumber: string; loyalty?: SaleLoyalty | null },
+    reason: string,
+    model: LoyaltySaleModel = SaleModel as unknown as LoyaltySaleModel,
+  ) {
     const loyalty = sale.loyalty;
     if (!loyalty) return;
     const claim = {
@@ -602,7 +623,7 @@ class LoyaltyService {
       pointsEarnedReversed: Math.max(0, loyalty.pointsEarned - loyalty.pointsEarnedReversed),
       pointsRedeemedRestored: Math.max(0, loyalty.pointsRedeemed - loyalty.pointsRedeemedRestored),
     };
-    await SaleModel.updateOne(
+    await model.updateOne(
       { _id: sale._id, tenantId: ctx.tenantId },
       { $set: { 'loyalty.pointsEarnedReversed': loyalty.pointsEarned, 'loyalty.pointsRedeemedRestored': loyalty.pointsRedeemed } },
     );

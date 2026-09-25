@@ -8503,6 +8503,83 @@ async function main() {
     );
   }
 
+
+  // --- Loyalty beyond Clothing -------------------------------------------------
+  // A Super Shop runs the same program: a scanned CARD earns and redeems, never
+  // a customer and never a phone, and the points come back when goods do.
+  section('Loyalty in Super Shop');
+
+  const ssLoyEnable = await api('/stores/current', { method: 'PATCH', token: ssToken, body: { loyalty: { enabled: true, earnSpendMinor: 10_000, pointValueMinor: 100 } } });
+  check('Super Shop: the owner can switch the program on', ssLoyEnable.status === 200 && ssLoyEnable.data?.loyalty?.enabled === true, ssLoyEnable.error);
+  check('Super Shop: the till is told it is available', (await api('/stores/pos-config', { token: ssToken })).data?.loyalty?.available === true);
+
+  const ssLoyStamp = String(Date.now()).slice(-7);
+  const ssLoyCustomer = (await api('/customers', { method: 'POST', token: ssToken, body: { name: 'Shopper Loyal', phone: `0175${ssLoyStamp}` } })).data;
+  const ssCard = await api('/loyalty/memberships', { method: 'POST', token: ssToken, body: { customerId: ssLoyCustomer._id, idempotencyKey: `ssloy${ssLoyStamp}` } });
+  check('Super Shop: a card is issued to a customer', ssCard.status === 201 && ssCard.data?.cardNumber, ssCard.error);
+  const ssCardNumber = ssCard.data.cardNumber;
+  const ssMembershipId = ssCard.data._id ?? ssCard.data.id;
+
+  check('Super Shop: the card can be looked up by its number', (await api(`/loyalty/lookup?code=${ssCardNumber}`, { token: ssToken })).data?.cardNumber === ssCardNumber);
+
+  // Earning: ৳100 of goods (excluding VAT) = 1 point.
+  const ssLoyProduct = await ssProduct({ name: `Loyal Rice ${ssLoyStamp}`, priceMinor: 25_000, reorderLevel: 1 });
+  await ssApi(`/products/${ssLoyProduct.data._id}/stock`, { method: 'POST', body: { quantity: 20, costPriceMinor: 15_000 } });
+  const ssLoySale = await ssSale({
+    items: [{ productId: ssLoyProduct.data._id, quantity: 2 }],
+    payments: [{ method: 'cash', amountMinor: 50_000 }],
+    loyaltyMembershipId: ssMembershipId,
+  });
+  check('Super Shop: a sale on a scanned card earns points', ssLoySale.status === 201 && ssLoySale.data?.loyalty?.pointsEarned === 5, ssLoySale.data?.loyalty ?? ssLoySale.error);
+  check('Super Shop: the sale keeps the card and the rules it earned under', ssLoySale.data?.loyalty?.cardNumber === ssCardNumber && ssLoySale.data.loyalty.earnSpendMinor === 10_000, ssLoySale.data?.loyalty);
+  check('Super Shop: the balance moved', (await api(`/loyalty/lookup?code=${ssCardNumber}`, { token: ssToken })).data?.pointsBalance === 5);
+
+  // A customer alone earns nothing: only a card does.
+  const ssNoCardSale = await ssSale({
+    items: [{ productId: ssLoyProduct.data._id, quantity: 1 }],
+    payments: [{ method: 'cash', amountMinor: 25_000 }],
+    customerId: ssLoyCustomer._id,
+  });
+  check('Super Shop: a customer without a card earns nothing', ssNoCardSale.status === 201 && ssNoCardSale.data?.loyalty === null, ssNoCardSale.data?.loyalty);
+  check('Super Shop: and the balance did not move', (await api(`/loyalty/lookup?code=${ssCardNumber}`, { token: ssToken })).data?.pointsBalance === 5);
+
+  // Redeeming: points pay for part of the basket.
+  const ssRedeem = await ssSale({
+    items: [{ productId: ssLoyProduct.data._id, quantity: 1 }],
+    payments: [{ method: 'cash', amountMinor: 24_500 }],
+    loyaltyMembershipId: ssMembershipId,
+    redeemPoints: 5,
+  });
+  check('Super Shop: points pay for part of the basket', ssRedeem.status === 201 && ssRedeem.data?.totalMinor === 24_500, { total: ssRedeem.data?.totalMinor, error: ssRedeem.error });
+  check('Super Shop: the sale records what the points were worth', ssRedeem.data?.loyalty?.pointsRedeemed === 5 && ssRedeem.data.loyalty.discountMinor === 500, ssRedeem.data?.loyalty);
+  check('Super Shop: redeeming spends the points and the sale earns on what was paid', (await api(`/loyalty/lookup?code=${ssCardNumber}`, { token: ssToken })).data?.pointsBalance === 2, 'spent 5, earned 2 on ৳245');
+  check('Super Shop: more points than the card holds is refused', (await ssSale({ items: [{ productId: ssLoyProduct.data._id, quantity: 1 }], payments: [{ method: 'cash', amountMinor: 25_000 }], loyaltyMembershipId: ssMembershipId, redeemPoints: 9999 })).status === 422);
+  check('Super Shop: redeeming without a card is refused', (await ssSale({ items: [{ productId: ssLoyProduct.data._id, quantity: 1 }], payments: [{ method: 'cash', amountMinor: 25_000 }], redeemPoints: 2 })).status === 422);
+
+  // Returning the goods takes the points back with them.
+  const ssLoyReturn = await ssApi(`/sales/${ssLoySale.data._id}/return`, {
+    method: 'POST',
+    body: { items: [{ saleItemId: ssLoySale.data.items[0]._id, quantity: 2 }], reason: 'Returned the whole basket' },
+  });
+  check('Super Shop: the sale can be returned', ssLoyReturn.status === 201, ssLoyReturn.error);
+  check(
+    'Super Shop: returning the goods takes their points back',
+    (await api(`/loyalty/lookup?code=${ssCardNumber}`, { token: ssToken })).data?.pointsBalance === -3,
+    'earned 5 on that sale, so 5 come back off a balance of 2',
+  );
+
+  // Voiding a sale that redeemed points gives them back.
+  const ssVoidLoy = await ssVoid(ssRedeem.data._id, 'Voided after redeeming');
+  check('Super Shop: a sale that redeemed points can be voided', ssVoidLoy.status === 200, ssVoidLoy.error);
+  check(
+    'Super Shop: the void gives the redeemed points back and takes the earned ones',
+    (await api(`/loyalty/lookup?code=${ssCardNumber}`, { token: ssToken })).data?.pointsBalance === 0,
+    'redeemed 5 returned, earned 2 reversed, from -3',
+  );
+
+  // Another workspace's card is not this one's.
+  check('A card from another workspace cannot be used', (await ssSale({ items: [{ productId: ssLoyProduct.data._id, quantity: 1 }], payments: [{ method: 'cash', amountMinor: 25_000 }], loyaltyMembershipId: '64b000000000000000000000' })).status === 400);
+
   // ------------------------------------------------ cash received, change and receipt
   section('Clothing POS: cash received, change and receipt');
   const ctnStamp = Date.now();

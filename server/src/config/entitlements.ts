@@ -54,8 +54,8 @@ export const ENTITLEMENT_FEATURES = {
   emailMarketing: { label: 'Email marketing', planFeature: 'emailMarketing' },
   marketing: { label: 'Marketing', anyOf: ['smsMarketing', 'emailMarketing'] },
   imageOptimization: { label: 'Image optimisation', planFeature: 'imageOptimization' },
-  // Clothing only for now; other POS types never receive it.
-  loyalty: { label: 'Loyalty program', planFeature: 'loyaltyProgram', verticals: ['clothing'] },
+  // The tills that run a card program; a POS type not listed here never receives it.
+  loyalty: { label: 'Loyalty program', planFeature: 'loyaltyProgram', verticals: ['clothing', 'supershop'] },
   // Separate from `dataExport` on purpose: import is on every plan, export is not.
   productImport: { label: 'Bulk product import', planFeature: 'productImport', verticals: ['clothing'] },
   supplierManagement: { label: 'Supplier management', planFeature: 'supplierManagement', verticals: ['clothing'] },

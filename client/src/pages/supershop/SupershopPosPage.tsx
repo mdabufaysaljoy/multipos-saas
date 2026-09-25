@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { Minus, Plus, ScanBarcode, Scale, Trash2 } from 'lucide-react';
+import { CreditCard, Minus, Plus, ScanBarcode, Scale, Trash2 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -13,6 +13,12 @@ import { MoneyInput } from '@/components/MoneyInput';
 import { LimitAlert } from '@/components/LimitAlert';
 import { useDebounced } from '@/components/SearchInput';
 import { CustomerPicker, saleCustomerFields, type SelectedCustomer } from '@/features/customers/CustomerPicker';
+import { LoyaltyCardDialog } from '@/features/loyalty/LoyaltyCardDialog';
+import { LoyaltyStrip } from '@/features/loyalty/LoyaltyStrip';
+import { isLoyaltyCardCode, maxRedeemablePoints, pointsForSpend } from '@/features/loyalty/loyaltyMath';
+import { useLoyaltyAccess } from '@/features/loyalty/useLoyaltyAccess';
+import { loyaltyApi } from '@/api/endpoints';
+import type { LoyaltyLookup } from '@/types/domain';
 import { PaymentPanel } from '@/features/payments/PaymentPanel';
 import { tenderedRows } from '@/features/payments/paymentMath';
 import { usePayments } from '@/features/payments/usePayments';
@@ -50,6 +56,11 @@ export function SupershopPosPage() {
   const [weighing, setWeighing] = React.useState<CartLine | { product: ShopProduct; quantity: 0 } | null>(null);
   const [discount, setDiscount] = React.useState<number | null>(0);
   const [customer, setCustomer] = React.useState<SelectedCustomer | null>(null);
+  // Only a scanned CARD earns or redeems - never a customer or a phone number.
+  const [loyaltyMember, setLoyaltyMember] = React.useState<LoyaltyLookup | null>(null);
+  const [redeemPoints, setRedeemPoints] = React.useState<number | null>(null);
+  const [cardDialogOpen, setCardDialogOpen] = React.useState(false);
+  const loyaltyAccess = useLoyaltyAccess();
   // A till with this permission may sell goods the system thinks are gone -
   // the shelf is right and the record is wrong. The server checks it again.
   const canSellOutOfStock = can('sales.sellOutOfStock');
@@ -63,10 +74,24 @@ export function SupershopPosPage() {
 
   const subtotal = cart.reduce((sum, line) => sum + lineAmount(line.product.priceMinor, line.quantity, line.product.unitType), 0);
   const discountMinor = Math.min(discount ?? 0, subtotal);
-  const total = subtotal - discountMinor;
+  const payableMinor = subtotal - discountMinor;
+  // Points can pay for the goods after the discount, never more than that and
+  // never more than the card holds. The server checks all of it again.
+  const maxRedeemable = loyaltyMember ? maxRedeemablePoints(payableMinor, loyaltyMember.pointValueMinor, loyaltyMember.pointsBalance) : 0;
+  const redeeming = Math.min(redeemPoints ?? 0, maxRedeemable);
+  const loyaltyDiscountMinor = loyaltyMember ? redeeming * loyaltyMember.pointValueMinor : 0;
+  const total = payableMinor - loyaltyDiscountMinor;
+  // VAT is collected for the government, so it never earns points. This is the
+  // till's estimate of it; the server works out the real figure per line.
+  const vatEstimateMinor = cart.reduce(
+    (sum, line) => sum + Math.floor((lineAmount(line.product.priceMinor, line.quantity, line.product.unitType) * line.product.vatRateBps) / (10_000 + line.product.vatRateBps)),
+    0,
+  );
+  const pointsToEarn = loyaltyMember ? pointsForSpend(Math.max(0, total - vatEstimateMinor), loyaltyMember.earnSpendMinor) : 0;
 
   // The branch decides which tenders it takes; the till only offers those.
   const { data: posConfig } = useQuery({ queryKey: ['store', 'pos-config'], queryFn: storeApi.posConfig });
+  const loyaltyAvailable = loyaltyAccess.inPlan && posConfig?.loyalty?.available === true;
   const availableMethods = tendersFromConfig(posConfig);
   // The same payment maths as every other till: cash is what the customer
   // hands over, and change comes out of it.
@@ -111,8 +136,35 @@ export function SupershopPosPage() {
     onError: () => toast.error('No product has that barcode'),
   });
 
+  const attachCard = async (code: string): Promise<boolean> => {
+    if (!loyaltyAvailable) return false;
+    try {
+      const member = await loyaltyApi.lookup(code);
+      if (member.status !== 'active') {
+        toast.error('Loyalty card is inactive', { description: `${member.cardNumber} cannot earn or redeem points.` });
+        return true;
+      }
+      setLoyaltyMember(member);
+      setRedeemPoints(null);
+      if (member.customer) setCustomer({ id: member.customer.id, name: member.customer.name, phone: member.customer.phone, email: member.customer.email });
+      toast.success(`Loyalty member: ${member.customer?.name ?? member.cardNumber}`, { description: `${member.pointsBalance} points` });
+      setCardDialogOpen(false);
+      return true;
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 404) return false;
+      toast.error(error instanceof ApiError ? error.message : 'Could not look up that card');
+      return true;
+    }
+  };
+
+  const removeCard = () => {
+    setLoyaltyMember(null);
+    setRedeemPoints(null);
+  };
+
   const reset = () => {
     setCart([]);
+    removeCard();
     setDiscount(0);
     setCustomer(null);
     payments.reset();
@@ -127,6 +179,8 @@ export function SupershopPosPage() {
         payments: tenderedRows(payments),
         discountMinor,
         ...saleCustomerFields(customer),
+        // The card is what earns and redeems; the server re-checks both.
+        ...(loyaltyMember ? { loyaltyMembershipId: loyaltyMember.id, redeemPoints: redeeming } : {}),
       }),
     onSuccess: (sale) => {
       toast.success(`${sale.saleNumber} completed`, {
@@ -147,10 +201,17 @@ export function SupershopPosPage() {
         <CardHeader className="space-y-3 pb-2">
           <CardTitle className="text-base">Scan or search</CardTitle>
           <form
-            onSubmit={(event) => {
+            onSubmit={async (event) => {
               event.preventDefault();
               const value = term.trim();
-              if (/^[A-Za-z0-9-]{3,64}$/.test(value)) scan.mutate(value);
+              if (!/^[A-Za-z0-9-]{3,64}$/.test(value)) return;
+              // A membership card scanned into the product box attaches the
+              // member rather than looking for goods that do not exist.
+              if (loyaltyAvailable && isLoyaltyCardCode(value) && (await attachCard(value))) {
+                setTerm('');
+                return;
+              }
+              scan.mutate(value);
             }}
             className="relative"
           >
@@ -265,13 +326,42 @@ export function SupershopPosPage() {
                 </dd>
               </div>
             )}
+            {loyaltyDiscountMinor > 0 && (
+              <div className="flex justify-between text-success">
+                <dt>Points ({redeeming})</dt>
+                <dd className="tabular">-{formatMoney(loyaltyDiscountMinor, currency)}</dd>
+              </div>
+            )}
             <div className="flex justify-between text-base font-semibold">
               <dt>Total</dt>
               <dd className="tabular">{formatMoney(total, currency)}</dd>
             </div>
           </dl>
 
-          <CustomerPicker value={customer} onChange={setCustomer} canCreate={can('customers.create')} />
+          <div className="flex items-stretch gap-2">
+            <div className="min-w-0 flex-1">
+              <CustomerPicker value={customer} onChange={setCustomer} canCreate={can('customers.create')} />
+            </div>
+            {loyaltyAvailable && !loyaltyMember && (
+              <Button type="button" variant="outline" size="sm" className="h-auto shrink-0" onClick={() => setCardDialogOpen(true)} title="Scan or enter a loyalty card">
+                <CreditCard />
+                <span className="hidden sm:inline">Card</span>
+              </Button>
+            )}
+          </div>
+
+          {loyaltyMember && (
+            <LoyaltyStrip
+              member={loyaltyMember}
+              currency={currency}
+              canRedeem={loyaltyAccess.canRedeem}
+              redeemPoints={redeemPoints}
+              maxRedeemable={maxRedeemable}
+              pointsToEarn={pointsToEarn}
+              onRedeemChange={setRedeemPoints}
+              onRemove={removeCard}
+            />
+          )}
 
           <PaymentPanel
             rows={payments.rows}
@@ -320,6 +410,8 @@ export function SupershopPosPage() {
       )}
       {/* Opened only by a completed sale, so it prints itself - no dialog, no
           printer picker. The sale is already saved; printing cannot undo it. */}
+      <LoyaltyCardDialog open={cardDialogOpen} onOpenChange={setCardDialogOpen} onSubmit={(code) => attachCard(code)} />
+
       <ShopReceiptDialog saleId={receiptFor} onClose={() => setReceiptFor(null)} onNewSale={() => setReceiptFor(null)} autoPrint />
     </div>
   );

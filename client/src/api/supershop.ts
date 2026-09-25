@@ -18,6 +18,9 @@ export interface ShopSaleInput extends SaleCustomerFields {
   items: { productId: string; quantity: number }[];
   payments: { method: string; amountMinor: number }[];
   discountMinor?: number;
+  /** The scanned card, and the points the cashier chose to redeem on it. */
+  loyaltyMembershipId?: string;
+  redeemPoints?: number;
   note?: string;
 }
 

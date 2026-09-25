@@ -35,6 +35,25 @@ export interface ShopSaleLine {
  * server and never recomputed. Prices include VAT; `vatMinor` is the VAT
  * contained in the total actually charged.
  */
+/** What a sale did to a loyalty card, snapshotted so later setting changes never rewrite it. */
+export interface ShopSaleLoyalty {
+  membershipId: Types.ObjectId;
+  cardNumber: string;
+  pointValueMinor: number;
+  earnSpendMinor: number;
+  pointsRedeemed: number;
+  /** pointsRedeemed x pointValueMinor. */
+  discountMinor: number;
+  /** What earned points: the goods, less discounts, never the VAT. */
+  qualifyingMinor: number;
+  pointsEarned: number;
+  /** Card balance right after this sale, for the receipt. */
+  balanceAfter: number;
+  /** Running totals given back by returns and voids. */
+  pointsEarnedReversed: number;
+  pointsRedeemedRestored: number;
+}
+
 export interface ShopSaleDoc extends BaseDoc {
   tenantId: Types.ObjectId;
   storeId: Types.ObjectId;
@@ -51,6 +70,8 @@ export interface ShopSaleDoc extends BaseDoc {
   customerId: Types.ObjectId | null;
   customerNameSnapshot: string;
   note: string;
+  /** The loyalty card this sale earned or redeemed on. Null for most sales. */
+  loyalty: ShopSaleLoyalty | null;
   status: ShopSaleStatus;
   /** Value returned against this sale so far, and whether nothing is left. */
   returnedTotalMinor?: number;
@@ -114,6 +135,25 @@ const shopSaleSchema = new Schema<ShopSaleDoc>(
     customerId: { type: Schema.Types.ObjectId, ref: 'Customer', default: null },
     customerNameSnapshot: { type: String, default: '' },
     note: { type: String, trim: true, maxlength: 300, default: '' },
+    loyalty: {
+      type: new Schema<ShopSaleLoyalty>(
+        {
+          membershipId: { type: Schema.Types.ObjectId, ref: 'LoyaltyMembership', required: true },
+          cardNumber: { type: String, required: true },
+          pointValueMinor: minor,
+          earnSpendMinor: minor,
+          pointsRedeemed: { type: Number, default: 0, min: 0 },
+          discountMinor: minor,
+          qualifyingMinor: minor,
+          pointsEarned: { type: Number, default: 0, min: 0 },
+          balanceAfter: { type: Number, default: 0 },
+          pointsEarnedReversed: { type: Number, default: 0, min: 0 },
+          pointsRedeemedRestored: { type: Number, default: 0, min: 0 },
+        },
+        { _id: false },
+      ),
+      default: null,
+    },
     status: { type: String, enum: [...SHOP_SALE_STATUSES], default: 'completed' },
     returnedTotalMinor: { type: Number, default: 0, min: 0 },
     fullyReturned: { type: Boolean, default: false },

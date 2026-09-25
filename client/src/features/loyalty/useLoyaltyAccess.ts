@@ -1,15 +1,18 @@
 import { useAuth } from '@/hooks/useAuth';
 
+/** The POS types whose tills run the loyalty program. Mirrors the server's entitlement. */
+const LOYALTY_VERTICALS = ['clothing', 'supershop'];
+
 /**
  * What the loyalty UI may show. For display only: every loyalty API checks the
  * plan entitlement and the permission again on the server.
  */
 export function useLoyaltyAccess() {
   const { session, can } = useAuth();
-  const isClothing = (session?.tenant?.vertical ?? 'clothing') === 'clothing';
-  const inPlan = isClothing && session?.entitlement?.features?.loyaltyProgram === true;
+  const vertical = session?.tenant?.vertical ?? 'clothing';
+  // The server's entitlement is the gate; this only decides what to render.
+  const inPlan = LOYALTY_VERTICALS.includes(vertical) && session?.entitlement?.features?.loyaltyProgram === true;
   return {
-    isClothing,
     inPlan,
     canView: inPlan && can('loyalty.view'),
     canManage: inPlan && can('loyalty.manage'),
