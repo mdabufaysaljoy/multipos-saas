@@ -550,3 +550,98 @@ movement in the ledger.
 references them. **Still open:** the CI failure (Issue 10) is red for the reason
 documented above; it is a shared validator on a Clothing route and was out of
 scope here.
+
+## 2026-09-26 — Phase 2: the till's item list, and filtering it
+
+Issues 3 and 9 of the audit above. Super Shop only.
+
+### Issue 3 — the POS showed no products
+
+**Cause — a disabled query, not pagination.** `SupershopPosPage.tsx` had:
+
+```ts
+const browsing = search.length > 0 || department !== 'all';
+const { data: results } = useQuery({ ..., enabled: browsing });
+```
+
+So the product query **never ran** until the cashier typed something or picked a
+department; until then the screen showed an `EmptyState` reading *"Ready to
+scan"*. That is the reported "shows no products", and it was deliberate — the
+till was built scan-first. Behind it sat the second half: `limit: 30`, one page,
+no way to reach page 2, so even while browsing it showed at most 30 of the
+catalogue.
+
+Everything else audited was already correct and was left alone: the API request,
+the `activeOnly` product-status filter, the category filter, and branch scoping
+(the catalogue is **workspace**-scoped by design — `ShopStock` is what is per
+branch, and the list already carries this branch's stock per row).
+
+**Fix.** The query is now a `useInfiniteQuery`, always enabled, 40 products a
+page, with an `IntersectionObserver` sentinel that fetches the next page as the
+end of the list scrolls into view and a "Load more products" button as the
+fallback. This is the same shape Clothing's `features/pos/ProductSearchPanel`
+has used since it was built — the reference implementation, followed rather than
+reinvented. The whole database is never loaded: the browser holds only the pages
+that were scrolled to.
+
+Preserved exactly: the barcode path (a separate `lookup` mutation, untouched and
+unaffected by any filter — asserted), the debounced product search, and
+**out-of-stock visibility**. An out-of-stock row is still listed, still says
+"Out of stock", and is tappable or not according to `sales.sellOutOfStock` —
+the same permission flow as before, re-checked on the server.
+
+### Issue 9 — Brand and Category dropdowns
+
+Category filtering already worked; **brand did not exist** as a filter — brand
+was reachable only through the free-text search `$or`.
+
+- `listProductsSchema` gained `brand`; `listProducts` filters on it. **Server-side**,
+  so a filter narrows the whole catalogue and not the page already in the browser.
+- New `GET /supershop/brands` (`products.view`) returns the distinct brands in
+  use, blanks dropped and sorted for a dropdown. A brand is still free text on
+  the product — there is no Brand catalogue yet (audit Issue 6), so this is the
+  values in use, not a managed set.
+- `ShopProduct` gained `{ tenantId, deletedAt, brand, name }`. The existing index
+  leads with `category` and cannot serve a brand filter or the `distinct`.
+  Additive; no migration.
+- Client: new `features/supershop/PosFilters.tsx` — two dropdowns. **Dropdowns,
+  not the chip row**, because a supershop has far more departments than a
+  restaurant has menu sections and brands are open text, so chips would scroll
+  off the side of a tablet. `features/catalogue/CategoryFilter` is **shared with
+  Pharmacy and Restaurant and was not touched**; the Super Shop page simply stops
+  using it.
+- Both filters live in the query key beside the search text, so changing any of
+  them restarts at page 1 and pages from different filters never mix. A
+  department or brand that stops existing falls back to All rather than filtering
+  the list to nothing behind a blank dropdown.
+
+**No second product-query system:** both filters, the search and the paging all
+go through the existing `supershopApi.products` → `GET /supershop/products`.
+
+### Verification
+
+- `npm run lint` ✅ · `npm run typecheck` ✅ · `npm run build` ✅
+- `npm test` — **3289 passed, 0 failed** (was 3262; **27 net new assertions**).
+
+New assertions, in a new section *"Supershop POS item list: paging and filters"*,
+run against **45 real products** so the 40-per-page list genuinely has a second
+page: no filter (whole catalogue counted, first page only, second page is the
+rest, no product on both pages, out-of-stock rows present); the brand list
+(brands in use, never a blank, sorted); **category only** (23), **brand only**
+(15), **both** (8), an unknown brand returning nothing rather than everything;
+**search + brand** (15) and **search + both** (7), and a search that matches
+nothing in a brand; the **barcode lookup unaffected by the filters**; and
+isolation — 401 unauthenticated on both routes, 403 cross-workspace on both, and
+422 for a malformed brand. The 45 fixtures are retired at the end of the block,
+because the plan meter and the dead-stock report further down count products by
+exact value.
+
+**Browser pass: not completed.** The dev database's Super Shop workspace
+("Shwapno", 25 products, brands PRAN/Square) belongs to the owner's own account
+and signing in would mean entering their password, which I will not do. The app
+builds, serves and reaches the sign-in screen with no console errors; the
+signed-in visual check of the dropdowns and infinite scroll is still outstanding
+and needs the owner at the keyboard.
+
+**Not touched:** Clothing, Restaurant, Pharmacy. **Still open:** CI (audit Issue
+10) remains red for the timezone reason documented above.

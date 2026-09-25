@@ -53,6 +53,9 @@ const shopProductSchema = new Schema<ShopProductDoc>(
 );
 
 shopProductSchema.index({ tenantId: 1, deletedAt: 1, category: 1, name: 1 });
+// The till's brand filter and the brand dropdown's `distinct`, which the
+// category index above cannot serve: it leads with `category`.
+shopProductSchema.index({ tenantId: 1, deletedAt: 1, brand: 1, name: 1 });
 // The scanner path: one exact barcode lookup per beep.
 shopProductSchema.index({ tenantId: 1, barcode: 1 });
 

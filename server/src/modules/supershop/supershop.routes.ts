@@ -45,6 +45,9 @@ router.use(authenticate, resolveTenant, requireVertical('supershop'), requireSub
 router.get('/products', requirePermission(PERMISSIONS.PRODUCTS_VIEW), validate({ query: listProductsSchema }), controller.listProducts);
 // Registered before `/products/:id` so "lookup" is never read as an id.
 router.get('/products/lookup', requirePermission(PERMISSIONS.PRODUCTS_VIEW), validate({ query: barcodeQuerySchema }), controller.lookupBarcode);
+// The brands the shop's products carry, for the till's brand filter. Reading
+// needs only `products.view`, like the department list beside it.
+router.get('/brands', requirePermission(PERMISSIONS.PRODUCTS_VIEW), controller.listBrands);
 // The departments this workspace sells under; the same four routes in every POS
 // type whose items carry the category as a name (see services/catalogue).
 router.get('/categories', requirePermission(PERMISSIONS.PRODUCTS_VIEW), validate({ query: listPosCategoriesSchema }), listCategories);

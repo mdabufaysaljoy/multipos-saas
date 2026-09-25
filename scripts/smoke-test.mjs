@@ -5742,6 +5742,88 @@ async function main() {
     ssDepartments,
   );
 
+  // --- The till's item list: paging, and the department/brand filters ----------
+  // The POS asks for this list with `activeOnly`, a page at a time. It used to
+  // ask for nothing at all until the cashier typed something, and only ever for
+  // one page of 30; it now browses the shelf from the moment it opens and pages
+  // as it is scrolled. Both filters are applied by the SERVER, so they narrow the
+  // whole catalogue rather than the page already in the browser.
+  section('Supershop POS item list: paging and filters');
+
+  const ssPosList = (params) => ssApi(`/products?${new URLSearchParams({ activeOnly: 'true', ...params })}`);
+  const ssBaseline = (await ssPosList({ limit: 1 })).meta?.total ?? 0;
+  const ssBaseGrocery = (await ssPosList({ limit: 1, category: 'Grocery' })).meta?.total ?? 0;
+
+  // 45 products, so the till's 40-per-page list genuinely has a second page.
+  const ssFilterStamp = String(Date.now()).slice(-6);
+  const ssFilterIds = [];
+  for (let i = 0; i < 45; i += 1) {
+    const created = await ssProduct({
+      name: `Filter Item ${ssFilterStamp}-${String(i).padStart(2, '0')}`,
+      brand: i % 3 === 0 ? 'Fresh' : i % 3 === 1 ? 'Pran' : '',
+      category: i % 2 === 0 ? 'Grocery' : 'Household',
+      priceMinor: 1000 + i,
+    });
+    ssFilterIds.push(created.data?._id);
+  }
+  check('45 products are created for the paging and filter checks', ssFilterIds.length === 45 && ssFilterIds.every(Boolean));
+
+  // ---- no filter: every sellable product, first page only --------------------
+  const ssPage1 = await ssPosList({ limit: 40 });
+  check('With no filter the till lists the whole catalogue', ssPage1.meta?.total === ssBaseline + 45, { total: ssPage1.meta?.total, expected: ssBaseline + 45 });
+  check('...but sends only the first page', (ssPage1.data ?? []).length === 40 && ssPage1.meta?.totalPages === 2, { returned: ssPage1.data?.length, totalPages: ssPage1.meta?.totalPages });
+  const ssPage2 = await ssPosList({ limit: 40, page: 2 });
+  check('...and the second page is the rest', (ssPage2.data ?? []).length === ssBaseline + 45 - 40, { returned: ssPage2.data?.length });
+  const ssPage1Ids = new Set((ssPage1.data ?? []).map((row) => row._id));
+  check('...with no product on both pages', (ssPage2.data ?? []).every((row) => !ssPage1Ids.has(row._id)));
+  check('Out-of-stock products are listed, not hidden', (ssPage1.data ?? []).some((row) => (row.stock?.quantityOnHand ?? 0) === 0));
+
+  // ---- the brand list the dropdown is built from -----------------------------
+  const ssBrands = (await ssApi('/brands')).data ?? [];
+  check('The brand list offers the brands in use', ['Fresh', 'Pran', 'Lux'].every((name) => ssBrands.includes(name)), ssBrands);
+  check('...never a blank one', !ssBrands.includes('') && !ssBrands.some((name) => name.trim() === ''), ssBrands);
+  check('...and is sorted for a dropdown', JSON.stringify(ssBrands) === JSON.stringify([...ssBrands].sort((a, b) => a.localeCompare(b))), ssBrands);
+
+  // ---- one filter at a time --------------------------------------------------
+  const ssByCategory = await ssPosList({ limit: 100, category: 'Grocery' });
+  check('Category only: 23 of the new products are Grocery', ssByCategory.meta?.total === ssBaseGrocery + 23, { total: ssByCategory.meta?.total, expected: ssBaseGrocery + 23 });
+  check('...and every row really is', (ssByCategory.data ?? []).every((row) => row.category === 'Grocery'));
+
+  const ssByBrand = await ssPosList({ limit: 100, brand: 'Fresh' });
+  check('Brand only: 15 products carry Fresh', ssByBrand.meta?.total === 15, ssByBrand.meta);
+  check('...and every row really does', (ssByBrand.data ?? []).every((row) => row.brand === 'Fresh'));
+
+  // ---- both together --------------------------------------------------------
+  const ssBoth = await ssPosList({ limit: 100, category: 'Grocery', brand: 'Fresh' });
+  check('Both filters narrow to the 8 Fresh products in Grocery', ssBoth.meta?.total === 8, ssBoth.meta);
+  check('...and both hold on every row', (ssBoth.data ?? []).every((row) => row.brand === 'Fresh' && row.category === 'Grocery'));
+  check('A brand the shop does not carry returns nothing, not everything', (await ssPosList({ limit: 10, brand: `Nope ${ssFilterStamp}` })).meta?.total === 0);
+
+  // ---- search together with the filters -------------------------------------
+  const ssSearchBrand = await ssPosList({ limit: 100, search: `Filter Item ${ssFilterStamp}`, brand: 'Pran' });
+  check('Search and a brand filter apply together', ssSearchBrand.meta?.total === 15, ssSearchBrand.meta);
+  const ssSearchBoth = await ssPosList({ limit: 100, search: `Filter Item ${ssFilterStamp}`, category: 'Household', brand: 'Fresh' });
+  check('Search with both filters applies all three', ssSearchBoth.meta?.total === 7, ssSearchBoth.meta);
+  check('A search that matches nothing in that brand is empty', (await ssPosList({ limit: 10, search: 'Miniket', brand: 'Fresh' })).meta?.total === 0);
+
+  // ---- the scanner is untouched by any of it --------------------------------
+  check('A barcode lookup still ignores the filters entirely', (await ssApi('/products/lookup?barcode=8941100500019')).data?._id === soap.data._id);
+
+  // ---- isolation ------------------------------------------------------------
+  // The catalogue is workspace-wide by design (stock is what is per branch), so
+  // the boundary that matters here is the workspace one.
+  check('The item list needs a session', (await api('/supershop/products?activeOnly=true')).status === 401);
+  check('The brand list needs one too', (await api('/supershop/brands')).status === 401);
+  check("Another workspace cannot read this one's products", (await api('/supershop/products?activeOnly=true', { token: phToken })).status === 403);
+  check("Another workspace cannot read this one's brands", (await api('/supershop/brands', { token: phToken })).status === 403);
+  check('A malformed brand filter is refused', (await ssPosList({ limit: 10, brand: 'x'.repeat(81) })).status === 422);
+
+  // Retire the 45: the plan meter and the dead-stock report below both count
+  // products by exact value. They hold no stock, so they delete cleanly.
+  for (const id of ssFilterIds) await ssApi(`/products/${id}`, { method: 'DELETE' });
+  check('The filter fixtures are retired', (await ssPosList({ limit: 1 })).meta?.total === ssBaseline, (await ssPosList({ limit: 1 })).meta);
+  check('...and their brands leave the dropdown with them', !((await ssApi('/brands')).data ?? []).includes('Fresh'));
+
   const ssSale = (body) => ssApi('/sales', { method: 'POST', body });
   const basket = await ssSale({ items: [{ productId: soap.data._id, quantity: 3 }, { productId: rice.data._id, quantity: 1500 }], payments: [{ method: 'cash', amountMinor: 30_000 }] });
   check(

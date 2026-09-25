@@ -34,6 +34,8 @@ export const supershopApi = {
   products: (params?: Query) => getPaginated<ShopProduct>('/supershop/products', params),
   product: (id: string) => get<ShopProductDetail>(`/supershop/products/${id}`),
   lookup: (barcode: string) => get<ShopProduct>('/supershop/products/lookup', { barcode }),
+  /** The brands in use, for the till's brand filter. Free text on the product today. */
+  brands: () => get<string[]>('/supershop/brands'),
   createProduct: (body: ShopProductInput) => post<ShopProduct>('/supershop/products', body),
   updateProduct: (id: string, body: Partial<Omit<ShopProductInput, 'unitType'>>) => patch<ShopProduct>(`/supershop/products/${id}`, body),
   removeProduct: (id: string) => del<{ id: string }>(`/supershop/products/${id}`),

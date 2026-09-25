@@ -68,6 +68,7 @@ class SupershopService {
     const filter: Record<string, unknown> = { tenantId: ctx.tenantId, deletedAt: null };
     if (input.activeOnly) filter.isActive = true;
     if (input.category) filter.category = input.category;
+    if (input.brand) filter.brand = input.brand;
     if (input.search) {
       const rx = searchRegex(input.search);
       filter.$or = [{ name: rx }, { brand: rx }, { barcode: rx }];
@@ -86,6 +87,21 @@ class SupershopService {
     ]);
     const stock = await this.stockFor(ctx, items.map((item) => item._id));
     return { items: items.map((item) => this.withStock(item, stock)), page, limit, total };
+  }
+
+  /**
+   * The brands this workspace actually sells under.
+   *
+   * A brand is free text on the product today (there is no Brand catalogue yet),
+   * so the list is the distinct values in use rather than a managed set. Blanks
+   * are dropped: "no brand" is not a brand to filter by. Sorted the way a person
+   * reads a dropdown, and tenant-scoped like everything else.
+   */
+  async listBrands(ctx: TenantContext) {
+    const brands = await ShopProductModel.distinct('brand', { tenantId: ctx.tenantId, deletedAt: null });
+    return brands
+      .filter((brand): brand is string => typeof brand === 'string' && brand.trim() !== '')
+      .sort((a, b) => a.localeCompare(b));
   }
 
   /** The scanner path: one exact barcode in this workspace, with this branch's stock. */

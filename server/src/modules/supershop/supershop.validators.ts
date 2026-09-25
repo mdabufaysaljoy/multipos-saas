@@ -60,6 +60,8 @@ export const updateProductSchema = z
 
 export const listProductsSchema = searchSchema.extend({
   category: z.string().trim().max(60).optional(),
+  /** Exact brand name, as `/brands` lists them. Free text on the product today. */
+  brand: z.string().trim().max(80).optional(),
   activeOnly: queryFlag,
   lowStockOnly: queryFlag,
 });

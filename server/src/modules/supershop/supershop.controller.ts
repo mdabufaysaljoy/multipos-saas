@@ -34,6 +34,11 @@ export const listProducts = asyncHandler(async (req: Request, res: Response) => 
   paginated(res, result.items, buildPageMeta(result.page, result.limit, result.total));
 });
 
+/** The brands in use, for the till's brand filter. */
+export const listBrands = asyncHandler(async (req: Request, res: Response) => {
+  ok(res, await supershopService.listBrands(getContext(req)));
+});
+
 export const lookupBarcode = asyncHandler(async (req: Request, res: Response) => {
   ok(res, await supershopService.lookupBarcode(getContext(req), query<{ barcode: string }>(req).barcode));
 });

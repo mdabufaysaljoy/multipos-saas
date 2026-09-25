@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { CreditCard, Minus, Plus, ScanBarcode, Scale, Trash2 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
@@ -17,7 +17,7 @@ import { LoyaltyCardDialog } from '@/features/loyalty/LoyaltyCardDialog';
 import { LoyaltyStrip } from '@/features/loyalty/LoyaltyStrip';
 import { isLoyaltyCardCode, maxRedeemablePoints, pointsForSpend } from '@/features/loyalty/loyaltyMath';
 import { useLoyaltyAccess } from '@/features/loyalty/useLoyaltyAccess';
-import { CategoryFilter } from '@/features/catalogue/CategoryFilter';
+import { ANY, PosFilters } from '@/features/supershop/PosFilters';
 import { loyaltyApi } from '@/api/endpoints';
 import type { LoyaltyLookup } from '@/types/domain';
 import { PaymentPanel } from '@/features/payments/PaymentPanel';
@@ -69,17 +69,84 @@ export function SupershopPosPage() {
   const [receiptFor, setReceiptFor] = React.useState<string | null>(null);
 
   // The departments this shop sells under, in the owner's order and without the
-  // ones they hid; picking one browses it without typing anything.
-  const { data: departments } = useQuery({ queryKey: ['supershop', 'categories', 'filter'], queryFn: () => shopCategoriesApi.list() });
-  const [department, setDepartment] = React.useState('all');
-  const browsing = search.length > 0 || department !== 'all';
+  // ones they hid, and the brands its products actually carry.
+  const { data: departments } = useQuery({ queryKey: ['supershop', 'categories', 'filter'], queryFn: () => shopCategoriesApi.list(), staleTime: 60_000 });
+  const { data: brands } = useQuery({ queryKey: ['supershop', 'brands'], queryFn: () => supershopApi.brands(), staleTime: 60_000 });
+  const [department, setDepartment] = React.useState(ANY);
+  const [brand, setBrand] = React.useState(ANY);
 
-  const { data: results, isLoading } = useQuery({
-    queryKey: ['supershop', 'products', 'pos', search, department],
-    queryFn: () =>
-      supershopApi.products({ limit: 30, activeOnly: 'true', ...(search ? { search } : {}), ...(department !== 'all' ? { category: department } : {}) }),
-    enabled: browsing,
+  // A department or brand that stops existing (renamed, its last product sold
+  // off and deleted) quietly falls back to All rather than filtering the list
+  // down to nothing with a dropdown that shows a blank.
+  React.useEffect(() => {
+    if (department !== ANY && departments && !departments.some((row) => row.name === department)) setDepartment(ANY);
+  }, [departments, department]);
+  React.useEffect(() => {
+    if (brand !== ANY && brands && !brands.includes(brand)) setBrand(ANY);
+  }, [brands, brand]);
+
+  const listRef = React.useRef<HTMLDivElement>(null);
+  const sentinelRef = React.useRef<HTMLDivElement>(null);
+
+  /**
+   * The till's item list.
+   *
+   * Paged, and shown from the moment the screen opens: the shelf is what a
+   * cashier browses when there is nothing to scan. The key holds the search text
+   * and BOTH filters, so changing any of them starts again at page 1 and pages
+   * from different filters never mix. Filtering happens on the server, so a
+   * department or brand applies to the whole catalogue rather than to the page
+   * already in the browser.
+   *
+   * Out-of-stock products are deliberately still listed - the row says so, and
+   * whether it can be tapped is the `sales.sellOutOfStock` question below.
+   */
+  const {
+    data: results,
+    isLoading,
+    hasNextPage,
+    fetchNextPage,
+    isFetchingNextPage,
+  } = useInfiniteQuery({
+    queryKey: ['supershop', 'products', 'pos', search, department, brand],
+    queryFn: ({ pageParam }) =>
+      supershopApi.products({
+        page: pageParam,
+        limit: 40,
+        activeOnly: 'true',
+        ...(search ? { search } : {}),
+        ...(department !== ANY ? { category: department } : {}),
+        ...(brand !== ANY ? { brand } : {}),
+      }),
+    initialPageParam: 1,
+    getNextPageParam: (last) => (last.meta.page < last.meta.totalPages ? last.meta.page + 1 : undefined),
+    staleTime: 10_000,
   });
+
+  // Every page loaded so far, as one list. Memoised so the rows below are not
+  // rebuilt on every unrelated render (a keystroke in the payment panel).
+  const products = React.useMemo(() => (results?.pages ?? []).flatMap((page) => page.items), [results]);
+  const totalMatching = results?.pages[0]?.meta.total ?? 0;
+
+  // A new search or filter shows its first page from the top.
+  React.useEffect(() => {
+    listRef.current?.scrollTo({ top: 0 });
+  }, [search, department, brand]);
+
+  // Infinite scroll: the next page loads as the end of the list comes into view.
+  // The "Load more" button below is the fallback when the observer cannot run.
+  React.useEffect(() => {
+    const sentinel = sentinelRef.current;
+    if (!sentinel || !hasNextPage) return;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries[0]?.isIntersecting && !isFetchingNextPage) void fetchNextPage();
+      },
+      { root: listRef.current, rootMargin: '300px' },
+    );
+    observer.observe(sentinel);
+    return () => observer.disconnect();
+  }, [hasNextPage, isFetchingNextPage, fetchNextPage]);
 
   const subtotal = cart.reduce((sum, line) => sum + lineAmount(line.product.priceMinor, line.quantity, line.product.unitType), 0);
   const discountMinor = Math.min(discount ?? 0, subtotal);
@@ -235,19 +302,31 @@ export function SupershopPosPage() {
               aria-label="Scan or search"
             />
           </form>
-          <CategoryFilter categories={(departments ?? []).map((row) => row.name)} value={department} onChange={setDepartment} />
+          <PosFilters
+            categories={(departments ?? []).map((row) => row.name)}
+            brands={brands ?? []}
+            category={department}
+            brand={brand}
+            onCategory={setDepartment}
+            onBrand={setBrand}
+          />
           <LimitAlert resource="monthlySales" />
         </CardHeader>
-        <CardContent className="scrollbar-thin min-h-0 flex-1 overflow-y-auto">
-          {!browsing ? (
-            <EmptyState title="Ready to scan" description="Scan, type a name, or pick a department to browse it." />
-          ) : isLoading ? (
-            <LoadingState label="Searching…" />
-          ) : (results?.items ?? []).length === 0 ? (
-            <EmptyState title="Nothing found" description="Try another name or barcode." />
+        <CardContent ref={listRef} className="scrollbar-thin min-h-0 flex-1 overflow-y-auto">
+          {isLoading ? (
+            <LoadingState label="Loading products…" />
+          ) : products.length === 0 ? (
+            <EmptyState
+              title="Nothing found"
+              description={
+                search || department !== ANY || brand !== ANY
+                  ? 'Try another name, barcode, department or brand.'
+                  : 'Add what you sell on Products & stock, and it will show up here.'
+              }
+            />
           ) : (
             <ul className="divide-y">
-              {(results?.items ?? []).map((product) => {
+              {products.map((product) => {
                 const onHand = product.stock?.quantityOnHand ?? 0;
                 const blocked = onHand <= 0 && !canSellOutOfStock;
                 return (
@@ -278,6 +357,19 @@ export function SupershopPosPage() {
                 );
               })}
             </ul>
+          )}
+
+          {/* Loads the next page when scrolled into view; the button is the fallback. */}
+          <div ref={sentinelRef} className="h-px" aria-hidden />
+          {hasNextPage && (
+            <div className="flex justify-center py-3">
+              <Button type="button" variant="outline" size="sm" loading={isFetchingNextPage} onClick={() => void fetchNextPage()}>
+                Load more products
+              </Button>
+            </div>
+          )}
+          {!isLoading && products.length > 0 && !hasNextPage && totalMatching > 40 && (
+            <p className="py-3 text-center text-xs text-muted-foreground">All {totalMatching} products shown</p>
           )}
         </CardContent>
       </Card>
