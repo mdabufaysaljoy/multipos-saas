@@ -25,13 +25,17 @@ import { CustomerPicker, saleCustomerFields, type SelectedCustomer } from '@/fea
 import { PaymentPanel } from '@/features/payments/PaymentPanel';
 import { tenderedRows } from '@/features/payments/paymentMath';
 import { usePayments } from '@/features/payments/usePayments';
-import { storeApi } from '@/api/endpoints';
+import { LoyaltyCardDialog } from '@/features/loyalty/LoyaltyCardDialog';
+import { LoyaltyStrip } from '@/features/loyalty/LoyaltyStrip';
+import { maxRedeemablePoints, pointsForSpend } from '@/features/loyalty/loyaltyMath';
+import { useLoyaltyAccess } from '@/features/loyalty/useLoyaltyAccess';
+import { loyaltyApi, storeApi } from '@/api/endpoints';
 import { restaurantApi } from '@/api/restaurant';
 import { formatMoney } from '@/lib/money';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/hooks/useAuth';
 import type { MenuItem, RestaurantOrder } from '@/types/restaurant';
-import { tendersFromConfig } from '@/types/domain';
+import { tendersFromConfig, type LoyaltyLookup } from '@/types/domain';
 
 /** An order not yet sent: prices shown are previews; the server prices on send. */
 interface Draft {
@@ -514,10 +518,23 @@ function PayDialog({
   onPaid: (order: RestaurantOrder) => void;
 }) {
   const [discountMinor, setDiscountMinor] = React.useState<number | null>(0);
-  const total = Math.max(0, order.subtotalMinor - (discountMinor ?? 0));
+  // A restaurant earns on the BILL, so the card is scanned when it is settled.
+  // Only a scanned card earns or redeems - never the customer on the order.
+  const [loyaltyMember, setLoyaltyMember] = React.useState<LoyaltyLookup | null>(null);
+  const [redeemPoints, setRedeemPoints] = React.useState<number | null>(null);
+  const [cardDialogOpen, setCardDialogOpen] = React.useState(false);
+  const loyaltyAccess = useLoyaltyAccess();
+
+  const payableMinor = Math.max(0, order.subtotalMinor - (discountMinor ?? 0));
+  const maxRedeemable = loyaltyMember ? maxRedeemablePoints(payableMinor, loyaltyMember.pointValueMinor, loyaltyMember.pointsBalance) : 0;
+  const redeeming = Math.min(redeemPoints ?? 0, maxRedeemable);
+  const loyaltyDiscountMinor = loyaltyMember ? redeeming * loyaltyMember.pointValueMinor : 0;
+  const total = payableMinor - loyaltyDiscountMinor;
 
   // The branch decides which tenders it takes; the till only offers those.
   const { data: posConfig } = useQuery({ queryKey: ['store', 'pos-config'], queryFn: storeApi.posConfig });
+  const loyaltyAvailable = loyaltyAccess.inPlan && posConfig?.loyalty?.available === true;
+  const pointsToEarn = loyaltyMember ? pointsForSpend(total, loyaltyMember.earnSpendMinor) : 0;
   const availableMethods = tendersFromConfig(posConfig);
   // The same payment maths as every other till: cash is what the guest hands
   // over, and change comes out of it.
@@ -527,9 +544,30 @@ function PayDialog({
   React.useEffect(() => {
     if (open) {
       setDiscountMinor(0);
+      setLoyaltyMember(null);
+      setRedeemPoints(null);
       resetPayments();
     }
   }, [open, order.totalMinor, resetPayments]);
+
+  const attachCard = async (code: string): Promise<boolean> => {
+    if (!loyaltyAvailable) return false;
+    try {
+      const member = await loyaltyApi.lookup(code);
+      if (member.status !== 'active') {
+        toast.error('Loyalty card is inactive', { description: `${member.cardNumber} cannot earn or redeem points.` });
+        return true;
+      }
+      setLoyaltyMember(member);
+      setRedeemPoints(null);
+      toast.success(`Loyalty member: ${member.customer?.name ?? member.cardNumber}`, { description: `${member.pointsBalance} points` });
+      setCardDialogOpen(false);
+      return true;
+    } catch (error) {
+      toast.error(errorMessage(error, 'Could not look up that card'));
+      return true;
+    }
+  };
 
   const pay = useMutation({
     mutationFn: () =>
@@ -538,6 +576,8 @@ function PayDialog({
         payments: tenderedRows(payments),
         discountMinor: discountMinor ?? 0,
         rev: order.rev,
+        // The card is what earns and redeems; the server re-checks both.
+        ...(loyaltyMember ? { loyaltyMembershipId: loyaltyMember.id, redeemPoints: redeeming } : {}),
       }),
     onSuccess: (paid) => {
       onOpenChange(false);
@@ -566,6 +606,27 @@ function PayDialog({
               <MoneyInput value={discountMinor} onChange={setDiscountMinor} ariaLabel="Discount" />
             </div>
           )}
+          {loyaltyAvailable && !loyaltyMember && (
+            <Button type="button" variant="outline" className="w-full" onClick={() => setCardDialogOpen(true)}>
+              <CreditCard />
+              Loyalty card
+            </Button>
+          )}
+          {loyaltyMember && (
+            <LoyaltyStrip
+              member={loyaltyMember}
+              currency={currency}
+              canRedeem={loyaltyAccess.canRedeem}
+              redeemPoints={redeemPoints}
+              maxRedeemable={maxRedeemable}
+              pointsToEarn={pointsToEarn}
+              onRedeemChange={setRedeemPoints}
+              onRemove={() => {
+                setLoyaltyMember(null);
+                setRedeemPoints(null);
+              }}
+            />
+          )}
           <PaymentPanel
             rows={payments.rows}
             availableMethods={availableMethods}
@@ -592,6 +653,8 @@ function PayDialog({
           </Button>
         </DialogFooter>
       </DialogContent>
+
+      <LoyaltyCardDialog open={cardDialogOpen} onOpenChange={setCardDialogOpen} onSubmit={(code) => attachCard(code)} />
     </Dialog>
   );
 }

@@ -47,7 +47,17 @@ export const restaurantApi = {
   updateLine: (id: string, lineId: string, quantity: number) =>
     patch<RestaurantOrder>(`/restaurant/orders/${id}/items/${lineId}`, { quantity }),
   removeLine: (id: string, lineId: string) => del<RestaurantOrder>(`/restaurant/orders/${id}/items/${lineId}`),
-  pay: (id: string, body: { payments: { method: string; amountMinor: number }[]; discountMinor: number; rev: number }) =>
+  pay: (
+    id: string,
+    body: {
+      payments: { method: string; amountMinor: number }[];
+      discountMinor: number;
+      rev: number;
+      /** The scanned card, and the points the cashier chose to redeem on it. */
+      loyaltyMembershipId?: string;
+      redeemPoints?: number;
+    },
+  ) =>
     post<RestaurantOrder>(`/restaurant/orders/${id}/pay`, body),
   /** A refund against a paid order: money back, nothing restocked. */
   createReturn: (id: string, body: { items: { saleItemId: string; quantity: number }[]; reason: string; refundMethod: string }) =>

@@ -1,6 +1,7 @@
 import { Schema, model, type Types } from 'mongoose';
 import type { PaymentMethod } from '../config/constants';
 import type { BaseDoc } from './types';
+import { saleLoyaltySchema, type SaleLoyaltySnapshot } from './saleLoyalty';
 
 export const PHARMACY_SALE_STATUSES = ['completed', 'voided'] as const;
 export type PharmacySaleStatus = (typeof PHARMACY_SALE_STATUSES)[number];
@@ -45,6 +46,9 @@ export interface PrescriptionRecord {
  * recomputed. A voided sale keeps every line; its stock went back to the
  * batches it came from.
  */
+/** What a sale did to a loyalty card: the shared snapshot, under this vertical's name. */
+export type PharmacySaleLoyalty = SaleLoyaltySnapshot;
+
 export interface PharmacySaleDoc extends BaseDoc {
   tenantId: Types.ObjectId;
   storeId: Types.ObjectId;
@@ -62,6 +66,8 @@ export interface PharmacySaleDoc extends BaseDoc {
   customerId: Types.ObjectId | null;
   customerNameSnapshot: string;
   note: string;
+  /** The loyalty card this sale earned or redeemed on. Null for most sales. */
+  loyalty: PharmacySaleLoyalty | null;
   status: PharmacySaleStatus;
   /** Value returned against this sale so far, and whether nothing is left. */
   returnedTotalMinor?: number;
@@ -144,6 +150,7 @@ const pharmacySaleSchema = new Schema<PharmacySaleDoc>(
     customerId: { type: Schema.Types.ObjectId, ref: 'Customer', default: null },
     customerNameSnapshot: { type: String, default: '' },
     note: { type: String, trim: true, maxlength: 300, default: '' },
+    loyalty: { type: saleLoyaltySchema(), default: null },
     status: { type: String, enum: [...PHARMACY_SALE_STATUSES], default: 'completed' },
     returnedTotalMinor: { type: Number, default: 0, min: 0 },
     fullyReturned: { type: Boolean, default: false },

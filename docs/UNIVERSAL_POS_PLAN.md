@@ -54,7 +54,7 @@ Legend: **mature** = reference implementation · **partial** = works but narrowe
 | 2 | Split payment | **mature** (UI + server) | **done** (task 04) | **done** (task 04) | **done** (task 04) | one `paymentMethods.service.ts` (task 02) and one `features/payments/` panel (task 04) | refusal status (Clothing 422, the rest 400) and the card over-tender gap - task 03 | ✅ complete | — |
 | 3 | Custom payment methods | **done** (task 03) | **done** | **done** | **done** | `PaymentMethod` collection (custom only), `listTenders`, `stampTenderLabels`; built-ins stay implicit | none | ✅ complete | — |
 | 4 | Customer selection | **mature** (`CustomerPicker`) | **done** (task 05) | **done** (task 05) | **done** (task 05) | `/api/customers`, the shared `CustomerPicker` and one `resolveForPosSale` | Restaurant selects per *order*, not per payment; Pharmacy keeps buyer and patient apart | ✅ complete | — |
-| 4b | Loyalty (card, points, scan) | **mature** (membership, EAN-13 card, ledger, earn/redeem, returns/exchange reversal) | missing | missing | **done** (task 09 pt 1) | `loyaltyService` takes the sale model as a parameter; the return engine calls an optional `reverseLoyalty` on the sale adapter | earn base differs (order total vs sale ex-VAT total); Pharmacy may exclude prescription items | Restaurant + Pharmacy hooks remain (task 09 pt 2) | **Medium** |
+| 4b | Loyalty (card, points, scan) | **mature** | **done** (task 09 pt 2) | **done** (task 09 pt 2) | **done** (task 09 pt 1) | `loyaltyService` takes the sale model as a parameter; the return engine calls an optional `reverseLoyalty` on the sale adapter | earn base differs: Clothing subtotal, Super Shop ex-VAT, Pharmacy excludes prescription medicines, Restaurant earns on the settled bill | ✅ complete | **Medium** |
 | 5 | Return / exchange / refund / cancel | **mature** | **done** (task 08) | **done** (task 08) | **done** (task 08) | `services/returns/` engine + a sale adapter per vertical, on top of the inventory adapter | a restaurant refunds money only; Pharmacy returns to the *batch* it came from; Clothing keeps its exchange/loyalty engine | folding Clothing in, one day | **High** |
 | 6 | Bulk product import | **mature** (registry, preview, row errors, streamed) | missing | missing | missing | `import.parse.ts` (xlsx/csv, header detection) is already generic | mandatory columns differ per model: Clothing needs Product+Variant+Price; Super Shop barcode+price+qty; Pharmacy name+price(+batch); Restaurant name+price | Extract a column registry per vertical behind one engine | **Medium** |
 | 7 | Category management + POS filter | **mature** (`Category` model, page, POS filter) | string field + client-side chip filter | string field, no filter | string field, no filter | none | a real category entity is only worth it where products are managed in bulk | Either promote the string to `Category` per vertical, or keep strings and add a shared filter API | **Medium** |
@@ -98,8 +98,8 @@ strings — genuine duplication, ready to be shared.
 `LoyaltyMembership` (EAN-13 card, one active card per customer, branch-scoped) + append-only
 `LoyaltyTransaction` with a unique `dedupeKey`. Only a **scanned card** earns or redeems; a phone
 number never does. Points move only through `loyaltyService` (atomic `$inc` + ledger row); sales,
-returns, exchanges and cancellations call its hooks. Entitlement `loyalty` →
-`verticals: ['clothing', 'supershop']` (task 09 part 1; see `docs/LOYALTY_UNIVERSAL.md`).
+returns, exchanges and cancellations call its hooks. Entitlement `loyalty` → all four verticals
+(task 09; see `docs/LOYALTY_UNIVERSAL.md`).
 
 ### Returns (`modules/returns`)
 Sale lookup → line selection with quantity validation against what is still returnable → refund method
@@ -271,7 +271,7 @@ must pass unchanged, and the Clothing sections must not be edited to accommodate
 - `docs/INVENTORY_ADAPTER.md` — the stock seam and the shared ledger read, delivered by task 06.
 - `docs/RETURNS.md` — taking goods back, delivered by task 08.
 - `docs/ANALYTICS_PARITY.md` — the shared metric vocabulary, delivered by task 13.
-- `docs/LOYALTY_UNIVERSAL.md` — the card program beyond Clothing, delivered by task 09 part 1.
+- `docs/LOYALTY_UNIVERSAL.md` — the card program in all four POS types, delivered by task 09.
 
 Feature docs (`PRINTING_ARCHITECTURE.md`, `PRODUCT_IMPORT.md`, `DATA_EXPORT.md`,
 `SUPPLIER_MANAGEMENT.md`, `CONTACT_VERIFICATION.md`, `ENTITLEMENTS.md`) remain accurate for Clothing
@@ -281,14 +281,11 @@ and are the reference material for the tasks above.
 
 ## 10. Recommended next task
 
-**Task 09 part 2 — loyalty in Pharmacy and Restaurant**, or the lighter 10 / 11 / 14.
+**Task 10 (category management), then 11 (universal import, which wants 10 first), then 14
+(PDF/print of reports).**
 
-Part 1 put the card program in Super Shop (`docs/LOYALTY_UNIVERSAL.md`). Part 2 needs one decision
-before it starts - whether prescription medicines earn points - and Restaurant's hook belongs on
-payment rather than on the order, because a restaurant refund is money only.
-
-Task 10 (category management) and task 11 (universal import, which wants 10 first) are catalogue
-work. Task 14 (PDF/print of reports) now has task 13's shared metrics under it, which is what it was
-waiting for.
+Task 09 is complete in all four POS types (`docs/LOYALTY_UNIVERSAL.md`). What remains is catalogue
+work and reporting: task 14 now has task 13's shared metrics under it, which is what it was waiting
+for.
 
 Waiting for an explicit instruction before starting any of them.

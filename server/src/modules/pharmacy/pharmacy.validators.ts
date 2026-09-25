@@ -139,6 +139,12 @@ export const createSaleSchema = z
       })
       .strict()
       .optional(),
+    /**
+     * The loyalty card scanned at the till. Only a scanned card earns or
+     * redeems - never a phone number, and never a customer on their own.
+     */
+    loyaltyMembershipId: objectId.optional(),
+    redeemPoints: z.number().int().min(0).max(1_000_000).default(0),
     note: text(300).optional().default(''),
   })
   .strict();

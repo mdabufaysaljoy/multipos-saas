@@ -20,6 +20,9 @@ export interface PharmacySaleInput extends SaleCustomerFields {
   payments: { method: string; amountMinor: number }[];
   discountMinor?: number;
   prescription?: { patientName: string; prescriberName: string; prescriptionNumber?: string; note?: string };
+  /** The scanned card, and the points the cashier chose to redeem on it. */
+  loyaltyMembershipId?: string;
+  redeemPoints?: number;
   note?: string;
 }
 

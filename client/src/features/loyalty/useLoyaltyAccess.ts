@@ -1,7 +1,7 @@
 import { useAuth } from '@/hooks/useAuth';
 
 /** The POS types whose tills run the loyalty program. Mirrors the server's entitlement. */
-const LOYALTY_VERTICALS = ['clothing', 'supershop'];
+const LOYALTY_VERTICALS = ['clothing', 'supershop', 'pharmacy', 'restaurant'];
 
 /** Whether this POS type has a card program at all: navigation and settings ask. */
 export const isLoyaltyVertical = (vertical: string | null | undefined) => LOYALTY_VERTICALS.includes(vertical ?? 'clothing');

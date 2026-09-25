@@ -13,6 +13,9 @@ import { resolvePage, searchRegex } from '../../utils/pagination';
 import { entitlementService } from '../../services/subscription/entitlement.service';
 import { resolveDashboardWindow } from '../reports/reports.service';
 import { customerService } from '../customers/customers.service';
+import { loyaltyService } from '../loyalty/loyalty.service';
+import { pointsForSpend } from '../loyalty/loyalty.math';
+import { logger } from '../../utils/logger';
 import { returnFiguresFor } from '../../services/returns/posReturns.figures';
 import { POS_TENDER_DIALECT, settleTender, stampTenderLabels, tenderLabels } from '../../services/pos/paymentMethods.service';
 import type { TenantContext } from '../../types/express';
@@ -510,7 +513,27 @@ class RestaurantService {
 
     const store = await StoreModel.findOne({ _id: ctx.storeId, tenantId: ctx.tenantId }).select('paymentMethods').lean();
 
-    const totalMinor = order.subtotalMinor - input.discountMinor;
+    // ---- loyalty -----------------------------------------------------------
+    // A restaurant earns on the BILL, so the card is scanned when the bill is
+    // settled, not when the order is opened. Only a scanned card earns or
+    // redeems; the customer on the order does not.
+    const loyalty = await loyaltyService.prepareForSale(ctx, {
+      membershipId: input.loyaltyMembershipId,
+      redeemPoints: input.redeemPoints,
+      internal: false,
+    });
+    if (loyalty && order.customerId && !loyalty.membership.customerId.equals(order.customerId)) {
+      throw ApiError.validation('The loyalty card belongs to a different customer than this order.');
+    }
+    const loyaltyDiscountMinor = loyalty ? input.redeemPoints * loyalty.settings.pointValueMinor : 0;
+    if (loyaltyDiscountMinor > order.subtotalMinor - input.discountMinor) {
+      throw ApiError.validation('Those points are worth more than this bill.', { reason: 'LOYALTY_DISCOUNT_TOO_LARGE' });
+    }
+
+    const totalMinor = order.subtotalMinor - input.discountMinor - loyaltyDiscountMinor;
+    if (totalMinor <= 0) {
+      throw ApiError.validation('A bill must come to more than nothing after points.', { reason: 'LOYALTY_NOTHING_PAYABLE' });
+    }
     // Enabled for the branch, covering the total, change only out of cash:
     // the same three rules every POS settles by.
     const { paidMinor, changeMinor } = settleTender({
@@ -527,12 +550,21 @@ class RestaurantService {
       .select('_id')
       .lean();
 
+    // Names the redemption before the order is settled; if settling fails, the
+    // same ref gives the points back.
+    const checkoutRef = new Types.ObjectId();
+    let redeemed: { balanceAfter: number } | null = null;
+    if (loyalty && input.redeemPoints > 0) {
+      redeemed = await loyaltyService.redeemForSale(ctx, loyalty.membership._id, input.redeemPoints, checkoutRef);
+    }
+
     const paid = await RestaurantOrderModel.findOneAndUpdate(
       { _id: id, tenantId: ctx.tenantId, storeId: ctx.storeId, status: 'open', rev: input.rev },
       {
         $set: {
           status: 'paid',
-          discountMinor: input.discountMinor,
+          // Includes the loyalty discount, so every report that subtracts discounts stays right.
+          discountMinor: input.discountMinor + loyaltyDiscountMinor,
           totalMinor,
           paidMinor,
           changeMinor,
@@ -541,16 +573,62 @@ class RestaurantService {
           paidBy: ctx.userId,
           paidByNameSnapshot: ctx.userName,
           shiftId: shift?._id ?? null,
+          loyalty: loyalty
+            ? {
+                membershipId: loyalty.membership._id,
+                cardNumber: loyalty.membership.cardNumber,
+                pointValueMinor: loyalty.settings.pointValueMinor,
+                earnSpendMinor: loyalty.settings.earnSpendMinor,
+                pointsRedeemed: input.redeemPoints,
+                discountMinor: loyaltyDiscountMinor,
+                // The bill actually paid, after any discount and any points spent.
+                qualifyingMinor: totalMinor,
+                pointsEarned: 0,
+                balanceAfter: redeemed?.balanceAfter ?? loyalty.membership.pointsBalance,
+                pointsEarnedReversed: 0,
+                pointsRedeemedRestored: 0,
+              }
+            : null,
         },
       },
       { new: true },
     ).lean();
-    if (!paid) throw ApiError.conflict('The order was changed or already settled. Refresh and try again.');
+    if (!paid) {
+      if (loyalty && redeemed) await loyaltyService.reverseRedemption(ctx, loyalty.membership._id, input.redeemPoints, checkoutRef);
+      throw ApiError.conflict('The order was changed or already settled. Refresh and try again.');
+    }
 
     // An order only counts towards a customer's lifetime value once it is paid;
     // an open order is not yet revenue, and a cancelled one never will be.
     if (paid.customerId) {
       await customerService.applySaleStats(ctx, paid.customerId, { amountMinor: totalMinor, orderDelta: 1, purchasedAt: paid.paidAt ?? new Date() });
+    }
+
+    // ---- earning: only now the bill is settled, and only once --------------
+    if (loyalty) {
+      await loyaltyService.attachSale(ctx, checkoutRef, paid._id, paid.orderNumber);
+      try {
+        const points = pointsForSpend(totalMinor, loyalty.settings.earnSpendMinor);
+        const earned = await loyaltyService.earnForSale(ctx, loyalty.membership._id, points, { _id: paid._id, saleNumber: paid.orderNumber });
+        if (earned) {
+          await RestaurantOrderModel.updateOne(
+            { _id: paid._id, tenantId: ctx.tenantId },
+            { $set: { 'loyalty.pointsEarned': points, 'loyalty.balanceAfter': earned.balanceAfter } },
+          );
+          if (paid.loyalty) {
+            paid.loyalty.pointsEarned = points;
+            paid.loyalty.balanceAfter = earned.balanceAfter;
+          }
+        }
+      } catch (error) {
+        // The bill is paid and the table has left; the missing points are
+        // logged for a manual adjustment rather than failing the payment.
+        logger.error('CRITICAL: loyalty points could not be awarded for a paid restaurant order', {
+          tenantId: String(ctx.tenantId),
+          orderId: String(paid._id),
+          error,
+        });
+      }
     }
 
     return paid;

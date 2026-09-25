@@ -12,6 +12,9 @@ import { formatDocumentNumber, nextSequence } from '../../utils/counters';
 import { resolvePage, searchRegex } from '../../utils/pagination';
 import { entitlementService } from '../../services/subscription/entitlement.service';
 import { customerService } from '../customers/customers.service';
+import { loyaltyService } from '../loyalty/loyalty.service';
+import { pointsForSpend } from '../loyalty/loyalty.math';
+import { logger } from '../../utils/logger';
 import { pharmacyInventoryAdapter, pharmacyMovementRow, todayUtc, type PharmacyReservation } from '../../services/inventory/adapters/pharmacy.adapter';
 import { POS_TENDER_DIALECT, settleTender, stampTenderLabels, tenderLabels } from '../../services/pos/paymentMethods.service';
 import { resolveDashboardWindow } from '../reports/reports.service';
@@ -308,7 +311,25 @@ class PharmacyService {
     }
     if (input.discountMinor > subtotalMinor) throw ApiError.badRequest('The discount cannot exceed the subtotal');
 
-    const totalMinor = subtotalMinor - input.discountMinor;
+    // ---- loyalty -----------------------------------------------------------
+    // Only a scanned card earns or redeems; a customer on the sale does not.
+    const loyalty = await loyaltyService.prepareForSale(ctx, {
+      membershipId: input.loyaltyMembershipId,
+      redeemPoints: input.redeemPoints,
+      internal: false,
+    });
+    if (loyalty && input.customerId && !loyalty.membership.customerId.equals(input.customerId)) {
+      throw ApiError.validation('The loyalty card belongs to a different customer. Remove the customer or the card.');
+    }
+    const loyaltyDiscountMinor = loyalty ? input.redeemPoints * loyalty.settings.pointValueMinor : 0;
+    if (loyaltyDiscountMinor > subtotalMinor - input.discountMinor) {
+      throw ApiError.validation('Those points are worth more than this sale.', { reason: 'LOYALTY_DISCOUNT_TOO_LARGE' });
+    }
+
+    const totalMinor = subtotalMinor - input.discountMinor - loyaltyDiscountMinor;
+    if (totalMinor <= 0) {
+      throw ApiError.validation('A sale must come to more than nothing after points.', { reason: 'LOYALTY_NOTHING_PAYABLE' });
+    }
     // Enabled for the branch, covering the total, change only out of cash:
     // the same three rules every POS settles by.
     const { paidMinor, changeMinor } = settleTender({
@@ -324,6 +345,26 @@ class PharmacyService {
     // customer, or one created at the till from a name and phone. This is who
     // the medicine was dispensed to; the prescription names the patient.
     const customer = await customerService.resolveForPosSale(ctx, input);
+
+    // Names the redemption before the sale exists, so the ledger row can be
+    // stamped with the invoice number once it does.
+    const checkoutRef = new Types.ObjectId();
+    let redeemed: { balanceAfter: number } | null = null;
+    if (loyalty && input.redeemPoints > 0) {
+      redeemed = await loyaltyService.redeemForSale(ctx, loyalty.membership._id, input.redeemPoints, checkoutRef);
+    }
+    const undoRedemption = async () => {
+      if (loyalty && redeemed) await loyaltyService.reverseRedemption(ctx, loyalty.membership._id, input.redeemPoints, checkoutRef);
+    };
+
+    /**
+     * What earns points here. Prescription medicines are excluded: a pharmacy
+     * must not reward buying more prescription-only medicine. The rest of the
+     * basket earns, scaled by what was actually charged so discounts and points
+     * spent are already taken off.
+     */
+    const overTheCounterMinor = priced.filter((line) => !line.medicine.requiresPrescription).reduce((sum, line) => sum + line.lineTotalMinor, 0);
+    const qualifyingMinor = subtotalMinor > 0 ? Math.floor((overTheCounterMinor * totalMinor) / subtotalMinor) : 0;
 
     // ---- take stock, earliest expiry first --------------------------------
     // Through the adapter, so shared code can do this without knowing that a
@@ -342,6 +383,7 @@ class PharmacyService {
       }
     } catch (error) {
       await pharmacyInventoryAdapter.release(ctx, taken);
+      await undoRedemption();
       throw error;
     }
 
@@ -376,7 +418,8 @@ class PharmacyService {
           ...(taken.find((entry) => entry.itemId.equals(line.medicine._id))?.detail.outOfStockOverride ? { outOfStockOverride: true } : {}),
         })),
         subtotalMinor,
-        discountMinor: input.discountMinor,
+        // Includes the loyalty discount, so every report that subtracts discounts stays right.
+        discountMinor: input.discountMinor + loyaltyDiscountMinor,
         totalMinor,
         costMinor: taken.reduce(
           (sum, entry) => sum + entry.detail.allocations.reduce((lineSum, allocation) => lineSum + allocation.quantity * allocation.costPriceMinor, 0),
@@ -389,6 +432,21 @@ class PharmacyService {
         customerId: customer?._id ?? null,
         customerNameSnapshot: customer?.name ?? '',
         note: input.note,
+        loyalty: loyalty
+          ? {
+              membershipId: loyalty.membership._id,
+              cardNumber: loyalty.membership.cardNumber,
+              pointValueMinor: loyalty.settings.pointValueMinor,
+              earnSpendMinor: loyalty.settings.earnSpendMinor,
+              pointsRedeemed: input.redeemPoints,
+              discountMinor: loyaltyDiscountMinor,
+              qualifyingMinor,
+              pointsEarned: 0,
+              balanceAfter: redeemed?.balanceAfter ?? loyalty.membership.pointsBalance,
+              pointsEarnedReversed: 0,
+              pointsRedeemedRestored: 0,
+            }
+          : null,
         status: 'completed',
         soldAt,
         cashierId: ctx.userId,
@@ -412,10 +470,36 @@ class PharmacyService {
         await customerService.applySaleStats(ctx, customer._id, { amountMinor: totalMinor, orderDelta: 1, purchasedAt: soldAt });
       }
 
+      // ---- earning: only now the sale is complete, and only once -----------
+      if (loyalty) {
+        await loyaltyService.attachSale(ctx, checkoutRef, sale._id, saleNumber);
+        try {
+          const points = pointsForSpend(qualifyingMinor, loyalty.settings.earnSpendMinor);
+          const earned = await loyaltyService.earnForSale(ctx, loyalty.membership._id, points, { _id: sale._id, saleNumber });
+          if (earned && sale.loyalty) {
+            sale.loyalty.pointsEarned = points;
+            sale.loyalty.balanceAfter = earned.balanceAfter;
+            await PharmacySaleModel.updateOne(
+              { _id: sale._id, tenantId: ctx.tenantId },
+              { $set: { 'loyalty.pointsEarned': points, 'loyalty.balanceAfter': earned.balanceAfter } },
+            );
+          }
+        } catch (error) {
+          // The customer has paid and the sale stands; the missing points are
+          // logged for a manual adjustment rather than failing the sale.
+          logger.error('CRITICAL: loyalty points could not be awarded for a completed Pharmacy sale', {
+            tenantId: String(ctx.tenantId),
+            saleId: String(sale._id),
+            error,
+          });
+        }
+      }
+
       return sale.toObject();
     } catch (error) {
       if (saved) await PharmacySaleModel.deleteOne({ _id: saleId, tenantId: ctx.tenantId });
       await pharmacyInventoryAdapter.release(ctx, taken);
+      await undoRedemption();
       throw error;
     }
   }
@@ -478,6 +562,17 @@ class PharmacyService {
       })),
       { reason, referenceId: sale._id, referenceNumber: sale.saleNumber },
     );
+
+    // A voided sale never happened as far as the card is concerned: points it
+    // earned are taken back and points it spent are given back.
+    if (sale.loyalty) {
+      await loyaltyService.applyCancellation(
+        ctx,
+        { _id: sale._id, saleNumber: sale.saleNumber, loyalty: sale.loyalty as never },
+        reason,
+        PharmacySaleModel as never,
+      );
+    }
 
     // A voided sale is not a purchase: take it back off the customer's total.
     if (sale.customerId) {

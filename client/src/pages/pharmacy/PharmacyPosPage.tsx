@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { FileText, Minus, Plus, Search, Trash2 } from 'lucide-react';
+import { CreditCard, FileText, Minus, Plus, Search, Trash2 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -15,14 +15,19 @@ import { PaymentPanel } from '@/features/payments/PaymentPanel';
 import { tenderedRows } from '@/features/payments/paymentMath';
 import { usePayments } from '@/features/payments/usePayments';
 import { PharmacyReceiptDialog } from '@/features/pharmacy/PharmacyReceiptDialog';
+import { LoyaltyCardDialog } from '@/features/loyalty/LoyaltyCardDialog';
+import { LoyaltyStrip } from '@/features/loyalty/LoyaltyStrip';
+import { isLoyaltyCardCode, maxRedeemablePoints, pointsForSpend } from '@/features/loyalty/loyaltyMath';
+import { useLoyaltyAccess } from '@/features/loyalty/useLoyaltyAccess';
 import { ApiError } from '@/api/client';
-import { storeApi } from '@/api/endpoints';
+import { loyaltyApi, storeApi } from '@/api/endpoints';
 import { pharmacyApi } from '@/api/pharmacy';
 import { formatMoney } from '@/lib/money';
 import { DOSAGE_FORM_LABELS, formatExpiry } from '@/lib/pharmacy';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/hooks/useAuth';
 import type { Medicine } from '@/types/pharmacy';
+import type { LoyaltyLookup } from '@/types/domain';
 import { tendersFromConfig } from '@/types/domain';
 
 interface CartLine {
@@ -48,6 +53,11 @@ export function PharmacyPosPage() {
   const [discount, setDiscount] = React.useState<number | null>(0);
   const [rx, setRx] = React.useState(EMPTY_RX);
   const [customer, setCustomer] = React.useState<SelectedCustomer | null>(null);
+  // Only a scanned CARD earns or redeems - never a customer or a phone number.
+  const [loyaltyMember, setLoyaltyMember] = React.useState<LoyaltyLookup | null>(null);
+  const [redeemPoints, setRedeemPoints] = React.useState<number | null>(null);
+  const [cardDialogOpen, setCardDialogOpen] = React.useState(false);
+  const loyaltyAccess = useLoyaltyAccess();
   // A till with this permission may dispense units the system thinks are gone.
   // The server still refuses expired stock, and refuses entirely when there is
   // no unexpired batch to record the units against.
@@ -61,10 +71,25 @@ export function PharmacyPosPage() {
 
   const subtotal = cart.reduce((sum, line) => sum + line.medicine.sellingPriceMinor * line.quantity, 0);
   const discountMinor = Math.min(discount ?? 0, subtotal);
-  const total = subtotal - discountMinor;
+  const payableMinor = subtotal - discountMinor;
+  // Points can pay for the medicines after the discount, never more than that
+  // and never more than the card holds. The server checks all of it again.
+  const maxRedeemable = loyaltyMember ? maxRedeemablePoints(payableMinor, loyaltyMember.pointValueMinor, loyaltyMember.pointsBalance) : 0;
+  const redeeming = Math.min(redeemPoints ?? 0, maxRedeemable);
+  const loyaltyDiscountMinor = loyaltyMember ? redeeming * loyaltyMember.pointValueMinor : 0;
+  const total = payableMinor - loyaltyDiscountMinor;
+  // Prescription medicines never earn points. The till shows what the rest of
+  // the basket earns, scaled by what is actually being charged; the server
+  // works the real figure out the same way.
+  const overTheCounterMinor = cart
+    .filter((line) => !line.medicine.requiresPrescription)
+    .reduce((sum, line) => sum + line.medicine.sellingPriceMinor * line.quantity, 0);
+  const qualifyingMinor = subtotal > 0 ? Math.floor((overTheCounterMinor * total) / subtotal) : 0;
+  const pointsToEarn = loyaltyMember ? pointsForSpend(qualifyingMinor, loyaltyMember.earnSpendMinor) : 0;
 
   // The branch decides which tenders it takes; the till only offers those.
   const { data: posConfig } = useQuery({ queryKey: ['store', 'pos-config'], queryFn: storeApi.posConfig });
+  const loyaltyAvailable = loyaltyAccess.inPlan && posConfig?.loyalty?.available === true;
   const availableMethods = tendersFromConfig(posConfig);
   // The same payment maths as every other till: cash is what the customer
   // hands over, and change comes out of it.
@@ -91,11 +116,38 @@ export function PharmacyPosPage() {
   const setQuantity = (id: string, quantity: number) =>
     setCart(cart.flatMap((line) => (line.medicine._id !== id ? [line] : quantity <= 0 ? [] : [{ ...line, quantity }])));
 
+  const attachCard = async (code: string): Promise<boolean> => {
+    if (!loyaltyAvailable) return false;
+    try {
+      const member = await loyaltyApi.lookup(code);
+      if (member.status !== 'active') {
+        toast.error('Loyalty card is inactive', { description: `${member.cardNumber} cannot earn or redeem points.` });
+        return true;
+      }
+      setLoyaltyMember(member);
+      setRedeemPoints(null);
+      if (member.customer) setCustomer({ id: member.customer.id, name: member.customer.name, phone: member.customer.phone, email: member.customer.email });
+      toast.success(`Loyalty member: ${member.customer?.name ?? member.cardNumber}`, { description: `${member.pointsBalance} points` });
+      setCardDialogOpen(false);
+      return true;
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 404) return false;
+      toast.error(error instanceof ApiError ? error.message : 'Could not look up that card');
+      return true;
+    }
+  };
+
+  const removeCard = () => {
+    setLoyaltyMember(null);
+    setRedeemPoints(null);
+  };
+
   const reset = () => {
     setCart([]);
     setDiscount(0);
     setRx(EMPTY_RX);
     setCustomer(null);
+    removeCard();
     payments.reset();
   };
 
@@ -110,6 +162,8 @@ export function PharmacyPosPage() {
         ...(needsRx
           ? { prescription: { patientName: rx.patientName.trim(), prescriberName: rx.prescriberName.trim(), prescriptionNumber: rx.prescriptionNumber.trim() } }
           : {}),
+        // The card is what earns and redeems; the server re-checks both.
+        ...(loyaltyMember ? { loyaltyMembershipId: loyaltyMember.id, redeemPoints: redeeming } : {}),
       }),
     onSuccess: (sale) => {
       toast.success(`${sale.saleNumber} completed`, {
@@ -140,6 +194,13 @@ export function PharmacyPosPage() {
               className="pl-8"
               value={term}
               onChange={(event) => setTerm(event.target.value)}
+              onKeyDown={async (event) => {
+                if (event.key !== 'Enter') return;
+                const value = term.trim();
+                // A membership card scanned into the search box attaches the
+                // member rather than looking for a medicine that does not exist.
+                if (loyaltyAvailable && isLoyaltyCardCode(value) && (await attachCard(value))) setTerm('');
+              }}
               placeholder="Search brand, generic name or scan a barcode…"
               aria-label="Search medicines"
             />
@@ -250,13 +311,42 @@ export function PharmacyPosPage() {
                 </dd>
               </div>
             )}
+            {loyaltyDiscountMinor > 0 && (
+              <div className="flex justify-between text-success">
+                <dt>Points ({redeeming})</dt>
+                <dd className="tabular">-{formatMoney(loyaltyDiscountMinor, currency)}</dd>
+              </div>
+            )}
             <div className="flex justify-between text-base font-semibold">
               <dt>Total</dt>
               <dd className="tabular">{formatMoney(total, currency)}</dd>
             </div>
           </dl>
 
-          <CustomerPicker value={customer} onChange={setCustomer} canCreate={can('customers.create')} />
+          <div className="flex items-stretch gap-2">
+            <div className="min-w-0 flex-1">
+              <CustomerPicker value={customer} onChange={setCustomer} canCreate={can('customers.create')} />
+            </div>
+            {loyaltyAvailable && !loyaltyMember && (
+              <Button type="button" variant="outline" size="sm" className="h-auto shrink-0" onClick={() => setCardDialogOpen(true)} title="Scan or enter a loyalty card">
+                <CreditCard />
+                <span className="hidden sm:inline">Card</span>
+              </Button>
+            )}
+          </div>
+
+          {loyaltyMember && (
+            <LoyaltyStrip
+              member={loyaltyMember}
+              currency={currency}
+              canRedeem={loyaltyAccess.canRedeem}
+              redeemPoints={redeemPoints}
+              maxRedeemable={maxRedeemable}
+              pointsToEarn={pointsToEarn}
+              onRedeemChange={setRedeemPoints}
+              onRemove={removeCard}
+            />
+          )}
 
           <PaymentPanel
             rows={payments.rows}
@@ -288,6 +378,8 @@ export function PharmacyPosPage() {
       {/* Opened only by a completed sale, so it prints itself - no dialog, no
           printer picker. The sale is already saved; printing cannot undo it. */}
       <PharmacyReceiptDialog saleId={receiptFor} onClose={() => setReceiptFor(null)} onNewSale={() => setReceiptFor(null)} autoPrint />
+
+      <LoyaltyCardDialog open={cardDialogOpen} onOpenChange={setCardDialogOpen} onSubmit={(code) => attachCard(code)} />
     </div>
   );
 }

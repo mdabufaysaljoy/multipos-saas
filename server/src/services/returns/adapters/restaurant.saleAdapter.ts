@@ -1,6 +1,7 @@
 import type { Types } from 'mongoose';
 import { RestaurantOrderModel } from '../../../models/RestaurantOrder';
 import type { TenantContext } from '../../../types/express';
+import { loyaltyService } from '../../../modules/loyalty/loyalty.service';
 import type { ReturnableSale, SaleReturnAdapter } from '../posReturns.types';
 
 /**
@@ -65,6 +66,25 @@ class RestaurantSaleReturnAdapter implements SaleReturnAdapter {
         { $inc: { 'items.$.returnedQuantity': -line.quantity } },
       );
     }
+  }
+
+
+  /**
+   * Points follow the goods. The claim is worked out from what has been
+   * returned SO FAR, so a sale returned in several parts ends exactly where one
+   * full return would - the shared loyalty maths does that part.
+   */
+  async reverseLoyalty(ctx: TenantContext, saleId: Types.ObjectId, reason: string): Promise<void> {
+    const sale = await RestaurantOrderModel.findOne({ _id: saleId, tenantId: ctx.tenantId }).select('loyalty orderNumber').lean();
+    if (!sale?.loyalty) return;
+    const claim = await loyaltyService.claimReturn(ctx, saleId, RestaurantOrderModel as never);
+    if (!claim) return;
+    await loyaltyService.applyReturnClaim(ctx, claim, {
+      key: `return:${saleId}:${claim.pointsEarnedReversed}:${claim.pointsRedeemedRestored}`,
+      saleId,
+      saleNumber: sale.orderNumber,
+      reason: reason || 'Refund',
+    });
   }
 
   async applyReturnTotals(ctx: TenantContext, saleId: Types.ObjectId, refundedMinor: number): Promise<void> {

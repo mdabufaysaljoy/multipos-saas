@@ -8650,6 +8650,142 @@ async function main() {
   // Another workspace's card is not this one's.
   check('A card from another workspace cannot be used', (await ssSale({ items: [{ productId: ssLoyProduct.data._id, quantity: 1 }], payments: [{ method: 'cash', amountMinor: 25_000 }], loyaltyMembershipId: '64b000000000000000000000' })).status === 400);
 
+
+  // --- Loyalty in a Pharmacy ---------------------------------------------------
+  // The same program, with one rule of its own: PRESCRIPTION medicines never
+  // earn points. A pharmacy must not reward buying more prescription-only
+  // medicine; the rest of the basket earns as it does anywhere else.
+  section('Loyalty in Pharmacy');
+
+  const phLoyEnable = await api('/stores/current', { method: 'PATCH', token: phToken, body: { loyalty: { enabled: true, earnSpendMinor: 10_000, pointValueMinor: 100 } } });
+  check('Pharmacy: the owner can switch the program on', phLoyEnable.status === 200 && phLoyEnable.data?.loyalty?.enabled === true, phLoyEnable.error);
+
+  const phLoyStamp = String(Date.now()).slice(-7);
+  const phLoyCustomer = (await api('/customers', { method: 'POST', token: phToken, body: { name: 'Patient Loyal', phone: `0176${phLoyStamp}` } })).data;
+  const phCard = await api('/loyalty/memberships', { method: 'POST', token: phToken, body: { customerId: phLoyCustomer._id, idempotencyKey: `phloy${phLoyStamp}` } });
+  check('Pharmacy: a card is issued to a customer', phCard.status === 201 && phCard.data?.cardNumber, phCard.error);
+  const phCardNumber = phCard.data.cardNumber;
+  const phMembershipId = phCard.data._id ?? phCard.data.id;
+  const phBalance = async () => (await api(`/loyalty/lookup?code=${phCardNumber}`, { token: phToken })).data?.pointsBalance;
+
+  // Over the counter: ৳100 = 1 point.
+  const phOtc = await phMedicine({ name: `Loyal Paracetamol ${phLoyStamp}`, strength: '500 mg', dosageForm: 'tablet', sellingPriceMinor: 5_000 });
+  await phReceive(phOtc.data._id, { batchNumber: `LOY-${phLoyStamp}`, expiryDate: phDay(400), quantity: 100, costPriceMinor: 2_000 });
+  // Prescription only: dispensed, but it never earns.
+  const phRx = await phMedicine({ name: `Loyal Amoxil ${phLoyStamp}`, strength: '250 mg', dosageForm: 'capsule', sellingPriceMinor: 10_000, requiresPrescription: true });
+  await phReceive(phRx.data._id, { batchNumber: `LOYRX-${phLoyStamp}`, expiryDate: phDay(400), quantity: 100, costPriceMinor: 4_000 });
+
+  const phLoySale = await phApi('/sales', {
+    method: 'POST',
+    body: { items: [{ medicineId: phOtc.data._id, quantity: 10 }], payments: [{ method: 'cash', amountMinor: 50_000 }], loyaltyMembershipId: phMembershipId },
+  });
+  check('Pharmacy: a sale on a scanned card earns points', phLoySale.status === 201 && phLoySale.data?.loyalty?.pointsEarned === 5, phLoySale.data?.loyalty ?? phLoySale.error);
+  check('Pharmacy: the balance moved', (await phBalance()) === 5);
+
+  // A mixed basket: only the over-the-counter half earns.
+  const phMixed = await phApi('/sales', {
+    method: 'POST',
+    body: {
+      items: [{ medicineId: phOtc.data._id, quantity: 10 }, { medicineId: phRx.data._id, quantity: 5 }],
+      payments: [{ method: 'cash', amountMinor: 100_000 }],
+      prescription: { patientName: 'Patient Loyal', prescriberName: 'Dr Rahman' },
+      loyaltyMembershipId: phMembershipId,
+    },
+  });
+  check('Pharmacy: a mixed basket is dispensed', phMixed.status === 201, phMixed.error);
+  check(
+    'Pharmacy: prescription medicines earn nothing, the rest of the basket earns',
+    phMixed.data?.loyalty?.qualifyingMinor === 50_000 && phMixed.data.loyalty.pointsEarned === 5,
+    phMixed.data?.loyalty,
+  );
+
+  // A basket of nothing but prescription medicine earns nothing at all.
+  const phRxOnly = await phApi('/sales', {
+    method: 'POST',
+    body: {
+      items: [{ medicineId: phRx.data._id, quantity: 5 }],
+      payments: [{ method: 'cash', amountMinor: 50_000 }],
+      prescription: { patientName: 'Patient Loyal', prescriberName: 'Dr Rahman' },
+      loyaltyMembershipId: phMembershipId,
+    },
+  });
+  check('Pharmacy: a prescription-only basket earns no points at all', phRxOnly.status === 201 && phRxOnly.data?.loyalty?.pointsEarned === 0, phRxOnly.data?.loyalty ?? phRxOnly.error);
+  check('Pharmacy: and the card is still a loyalty sale, recorded with nothing earned', phRxOnly.data?.loyalty?.cardNumber === phCardNumber && (await phBalance()) === 10);
+
+  // Redeeming pays for part of the sale, prescription or not.
+  const phRedeem = await phApi('/sales', {
+    method: 'POST',
+    body: { items: [{ medicineId: phOtc.data._id, quantity: 10 }], payments: [{ method: 'cash', amountMinor: 49_000 }], loyaltyMembershipId: phMembershipId, redeemPoints: 10 },
+  });
+  check('Pharmacy: points pay for part of the sale', phRedeem.status === 201 && phRedeem.data?.totalMinor === 49_000, { total: phRedeem.data?.totalMinor, error: phRedeem.error });
+  check('Pharmacy: spending 10 points and earning 4 on ৳490 leaves 4', (await phBalance()) === 4, 'earned floor(490/100) = 4');
+  check('Pharmacy: more points than the card holds is refused', (await phApi('/sales', { method: 'POST', body: { items: [{ medicineId: phOtc.data._id, quantity: 1 }], payments: [{ method: 'cash', amountMinor: 5_000 }], loyaltyMembershipId: phMembershipId, redeemPoints: 9999 } })).status === 422);
+  check('Pharmacy: redeeming without a card is refused', (await phApi('/sales', { method: 'POST', body: { items: [{ medicineId: phOtc.data._id, quantity: 1 }], payments: [{ method: 'cash', amountMinor: 5_000 }], redeemPoints: 2 } })).status === 422);
+
+  // Goods back, points back.
+  const phLoyReturn = await phApi(`/sales/${phLoySale.data._id}/return`, {
+    method: 'POST',
+    body: { items: [{ saleItemId: phLoySale.data.items[0]._id, quantity: 10 }], reason: 'Returned the lot' },
+  });
+  check('Pharmacy: the sale can be returned', phLoyReturn.status === 201, phLoyReturn.error);
+  check('Pharmacy: returning the goods takes their points back', (await phBalance()) === -1, 'earned 5 on that sale, off a balance of 4');
+
+  // A void gives redeemed points back and takes the earned ones.
+  const phVoidLoy = await phApi(`/sales/${phRedeem.data._id}/void`, { method: 'POST', body: { reason: 'Voided after redeeming' } });
+  check('Pharmacy: a sale that redeemed points can be voided', phVoidLoy.status === 200, phVoidLoy.error);
+  check('Pharmacy: the void gives the redeemed points back and takes the earned ones', (await phBalance()) === 5, 'redeemed 10 returned, earned 4 reversed, from -1');
+
+  check('Pharmacy: a card from another workspace cannot be used', (await phApi('/sales', { method: 'POST', body: { items: [{ medicineId: phOtc.data._id, quantity: 1 }], payments: [{ method: 'cash', amountMinor: 5_000 }], loyaltyMembershipId: ssMembershipId } })).status === 400);
+
+
+  // --- Loyalty in a Restaurant -------------------------------------------------
+  // A restaurant earns on the BILL, so the card is scanned when the bill is
+  // settled - not when the order is opened, which may be hours earlier.
+  section('Loyalty in Restaurant');
+
+  const rvLoyEnable = await api('/stores/current', { method: 'PATCH', token: rvToken, body: { loyalty: { enabled: true, earnSpendMinor: 10_000, pointValueMinor: 100 } } });
+  check('Restaurant: the owner can switch the program on', rvLoyEnable.status === 200 && rvLoyEnable.data?.loyalty?.enabled === true, rvLoyEnable.error);
+
+  const rvLoyStamp = String(Date.now()).slice(-7);
+  const rvLoyCustomer = (await api('/customers', { method: 'POST', token: rvToken, body: { name: 'Diner Loyal', phone: `0177${rvLoyStamp}` } })).data;
+  const rvCard = await api('/loyalty/memberships', { method: 'POST', token: rvToken, body: { customerId: rvLoyCustomer._id, idempotencyKey: `rvloy${rvLoyStamp}` } });
+  check('Restaurant: a card is issued to a guest', rvCard.status === 201 && rvCard.data?.cardNumber, rvCard.error);
+  const rvCardNumber = rvCard.data.cardNumber;
+  const rvMembershipId = rvCard.data._id ?? rvCard.data.id;
+  const rvBalance = async () => (await api(`/loyalty/lookup?code=${rvCardNumber}`, { token: rvToken })).data?.pointsBalance;
+
+  const rvLoyOrder = await rvOrder({ type: 'takeaway', items: [{ menuItemId: borhani.data._id, quantity: 5 }] });
+  check('Restaurant: a bill of ৳400 is opened', rvLoyOrder.status === 201 && rvLoyOrder.data?.subtotalMinor === 40_000, rvLoyOrder.data?.subtotalMinor ?? rvLoyOrder.error);
+  const rvLoyPaid = await rvPay(rvLoyOrder.data._id, { payments: [{ method: 'cash', amountMinor: 40_000 }], rev: rvLoyOrder.data.rev, loyaltyMembershipId: rvMembershipId });
+  check('Restaurant: a bill settled on a scanned card earns points', rvLoyPaid.status === 200 && rvLoyPaid.data?.loyalty?.pointsEarned === 4, rvLoyPaid.data?.loyalty ?? rvLoyPaid.error);
+  check('Restaurant: the order keeps the card and what it earned on', rvLoyPaid.data?.loyalty?.cardNumber === rvCardNumber && rvLoyPaid.data.loyalty.qualifyingMinor === 40_000, rvLoyPaid.data?.loyalty);
+  check('Restaurant: the balance moved', (await rvBalance()) === 4);
+
+  // An order paid without a card earns nothing.
+  const rvNoCard = await rvOrder({ type: 'takeaway', items: [{ menuItemId: borhani.data._id, quantity: 1 }] });
+  const rvNoCardPaid = await rvPay(rvNoCard.data._id, { payments: [{ method: 'cash', amountMinor: 8_000 }], rev: rvNoCard.data.rev });
+  check('Restaurant: a bill settled without a card earns nothing', rvNoCardPaid.status === 200 && rvNoCardPaid.data?.loyalty == null, rvNoCardPaid.data?.loyalty);
+
+  // Redeeming pays for part of the bill.
+  const rvRedeemOrder = await rvOrder({ type: 'takeaway', items: [{ menuItemId: borhani.data._id, quantity: 5 }] });
+  const rvRedeemPaid = await rvPay(rvRedeemOrder.data._id, { payments: [{ method: 'cash', amountMinor: 39_600 }], rev: rvRedeemOrder.data.rev, loyaltyMembershipId: rvMembershipId, redeemPoints: 4 });
+  check('Restaurant: points pay for part of the bill', rvRedeemPaid.status === 200 && rvRedeemPaid.data?.totalMinor === 39_600, { total: rvRedeemPaid.data?.totalMinor, error: rvRedeemPaid.error });
+  check('Restaurant: the bill records what the points were worth', rvRedeemPaid.data?.loyalty?.pointsRedeemed === 4 && rvRedeemPaid.data.loyalty.discountMinor === 400, rvRedeemPaid.data?.loyalty);
+  check('Restaurant: spending 4 and earning 3 on ৳396 leaves 3', (await rvBalance()) === 3, 'floor(396/100) = 3');
+  check('Restaurant: more points than the card holds is refused', (await rvPay((await rvOrder({ type: 'takeaway', items: [{ menuItemId: borhani.data._id, quantity: 1 }] })).data._id, { payments: [{ method: 'cash', amountMinor: 8_000 }], rev: 0, loyaltyMembershipId: rvMembershipId, redeemPoints: 9999 })).status === 422);
+  check('Restaurant: redeeming without a card is refused', (await rvPay((await rvOrder({ type: 'takeaway', items: [{ menuItemId: borhani.data._id, quantity: 1 }] })).data._id, { payments: [{ method: 'cash', amountMinor: 8_000 }], rev: 0, redeemPoints: 2 })).status === 422);
+
+  // A refund takes the points the refunded food earned.
+  const rvLoyRefund = await api(`/restaurant/orders/${rvLoyPaid.data._id}/return`, {
+    method: 'POST',
+    token: rvToken,
+    body: { items: [{ saleItemId: rvLoyPaid.data.items[0]._id, quantity: 5 }], reason: 'Sent the whole order back' },
+  });
+  check('Restaurant: the bill can be refunded', rvLoyRefund.status === 201, rvLoyRefund.error);
+  check('Restaurant: refunding takes the points that bill earned', (await rvBalance()) === -1, 'earned 4 on that bill, off a balance of 3');
+
+  check('Restaurant: a card from another workspace cannot be used', (await rvPay((await rvOrder({ type: 'takeaway', items: [{ menuItemId: borhani.data._id, quantity: 1 }] })).data._id, { payments: [{ method: 'cash', amountMinor: 8_000 }], rev: 0, loyaltyMembershipId: ssMembershipId })).status === 400);
+
   // ------------------------------------------------ cash received, change and receipt
   section('Clothing POS: cash received, change and receipt');
   const ctnStamp = Date.now();

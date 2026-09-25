@@ -113,6 +113,12 @@ export const payOrderSchema = z
     discountMinor: amount.default(0),
     /** The revision the cashier is paying for; stale edits are refused. */
     rev: z.number().int().min(0),
+    /**
+     * The loyalty card scanned at the till. Only a scanned card earns or
+     * redeems - never a phone number, and never a customer on their own.
+     */
+    loyaltyMembershipId: objectId.optional(),
+    redeemPoints: z.number().int().min(0).max(1_000_000).default(0),
   })
   .strict();
 

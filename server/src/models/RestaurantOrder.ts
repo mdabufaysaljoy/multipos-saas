@@ -1,6 +1,7 @@
 import { Schema, model, type Types } from 'mongoose';
 import type { PaymentMethod } from '../config/constants';
 import type { BaseDoc } from './types';
+import { saleLoyaltySchema, type SaleLoyaltySnapshot } from './saleLoyalty';
 
 export const RESTAURANT_ORDER_TYPES = ['dine_in', 'takeaway'] as const;
 export type RestaurantOrderType = (typeof RESTAURANT_ORDER_TYPES)[number];
@@ -70,6 +71,9 @@ export interface RestaurantOrderPayment {
  * historical orders stay exact whatever happens to the menu. Totals are always
  * recomputed from the lines inside the same atomic update that changes them.
  */
+/** What an order did to a loyalty card: the shared snapshot, under this vertical's name. */
+export type RestaurantOrderLoyalty = SaleLoyaltySnapshot;
+
 export interface RestaurantOrderDoc extends BaseDoc {
   tenantId: Types.ObjectId;
   storeId: Types.ObjectId;
@@ -88,6 +92,8 @@ export interface RestaurantOrderDoc extends BaseDoc {
   payments: RestaurantOrderPayment[];
   /** Kitchen tickets, in the order they were sent. */
   tickets: KitchenTicket[];
+  /** The loyalty card this order was paid with. Null until it is paid, and for most orders. */
+  loyalty: RestaurantOrderLoyalty | null;
   status: RestaurantOrderStatus;
   /** Money refunded against this order, and whether nothing is left to refund. */
   returnedTotalMinor?: number;
@@ -180,6 +186,7 @@ const restaurantOrderSchema = new Schema<RestaurantOrderDoc>(
     changeMinor: money,
     payments: { type: [paymentSchema], default: [] },
     tickets: { type: [ticketSchema], default: [] },
+    loyalty: { type: saleLoyaltySchema(), default: null },
     status: { type: String, enum: [...RESTAURANT_ORDER_STATUSES], default: 'open' },
     returnedTotalMinor: { type: Number, default: 0, min: 0 },
     fullyReturned: { type: Boolean, default: false },
