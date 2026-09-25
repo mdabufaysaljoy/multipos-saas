@@ -5,6 +5,7 @@ import { Ban, CalendarClock, CreditCard, FileText, Percent, Pill, TrendingUp, Tr
 import { EmptyState, LoadingState } from '@/components/states';
 import { PageHeader } from '@/components/PageHeader';
 import { AdvancedAnalyticsLocked } from '@/features/reports/AdvancedAnalyticsLocked';
+import { ReturnsCardBody, ReturnsCardIcon } from '@/features/reports/ReturnsCard';
 import { AnalyticsCard, AnalyticsStat, BarList, PAYMENT_LABELS, formatBps } from '@/features/reports/AnalyticsParts';
 import { REPORT_PRESETS, RangePicker, isRangeReady, rangeParams, type RangeValue } from '@/features/reports/RangePicker';
 import { ApiError } from '@/api/client';
@@ -69,7 +70,15 @@ export function PharmacyReportsPage() {
       {data && (
         <>
           <div className="grid grid-cols-2 gap-3 xl:grid-cols-4">
-            <AnalyticsStat label="Net sales" value={money(data.totals.netSalesMinor)} hint={`${data.totals.salesCount} sales · avg ${money(data.totals.averageBasketMinor)}`} />
+            <AnalyticsStat
+              label="Net sales"
+              value={money(data.totals.netSalesMinor)}
+              hint={
+                data.totals.returnAmountMinor > 0
+                  ? `${money(data.totals.grossSalesMinor)} charged less ${money(data.totals.returnAmountMinor)} refunded · ${data.totals.salesCount} sales`
+                  : `${data.totals.salesCount} sales · avg ${money(data.totals.averageBasketMinor)}`
+              }
+            />
             <AnalyticsStat
               label="Gross profit"
               value={money(data.totals.grossProfitMinor)}
@@ -194,6 +203,10 @@ export function PharmacyReportsPage() {
                   </li>
                 ))}
               </ul>
+            </AnalyticsCard>
+
+            <AnalyticsCard title="Returns" icon={<ReturnsCardIcon />} isEmpty={data.returns.count === 0} empty="Nothing came back">
+              <ReturnsCardBody returns={data.returns} currency={currency} />
             </AnalyticsCard>
 
             <AnalyticsCard title="Write-offs" icon={<Trash2 className="h-4 w-4" />} isEmpty={data.writeOffs.byMedicine.length === 0} empty="Nothing written off">

@@ -1,4 +1,5 @@
 import type { ReceiptStore } from './receipt';
+import type { PosReturnSummary } from './domain';
 
 export type DosageForm =
   | 'tablet'
@@ -156,6 +157,11 @@ export interface PharmacyReports {
   range: AnalyticsRange;
   totals: {
     salesCount: number;
+    /** What was charged. */
+    grossSalesMinor: number;
+    returnCount: number;
+    returnAmountMinor: number;
+    /** What was kept: charged less refunded. */
     netSalesMinor: number;
     discountsMinor: number;
     costMinor: number;
@@ -180,6 +186,14 @@ export interface PharmacyReports {
   dosageForms: { dosageForm: string; quantity: number; revenueMinor: number }[];
   payments: { method: string; sales: number; amountMinor: number }[];
   discounts: { totalMinor: number; byStaff: { userId: string | null; name: string; sales: number; discountsMinor: number }[] };
+  /** What came back: money, units and the most recent of them. */
+  returns: {
+    count: number;
+    units: number;
+    amountMinor: number;
+    costMinor: number;
+    recent: PosReturnSummary[];
+  };
   voids: { count: number; valueMinor: number; recent: VoidedSaleRow[] };
   writeOffs: { units: number; costMinor: number; byMedicine: { medicineId: string; name: string; units: number; costMinor: number }[] };
   expiry: { expired: StockBucket; within30: StockBucket; within60: StockBucket; within90: StockBucket };
@@ -195,7 +209,8 @@ export interface PharmacyDashboardTotals {
 
 export interface PharmacyDashboard {
   range: { from: string; to: string; label: string; preset: string; bucket: 'hour' | 'day' | 'month' };
-  kpis: PharmacyDashboardTotals & { prescriptionSales: number };
+  /** `totalMinor` is what was charged; `netSalesMinor` is what was kept. */
+  kpis: PharmacyDashboardTotals & { prescriptionSales: number; refundCount: number; refundedMinor: number; netSalesMinor: number };
   /** The period of equal length just before the range, for comparison. */
   previous: PharmacyDashboardTotals;
   /** Stock is not a period: expiry and low stock describe the shelf right now. */

@@ -4,6 +4,7 @@ import { MedicineBatchModel } from '../../models/MedicineBatch';
 import { PharmacySaleModel } from '../../models/PharmacySale';
 import { PharmacyStockMovementModel } from '../../models/PharmacyStockMovement';
 import { resolveRange } from '../reports/reports.service';
+import { recentReturns, returnFiguresFor, returnsByDay } from '../../services/returns/posReturns.figures';
 import type { AnalyticsRangeInput, ReportRangeInput } from '../reports/reports.validators';
 import type { TenantContext } from '../../types/express';
 import { todayUtc } from './pharmacy.service';
@@ -33,6 +34,13 @@ class PharmacyReportsService {
     const completed = { ...scope, status: 'completed', soldAt: window };
     const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
     const today = todayUtc();
+
+    // What was charged is on the sales; what was KEPT is that less what came back.
+    const [returns, refundsByDay, returnList] = await Promise.all([
+      returnFiguresFor(ctx, 'pharmacy', range),
+      returnsByDay(ctx, 'pharmacy', range, timezone),
+      recentReturns(ctx, 'pharmacy', range),
+    ]);
 
     const [totals, trend, medicines, dosageForms, payments, discounts, voidTotals, voids, writeOffs, expiry, slowMovers] = await Promise.all([
       PharmacySaleModel.aggregate<{
@@ -172,8 +180,11 @@ class PharmacyReportsService {
     ]);
 
     const t = totals[0];
-    const netSalesMinor = t?.netSalesMinor ?? 0;
-    const costMinor = t?.costMinor ?? 0;
+    // What was charged, what came back, and what the pharmacy actually kept.
+    const grossSalesMinor = t?.netSalesMinor ?? 0;
+    const netSalesMinor = grossSalesMinor - returns.totalMinor;
+    // Medicine that went back to its batch takes its cost out of profit with it.
+    const costMinor = (t?.costMinor ?? 0) - returns.costMinor;
     const grossProfitMinor = netSalesMinor - costMinor;
     const bucket = (name: string) => {
       const row = expiry.find((entry) => entry._id === name);
@@ -184,22 +195,32 @@ class PharmacyReportsService {
       range: { from: range.from, to: range.to, label: range.label, preset: input.preset },
       totals: {
         salesCount: t?.salesCount ?? 0,
+        grossSalesMinor,
+        returnCount: returns.count,
+        returnAmountMinor: returns.totalMinor,
         netSalesMinor,
         discountsMinor: t?.discountsMinor ?? 0,
         costMinor,
         grossProfitMinor,
         marginBps: marginBps(grossProfitMinor, netSalesMinor),
-        averageBasketMinor: t?.salesCount ? Math.round(netSalesMinor / t.salesCount) : 0,
+        averageBasketMinor: t?.salesCount ? Math.round(grossSalesMinor / t.salesCount) : 0,
         prescriptionSales: t?.prescriptionSales ?? 0,
         prescriptionValueMinor: t?.prescriptionValueMinor ?? 0,
       },
-      trend: trend.map((row) => ({
-        date: row._id,
-        salesCount: row.salesCount,
-        netSalesMinor: row.netSalesMinor,
-        grossProfitMinor: row.netSalesMinor - row.costMinor,
-      })),
-      // Line revenue and profit are before any sale-level discount.
+      trend: trend.map((row) => {
+        const refunded = refundsByDay.get(row._id) ?? { totalMinor: 0, costMinor: 0 };
+        return {
+          date: row._id,
+          salesCount: row.salesCount,
+          grossSalesMinor: row.netSalesMinor,
+          returnAmountMinor: refunded.totalMinor,
+          netSalesMinor: row.netSalesMinor - refunded.totalMinor,
+          // Same arithmetic as the totals: returned medicine takes its cost back too.
+          grossProfitMinor: row.netSalesMinor - refunded.totalMinor - (row.costMinor - refunded.costMinor),
+        };
+      }),
+      // Line revenue and profit are before any sale-level discount, and before
+      // anything came back.
       medicines: medicines.map((row) => ({
         medicineId: row._id,
         name: row.name,
@@ -222,6 +243,9 @@ class PharmacyReportsService {
         totalMinor: t?.discountsMinor ?? 0,
         byStaff: discounts.map((row) => ({ userId: row._id, name: row.name || 'Unknown', sales: row.sales, discountsMinor: row.discountsMinor })),
       },
+      // What came back, next to what was voided: a void cancels a sale, a
+      // return gives money back on one that stands.
+      returns: { count: returns.count, units: returns.units, amountMinor: returns.totalMinor, costMinor: returns.costMinor, recent: returnList },
       voids: { count: voidTotals[0]?.count ?? 0, valueMinor: voidTotals[0]?.valueMinor ?? 0, recent: voids },
       writeOffs: {
         units: writeOffs.reduce((sum, row) => sum + row.units, 0),

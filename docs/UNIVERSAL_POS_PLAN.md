@@ -2,9 +2,10 @@
 
 **Audit and plan.** It records what the four verticals do today, what "universal" should mean for each
 capability, and the order the work should be done in. Tasks are marked ✅ as they land - **tasks 01,
-02, 03, 04, 05, 06, 07, 08 and 12 are done** (printing, payment-method service, custom payment
+02, 03, 04, 05, 06, 07, 08, 12 and 13 are done** (printing, payment-method service, custom payment
 methods, split payment UI, customer selection, inventory adapter + ledger read, out-of-stock
-override, returns/refunds, dashboard ranges); tasks 09, 10, 11, 13 and 14 are still a plan.
+override, returns/refunds, dashboard ranges, analytics parity); tasks 09, 10, 11 and 14 are still a
+plan.
 
 Date: 2026-09-24 · Commit audited: `18bc974` (main, with the Clothing work merged in)
 Method: reading the code and the models, plus the checks the end-to-end suite already makes.
@@ -60,7 +61,7 @@ Legend: **mature** = reference implementation · **partial** = works but narrowe
 | 8 | Authorized out-of-stock sale | **mature** (`sales.sellOutOfStock`, ledger flag, negative stock allowed) | n/a (no stock) | **missing** (batch quantity is hard-blocked) | **missing** (`ShopStock.quantityOnHand` has `min: 0`) | the permission exists platform-wide | Pharmacy must never sell *expired* stock, override or not; negative batch quantity is meaningless | Per-vertical override path + ledger flag | **High** |
 | 9 | Inventory management + ledger | **mature** (`InventoryTransaction`, before/after, actor, reference) | n/a | partial (`PharmacyStockMovement`) | partial (`ShopStockMovement`) | three parallel ledgers with the same shape | batch/expiry (Pharmacy), weighted-average cost (Super Shop), variants (Clothing) | Unify the *read* API and the movement contract, not the storage | **Medium** |
 | 10 | Dashboard date ranges | **mature** (`RangePicker`, presets + custom) | **mature** (same picker) | **done** (task 12) | **done** (task 12) | one `dashboardRangeSchema` + `resolveDashboardWindow`; `RangePicker` + `DashboardKpi` on every page | metric names differ (orders vs sales) - task 13 | ✅ complete | — |
-| 11 | Advanced analytics | **mature** (10 endpoints: sales, profit, breakdown, payments, returns, staff, inventory, customers, branches) | partial (1 `report` endpoint) | partial (1 `report` endpoint) | partial (1 `report` endpoint) | `advancedAnalytics` entitlement gates all four | Restaurant: tables/tickets/shifts; Pharmacy: expiry/prescription; Super Shop: VAT/dead stock | Shared metric contract; keep vertical metrics vertical | **Medium** |
+| 11 | Advanced analytics | **mature** (10 endpoints) | 1 `report`, now net of refunds + payments (task 13) | 1 `report`, now net of refunds (task 13) | 1 `report`, now net of refunds (task 13) | `posMetrics.ts` contract + `advancedAnalytics` entitlement | Restaurant: tables/tickets/shifts; Pharmacy: expiry/prescription; Super Shop: VAT/dead stock | staff performance in Super Shop and Pharmacy | **Medium** |
 | 12 | PDF / print of dashboard + analytics | **missing** (export module can produce PDF for *datasets*, not for a report view) | missing | missing | missing | `export.formats.ts` already writes CSV/XLSX/JSON/PDF from sections | — | Feed report output through the existing export writers | **Medium** |
 
 ### What this says
@@ -198,10 +199,10 @@ Each is independently executable, independently testable, and leaves the tree gr
 | **10** Category management | Decide per vertical: promote to `Category` (Super Shop, Pharmacy) or keep strings (Restaurant); shared POS filter API | — | M | Medium |
 | **11** Universal import | Column registry per vertical behind the existing engine | 10 | M | Medium |
 | **12** Dashboard date ranges ✅ **done** | One `dashboardRangeSchema` and `resolveDashboardWindow` (range, previous period, bucket, timezone) behind all four dashboards; `RangePicker` + shared `DashboardKpi` on the Pharmacy and Super Shop pages; risk 5 settled | — | S | Low |
-| **13** Analytics parity | Shared metric contract; fill the gaps per vertical | 12 | M | Medium |
+| **13** Analytics parity ✅ **done** | `services/reports/posMetrics.ts` contract (gross/returns/net/cost/profit); all three newer verticals report net of refunds on dashboard AND analytics, with a returns card; Restaurant gained the payment breakdown it never had. Left: staff performance in Super Shop and Pharmacy | 12 | M | Medium |
 | **14** PDF/print of reports | Serialise the current report view through `export.formats.ts` (already writes PDF) | 13 | M | Medium |
 
-Recommended sequencing: **01 ✅ → 12 ✅ → 05 ✅ → 02 ✅ → 04 ✅ → 06 ✅ → 07 ✅ → 03 ✅ → 08 ✅ → 09 → 10 → 11 → 13 → 14.**
+Recommended sequencing: **01 ✅ → 12 ✅ → 05 ✅ → 02 ✅ → 04 ✅ → 06 ✅ → 07 ✅ → 03 ✅ → 08 ✅ → 13 ✅ → 09 → 10 → 11 → 14.**
 That front-loads the visible wins that carry almost no risk, and defers the two schema-wide changes
 (payment methods, returns) until the adapter seam exists to absorb them.
 
@@ -267,7 +268,8 @@ must pass unchanged, and the Clothing sections must not be edited to accommodate
 - `docs/POS_CUSTOMERS.md` — the customer on a sale, delivered by task 05.
 - `docs/POS_TENDER_RULES.md` — how a POS sale is paid for (§1-2 task 02, §3 task 04).
 - `docs/INVENTORY_ADAPTER.md` — the stock seam and the shared ledger read, delivered by task 06.
-- `docs/RETURNS.md` — taking goods back, delivered by task 08 (part 1).
+- `docs/RETURNS.md` — taking goods back, delivered by task 08.
+- `docs/ANALYTICS_PARITY.md` — the shared metric vocabulary, delivered by task 13.
 
 Feature docs (`PRINTING_ARCHITECTURE.md`, `PRODUCT_IMPORT.md`, `DATA_EXPORT.md`,
 `SUPPLIER_MANAGEMENT.md`, `CONTACT_VERIFICATION.md`, `ENTITLEMENTS.md`) remain accurate for Clothing
@@ -277,15 +279,15 @@ and are the reference material for the tasks above.
 
 ## 10. Recommended next task
 
-**Task 13 — Analytics parity**, and start with what task 08 left.
+**Task 09 — Universal loyalty**, or the lighter 10 / 11 / 14.
 
-Nine of the fourteen are done. Task 13 is now the one with a concrete debt behind it: Super Shop,
-Pharmacy and Restaurant record refunds but their dashboards and analytics still sum what was
-charged, not what was kept. Clothing's reports already subtract returns; bringing the other three
-into line is the first piece of analytics parity and the only place the platform currently reports a
-number that a shop would argue with.
+Ten of the fourteen are done, and nothing that remains is blocked. Task 09 is the biggest of them:
+loyalty is Clothing-only today, and generalising it means the sale hooks, the entitlement's
+verticals, and a card scan that selects the customer in every POS - task 05 already put the customer
+there. Medium size, medium risk, and the one customers ask for.
 
-Also open, blocking nothing: task 09 (universal loyalty, medium), task 10 (category management),
-task 11 (universal import), task 14 (PDF/print of reports, which wants 13 first).
+Task 10 (category management) and task 11 (universal import, which wants 10 first) are catalogue
+work. Task 14 (PDF/print of reports) now has task 13's shared metrics under it, which is what it was
+waiting for.
 
 Waiting for an explicit instruction before starting any of them.

@@ -53,7 +53,11 @@ export function SupershopDashboardPage() {
               icon={<Banknote className="h-4 w-4" />}
               label="Sales"
               value={formatMoney(data.kpis.totalMinor, currency)}
-              hint={`${data.kpis.salesCount} sale${data.kpis.salesCount === 1 ? '' : 's'}`}
+              hint={
+                data.kpis.refundedMinor > 0
+                  ? `${data.kpis.salesCount} sale${data.kpis.salesCount === 1 ? '' : 's'} · ${formatMoney(data.kpis.netSalesMinor, currency)} kept after ${formatMoney(data.kpis.refundedMinor, currency)} refunded`
+                  : `${data.kpis.salesCount} sale${data.kpis.salesCount === 1 ? '' : 's'}`
+              }
               now={data.kpis.totalMinor}
               before={data.previous.totalMinor}
             />

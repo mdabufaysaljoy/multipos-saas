@@ -13,6 +13,7 @@ import { resolvePage, searchRegex } from '../../utils/pagination';
 import { entitlementService } from '../../services/subscription/entitlement.service';
 import { resolveDashboardWindow } from '../reports/reports.service';
 import { customerService } from '../customers/customers.service';
+import { returnFiguresFor } from '../../services/returns/posReturns.figures';
 import { POS_TENDER_DIALECT, settleTender, stampTenderLabels, tenderLabels } from '../../services/pos/paymentMethods.service';
 import type { TenantContext } from '../../types/express';
 import type {
@@ -661,6 +662,8 @@ class RestaurantService {
     const paidIn = (from: Date, to: Date) => ({ ...scope, status: 'paid', paidAt: { $gte: from, $lte: to } });
     const paidMatch = paidIn(range.from, range.to);
 
+    const refunds = await returnFiguresFor(ctx, 'restaurant', { from: range.from, to: range.to });
+
     const [current, previous, trend, byMethod, byType, topItems, byStaff, cancelledOrders, tableCount, openNow, recentOrders] =
       await Promise.all([
         this.periodTotals(paidMatch),
@@ -725,6 +728,10 @@ class RestaurantService {
         itemsSold: current.itemsSold,
         discountsMinor: current.discountsMinor,
         cancelledOrders,
+        refundCount: refunds.count,
+        refundedMinor: refunds.totalMinor,
+        // What the restaurant actually kept: charged less refunded.
+        netRevenueMinor: current.revenueMinor - refunds.totalMinor,
       },
       previous: {
         revenueMinor: previous.revenueMinor,

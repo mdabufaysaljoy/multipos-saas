@@ -6,6 +6,7 @@ import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { EmptyState, LoadingState } from '@/components/states';
 import { PageHeader } from '@/components/PageHeader';
+import { ReturnsCardBody } from '@/features/reports/ReturnsCard';
 import { AdvancedAnalyticsLocked } from '@/features/reports/AdvancedAnalyticsLocked';
 import { REPORT_PRESETS, RangePicker, isRangeReady, rangeParams, type RangeValue } from '@/features/reports/RangePicker';
 import { Variance } from '@/pages/restaurant/ShiftsPage';
@@ -66,7 +67,15 @@ export function RestaurantReportsPage() {
       {data && (
         <>
           <div className="grid grid-cols-2 gap-3 xl:grid-cols-4">
-            <Stat label="Net sales" value={money(data.totals.netSalesMinor)} hint={`${data.totals.paidOrders} paid orders`} />
+            <Stat
+              label="Net sales"
+              value={money(data.totals.netSalesMinor)}
+              hint={
+                data.totals.returnAmountMinor > 0
+                  ? `${money(data.totals.grossSalesMinor)} charged less ${money(data.totals.returnAmountMinor)} refunded`
+                  : `${data.totals.paidOrders} paid orders`
+              }
+            />
             <Stat label="Discounts" value={money(data.totals.discountsMinor)} />
             <Stat
               label="Voids & cancellations"
@@ -86,6 +95,43 @@ export function RestaurantReportsPage() {
               {money(data.totals.unshiftedSalesMinor)} was paid while no shift was open, so it was never reconciled against a cash count.
             </p>
           )}
+
+          <div className="grid gap-4 lg:grid-cols-2">
+            <Card>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-base">Payments</CardTitle>
+              </CardHeader>
+              <CardContent>
+                {data.payments.length === 0 ? (
+                  <p className="py-6 text-center text-sm text-muted-foreground">Nothing taken</p>
+                ) : (
+                  <ul className="divide-y">
+                    {data.payments.map((row) => (
+                      <li key={row.method} className="flex items-center gap-2 py-2 first:pt-0">
+                        <span className="min-w-0 flex-1 truncate text-sm capitalize">{row.method}</span>
+                        <Badge variant="secondary">{row.orders}</Badge>
+                        <span className="tabular w-24 text-right text-sm">{money(row.amountMinor)}</span>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+                <p className="mt-2 text-xs text-muted-foreground">Cash is net of the change handed back.</p>
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-base">Refunds</CardTitle>
+              </CardHeader>
+              <CardContent>
+                {data.returns.count === 0 ? (
+                  <p className="py-6 text-center text-sm text-muted-foreground">Nothing refunded</p>
+                ) : (
+                  <ReturnsCardBody returns={data.returns} currency={currency} />
+                )}
+              </CardContent>
+            </Card>
+          </div>
 
           <div className="grid gap-4 lg:grid-cols-3">
             <Card className="lg:col-span-2">

@@ -4,6 +4,7 @@ import { ShopSaleModel } from '../../models/ShopSale';
 import { ShopStockModel } from '../../models/ShopStock';
 import { ShopStockMovementModel } from '../../models/ShopStockMovement';
 import { resolveRange } from '../reports/reports.service';
+import { recentReturns, returnFiguresFor, returnsByDay } from '../../services/returns/posReturns.figures';
 import type { AnalyticsRangeInput, ReportRangeInput } from '../reports/reports.validators';
 import type { TenantContext } from '../../types/express';
 import { lineAmount } from './supershop.service';
@@ -31,6 +32,13 @@ class SupershopReportsService {
     const window = { $gte: range.from, $lte: range.to };
     const completed = { ...scope, status: 'completed', soldAt: window };
     const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+
+    // What was charged is on the sales; what was KEPT is that less what came back.
+    const [returns, refundsByDay, returnList] = await Promise.all([
+      returnFiguresFor(ctx, 'supershop', range),
+      returnsByDay(ctx, 'supershop', range, timezone),
+      recentReturns(ctx, 'supershop', range),
+    ]);
 
     const [totals, trend, products, departments, vatRates, hours, payments, discounts, voidTotals, voids, writeOffs, deadStock] = await Promise.all([
       ShopSaleModel.aggregate<{ salesCount: number; netSalesMinor: number; discountsMinor: number; vatMinor: number; costMinor: number; changeMinor: number; lines: number }>([
@@ -156,9 +164,12 @@ class SupershopReportsService {
       .sort((a, b) => b.costMinor - a.costMinor);
 
     const t = totals[0];
-    const netSalesMinor = t?.netSalesMinor ?? 0;
+    // What was charged, what came back, and what the shop actually kept.
+    const grossSalesMinor = t?.netSalesMinor ?? 0;
+    const netSalesMinor = grossSalesMinor - returns.totalMinor;
     const vatMinor = t?.vatMinor ?? 0;
-    const costMinor = t?.costMinor ?? 0;
+    // Goods that went back on the shelf take their cost out of profit with them.
+    const costMinor = (t?.costMinor ?? 0) - returns.costMinor;
     const grossProfitMinor = netSalesMinor - vatMinor - costMinor;
     const dead = deadStock
       .filter((row) => row.productId && !row.productId.deletedAt)
@@ -176,23 +187,33 @@ class SupershopReportsService {
       range: { from: range.from, to: range.to, label: range.label, preset: input.preset },
       totals: {
         salesCount: t?.salesCount ?? 0,
+        grossSalesMinor,
+        returnCount: returns.count,
+        returnAmountMinor: returns.totalMinor,
         netSalesMinor,
         discountsMinor: t?.discountsMinor ?? 0,
         vatMinor,
         costMinor,
         grossProfitMinor,
         marginBps: marginBps(grossProfitMinor, netSalesMinor - vatMinor),
-        averageBasketMinor: t?.salesCount ? Math.round(netSalesMinor / t.salesCount) : 0,
+        averageBasketMinor: t?.salesCount ? Math.round(grossSalesMinor / t.salesCount) : 0,
         averageLines: t?.salesCount ? Math.round((t.lines / t.salesCount) * 10) / 10 : 0,
       },
-      trend: trend.map((row) => ({
-        date: row._id,
-        salesCount: row.salesCount,
-        netSalesMinor: row.netSalesMinor,
-        vatMinor: row.vatMinor,
-        grossProfitMinor: row.netSalesMinor - row.vatMinor - row.costMinor,
-      })),
-      // Product, department and VAT-rate figures are per line, before any sale-level discount.
+      trend: trend.map((row) => {
+        const refunded = refundsByDay.get(row._id) ?? { totalMinor: 0, costMinor: 0 };
+        return {
+          date: row._id,
+          salesCount: row.salesCount,
+          grossSalesMinor: row.netSalesMinor,
+          returnAmountMinor: refunded.totalMinor,
+          netSalesMinor: row.netSalesMinor - refunded.totalMinor,
+          vatMinor: row.vatMinor,
+          // Same arithmetic as the totals: returned goods take their cost back too.
+          grossProfitMinor: row.netSalesMinor - refunded.totalMinor - row.vatMinor - (row.costMinor - refunded.costMinor),
+        };
+      }),
+      // Product, department and VAT-rate figures are per line, before any
+      // sale-level discount and before anything came back.
       products: products.map((row) => {
         const profitMinor = row.revenueMinor - row.vatMinor - row.costMinor;
         return {
@@ -224,6 +245,9 @@ class SupershopReportsService {
         totalMinor: t?.discountsMinor ?? 0,
         byStaff: discounts.map((row) => ({ userId: row._id, name: row.name || 'Unknown', sales: row.sales, discountsMinor: row.discountsMinor })),
       },
+      // What came back, next to what was voided: a void cancels a sale, a
+      // return gives money back on one that stands.
+      returns: { count: returns.count, units: returns.units, amountMinor: returns.totalMinor, costMinor: returns.costMinor, recent: returnList },
       voids: { count: voidTotals[0]?.count ?? 0, valueMinor: voidTotals[0]?.valueMinor ?? 0, recent: voids },
       writeOffs: { costMinor: writeOffRows.reduce((sum, row) => sum + row.costMinor, 0), byProduct: writeOffRows.slice(0, 10) },
       deadStock: dead,

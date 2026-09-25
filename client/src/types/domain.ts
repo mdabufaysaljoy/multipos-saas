@@ -1064,3 +1064,19 @@ export interface PosReturn {
     allocations?: { batchNumber: string; quantity: number }[];
   }[];
 }
+
+/** One return, as any vertical's analytics lists it. */
+export interface PosReturnSummary {
+  _id: string;
+  returnNumber: string;
+  saleNumber: string;
+  totalMinor: number;
+  reason: string;
+  refundMethod: string;
+  refundMethodLabel: string;
+  returnedAt: string;
+  by: string;
+  units: number;
+  /** Refunded but not put back: damaged, opened, expired. */
+  notRestockedUnits: number;
+}

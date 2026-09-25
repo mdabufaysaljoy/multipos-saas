@@ -15,6 +15,7 @@ import { customerService } from '../customers/customers.service';
 import { shopMovementRow, supershopInventoryAdapter, type ShopReservation } from '../../services/inventory/adapters/supershop.adapter';
 import { POS_TENDER_DIALECT, settleTender, stampTenderLabels, tenderLabels } from '../../services/pos/paymentMethods.service';
 import { resolveDashboardWindow } from '../reports/reports.service';
+import { returnFiguresFor } from '../../services/returns/posReturns.figures';
 import type { DashboardRangeInput } from '../reports/reports.validators';
 import type { TenantContext } from '../../types/express';
 import type {
@@ -458,9 +459,11 @@ class SupershopService {
         },
       ]);
 
-    const [currentRows, previousRows, topProducts, reorderable, stocked] = await Promise.all([
+    const [currentRows, previousRows, refunds, topProducts, reorderable, stocked] = await Promise.all([
       totals(range.from, range.to),
       totals(previousFrom, previousTo),
+      // What was charged is on the sales; what was kept is that less refunds.
+      returnFiguresFor(ctx, 'supershop', { from: range.from, to: range.to }),
       ShopSaleModel.aggregate<{ _id: Types.ObjectId; name: string; unitType: ShopUnitType; quantity: number; totalMinor: number }>([
         { $match: soldIn(range.from, range.to) },
         { $unwind: '$items' },
@@ -498,9 +501,19 @@ class SupershopService {
       };
     };
 
+    const current = summarise(currentRows);
     return {
       range: { from: range.from, to: range.to, label: range.label, preset: range.preset, bucket },
-      kpis: summarise(currentRows),
+      kpis: {
+        ...current,
+        refundCount: refunds.count,
+        refundedMinor: refunds.totalMinor,
+        // What the till actually kept: charged less refunded.
+        netSalesMinor: current.totalMinor - refunds.totalMinor,
+        // Profit on what was kept, with the cost of returned goods taken back
+        // out - the same arithmetic Advanced Analytics uses, so the two agree.
+        grossProfitMinor: current.grossProfitMinor - refunds.totalMinor + refunds.costMinor,
+      },
       previous: summarise(previousRows),
       topProducts: topProducts.map((row) => ({ productId: row._id, name: row.name, unitType: row.unitType, quantity: row.quantity, totalMinor: row.totalMinor })),
       lowStock: lowStock.slice(0, 10),

@@ -8395,6 +8395,114 @@ async function main() {
   check('Restaurant: the refunds are listed', ((await api('/restaurant/returns', { token: rvToken })).data ?? []).length >= 2);
   check('Restaurant: another workspace cannot refund this order', (await api(`/restaurant/orders/${rvRefOrder.data._id}/return`, { method: 'POST', token: admin.token, body: { items: [{ saleItemId: rvRefLineId, quantity: 1 }], reason: 'Not mine' } })).status === 403);
 
+  // --- What the shop KEPT, not what it charged ---------------------------------
+  // Every vertical records refunds now, so every report that says "net" has to
+  // mean net. Clothing has always subtracted returns; these are the other three.
+  section('Analytics net of refunds');
+
+  const ssNet = await ssApi('/reports?preset=today');
+  check(
+    'Super Shop: the report separates what was charged from what came back',
+    ssNet.status === 200 && ssNet.data?.totals?.returnAmountMinor > 0 && ssNet.data.totals.grossSalesMinor > ssNet.data.totals.netSalesMinor,
+    ssNet.data?.totals,
+  );
+  check(
+    'Super Shop: net is gross less the refunds, exactly',
+    ssNet.data.totals.netSalesMinor === ssNet.data.totals.grossSalesMinor - ssNet.data.totals.returnAmountMinor,
+    ssNet.data?.totals,
+  );
+  check('Super Shop: the refunds are counted', ssNet.data.totals.returnCount >= 2, ssNet.data?.totals?.returnCount);
+  check(
+    'Super Shop: a day in the trend shows both figures',
+    (ssNet.data.trend ?? []).some((row) => row.returnAmountMinor > 0 && row.netSalesMinor === row.grossSalesMinor - row.returnAmountMinor),
+    ssNet.data?.trend,
+  );
+  check(
+    'Super Shop: a one-day period has one trend row that equals the totals',
+    (ssNet.data.trend ?? []).length !== 1 ||
+      (ssNet.data.trend[0].netSalesMinor === ssNet.data.totals.netSalesMinor && ssNet.data.trend[0].grossProfitMinor === ssNet.data.totals.grossProfitMinor),
+    { trend: ssNet.data.trend?.[0], totals: ssNet.data.totals },
+  );
+  const ssNetDash = await ssApi('/dashboard');
+  check(
+    'Super Shop: the dashboard shows what was refunded and what was kept',
+    ssNetDash.data?.kpis?.refundedMinor > 0 && ssNetDash.data.kpis.netSalesMinor === ssNetDash.data.kpis.totalMinor - ssNetDash.data.kpis.refundedMinor,
+    ssNetDash.data?.kpis,
+  );
+  check(
+    'Super Shop: the dashboard and the report agree on profit',
+    ssNetDash.data.kpis.grossProfitMinor === ssNet.data.totals.grossProfitMinor,
+    { dashboard: ssNetDash.data.kpis.grossProfitMinor, report: ssNet.data.totals.grossProfitMinor },
+  );
+
+  const phNet = await phApi('/reports?preset=today');
+  check(
+    'Pharmacy: net is gross less the refunds',
+    phNet.status === 200 && phNet.data?.totals?.returnAmountMinor > 0 && phNet.data.totals.netSalesMinor === phNet.data.totals.grossSalesMinor - phNet.data.totals.returnAmountMinor,
+    phNet.data?.totals,
+  );
+  check(
+    'Pharmacy: medicine that went back to its batch takes its cost out of profit too',
+    phNet.data.totals.grossProfitMinor === phNet.data.totals.netSalesMinor - phNet.data.totals.costMinor,
+    phNet.data?.totals,
+  );
+  const phNetDash = await phApi('/dashboard');
+  check(
+    'Pharmacy: the dashboard shows what was refunded and what was kept',
+    phNetDash.data?.kpis?.refundedMinor > 0 && phNetDash.data.kpis.netSalesMinor === phNetDash.data.kpis.totalMinor - phNetDash.data.kpis.refundedMinor,
+    phNetDash.data?.kpis,
+  );
+
+  // This workspace is on Starter, where Advanced Analytics is locked (checked
+  // far above). Move it up so the report itself can be read.
+  const rvNetPlan = ((await api('/plans?vertical=restaurant')).data ?? []).find((p) => p.code === 'showroom-monthly');
+  await api('/platform/subscriptions', { method: 'POST', token: platform2.token, body: { tenantId: rv.created.data?.workspace?.id, planId: rvNetPlan?._id, periods: 1, status: 'active' } });
+  const rvNet = await api('/restaurant/reports?preset=today', { token: rvToken });
+  check(
+    'Restaurant: net is gross less the refunds',
+    rvNet.status === 200 && rvNet.data?.totals?.returnAmountMinor > 0 && rvNet.data.totals.netSalesMinor === rvNet.data.totals.grossSalesMinor - rvNet.data.totals.returnAmountMinor,
+    rvNet.data?.totals,
+  );
+  const rvNetDash = await api('/restaurant/dashboard?preset=today', { token: rvToken });
+  check(
+    'Restaurant: the dashboard shows what was refunded and what was kept',
+    rvNetDash.data?.kpis?.refundedMinor > 0 && rvNetDash.data.kpis.netRevenueMinor === rvNetDash.data.kpis.revenueMinor - rvNetDash.data.kpis.refundedMinor,
+    rvNetDash.data?.kpis,
+  );
+
+  // A refund is not a sale going away: the sale still stands, and the gross says so.
+  check('The sales themselves are unchanged by a refund', ssNet.data.totals.salesCount >= 2 && rvNet.data.totals.paidOrders >= 1);
+
+  // What came back, not just how much.
+  check(
+    'Super Shop: the report lists what came back, with the reason and who took it',
+    (ssNet.data.returns?.recent ?? []).some((row) => row.returnNumber && row.reason && row.by && row.units > 0),
+    ssNet.data?.returns?.recent?.[0],
+  );
+  check(
+    'Super Shop: goods refunded but not restocked are counted as such',
+    (ssNet.data.returns?.recent ?? []).some((row) => row.notRestockedUnits > 0),
+    ssNet.data?.returns?.recent,
+  );
+  check('Pharmacy: the report lists what came back', (phNet.data.returns?.recent ?? []).length >= 1 && phNet.data.returns.units >= 2, phNet.data?.returns);
+  check('Restaurant: the report lists what was refunded', (rvNet.data.returns?.recent ?? []).length >= 1, rvNet.data?.returns);
+
+  // Restaurant took split payments from task 04 but could not report them.
+  check(
+    'Restaurant: payments are broken down by method, cash net of change',
+    (rvNet.data.payments ?? []).length >= 1 && rvNet.data.payments.every((row) => typeof row.amountMinor === 'number' && row.method),
+    rvNet.data?.payments,
+  );
+
+  // The same vocabulary in all three, which is what task 13 is for.
+  for (const [name, totals] of [['Super Shop', ssNet.data.totals], ['Pharmacy', phNet.data.totals], ['Restaurant', rvNet.data.totals]]) {
+    check(
+      `${name}: reports gross, returns and net by the same names`,
+      ['grossSalesMinor', 'returnAmountMinor', 'netSalesMinor', 'returnCount'].every((key) => typeof totals[key] === 'number'),
+      Object.keys(totals),
+    );
+  }
+
   // ------------------------------------------------ cash received, change and receipt
   section('Clothing POS: cash received, change and receipt');
   const ctnStamp = Date.now();

@@ -1,4 +1,5 @@
 import type { ReceiptStore } from './receipt';
+import type { PosReturnSummary } from './domain';
 
 /** Restaurant POS vertical. Kept apart from the Clothing domain types on purpose. */
 
@@ -119,6 +120,10 @@ export interface RestaurantDashboard {
   range: { from: string; to: string; label: string; preset: string; bucket: 'hour' | 'day' | 'month' };
   kpis: {
     revenueMinor: number;
+    /** What was kept: charged less refunded. */
+    netRevenueMinor: number;
+    refundCount: number;
+    refundedMinor: number;
     paidOrders: number;
     averageOrderMinor: number;
     itemsSold: number;
@@ -191,9 +196,23 @@ export interface ShiftPayload {
 
 export interface RestaurantReports {
   range: { from: string; to: string; label: string; preset: string };
-  totals: { paidOrders: number; netSalesMinor: number; discountsMinor: number; unshiftedSalesMinor: number };
+  totals: {
+    paidOrders: number;
+    /** What was charged. */
+    grossSalesMinor: number;
+    returnCount: number;
+    returnAmountMinor: number;
+    /** What was kept: charged less refunded. */
+    netSalesMinor: number;
+    discountsMinor: number;
+    unshiftedSalesMinor: number;
+  };
   menu: { menuItemId: string; name: string; category: string; quantity: number; orders: number; revenueMinor: number }[];
   categories: { category: string; quantity: number; revenueMinor: number }[];
+  /** Money taken by method, cash net of the change handed back. */
+  payments: { method: string; orders: number; amountMinor: number }[];
+  /** What was refunded: money, units and the most recent of them. */
+  returns: { count: number; units: number; amountMinor: number; recent: PosReturnSummary[] };
   voids: {
     lines: number;
     quantity: number;

@@ -15,6 +15,7 @@ import { customerService } from '../customers/customers.service';
 import { pharmacyInventoryAdapter, pharmacyMovementRow, todayUtc, type PharmacyReservation } from '../../services/inventory/adapters/pharmacy.adapter';
 import { POS_TENDER_DIALECT, settleTender, stampTenderLabels, tenderLabels } from '../../services/pos/paymentMethods.service';
 import { resolveDashboardWindow } from '../reports/reports.service';
+import { returnFiguresFor } from '../../services/returns/posReturns.figures';
 import type { DashboardRangeInput } from '../reports/reports.validators';
 import type { TenantContext } from '../../types/express';
 import type {
@@ -508,9 +509,11 @@ class PharmacyService {
         { $group: { _id: null, count: { $sum: 1 }, totalMinor: { $sum: '$totalMinor' }, discountMinor: { $sum: '$discountMinor' } } },
       ]);
 
-    const [currentRows, previousRows, prescriptionSales, expiring, expiredRows, reorderable] = await Promise.all([
+    const [currentRows, previousRows, refunds, prescriptionSales, expiring, expiredRows, reorderable] = await Promise.all([
       totals(range.from, range.to),
       totals(previousFrom, previousTo),
+      // What was charged is on the sales; what was kept is that less refunds.
+      returnFiguresFor(ctx, 'pharmacy', { from: range.from, to: range.to }),
       PharmacySaleModel.countDocuments({ ...soldIn(range.from, range.to), prescription: { $ne: null } }),
       MedicineBatchModel.find({ tenantId: ctx.tenantId, storeId: ctx.storeId, quantityOnHand: { $gt: 0 }, expiryDate: { $gte: today, $lt: soon } })
         .sort({ expiryDate: 1 })
@@ -562,7 +565,14 @@ class PharmacyService {
 
     return {
       range: { from: range.from, to: range.to, label: range.label, preset: range.preset, bucket },
-      kpis: { ...current, prescriptionSales },
+      kpis: {
+        ...current,
+        prescriptionSales,
+        refundCount: refunds.count,
+        refundedMinor: refunds.totalMinor,
+        // What the till actually kept: charged less refunded.
+        netSalesMinor: current.totalMinor - refunds.totalMinor,
+      },
       previous: summarise(previousRows),
       expiringSoon: expiring.map((batch) => ({
         batchId: batch._id,

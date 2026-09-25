@@ -86,6 +86,11 @@ export function RestaurantDashboardPage() {
               icon={<Banknote className="h-4 w-4" />}
               label="Revenue"
               value={formatMoney(kpis.revenueMinor, currency)}
+              hint={
+                kpis.refundedMinor > 0
+                  ? `${formatMoney(kpis.netRevenueMinor, currency)} kept after ${formatMoney(kpis.refundedMinor, currency)} refunded`
+                  : undefined
+              }
               now={kpis.revenueMinor}
               before={data.previous.revenueMinor}
             />

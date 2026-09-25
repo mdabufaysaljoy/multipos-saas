@@ -5,6 +5,7 @@ import { Ban, Clock, CreditCard, Layers, Percent, ReceiptText, ShoppingBasket, S
 import { EmptyState, LoadingState } from '@/components/states';
 import { PageHeader } from '@/components/PageHeader';
 import { AdvancedAnalyticsLocked } from '@/features/reports/AdvancedAnalyticsLocked';
+import { ReturnsCardBody, ReturnsCardIcon } from '@/features/reports/ReturnsCard';
 import { AnalyticsCard, AnalyticsStat, BarList, PAYMENT_LABELS, formatBps } from '@/features/reports/AnalyticsParts';
 import { REPORT_PRESETS, RangePicker, isRangeReady, rangeParams, type RangeValue } from '@/features/reports/RangePicker';
 import { ApiError } from '@/api/client';
@@ -59,7 +60,15 @@ export function SupershopReportsPage() {
       {data && (
         <>
           <div className="grid grid-cols-2 gap-3 xl:grid-cols-4">
-            <AnalyticsStat label="Net sales" value={money(data.totals.netSalesMinor)} hint={`${data.totals.salesCount} sales · ${data.totals.averageLines} lines per basket`} />
+            <AnalyticsStat
+              label="Net sales"
+              value={money(data.totals.netSalesMinor)}
+              hint={
+                data.totals.returnAmountMinor > 0
+                  ? `${money(data.totals.grossSalesMinor)} charged less ${money(data.totals.returnAmountMinor)} refunded · ${data.totals.salesCount} sales`
+                  : `${data.totals.salesCount} sales · ${data.totals.averageLines} lines per basket`
+              }
+            />
             <AnalyticsStat label="VAT collected" value={money(data.totals.vatMinor)} hint="Included in net sales" />
             <AnalyticsStat
               label="Gross profit"
@@ -106,7 +115,7 @@ export function SupershopReportsPage() {
                   ))}
                 </tbody>
               </table>
-              <p className="mt-2 text-xs text-muted-foreground">Per line, before sale discounts. Profit excludes VAT.</p>
+              <p className="mt-2 text-xs text-muted-foreground">Per line, before sale discounts and returns. Profit excludes VAT.</p>
             </AnalyticsCard>
           </div>
 
@@ -139,7 +148,7 @@ export function SupershopReportsPage() {
                   ))}
                 </tbody>
               </table>
-              <p className="mt-2 text-xs text-muted-foreground">Per line, before sale discounts. VAT actually collected: {money(data.totals.vatMinor)}.</p>
+              <p className="mt-2 text-xs text-muted-foreground">Per line, before sale discounts and returns. VAT actually collected: {money(data.totals.vatMinor)}.</p>
             </AnalyticsCard>
 
             <AnalyticsCard title="Busy hours" icon={<Clock className="h-4 w-4" />} isEmpty={data.hours.length === 0} empty="No sales">
@@ -151,6 +160,10 @@ export function SupershopReportsPage() {
           </div>
 
           <div className="grid gap-4 lg:grid-cols-4">
+            <AnalyticsCard title="Returns" icon={<ReturnsCardIcon />} isEmpty={data.returns.count === 0} empty="Nothing came back">
+              <ReturnsCardBody returns={data.returns} currency={currency} />
+            </AnalyticsCard>
+
             <AnalyticsCard title="Dead stock" icon={<Snowflake className="h-4 w-4" />} isEmpty={data.deadStock.length === 0} empty="Everything in stock sold at least once">
               <ul className="divide-y text-sm">
                 {data.deadStock.map((row) => (

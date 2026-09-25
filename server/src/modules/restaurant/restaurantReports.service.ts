@@ -2,6 +2,7 @@ import type { Types } from 'mongoose';
 import { RestaurantOrderModel } from '../../models/RestaurantOrder';
 import { RestaurantShiftModel } from '../../models/RestaurantShift';
 import { resolveRange } from '../reports/reports.service';
+import { recentReturns, returnFiguresFor } from '../../services/returns/posReturns.figures';
 import type { ReportRangeInput } from '../reports/reports.validators';
 import type { TenantContext } from '../../types/express';
 import type { DashboardInput } from './restaurant.validators';
@@ -21,8 +22,14 @@ class RestaurantReportsService {
     const paidMatch = { ...scope, status: 'paid', paidAt: window };
     const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
 
-    const [totals, menu, categories, voids, cancelTotals, cancellations, discounts, kitchen, shifts] = await Promise.all([
-      RestaurantOrderModel.aggregate<{ paidOrders: number; netSalesMinor: number; discountsMinor: number; unshiftedSalesMinor: number }>([
+    // A kitchen restocks nothing, so a refund takes money out and no cost back.
+    const [returns, returnList] = await Promise.all([
+      returnFiguresFor(ctx, 'restaurant', range),
+      recentReturns(ctx, 'restaurant', range),
+    ]);
+
+    const [totals, payments, menu, categories, voids, cancelTotals, cancellations, discounts, kitchen, shifts] = await Promise.all([
+      RestaurantOrderModel.aggregate<{ paidOrders: number; netSalesMinor: number; discountsMinor: number; changeMinor: number; unshiftedSalesMinor: number }>([
         { $match: paidMatch },
         {
           $group: {
@@ -30,9 +37,18 @@ class RestaurantReportsService {
             paidOrders: { $sum: 1 },
             netSalesMinor: { $sum: '$totalMinor' },
             discountsMinor: { $sum: '$discountMinor' },
+            changeMinor: { $sum: '$changeMinor' },
             unshiftedSalesMinor: { $sum: { $cond: [{ $eq: [{ $ifNull: ['$shiftId', null] }, null] }, '$totalMinor', 0] } },
           },
         },
+      ]),
+      // Split payment has been accepted here since task 04; this is the
+      // breakdown a drawer reconciliation needs, cash net of the change given.
+      RestaurantOrderModel.aggregate<{ _id: string; amountMinor: number; orders: number }>([
+        { $match: paidMatch },
+        { $unwind: '$payments' },
+        { $group: { _id: '$payments.method', amountMinor: { $sum: '$payments.amountMinor' }, orders: { $sum: 1 } } },
+        { $sort: { amountMinor: -1 } },
       ]),
       RestaurantOrderModel.aggregate<{ _id: Types.ObjectId; name: string; category: string; quantity: number; revenueMinor: number; orders: number }>([
         { $match: paidMatch },
@@ -124,7 +140,11 @@ class RestaurantReportsService {
       range: { from: range.from, to: range.to, label: range.label, preset: input.preset },
       totals: {
         paidOrders: t?.paidOrders ?? 0,
-        netSalesMinor: t?.netSalesMinor ?? 0,
+        // What was charged, what was refunded, and what the restaurant kept.
+        grossSalesMinor: t?.netSalesMinor ?? 0,
+        returnCount: returns.count,
+        returnAmountMinor: returns.totalMinor,
+        netSalesMinor: (t?.netSalesMinor ?? 0) - returns.totalMinor,
         discountsMinor: t?.discountsMinor ?? 0,
         // Paid while no shift was open: money not reconciled against a drawer count.
         unshiftedSalesMinor: t?.unshiftedSalesMinor ?? 0,
@@ -138,6 +158,14 @@ class RestaurantReportsService {
         revenueMinor: row.revenueMinor,
       })),
       categories: categories.map((row) => ({ category: row._id || 'General', quantity: row.quantity, revenueMinor: row.revenueMinor })),
+      // Cash is reported net of the change handed back, so the methods add up
+      // to what was actually taken.
+      payments: payments.map((row) => ({
+        method: row._id,
+        orders: row.orders,
+        amountMinor: row._id === 'cash' ? row.amountMinor - (t?.changeMinor ?? 0) : row.amountMinor,
+      })),
+      returns: { count: returns.count, units: returns.units, amountMinor: returns.totalMinor, recent: returnList },
       voids: {
         lines: voids.reduce((sum, row) => sum + row.lines, 0),
         quantity: voids.reduce((sum, row) => sum + row.quantity, 0),

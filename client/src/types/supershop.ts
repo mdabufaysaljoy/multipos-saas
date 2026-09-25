@@ -1,4 +1,5 @@
 import type { ReceiptStore } from './receipt';
+import type { PosReturnSummary } from './domain';
 
 /** `each`: quantity in pieces, price per piece. `weight`: quantity in grams, price per kg. */
 export type ShopUnitType = 'each' | 'weight';
@@ -106,6 +107,11 @@ export interface ShopReports {
   range: { from: string; to: string; label: string; preset: string };
   totals: {
     salesCount: number;
+    /** What was charged. */
+    grossSalesMinor: number;
+    returnCount: number;
+    returnAmountMinor: number;
+    /** What was kept: charged less refunded. */
     netSalesMinor: number;
     discountsMinor: number;
     vatMinor: number;
@@ -115,7 +121,7 @@ export interface ShopReports {
     averageBasketMinor: number;
     averageLines: number;
   };
-  trend: { date: string; salesCount: number; netSalesMinor: number; vatMinor: number; grossProfitMinor: number }[];
+  trend: { date: string; salesCount: number; grossSalesMinor: number; returnAmountMinor: number; netSalesMinor: number; vatMinor: number; grossProfitMinor: number }[];
   products: {
     productId: string;
     name: string;
@@ -132,6 +138,14 @@ export interface ShopReports {
   hours: { hour: string; salesCount: number; netSalesMinor: number }[];
   payments: { method: string; sales: number; amountMinor: number }[];
   discounts: { totalMinor: number; byStaff: { userId: string | null; name: string; sales: number; discountsMinor: number }[] };
+  /** What came back: money, units and the most recent of them. */
+  returns: {
+    count: number;
+    units: number;
+    amountMinor: number;
+    costMinor: number;
+    recent: PosReturnSummary[];
+  };
   voids: {
     count: number;
     valueMinor: number;
@@ -152,7 +166,8 @@ export interface ShopDashboardTotals {
 
 export interface ShopDashboard {
   range: { from: string; to: string; label: string; preset: string; bucket: 'hour' | 'day' | 'month' };
-  kpis: ShopDashboardTotals;
+  /** `totalMinor` is what was charged; `netSalesMinor` is what was kept. */
+  kpis: ShopDashboardTotals & { refundCount: number; refundedMinor: number; netSalesMinor: number };
   /** The period of equal length just before the range, for comparison. */
   previous: ShopDashboardTotals;
   topProducts: { productId: string; name: string; unitType: ShopUnitType; quantity: number; totalMinor: number }[];
