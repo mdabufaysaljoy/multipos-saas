@@ -119,8 +119,16 @@ class SupershopService {
     // The same for the brand, which is independent of the department and
     // optional: unbranded goods are most of a supershop's shelf.
     await shopBrandService.assertUsable(ctx, values.brand);
-    const product = await ShopProductModel.create({ tenantId: ctx.tenantId, ...values, createdBy: ctx.userId });
-    return product.toObject();
+    try {
+      const product = await ShopProductModel.create({ tenantId: ctx.tenantId, ...values, createdBy: ctx.userId });
+      return product.toObject();
+    } catch (error) {
+      // Two identical creates at the same instant: the index caught what the
+      // check above could not. Same refusal, so a till cannot tell the
+      // difference between losing that race and being second in line.
+      if (isDuplicateKey(error)) throw ApiError.conflict('Another product already uses this barcode');
+      throw error;
+    }
   }
 
   async updateProduct(ctx: TenantContext, id: Types.ObjectId, input: UpdateProductInput) {
@@ -129,7 +137,13 @@ class SupershopService {
     if (input.category) await posCategoryService.assertUsable(ctx, 'supershop', input.category);
     if (input.brand !== undefined) await shopBrandService.assertUsable(ctx, input.brand);
     await this.assertUnique(ctx, { name: input.name ?? before.name, brand: input.brand ?? before.brand, barcode: input.barcode ?? before.barcode }, id);
-    const after = await ShopProductModel.findOneAndUpdate({ _id: id, tenantId: ctx.tenantId, deletedAt: null }, { $set: input }, { new: true, runValidators: true }).lean<ProductRecord>();
+    let after: ProductRecord | null;
+    try {
+      after = await ShopProductModel.findOneAndUpdate({ _id: id, tenantId: ctx.tenantId, deletedAt: null }, { $set: input }, { new: true, runValidators: true }).lean<ProductRecord>();
+    } catch (error) {
+      if (isDuplicateKey(error)) throw ApiError.conflict('Another product already uses this barcode');
+      throw error;
+    }
     if (!after) throw ApiError.notFound('Product not found');
     return { before, after };
   }

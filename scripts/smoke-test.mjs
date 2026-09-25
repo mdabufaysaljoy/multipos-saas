@@ -6676,6 +6676,106 @@ async function main() {
   if (hdLeft !== 0) await ssApi(`/products/${hdProduct.data._id}/adjust`, { method: 'POST', body: { type: 'adjust', quantityDelta: -hdLeft, reason: 'Hold fixture' } });
   await ssApi(`/products/${hdProduct.data._id}`, { method: 'DELETE' });
 
+  // --- Quick product creation from the till -------------------------------------
+  // A barcode nothing answers to becomes a product without leaving the till.
+  // It goes through the ORDINARY product endpoint, so everything the Products
+  // screen enforces is enforced here: the same validation, the same uniqueness,
+  // the same plan limit, the same permission.
+  section('Supershop quick product creation');
+
+  const qcStamp = String(Date.now()).slice(-6);
+  const qcBarcode = `QC${qcStamp}`;
+
+  check('A barcode nothing carries is a 404, which is what opens the form', (await ssApi(`/products/lookup?barcode=${qcBarcode}`)).status === 404);
+
+  const qcMade = await ssProduct({ name: `Quick Item ${qcStamp}`, barcode: qcBarcode, unitType: 'each', priceMinor: 7500, category: 'Household' });
+  check('The scanned barcode becomes a product', qcMade.status === 201 && qcMade.data?.barcode === qcBarcode, qcMade.error);
+  check('...kept exactly as it was scanned', qcMade.data?.barcode === qcBarcode);
+  const qcFound = await ssApi(`/products/lookup?barcode=${qcBarcode}`);
+  check('...and the very next scan finds it', qcFound.status === 200 && qcFound.data?._id === qcMade.data._id, qcFound.error);
+  check('...with its unit and price as given', qcMade.data?.unitType === 'each' && qcMade.data?.priceMinor === 7500);
+
+  // ---- by weight, the other unit the till offers -------------------------------
+  const qcKg = await ssProduct({ name: `Quick Loose ${qcStamp}`, barcode: `QCW${qcStamp}`, unitType: 'weight', priceMinor: 9000 });
+  check('A weighed product can be created the same way', qcKg.status === 201 && qcKg.data?.unitType === 'weight', qcKg.error);
+  check('An invented unit is refused', (await ssProduct({ name: `Quick Bad Unit ${qcStamp}`, barcode: `QCU${qcStamp}`, unitType: 'litre', priceMinor: 100 })).status === 422);
+  // Omitting it is not an error: the catalogue has always defaulted to pieces,
+  // and the till's form simply never leaves it empty.
+  const qcNoUnit = await ssProduct({ name: `Quick Default Unit ${qcStamp}`, barcode: `QCD${qcStamp}`, priceMinor: 100 });
+  check('Leaving the unit out falls back to pieces, as it always has', qcNoUnit.status === 201 && qcNoUnit.data?.unitType === 'each');
+
+  // ---- the required fields ------------------------------------------------------
+  check('A product with no name is refused', (await ssProduct({ barcode: `QCN${qcStamp}`, unitType: 'each', priceMinor: 100 })).status === 422);
+  check('A blank name is refused', (await ssProduct({ name: '   ', barcode: `QCB${qcStamp}`, unitType: 'each', priceMinor: 100 })).status === 422);
+  check('A product with no price is refused', (await ssProduct({ name: `Quick No Price ${qcStamp}`, barcode: `QCP${qcStamp}`, unitType: 'each' })).status === 422);
+  check('A negative price is refused', (await ssProduct({ name: `Quick Neg ${qcStamp}`, barcode: `QCG${qcStamp}`, unitType: 'each', priceMinor: -1 })).status === 422);
+  check('A barcode with spaces or symbols is refused', (await ssProduct({ name: `Quick Bad Code ${qcStamp}`, barcode: 'not a barcode!', unitType: 'each', priceMinor: 100 })).status === 422);
+  check('A barcode over 64 characters is refused', (await ssProduct({ name: `Quick Long ${qcStamp}`, barcode: 'A'.repeat(65), unitType: 'each', priceMinor: 100 })).status === 422);
+
+  // ---- uniqueness ----------------------------------------------------------------
+  const qcDup = await ssProduct({ name: `Quick Other ${qcStamp}`, barcode: qcBarcode, unitType: 'each', priceMinor: 100 });
+  check('A barcode already in use is refused', qcDup.status === 409, qcDup.error?.message);
+  check('...and no second product was made', ((await ssApi(`/products?search=Quick Other ${qcStamp}`)).data ?? []).length === 0);
+
+  // Two tills scanning and creating the same new barcode at the same instant.
+  // The read-then-write check cannot see the other request; the unique index can.
+  const qcRaceCode = `QCR${qcStamp}`;
+  const qcRace = await Promise.all([
+    ssProduct({ name: `Quick Race A ${qcStamp}`, barcode: qcRaceCode, unitType: 'each', priceMinor: 100 }),
+    ssProduct({ name: `Quick Race B ${qcStamp}`, barcode: qcRaceCode, unitType: 'each', priceMinor: 100 }),
+  ]);
+  check('Two tills creating the same barcode at once: exactly one wins', qcRace.filter((res) => res.status === 201).length === 1 && qcRace.filter((res) => res.status === 409).length === 1, qcRace.map((res) => res.status));
+  check('...so one barcode still means one product', ((await ssApi(`/products?search=Quick Race&limit=20`)).data ?? []).filter((row) => row.barcode === qcRaceCode).length === 1);
+
+  // ---- department, brand and their ownership ---------------------------------------
+  const qcDept = `Quick Dept ${qcStamp}`;
+  const qcBrandName = `Quick Brand ${qcStamp}`;
+  const qcWithBoth = await ssProduct({ name: `Quick Both ${qcStamp}`, barcode: `QCX${qcStamp}`, unitType: 'each', priceMinor: 500, category: qcDept, brand: qcBrandName });
+  check('A new department and brand typed at the till are accepted', qcWithBoth.status === 201 && qcWithBoth.data?.category === qcDept && qcWithBoth.data?.brand === qcBrandName, qcWithBoth.error);
+  check('...the department joins the catalogue', ((await ssApi('/categories')).data ?? []).some((row) => row.name === qcDept));
+  check('...and so does the brand', ((await ssApi('/brands')).data ?? []).some((row) => row.name === qcBrandName));
+
+  // A department or brand the owner has retired cannot take new goods.
+  const qcHiddenDept = ((await ssApi('/categories?includeInactive=true')).data ?? []).find((row) => row.name === qcDept);
+  await ssApi(`/categories/${qcHiddenDept.id}`, { method: 'PATCH', body: { isActive: false } });
+  const qcIntoHiddenDept = await ssProduct({ name: `Quick Hidden Dept ${qcStamp}`, barcode: `QCH1${qcStamp}`, unitType: 'each', priceMinor: 100, category: qcDept });
+  check('A hidden department cannot take a new product', qcIntoHiddenDept.status === 400 && qcIntoHiddenDept.error?.details?.reason === 'CATEGORY_HIDDEN', qcIntoHiddenDept.error);
+
+  const qcHiddenBrand = ((await ssApi('/brands?includeInactive=true')).data ?? []).find((row) => row.name === qcBrandName);
+  await ssApi(`/brands/${qcHiddenBrand.id}`, { method: 'PATCH', body: { isActive: false } });
+  const qcIntoHiddenBrand = await ssProduct({ name: `Quick Hidden Brand ${qcStamp}`, barcode: `QCH2${qcStamp}`, unitType: 'each', priceMinor: 100, brand: qcBrandName });
+  check('A hidden brand cannot take a new product either', qcIntoHiddenBrand.status === 400 && qcIntoHiddenBrand.error?.details?.reason === 'BRAND_HIDDEN', qcIntoHiddenBrand.error);
+
+  // ---- isolation -------------------------------------------------------------------
+  check('Creating a product needs a session', (await api('/supershop/products', { method: 'POST', body: { name: 'X', priceMinor: 1 } })).status === 401);
+  check('Another workspace cannot create a product here', (await api('/supershop/products', { method: 'POST', token: phToken, body: { name: 'X', barcode: `QCZ${qcStamp}`, priceMinor: 1 } })).status === 403);
+  check("...and cannot see this one's new product by its barcode", (await api(`/supershop/products/lookup?barcode=${qcBarcode}`, { token: phToken })).status === 403);
+
+  // ---- who may do it -----------------------------------------------------------------
+  const qcTillCreated = await api('/staff', {
+    method: 'POST',
+    token: ssToken,
+    body: { name: 'Quick Till', email: `ssqc${qcStamp}@example.com`, password: 'Password@123', storeId: ssStoreIdForHold, extraPermissions: ['sales.create', 'sales.view', 'products.view'] },
+  });
+  const qcTill = { id: qcTillCreated.data?.id, token: (await login(`ssqc${qcStamp}@example.com`, 'Password@123')).token };
+  check('A till without products.create cannot add one', (await api('/supershop/products', { method: 'POST', token: qcTill.token, body: { name: `Quick Denied ${qcStamp}`, barcode: `QCY${qcStamp}`, unitType: 'each', priceMinor: 100 } })).status === 403);
+  check('...though it can still scan for one', (await api(`/supershop/products/lookup?barcode=${qcBarcode}`, { token: qcTill.token })).status === 200);
+  await api(`/staff/${qcTill.id}`, { method: 'PATCH', token: ssToken, body: { extraPermissions: ['sales.create', 'sales.view', 'products.view', 'products.create'] } });
+  const qcAllowed = await api('/supershop/products', { method: 'POST', token: qcTill.token, body: { name: `Quick Allowed ${qcStamp}`, barcode: `QCA${qcStamp}`, unitType: 'each', priceMinor: 100 } });
+  check('With products.create the same till can', qcAllowed.status === 201, qcAllowed.error);
+
+  // ---- and it sells straight away -----------------------------------------------------
+  await ssReceive(qcMade.data._id, { quantity: 5, costPriceMinor: 4000 });
+  const qcSale = await ssSale({ items: [{ productId: qcMade.data._id, quantity: 1 }], payments: [{ method: 'cash', amountMinor: 7500 }] });
+  check('A product created at the till sells like any other', qcSale.status === 201 && qcSale.data?.items?.[0]?.barcodeSnapshot === qcBarcode, qcSale.error);
+
+  // Retire the fixtures.
+  for (const row of (await ssApi(`/products?search=Quick&limit=100`)).data ?? []) {
+    const onHand = row.stock?.quantityOnHand ?? 0;
+    if (onHand !== 0) await ssApi(`/products/${row._id}/adjust`, { method: 'POST', body: { type: 'adjust', quantityDelta: -onHand, reason: 'Quick-create fixture' } });
+    await ssApi(`/products/${row._id}`, { method: 'DELETE' });
+  }
+
 
   // --- Customer on a sale, in every vertical -----------------------------------
   // Clothing has always been able to attach a customer at the till; these are the

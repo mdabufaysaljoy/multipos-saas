@@ -1181,3 +1181,89 @@ byte-for-byte comparison. Both passed before and after.
 
 **Not touched:** Clothing, Restaurant, Pharmacy. **Still open:** CI (audit Issue
 10), N1 on the ordinary return path, the browser pass.
+
+## 2026-09-26 — Phase 8: quick product creation from the till
+
+Audit Issue 11. Super Shop only; **no shared code changed**.
+
+### A shorter form, not a shortcut
+
+The scan path ended at `toast.error('No product has that barcode')`. It now
+offers to create the product — **through the ordinary `POST /supershop/products`
+endpoint**. No parallel "quick create" route and no relaxed service, so a product
+made at the till is in every way a product made on the Products screen: same
+validation, same uniqueness rules, same plan limit
+(`assertCanAddProduct`), same `products.create` permission, same tenant scoping,
+and the same `assertUsable` checks that a department or brand is not one the
+owner has retired.
+
+Only a **404** opens the form, and only for a till holding `products.create`.
+A refused permission or a network failure is reported as itself.
+
+### The barcode is not touched
+
+It is prefilled exactly as scanned and shown back ("Scanned as …"). It stays
+editable so a misread can be corrected, but nothing normalises, trims or rewrites
+it behind the cashier.
+
+### Fields
+
+Required: **barcode, name, unit, price**. The unit is the catalogue's own
+`each` / `weight`, labelled as the till says it — **pcs** and **kg** — rather
+than a new set of values. Optional: department and brand (both the managed
+pickers from Phase 5, so a new name joins the catalogue and a hidden one is
+refused), VAT rate, and — only for a till holding `inventory.adjust` — an opening
+delivery, recorded through the ordinary stock endpoint as a second step. If that
+second step fails the product still exists, and the till is told so rather than
+being left guessing.
+
+### A real gap closed: the duplicate-barcode race
+
+`assertUnique` is a read-then-write check. It gives a readable refusal, but it
+**cannot** see a second request arriving at the same instant — a double-tapped
+button or a retry — and there was **no unique index behind it**, so two
+concurrent creates could both succeed and leave one barcode on two products.
+
+`ShopProduct` now carries a partial unique index on `{tenantId, barcode}` for
+live products with a non-empty barcode, and `createProduct`/`updateProduct` turn
+the duplicate-key error back into the same 409, so a till cannot tell the
+difference between losing that race and simply being second. Proved with two
+genuinely concurrent creates: exactly one 201, one 409, one product.
+
+> **⚠️ Existing data:** the index is partial and additive, but if a workspace
+> somehow already holds two live products on one barcode the build will fail and
+> the protection silently will not apply — behaviour falls back to the existing
+> check, so nothing regresses. Worth a look before merging.
+
+### After creation
+
+The product is in the catalogue immediately — the next scan finds it, asserted —
+and it drops straight into the basket so the scan finishes as it would have for
+something already known. One honest exception: a product created **without** an
+opening delivery has nothing on the shelf, so a till without
+`sales.sellOutOfStock` cannot add it. Rather than the generic "Only 0 in stock",
+it now says what to do about it.
+
+### Verification
+
+- `npm run lint` ✅ · `npm run typecheck` ✅ · `npm run build` ✅
+- `npm test` — **3500 passed, 0 failed** (was 3470; **30 net new assertions**).
+
+Covering: the 404 that opens the form; creation with the barcode kept exactly as
+scanned and found by the very next scan; a weighed product; an invented unit
+refused; **missing name, blank name, missing price, negative price, a barcode
+with symbols and one over 64 characters** all refused; **a duplicate barcode**
+refused with no second product made; **two concurrent creates, one winner**;
+department and brand accepted and joining their catalogues; **a hidden department
+and a hidden brand each refusing new goods**; no session, another workspace
+creating and another workspace looking up; a till without `products.create`
+refused but still able to scan, and the same till succeeding once it holds it;
+and the new product selling like any other.
+
+**Noted, not changed:** omitting the unit is not an error — the catalogue has
+always defaulted to pieces, and the till's form never leaves it empty. Making it
+required server-side would change the existing product API and the bulk import,
+which is outside this task.
+
+**Not touched:** Clothing, Restaurant, Pharmacy. **Still open:** CI (audit Issue
+10), N1 on the ordinary return path, the browser pass.

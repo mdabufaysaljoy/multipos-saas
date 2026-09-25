@@ -57,6 +57,21 @@ shopProductSchema.index({ tenantId: 1, deletedAt: 1, category: 1, name: 1 });
 // category index above cannot serve: it leads with `category`.
 shopProductSchema.index({ tenantId: 1, deletedAt: 1, brand: 1, name: 1 });
 // The scanner path: one exact barcode lookup per beep.
-shopProductSchema.index({ tenantId: 1, barcode: 1 });
+/**
+ * One live product per barcode per workspace.
+ *
+ * `assertUnique` checks this before writing and gives a readable refusal, but a
+ * read-then-write cannot stop two requests arriving at the same instant - a
+ * double-tapped "create" on the till, or a retried request. The index is what
+ * actually makes it impossible; the service turns the duplicate-key error back
+ * into the same refusal.
+ *
+ * Partial, because most goods have no barcode at all and a soft-deleted product
+ * must not hold one hostage.
+ */
+shopProductSchema.index(
+  { tenantId: 1, barcode: 1 },
+  { unique: true, partialFilterExpression: { barcode: { $type: 'string', $gt: '' }, deletedAt: null } },
+);
 
 export const ShopProductModel = model<ShopProductDoc>('ShopProduct', shopProductSchema);

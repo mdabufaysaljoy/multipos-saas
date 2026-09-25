@@ -25,6 +25,7 @@ import { tenderedRows } from '@/features/payments/paymentMath';
 import { usePayments } from '@/features/payments/usePayments';
 import { ShopReceiptDialog } from '@/features/supershop/ShopReceiptDialog';
 import { HeldSalesDialog } from '@/features/supershop/HeldSalesDialog';
+import { QuickCreateDialog } from '@/features/supershop/QuickCreateDialog';
 import { ApiError } from '@/api/client';
 import { storeApi } from '@/api/endpoints';
 import { supershopApi } from '@/api/supershop';
@@ -70,6 +71,8 @@ export function SupershopPosPage() {
   const canSellOutOfStock = can('sales.sellOutOfStock');
   const [receiptFor, setReceiptFor] = React.useState<string | null>(null);
   const [heldOpen, setHeldOpen] = React.useState(false);
+  // The barcode a scan could not find, waiting to become a product.
+  const [unknownBarcode, setUnknownBarcode] = React.useState<string | null>(null);
 
   // The departments this shop sells under, in the owner's order and without the
   // ones they hid, and the brands its products actually carry.
@@ -208,13 +211,25 @@ export function SupershopPosPage() {
     setLine(product, current + 1);
   };
 
+  // A till that may add to the catalogue is offered the chance to, rather than
+  // being told the beep went nowhere.
+  const canCreateProduct = can('products.create');
+
   const scan = useMutation({
     mutationFn: (barcode: string) => supershopApi.lookup(barcode),
     onSuccess: (product) => {
       add(product);
       setTerm('');
     },
-    onError: () => toast.error('No product has that barcode'),
+    onError: (err, barcode) => {
+      // Only "nothing has that barcode" opens the form. Anything else - a
+      // refused permission, a network failure - is reported as itself.
+      if (err instanceof ApiError && err.status === 404 && canCreateProduct) {
+        setUnknownBarcode(barcode);
+        return;
+      }
+      toast.error(err instanceof ApiError && err.status !== 404 ? err.message : 'No product has that barcode');
+    },
   });
 
   const attachCard = async (code: string): Promise<boolean> => {
@@ -560,6 +575,34 @@ export function SupershopPosPage() {
           </Button>
         </div>
       </Card>
+
+      {unknownBarcode !== null && (
+        <QuickCreateDialog
+          key={unknownBarcode}
+          barcode={unknownBarcode}
+          currency={currency}
+          onClose={() => {
+            setUnknownBarcode(null);
+            scanRef.current?.focus();
+          }}
+          onCreated={(product) => {
+            setTerm('');
+            // A product created without an opening delivery has none on the
+            // shelf. `add` would refuse it with "Only 0 in stock", which is true
+            // but unhelpful two seconds after making it - so say what to do.
+            const onHand = product.stock?.quantityOnHand ?? 0;
+            if (onHand <= 0 && !canSellOutOfStock) {
+              toast.info(`${product.name} is in the catalogue, but none is in stock`, {
+                description: 'Record a delivery on Products & stock, or ask for permission to sell out of stock.',
+              });
+              return;
+            }
+            // Straight into the basket, so the scan finishes the way a scan of
+            // something already in the catalogue would have.
+            add(product);
+          }}
+        />
+      )}
 
       {heldOpen && <HeldSalesDialog currency={currency} onClose={() => setHeldOpen(false)} onResumed={(sale) => void restore(sale)} />}
 
