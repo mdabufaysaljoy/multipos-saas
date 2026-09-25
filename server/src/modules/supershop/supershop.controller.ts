@@ -9,6 +9,7 @@ import { listPosReturns } from '../../services/returns/posReturns.list';
 import { supershopSaleReturnAdapter } from '../../services/returns/adapters/supershop.saleAdapter';
 import { recordAudit } from '../../services/audit/audit.service';
 import { supershopService } from './supershop.service';
+import { heldSaleService } from './heldSales.service';
 import {
   shopBrandService,
   type CreateShopBrandInput,
@@ -31,6 +32,7 @@ import type {
   UpdateProductInput,
   CreateReturnInput,
   CreateExchangeInput,
+  HoldSaleInput,
 } from './supershop.validators';
 
 type IdParams = { id: Types.ObjectId };
@@ -204,6 +206,26 @@ export const createExchange = asyncHandler(async (req: Request, res: Response) =
   });
   // A replay is the same exchange, not a new one.
   created(res, result);
+});
+
+// ------------------------------------------------------------ held sales
+// A parked basket. It has taken no stock, no money and no points, so none of
+// these touches a sale, a ledger or a loyalty card.
+export const holdSale = asyncHandler(async (req: Request, res: Response) => {
+  created(res, await heldSaleService.hold(getContext(req), body<HoldSaleInput>(req)));
+});
+
+export const listHeldSales = asyncHandler(async (req: Request, res: Response) => {
+  ok(res, await heldSaleService.list(getContext(req)));
+});
+
+/** Resuming CLAIMS the basket: it is removed in the same atomic step. */
+export const resumeHeldSale = asyncHandler(async (req: Request, res: Response) => {
+  ok(res, await heldSaleService.resume(getContext(req), params<IdParams>(req).id));
+});
+
+export const removeHeldSale = asyncHandler(async (req: Request, res: Response) => {
+  ok(res, await heldSaleService.remove(getContext(req), params<IdParams>(req).id));
 });
 
 export const listReturns = asyncHandler(async (req: Request, res: Response) => {

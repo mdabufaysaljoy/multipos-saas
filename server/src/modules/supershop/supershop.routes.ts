@@ -22,6 +22,7 @@ import {
   updateProductSchema,
   createReturnSchema,
   createExchangeSchema,
+  holdSaleSchema,
   voidSaleSchema,
 } from './supershop.validators';
 import { posLedgerQuerySchema } from '../../services/inventory/posLedger';
@@ -135,6 +136,17 @@ router.post(
   controller.createExchange,
 );
 router.get('/returns', requirePermission(PERMISSIONS.RETURNS_VIEW), validate({ query: listSalesSchema }), controller.listReturns);
+
+// ----------------------------------------------------------- held sales
+// A basket put aside. Nothing here completes a sale, so nothing here needs an
+// active subscription beyond the one the module already requires - but holding
+// is part of taking a sale, so it follows `sales.create`.
+router.post('/held-sales', requireActiveSubscription, requirePermission(PERMISSIONS.SALES_CREATE), validate({ body: holdSaleSchema }), controller.holdSale);
+router.get('/held-sales', requirePermission(PERMISSIONS.SALES_VIEW), controller.listHeldSales);
+router.post('/held-sales/:id/resume', requireActiveSubscription, requirePermission(PERMISSIONS.SALES_CREATE), validate({ params: idParam }), controller.resumeHeldSale);
+// Discarding your own needs only that; discarding someone else's needs
+// `sales.cancel`, which the service checks.
+router.delete('/held-sales/:id', requireActiveSubscription, requirePermission(PERMISSIONS.SALES_CREATE), validate({ params: idParam }), controller.removeHeldSale);
 
 router.get('/dashboard', requirePermission(PERMISSIONS.REPORTS_VIEW), validate({ query: dashboardRangeSchema }), controller.dashboard);
 

@@ -232,3 +232,46 @@ export interface ShopExchange {
   /** True when this response replayed an exchange that had already happened. */
   replayed?: boolean;
 }
+
+
+/** A basket put aside, as the held-sales list shows it. */
+export interface ShopHeldSaleRow {
+  _id: string;
+  holdNumber: string;
+  label: string;
+  itemCount: number;
+  /** What it came to when parked. The catalogue decides again on resume. */
+  estimatedTotalMinor: number;
+  customerName: string;
+  heldByNameSnapshot: string;
+  heldBy: string;
+  createdAt: string;
+  expiresAt: string;
+}
+
+/** What the till sends to park a basket. No prices: the server reads them. */
+export interface ShopHoldInput {
+  items: { productId: string; quantity: number }[];
+  label?: string;
+  discountMinor?: number;
+  customerId?: string;
+  customer?: { name: string; phone: string; email?: string };
+  loyaltyCardNumber?: string;
+  note?: string;
+}
+
+/** A resumed basket, re-priced from the catalogue. */
+export interface ShopResumedSale {
+  holdNumber: string;
+  label: string;
+  items: { quantity: number; product: ShopProduct; priceChanged: boolean; pricedAtHoldMinor: number }[];
+  /** Lines whose product no longer exists and could not come back. */
+  dropped: string[];
+  customerId: string | null;
+  customerDraft: { name: string; phone: string } | null;
+  discountMinor: number;
+  loyaltyCardNumber: string;
+  note: string;
+  heldByNameSnapshot: string;
+  createdAt: string;
+}

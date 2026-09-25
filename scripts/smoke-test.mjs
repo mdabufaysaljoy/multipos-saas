@@ -6536,6 +6536,146 @@ async function main() {
     await ssApi(`/products/${id}`, { method: 'DELETE' });
   }
 
+  // --- Sale hold ----------------------------------------------------------------
+  // A basket put aside is NOT a sale. It takes no stock, no money and no points,
+  // and it lives in its own collection so nothing that counts trade can mistake
+  // it for any. Resuming CLAIMS it, atomically, which is what makes a held sale
+  // impossible to complete twice.
+  section('Supershop sale hold');
+
+  const hdStamp = String(Date.now()).slice(-6);
+  const ssStoreIdForHold = (await api('/stores', { token: ssToken })).data?.[0]?._id;
+  const hdApi = (path, opts = {}) => ssApi(`/held-sales${path}`, opts);
+  const hdProduct = await ssProduct({ name: `Hold Item ${hdStamp}`, category: 'Household', unitType: 'each', priceMinor: 12_500 });
+  await ssReceive(hdProduct.data._id, { quantity: 40, costPriceMinor: 6000 });
+  const hdOnHand = async () => (await ssApi(`/products/${hdProduct.data._id}`)).data?.product?.stock?.quantityOnHand ?? 0;
+  const hdStockBefore = await hdOnHand();
+  const hdSalesBefore = (await ssApi('/sales?limit=1')).meta?.total ?? 0;
+
+  // ---- holding -----------------------------------------------------------------
+  const hdHold = await hdApi('', {
+    method: 'POST',
+    body: {
+      items: [{ productId: hdProduct.data._id, quantity: 3 }],
+      label: `Blue basket ${hdStamp}`,
+      discountMinor: 500,
+      customer: { name: 'Held Customer', phone: `019${hdStamp}0` },
+    },
+  });
+  check('A basket can be held', hdHold.status === 201 && /^HOLD-\d+$/.test(hdHold.data?.holdNumber ?? ''), hdHold.data ?? hdHold.error);
+  check('...it takes NO stock', (await hdOnHand()) === hdStockBefore, { before: hdStockBefore, after: await hdOnHand() });
+  check('...it records NO sale', ((await ssApi('/sales?limit=1')).meta?.total ?? 0) === hdSalesBefore);
+  check('...and it is not a sale that can be read back as one', (await ssApi(`/sales/${hdHold.data._id}`)).status === 404);
+
+  const hdList = (await hdApi('')).data ?? [];
+  const hdRow = hdList.find((row) => row._id === hdHold.data._id);
+  check('It appears on this branch list with what it is worth', hdRow?.itemCount === 1 && hdRow?.estimatedTotalMinor === 3 * 12_500 - 500, hdRow);
+  check('...naming the cashier who held it, and when', Boolean(hdRow?.heldByNameSnapshot) && Boolean(hdRow?.createdAt), hdRow);
+  check('...and saying when it will expire on its own', new Date(hdRow.expiresAt) > new Date(hdRow.createdAt), { created: hdRow?.createdAt, expires: hdRow?.expiresAt });
+  const hdAgeDays = (new Date(hdRow.expiresAt) - new Date(hdRow.createdAt)) / 86_400_000;
+  check('...seven days after it was held', Math.round(hdAgeDays) === 7, hdAgeDays);
+
+  // ---- resuming -----------------------------------------------------------------
+  const hdResume = await hdApi(`/${hdHold.data._id}/resume`, { method: 'POST', body: {} });
+  check('It can be resumed', hdResume.status === 200 && hdResume.data?.holdNumber === hdHold.data.holdNumber, hdResume.error);
+  check('...with its lines, quantities and discount', hdResume.data?.items?.length === 1 && hdResume.data.items[0].quantity === 3 && hdResume.data?.discountMinor === 500, hdResume.data);
+  check('...the customer that was on it', hdResume.data?.customerDraft?.name === 'Held Customer', hdResume.data?.customerDraft);
+  check('...and its label', hdResume.data?.label === `Blue basket ${hdStamp}`);
+  check('...priced from the catalogue, not from what was stored', hdResume.data?.items?.[0]?.product?.priceMinor === 12_500 && hdResume.data.items[0].priceChanged === false, hdResume.data?.items?.[0]);
+  check('Resuming CLAIMS it: it is gone from the list', !((await hdApi('')).data ?? []).some((row) => row._id === hdHold.data._id));
+  check('...and cannot be resumed a second time', (await hdApi(`/${hdHold.data._id}/resume`, { method: 'POST', body: {} })).status === 404);
+
+  // ---- a price that moved while it sat ------------------------------------------
+  const hdHold2 = await hdApi('', { method: 'POST', body: { items: [{ productId: hdProduct.data._id, quantity: 1 }] } });
+  await ssApi(`/products/${hdProduct.data._id}`, { method: 'PATCH', body: { priceMinor: 20_000 } });
+  const hdResume2 = await hdApi(`/${hdHold2.data._id}/resume`, { method: 'POST', body: {} });
+  check('A basket comes back at TODAY\'s price, and says so', hdResume2.data?.items?.[0]?.product?.priceMinor === 20_000 && hdResume2.data.items[0].priceChanged === true, hdResume2.data?.items?.[0]);
+  check('...and reports what it was held at', hdResume2.data?.items?.[0]?.pricedAtHoldMinor === 12_500);
+  await ssApi(`/products/${hdProduct.data._id}`, { method: 'PATCH', body: { priceMinor: 12_500 } });
+
+  // ---- a product that vanished ---------------------------------------------------
+  const hdGone = await ssProduct({ name: `Hold Vanishing ${hdStamp}`, category: 'Household', priceMinor: 1000 });
+  const hdHold3 = await hdApi('', { method: 'POST', body: { items: [{ productId: hdProduct.data._id, quantity: 1 }, { productId: hdGone.data._id, quantity: 1 }] } });
+  await ssApi(`/products/${hdGone.data._id}`, { method: 'DELETE' });
+  const hdResume3 = await hdApi(`/${hdHold3.data._id}/resume`, { method: 'POST', body: {} });
+  check('A line whose product has gone is reported, not silently sold', hdResume3.data?.items?.length === 1 && (hdResume3.data?.dropped ?? []).length === 1, hdResume3.data?.dropped);
+
+  // ---- two tills, one basket -------------------------------------------------------
+  const hdRace = await hdApi('', { method: 'POST', body: { items: [{ productId: hdProduct.data._id, quantity: 2 }] } });
+  const hdBoth = await Promise.all([
+    hdApi(`/${hdRace.data._id}/resume`, { method: 'POST', body: {} }),
+    hdApi(`/${hdRace.data._id}/resume`, { method: 'POST', body: {} }),
+  ]);
+  check('Two tills opening the same basket: exactly one gets it', hdBoth.filter((res) => res.status === 200).length === 1 && hdBoth.filter((res) => res.status === 404).length === 1, hdBoth.map((res) => res.status));
+  check('...so a held sale can never be completed twice', ((await hdApi('')).data ?? []).every((row) => row._id !== hdRace.data._id));
+
+  // ---- finishing one for real --------------------------------------------------
+  const hdHold4 = await hdApi('', { method: 'POST', body: { items: [{ productId: hdProduct.data._id, quantity: 2 }] } });
+  const hdResume4 = await hdApi(`/${hdHold4.data._id}/resume`, { method: 'POST', body: {} });
+  const hdStockAtResume = await hdOnHand();
+  check('Resuming still takes no stock', hdStockAtResume === hdStockBefore);
+  const hdSale = await ssSale({
+    items: hdResume4.data.items.map((line) => ({ productId: line.product._id, quantity: line.quantity })),
+    payments: [{ method: 'cash', amountMinor: 25_000 }],
+  });
+  check('The resumed basket completes as an ordinary sale', hdSale.status === 201 && hdSale.data?.totalMinor === 25_000, hdSale.error);
+  check('...and only THEN does the stock move', (await hdOnHand()) === hdStockBefore - 2);
+
+  // ---- discarding -------------------------------------------------------------------
+  const hdHold5 = await hdApi('', { method: 'POST', body: { items: [{ productId: hdProduct.data._id, quantity: 1 }] } });
+  check('A cashier can discard a held sale', (await hdApi(`/${hdHold5.data._id}`, { method: 'DELETE' })).status === 200);
+  check('...and it is gone', (await hdApi(`/${hdHold5.data._id}/resume`, { method: 'POST', body: {} })).status === 404);
+  check('Discarding one that never existed is 404', (await hdApi(`/${hdProduct.data._id}`, { method: 'DELETE' })).status === 404);
+
+  // ---- validation --------------------------------------------------------------------
+  check('An empty basket cannot be held', (await hdApi('', { method: 'POST', body: { items: [] } })).status === 422);
+  check('A basket of goods from another shop cannot be held', (await hdApi('', { method: 'POST', body: { items: [{ productId: hdHold.data._id, quantity: 1 }] } })).status === 400);
+  check('The same product twice in one basket is refused', (await hdApi('', { method: 'POST', body: { items: [{ productId: hdProduct.data._id, quantity: 1 }, { productId: hdProduct.data._id, quantity: 2 }] } })).status === 422);
+  check('Unknown fields are refused', (await hdApi('', { method: 'POST', body: { items: [{ productId: hdProduct.data._id, quantity: 1 }], totalMinor: 1 } })).status === 422);
+
+  // ---- one branch cannot reach another's --------------------------------------------
+  // The plan caps this workspace at two branches and the costing section already
+  // made the second, so this reuses it rather than asking for a third.
+  const hdStores = (await api('/stores', { token: ssToken })).data ?? [];
+  const hdOtherStore = hdStores.find((row) => String(row._id) !== String(ssStoreIdForHold));
+  const hdMine = await hdApi('', { method: 'POST', body: { items: [{ productId: hdProduct.data._id, quantity: 1 }], label: 'Branch A basket' } });
+  if (hdOtherStore) {
+    const hdAt = { token: ssToken, storeId: hdOtherStore._id };
+    check("Another branch does not see this branch's held sales", !((await api('/supershop/held-sales', hdAt)).data ?? []).some((row) => row._id === hdMine.data._id));
+    check("...cannot resume one", (await api(`/supershop/held-sales/${hdMine.data._id}/resume`, { ...hdAt, method: 'POST', body: {} })).status === 404);
+    check("...and cannot discard one", (await api(`/supershop/held-sales/${hdMine.data._id}`, { ...hdAt, method: 'DELETE' })).status === 404);
+    check('...while its own branch still has it', ((await hdApi('')).data ?? []).some((row) => row._id === hdMine.data._id));
+  } else {
+    check('A second branch exists for the hold-isolation check', false, hdStores.map((row) => row.name));
+  }
+  check('Another workspace cannot read these held sales', (await api('/supershop/held-sales', { token: phToken })).status === 403);
+  check('Another workspace cannot hold here', (await api('/supershop/held-sales', { method: 'POST', token: phToken, body: { items: [{ productId: hdProduct.data._id, quantity: 1 }] } })).status === 403);
+  check('A held sale needs a session', (await api('/supershop/held-sales')).status === 401);
+
+  // ---- who may do what ----------------------------------------------------------------
+  const hdTillCreated = await api('/staff', {
+    method: 'POST',
+    token: ssToken,
+    body: { name: 'Hold Till', email: `sshold${hdStamp}@example.com`, password: 'Password@123', storeId: ssStoreIdForHold, extraPermissions: ['sales.view', 'products.view'] },
+  });
+  const hdTill = { id: hdTillCreated.data?.id, token: (await login(`sshold${hdStamp}@example.com`, 'Password@123')).token };
+  check('A till that may only VIEW sales can see the held list', (await api('/supershop/held-sales', { token: hdTill.token })).status === 200);
+  check('...but cannot hold one', (await api('/supershop/held-sales', { method: 'POST', token: hdTill.token, body: { items: [{ productId: hdProduct.data._id, quantity: 1 }] } })).status === 403);
+  check('...nor resume one', (await api(`/supershop/held-sales/${hdMine.data._id}/resume`, { method: 'POST', token: hdTill.token, body: {} })).status === 403);
+
+  // Another cashier's basket needs the permission that voids a sale.
+  await api(`/staff/${hdTill.id}`, { method: 'PATCH', token: ssToken, body: { extraPermissions: ['sales.view', 'sales.create', 'products.view'] } });
+  check("A cashier cannot discard another cashier's basket", (await api(`/supershop/held-sales/${hdMine.data._id}`, { method: 'DELETE', token: hdTill.token })).status === 403);
+  const hdTheirs = await api('/supershop/held-sales', { method: 'POST', token: hdTill.token, body: { items: [{ productId: hdProduct.data._id, quantity: 1 }] } });
+  check('...but may always discard their own', (await api(`/supershop/held-sales/${hdTheirs.data._id}`, { method: 'DELETE', token: hdTill.token })).status === 200);
+  await api(`/staff/${hdTill.id}`, { method: 'PATCH', token: ssToken, body: { extraPermissions: ['sales.view', 'sales.create', 'sales.cancel', 'products.view'] } });
+  check('With sales.cancel a supervisor may discard anyone\'s', (await api(`/supershop/held-sales/${hdMine.data._id}`, { method: 'DELETE', token: hdTill.token })).status === 200);
+
+  // Retire the fixture.
+  const hdLeft = await hdOnHand();
+  if (hdLeft !== 0) await ssApi(`/products/${hdProduct.data._id}/adjust`, { method: 'POST', body: { type: 'adjust', quantityDelta: -hdLeft, reason: 'Hold fixture' } });
+  await ssApi(`/products/${hdProduct.data._id}`, { method: 'DELETE' });
+
 
   // --- Customer on a sale, in every vertical -----------------------------------
   // Clothing has always been able to attach a customer at the till; these are the

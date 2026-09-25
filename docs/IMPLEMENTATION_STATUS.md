@@ -1084,3 +1084,100 @@ another workspace is refused.
 
 **Not touched:** Clothing, Restaurant, Pharmacy. **Still open:** CI (audit Issue
 10), N1 on the ordinary return path, the browser pass.
+
+## 2026-09-26 — Phase 7: Sale hold (Super Shop)
+
+Audit Issue 8. Super Shop only; **no shared code changed**.
+
+### Audited first: where the cart lived
+
+Nowhere durable. The basket was React state in `SupershopPosPage` — lines,
+discount, customer, scanned loyalty card — and a reload lost it. Nothing in the
+repo held, parked or suspended a sale in any vertical.
+
+### A held sale is not a sale, and not a sale status
+
+`ShopSale` has two statuses, `completed` and `voided`, and **every** report,
+export, ledger read and plan meter filters `status: 'completed'`. A third status
+would have meant re-auditing all of them, and one missed filter would have
+counted a parked basket as trade. So holds live in their own collection,
+`ShopHeldSale`, where nothing can mistake them for a sale.
+
+Holding therefore takes **no stock, no money, no points and no payment row** —
+not because each is suppressed, but because the hold path never touches the sale
+service at all. Asserted directly: stock unchanged, sale count unchanged, and the
+hold id is a 404 when asked for as a sale.
+
+### What is stored: intent, not money
+
+Lines keep a product and a quantity. The name, unit and price beside them are a
+snapshot **for the list only**. Also kept: label, discount, customer (on file or
+typed), the loyalty card **by number**, note, branch, cashier, timestamp and a
+per-branch `HOLD-000001`.
+
+**Resuming re-prices the whole basket from the catalogue.** A price that moved
+while the basket sat parked is picked up and flagged rather than smuggled past
+the till, a product that was deleted is reported as dropped rather than silently
+sold, and the loyalty card is looked up again so its balance is today's.
+
+### Claim-on-resume, and why
+
+`resume` is a single atomic `findOneAndDelete`. Two tills opening the same parked
+basket cannot both get it — the loser is told it has already been taken — and
+**a held sale cannot be completed twice, because after the first resume there is
+nothing left to resume from.** Asserted with two genuinely concurrent requests:
+exactly one 200, exactly one 404.
+
+The trade-off, stated plainly: a till that resumes and then crashes has lost the
+parked basket. Holding it again is one button, and that is the cheaper failure
+than two cashiers selling the same basket.
+
+### Stale holds — the documented policy
+
+**A hold lives 7 days from when it was last touched, then MongoDB removes it**
+through a TTL index on `expiresAt`. No sweep job, no cron, no leader election —
+which matters in a deployment that runs its schedulers in-process (audit L7). A
+branch also keeps at most **50** at once, so the list stays a list; the 51st is
+refused with `TOO_MANY_HOLDS` rather than silently dropping an older one. The
+dialog states the 7 days, and each row shows its age.
+
+### Permissions and isolation
+
+- Holding and resuming need `sales.create`; seeing the list needs `sales.view`.
+- **A cashier may always discard their own.** Discarding someone else's needs
+  `sales.cancel` — the permission that voids a sale.
+- Holds are keyed `(tenantId, storeId)` and every query scopes both, so **one
+  branch cannot see, resume or discard another's** — asserted from a second
+  branch of the same workspace, not just from another workspace.
+
+### UI
+
+A **Hold** button beside Clear in the basket footer, and a **Held** button in the
+basket header carrying the count. The dialog lists this branch's baskets with
+number, label, lines, value, cashier and age, and offers Open and Discard.
+
+### Verification
+
+- `npm run lint` ✅ · `npm run typecheck` ✅ · `npm run build` ✅
+- `npm test` — **3470 passed, 0 failed** (was 3427; **43 net new assertions**).
+
+Covering: holding, and that it takes no stock, records no sale and is not
+readable as one; the list with its value, cashier, timestamp and expiry seven
+days out; resume returning lines, quantities, discount, customer and label,
+priced from the catalogue; **resume claiming the basket** so it leaves the list
+and cannot be resumed again; a price that moved while parked, flagged with what
+it was held at; a product that vanished, reported as dropped; **two concurrent
+resumes, exactly one winner**; a resumed basket completing as an ordinary sale
+with the stock moving only then; discarding; validation (empty basket, another
+shop's goods, the same product twice, unknown fields); **branch isolation** from
+a second branch of the same workspace and from another workspace; and permissions
+— view-only cannot hold or resume, a cashier cannot discard another's basket but
+may always discard their own, and `sales.cancel` may discard anyone's.
+
+A run during this phase showed two unrelated failures that did not recur on the
+next run and are not Super Shop's: the wallet "ledger is a continuous chain"
+check (a known ordering flake already recorded above) and a report-print
+byte-for-byte comparison. Both passed before and after.
+
+**Not touched:** Clothing, Restaurant, Pharmacy. **Still open:** CI (audit Issue
+10), N1 on the ordinary return path, the browser pass.

@@ -225,6 +225,28 @@ export const createExchangeSchema = z
   })
   .strict();
 
+/**
+ * Parking a basket. No prices and no totals: the server reads them from the
+ * catalogue for the list, and reads them again from the catalogue on resume.
+ */
+export const holdSaleSchema = z
+  .object({
+    items: z
+      .array(z.object({ productId: objectId, quantity: baseQuantity }).strict())
+      .min(1, 'There is nothing to hold')
+      .max(200)
+      .refine((items) => new Set(items.map((item) => String(item.productId))).size === items.length, 'List each product once'),
+    /** What the cashier calls it, to find it again: "blue jacket", "table 3". */
+    label: text(60).optional().default(''),
+    discountMinor: saleAmount.default(0),
+    customerId: objectId.optional(),
+    customer: posCustomerSchema.optional(),
+    /** The card that was scanned, by number: resuming looks it up again. */
+    loyaltyCardNumber: text(64).optional().default(''),
+    note: text(300).optional().default(''),
+  })
+  .strict();
+
 export const voidSaleSchema = z.object({ reason: z.string().trim().min(3, 'Give a reason').max(200) }).strict();
 
 export const listSalesSchema = searchSchema.extend({
@@ -243,3 +265,4 @@ export type CreateSaleInput = z.infer<typeof createSaleSchema>;
 export type ListSalesInput = z.infer<typeof listSalesSchema>;
 export type CreateReturnInput = z.infer<typeof createReturnSchema>;
 export type CreateExchangeInput = z.infer<typeof createExchangeSchema>;
+export type HoldSaleInput = z.infer<typeof holdSaleSchema>;

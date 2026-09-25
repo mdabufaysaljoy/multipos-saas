@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { CreditCard, Minus, Plus, ScanBarcode, Scale, Trash2 } from 'lucide-react';
+import { CreditCard, Minus, PauseCircle, Plus, ScanBarcode, Scale, Trash2 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -24,6 +24,7 @@ import { PaymentPanel } from '@/features/payments/PaymentPanel';
 import { tenderedRows } from '@/features/payments/paymentMath';
 import { usePayments } from '@/features/payments/usePayments';
 import { ShopReceiptDialog } from '@/features/supershop/ShopReceiptDialog';
+import { HeldSalesDialog } from '@/features/supershop/HeldSalesDialog';
 import { ApiError } from '@/api/client';
 import { storeApi } from '@/api/endpoints';
 import { supershopApi } from '@/api/supershop';
@@ -33,7 +34,7 @@ import { formatMoney } from '@/lib/money';
 import { formatQuantity, gramsToKgText, lineAmount, parseKgToGrams } from '@/lib/supershop';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/hooks/useAuth';
-import type { ShopProduct } from '@/types/supershop';
+import type { ShopProduct, ShopResumedSale } from '@/types/supershop';
 import { tendersFromConfig } from '@/types/domain';
 
 interface CartLine {
@@ -68,6 +69,7 @@ export function SupershopPosPage() {
   // the shelf is right and the record is wrong. The server checks it again.
   const canSellOutOfStock = can('sales.sellOutOfStock');
   const [receiptFor, setReceiptFor] = React.useState<string | null>(null);
+  const [heldOpen, setHeldOpen] = React.useState(false);
 
   // The departments this shop sells under, in the owner's order and without the
   // ones they hid, and the brands its products actually carry.
@@ -250,6 +252,48 @@ export function SupershopPosPage() {
     scanRef.current?.focus();
   };
 
+  // How many baskets are waiting at this branch, for the button's badge.
+  const { data: heldSales } = useQuery({ queryKey: ['supershop', 'held-sales'], queryFn: () => supershopApi.heldSales(), staleTime: 10_000 });
+
+  /**
+   * Puts the basket aside. Nothing is sold: no stock moves, no money is taken
+   * and no points are awarded - the server stores what was in front of the
+   * cashier and prices it again when it comes back.
+   */
+  const hold = useMutation({
+    mutationFn: () =>
+      supershopApi.hold({
+        items: cart.map((line) => ({ productId: line.product._id, quantity: line.quantity })),
+        discountMinor,
+        ...saleCustomerFields(customer),
+        ...(loyaltyMember ? { loyaltyCardNumber: loyaltyMember.cardNumber } : {}),
+      }),
+    onSuccess: (result) => {
+      toast.success(`${result.holdNumber} held`, { description: 'Open it again from Held sales.' });
+      reset();
+      void queryClient.invalidateQueries({ queryKey: ['supershop', 'held-sales'] });
+    },
+    onError: (err) => toast.error(err instanceof ApiError ? err.message : 'Could not hold this sale'),
+  });
+
+  /** Puts a resumed basket back on the till, at today's prices. */
+  const restore = async (sale: ShopResumedSale) => {
+    setCart(sale.items.map((line) => ({ product: line.product, quantity: line.quantity })));
+    setDiscount(sale.discountMinor);
+    setCustomer(sale.customerDraft ? { name: sale.customerDraft.name, phone: sale.customerDraft.phone } : null);
+    payments.reset();
+    if (sale.loyaltyCardNumber) await attachCard(sale.loyaltyCardNumber);
+    if (sale.dropped.length > 0) {
+      toast.warning(`${sale.dropped.length} line(s) could not come back`, { description: sale.dropped.join(', ') });
+    }
+    const moved = sale.items.filter((line) => line.priceChanged);
+    if (moved.length > 0) {
+      toast.info('Prices have changed since this was held', { description: moved.map((line) => line.product.name).join(', ') });
+    }
+    toast.success(`${sale.holdNumber} reopened`);
+    scanRef.current?.focus();
+  };
+
   const complete = useMutation({
     mutationFn: () =>
       supershopApi.createSale({
@@ -391,7 +435,13 @@ export function SupershopPosPage() {
 
       <Card className="flex min-h-0 flex-col">
         <CardHeader className="pb-2">
-          <CardTitle className="text-base">Basket · {cart.length} line(s)</CardTitle>
+          <div className="flex items-center justify-between gap-2">
+            <CardTitle className="text-base">Basket · {cart.length} line(s)</CardTitle>
+            <Button variant="outline" size="sm" onClick={() => setHeldOpen(true)}>
+              <PauseCircle />
+              Held{(heldSales ?? []).length > 0 ? ` · ${(heldSales ?? []).length}` : ''}
+            </Button>
+          </div>
         </CardHeader>
         <CardContent className="scrollbar-thin min-h-0 flex-1 space-y-4 overflow-y-auto">
           {cart.length === 0 ? (
@@ -501,11 +551,17 @@ export function SupershopPosPage() {
           <Button variant="outline" onClick={reset} disabled={cart.length === 0}>
             Clear
           </Button>
+          <Button variant="outline" disabled={cart.length === 0 || hold.isPending} loading={hold.isPending} onClick={() => hold.mutate()}>
+            <PauseCircle />
+            Hold
+          </Button>
           <Button className="flex-1" disabled={!canComplete} loading={complete.isPending} onClick={() => complete.mutate()}>
             Complete sale · {formatMoney(total, currency)}
           </Button>
         </div>
       </Card>
+
+      {heldOpen && <HeldSalesDialog currency={currency} onClose={() => setHeldOpen(false)} onResumed={(sale) => void restore(sale)} />}
 
       {weighing && (
         <WeighDialog
