@@ -17,6 +17,11 @@ export interface ReturnableLine {
   unitPriceMinor: number;
   /** Carried from the sale so returned goods take their cost out of profit too. */
   costPriceMinor: number;
+  /**
+   * How the quantity is measured, where that is not simply "one of them".
+   * Super Shop weighs in grams and prices per kilogram; nothing else sets it.
+   */
+  unitType?: 'each' | 'weight';
   /** A pharmacy line names the batches it was dispensed from. */
   allocations?: { batchId: Types.ObjectId; batchNumber: string; quantity: number; costPriceMinor: number }[];
 }
@@ -70,6 +75,17 @@ export interface SaleReturnAdapter {
    * implement it; the engine calls it if it is there.
    */
   reverseLoyalty?(ctx: TenantContext, saleId: Types.ObjectId, reason: string): Promise<void>;
+  /**
+   * What `quantity` of this line was SOLD for, and what it COST.
+   *
+   * The default - unit price times quantity - is right wherever a quantity is a
+   * count of things, which is Pharmacy and Restaurant. It is WRONG for Super
+   * Shop's weighed goods, where the quantity is in grams and the price is per
+   * kilogram, so `20,000 x 1000` is a thousand times the real figure. A vertical
+   * that measures in anything other than whole units implements these.
+   */
+  amountOf?(line: ReturnableLine, quantity: number): number;
+  costOf?(line: ReturnableLine, quantity: number): number;
   /**
    * Exchange support. OPTIONAL, and implemented by Super Shop only: the engine
    * refuses an exchange when a vertical has not provided it, so Pharmacy and

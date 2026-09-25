@@ -990,3 +990,97 @@ that may read but not create, rename or remove.
 
 **Not touched:** Clothing, Restaurant, Pharmacy. **Still open:** CI (audit Issue
 10), N1 on the ordinary return path, and the browser pass.
+
+## 2026-09-26 — Phase 6: stock cost and profit
+
+Audit Issue 7. Full specification: **`docs/SUPERSHOP_COSTING.md`** (new).
+Super Shop only.
+
+### The method, audited before anything was changed
+
+**Weighted average cost, per branch.** Not FIFO, not batch cost, not last
+purchase price. `receiveStock` moves the average in one atomic pipeline update,
+upserted, with a duplicate-key retry:
+
+```
+newCost = round((onHand x oldCost + receivedQty x receivedCost) / (onHand + receivedQty))
+100 kg @ 100  +  100 kg @ 120  ->  200 kg @ 110
+```
+
+Verified correct as it stood, and two properties confirmed **deliberate** rather
+than fixed: `onHand` is floored at zero (units already sold out-of-stock must not
+dilute the delivery that arrives after them), and a delivery never rewrites what
+an earlier sale cost.
+
+Also verified correct already: the sale's own `costMinor`, `writeOffs` and
+`deadStock` in analytics, and `inventory-summary` — all four convert grams to
+kilograms through `lineAmount`.
+
+### What was actually broken — and it was worse than cost
+
+The unit trap. A Super Shop quantity is in **grams** while its prices are **per
+kilogram**, so `price x quantity` is a thousand times the real figure. Two places
+in the **shared** return engine did exactly that, because it sees a quantity and
+a unit price and has no idea one of its verticals weighs things:
+
+1. **`refundFor` — a weighed return refunded 1000x the money taken.** 1 kg of
+   rice sold for Tk 200 refunded Tk 200,000. Proved by running the new tests
+   before the fix: `creditMinor: 20,000,000` against a replacement priced at
+   `20,000`.
+2. `posReturns.figures` valued returned cost the same way, inflating reported
+   profit by the same factor — measured at exactly 1000x on the dashboard.
+
+**This is a money bug that shipped in task 08 and that my own audit missed** — it
+reviewed `refundFor`'s discount proration and never checked its units.
+
+### The fix: a seam, not a special case
+
+`SaleReturnAdapter` gained two optional methods:
+
+```ts
+amountOf?(line, quantity): number   // what these units SOLD for
+costOf?(line, quantity): number     // what they COST
+```
+
+The engine's default stays `price x quantity`, which is exactly right wherever a
+quantity is a count of things — **Pharmacy and Restaurant implement neither and
+are provably unchanged**, which the existing return assertions for both confirm.
+Super Shop implements both with the same `lineAmount` its checkout charges by, so
+a refund can never differ from what was taken.
+
+The return line now stores `costMinor`, the extended cost, so reports read a
+number rather than re-deriving one; both the return and the exchange writer use
+the same code path. Rows written before this fall back to
+`quantity x costPriceMinorSnapshot` — correct for a count of things, and what
+those rows have always reported.
+
+**⚠️ Existing data:** a Super Shop that has already refunded weighed goods holds
+the inflated figure on those `Return` rows and will keep reporting it through the
+fallback. Recomputing them is a migration this change does not attempt; the
+figures are recoverable from the sale lines if wanted. **Worth checking your
+production data before merging.**
+
+### Verification
+
+- `npm run lint` ✅ · `npm run typecheck` ✅ · `npm run build` ✅
+- `npm test` — **3427 passed, 0 failed** (was 3396; **31 net new assertions**).
+
+Run **before** the fix, the new section failed 4 assertions — the over-refund,
+the 1000x cost in the dashboard, and an exchange of weighed goods refused because
+its credit was a thousand times the replacement's price. One of the four was my
+own arithmetic (the half-kilo average is 10,010, not 10,020) and the expectation
+was corrected.
+
+Covering: the canonical 100+100 at 100/120 averaging to 110; **same cost** leaving
+it alone; **a lower cost** pulling it down rather than replacing it; **multiple
+receipts**; **decimal kg** weighted by real weight; **sale after receipt** costed
+per kilogram, and a later delivery never rewriting it; **return** giving back what
+was charged and never more than the sale took, with the line's own cost recorded;
+**exchange** of weighed goods; write-off and count correction leaving the average
+alone; stock value; pieces staying simple; **zero, negative, fractional and
+missing-cost receipts refused**; and **branch isolation** — a second branch starts
+with no stock and no cost, receiving there moves only its own average, and
+another workspace is refused.
+
+**Not touched:** Clothing, Restaurant, Pharmacy. **Still open:** CI (audit Issue
+10), N1 on the ordinary return path, the browser pass.

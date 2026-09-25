@@ -46,7 +46,16 @@ export async function returnFiguresFor(
               $map: {
                 input: '$items',
                 as: 'item',
-                in: { $cond: ['$$item.restock', { $multiply: ['$$item.quantity', { $ifNull: ['$$item.costPriceMinorSnapshot', 0] }] }, 0] },
+                // The cost the return recorded, already in the vertical's own
+                // unit. Returns written before that existed fall back to
+                // quantity x unit cost, which is what they have always reported.
+                in: {
+                  $cond: [
+                    '$$item.restock',
+                    { $ifNull: ['$$item.costMinor', { $multiply: ['$$item.quantity', { $ifNull: ['$$item.costPriceMinorSnapshot', 0] }] }] },
+                    0,
+                  ],
+                },
               },
             },
           },
@@ -77,7 +86,16 @@ export async function returnsByDay(
               $map: {
                 input: '$items',
                 as: 'item',
-                in: { $cond: ['$$item.restock', { $multiply: ['$$item.quantity', { $ifNull: ['$$item.costPriceMinorSnapshot', 0] }] }, 0] },
+                // The cost the return recorded, already in the vertical's own
+                // unit. Returns written before that existed fall back to
+                // quantity x unit cost, which is what they have always reported.
+                in: {
+                  $cond: [
+                    '$$item.restock',
+                    { $ifNull: ['$$item.costMinor', { $multiply: ['$$item.quantity', { $ifNull: ['$$item.costPriceMinorSnapshot', 0] }] }] },
+                    0,
+                  ],
+                },
               },
             },
           },

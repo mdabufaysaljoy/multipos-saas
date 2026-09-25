@@ -6382,6 +6382,160 @@ async function main() {
     await ssApi(`/products/${row._id}`, { method: 'DELETE' });
   }
 
+  // --- Stock cost and profit ----------------------------------------------------
+  // Super Shop values stock at WEIGHTED AVERAGE COST, per piece or per kilogram.
+  // Receiving at a new price moves the average; it never replaces it, and it
+  // never rewrites what an earlier sale already cost. Everything that touches
+  // cost - a sale, a return, an exchange, a write-off, the ledger, the dashboard
+  // and analytics - has to agree on the same number.
+  section('Supershop stock cost and profit');
+
+  const wcStampS = String(Date.now()).slice(-6);
+  const wcKg = (taka) => taka * 100;   // minor units per kilogram
+  const wcG = (kilos) => kilos * 1000; // grams
+
+  // ---- the canonical case: 100 kg @ 100 + 100 kg @ 120 = 200 kg @ 110 --------
+  const wcRice = await ssProduct({ name: `WA Rice ${wcStampS}`, category: 'Household', unitType: 'weight', priceMinor: wcKg(200) });
+  const wcFirst = await ssReceive(wcRice.data._id, { quantity: wcG(100), costPriceMinor: wcKg(100) });
+  check('A first delivery sets the cost', wcFirst.data?.costPriceMinor === wcKg(100) && wcFirst.data?.quantityOnHand === wcG(100), wcFirst.data);
+  const wcSecond = await ssReceive(wcRice.data._id, { quantity: wcG(100), costPriceMinor: wcKg(120) });
+  check('100 kg @ 100 plus 100 kg @ 120 averages to 110', wcSecond.data?.costPriceMinor === wcKg(110) && wcSecond.data?.quantityOnHand === wcG(200), wcSecond.data);
+
+  // ---- the same cost again leaves it alone ------------------------------------
+  const wcSame = await ssReceive(wcRice.data._id, { quantity: wcG(50), costPriceMinor: wcKg(110) });
+  check('Receiving at the same cost does not move the average', wcSame.data?.costPriceMinor === wcKg(110) && wcSame.data?.quantityOnHand === wcG(250), wcSame.data);
+
+  // ---- a cheaper delivery pulls it down ---------------------------------------
+  // 250 kg @ 110 + 250 kg @ 90  ->  (27500 + 22500) / 500 = 100
+  const wcCheaper = await ssReceive(wcRice.data._id, { quantity: wcG(250), costPriceMinor: wcKg(90) });
+  check('A cheaper delivery pulls the average down, it does not replace it', wcCheaper.data?.costPriceMinor === wcKg(100) && wcCheaper.data?.quantityOnHand === wcG(500), wcCheaper.data);
+
+  // ---- part-kilogram deliveries stay exact ------------------------------------
+  // 500 kg @ 100 + 0.5 kg @ 200 -> (5,000,000 + 10,000) / 500.5 kg = 10019.98.. -> 10020 per kg
+  const wcDecimal = await ssReceive(wcRice.data._id, { quantity: 500, costPriceMinor: wcKg(200) });
+  check('A half-kilo delivery is weighted by its real weight', wcDecimal.data?.quantityOnHand === wcG(500) + 500, wcDecimal.data);
+  // (500,000 g x 10,000 + 500 g x 20,000) / 500,500 g = 10,009.98... per kg
+  check('...and the average moves by only what it is worth', wcDecimal.data?.costPriceMinor === 10_010, wcDecimal.data?.costPriceMinor);
+
+  // ---- a sale costs the average at the moment it is taken ---------------------
+  const wcBefore = wcDecimal.data.costPriceMinor;
+  const wcSale = await ssSale({ items: [{ productId: wcRice.data._id, quantity: wcG(2) }], payments: [{ method: 'cash', amountMinor: wcKg(400) }] });
+  check('A sale is costed at the average per KILOGRAM, not per gram', wcSale.data?.costMinor === Math.floor((wcBefore * wcG(2) + 500) / 1000), {
+    costMinor: wcSale.data?.costMinor,
+    expected: Math.floor((wcBefore * wcG(2) + 500) / 1000),
+  });
+  check('...and profit is revenue less VAT less that cost', wcSale.data?.totalMinor === wcKg(400) && wcSale.data?.costMinor < wcSale.data?.totalMinor, wcSale.data?.costMinor);
+
+  // A later delivery must not rewrite what that sale already cost.
+  const wcSoldCost = wcSale.data.costMinor;
+  await ssReceive(wcRice.data._id, { quantity: wcG(10), costPriceMinor: wcKg(500) });
+  check('A later delivery never rewrites what an earlier sale cost', ((await ssApi(`/sales/${wcSale.data._id}`)).data?.costMinor) === wcSoldCost);
+
+  // ---- a return gives back the cost of the goods, in the same units ----------
+  const wcDashBefore = (await ssApi('/dashboard?preset=today')).data?.kpis;
+  const wcReturn = await ssApi(`/sales/${wcSale.data._id}/return`, {
+    method: 'POST',
+    body: { items: [{ saleItemId: wcSale.data.items[0]._id, quantity: wcG(1), restock: true }], reason: 'Half of it came back', refundMethod: 'cash' },
+  });
+  check('A weighed return is accepted', wcReturn.status === 201, wcReturn.error);
+  // 1 kg of a 2 kg sale at 200/kg is 200 back - NOT 200,000, which is what
+  // `unitPrice x grams` gives and what this used to refund.
+  check('A weighed return gives back what was charged, not a thousand times it', wcReturn.data?.totalMinor === wcKg(200), {
+    refunded: wcReturn.data?.totalMinor,
+    expected: wcKg(200),
+  });
+  check('...and never more than the sale itself took', wcReturn.data?.totalMinor <= wcSale.data?.totalMinor, {
+    refunded: wcReturn.data?.totalMinor,
+    saleTotal: wcSale.data?.totalMinor,
+  });
+  check('...with the returned line recording what those goods cost', (wcReturn.data?.items?.[0]?.costMinor ?? -1) === Math.floor((wcSoldCost * wcG(1) + wcG(1)) / wcG(2)), {
+    costMinor: wcReturn.data?.items?.[0]?.costMinor,
+  });
+  const wcDashAfter = (await ssApi('/dashboard?preset=today')).data?.kpis;
+  // Half the weight came back, so half the cost did. Anything near 1000x this
+  // is the per-kilogram cost being multiplied by a number of GRAMS.
+  const wcExpectedReturnedCost = Math.floor((wcSoldCost * wcG(1) + Math.floor(wcG(2) / 2)) / wcG(2));
+  check(
+    'A return takes back the cost of the goods, not a thousand times it',
+    Math.abs((wcDashAfter.grossProfitMinor - wcDashBefore.grossProfitMinor + (wcDashAfter.refundedMinor - wcDashBefore.refundedMinor)) - wcExpectedReturnedCost) <= 2,
+    {
+      profitBefore: wcDashBefore.grossProfitMinor,
+      profitAfter: wcDashAfter.grossProfitMinor,
+      refundedDelta: wcDashAfter.refundedMinor - wcDashBefore.refundedMinor,
+      expectedReturnedCost: wcExpectedReturnedCost,
+    },
+  );
+  check('...and the goods are back on the shelf', ((await ssApi(`/products/${wcRice.data._id}`)).data?.product?.stock?.quantityOnHand) > 0);
+
+  // ---- an exchange costs its replacement the same way -------------------------
+  const wcSale2 = await ssSale({ items: [{ productId: wcRice.data._id, quantity: wcG(1) }], payments: [{ method: 'cash', amountMinor: wcKg(200) }] });
+  const wcEx = await ssApi(`/sales/${wcSale2.data._id}/exchange`, {
+    method: 'POST',
+    body: {
+      items: [{ saleItemId: wcSale2.data.items[0]._id, quantity: wcG(1), restock: true }],
+      replacement: { items: [{ productId: wcRice.data._id, quantity: wcG(1) }], payments: [] },
+      reason: 'Swapped for fresher rice',
+      idempotencyKey: `wc-${wcStampS}-ex`,
+    },
+  });
+  check('An exchange of weighed goods completes', wcEx.status === 201, wcEx.error);
+  const wcExSale = (await ssApi(`/sales/${wcEx.data?.exchange?.saleId}`)).data;
+  check('...and its replacement is costed per kilogram like any other sale', wcExSale?.costMinor > 0 && wcExSale?.costMinor < wcExSale?.totalMinor * 10, {
+    cost: wcExSale?.costMinor,
+    total: wcExSale?.totalMinor,
+  });
+
+  // ---- adjustments and write-offs -------------------------------------------
+  const wcCostNow = (await ssApi(`/products/${wcRice.data._id}`)).data?.product?.stock?.costPriceMinor;
+  await ssApi(`/products/${wcRice.data._id}/adjust`, { method: 'POST', body: { type: 'write_off', quantityDelta: -wcG(1), reason: 'Spoiled' } });
+  check('A write-off removes weight without touching the average cost', ((await ssApi(`/products/${wcRice.data._id}`)).data?.product?.stock?.costPriceMinor) === wcCostNow);
+  await ssApi(`/products/${wcRice.data._id}/adjust`, { method: 'POST', body: { type: 'adjust', quantityDelta: wcG(1), reason: 'Found it again' } });
+  check('...and a count correction does not either', ((await ssApi(`/products/${wcRice.data._id}`)).data?.product?.stock?.costPriceMinor) === wcCostNow);
+
+  // ---- what the shelf is worth ------------------------------------------------
+  const wcSummary = (await ssApi('/inventory-summary')).data;
+  const wcOnHandNow = (await ssApi(`/products/${wcRice.data._id}`)).data?.product?.stock?.quantityOnHand;
+  check('Stock value is the weight times the average cost per kilogram', typeof wcSummary?.stockValueMinor === 'number' && wcSummary.stockValueMinor >= Math.floor((wcOnHandNow * wcCostNow) / 1000), {
+    stockValue: wcSummary?.stockValueMinor,
+    thisProduct: Math.floor((wcOnHandNow * wcCostNow) / 1000),
+  });
+
+  // ---- pieces are the simple case, and must stay simple ----------------------
+  const wcTin = await ssProduct({ name: `WA Tin ${wcStampS}`, category: 'Household', unitType: 'each', priceMinor: 5000 });
+  await ssReceive(wcTin.data._id, { quantity: 100, costPriceMinor: 1000 });
+  await ssReceive(wcTin.data._id, { quantity: 100, costPriceMinor: 2000 });
+  check('By the piece, the same average applies', ((await ssApi(`/products/${wcTin.data._id}`)).data?.product?.stock?.costPriceMinor) === 1500);
+  const wcTinSale = await ssSale({ items: [{ productId: wcTin.data._id, quantity: 2 }], payments: [{ method: 'cash', amountMinor: 10_000 }] });
+  check('...and a sale of two costs twice the average', wcTinSale.data?.costMinor === 3000, wcTinSale.data?.costMinor);
+
+  // ---- nonsense is refused ----------------------------------------------------
+  check('A zero-quantity receipt is refused', (await ssReceive(wcRice.data._id, { quantity: 0, costPriceMinor: 100 })).status === 422);
+  check('A negative-quantity receipt is refused', (await ssReceive(wcRice.data._id, { quantity: -5, costPriceMinor: 100 })).status === 422);
+  check('A fractional gram is refused', (await ssReceive(wcRice.data._id, { quantity: 1.5, costPriceMinor: 100 })).status === 422);
+  check('A negative cost is refused', (await ssReceive(wcRice.data._id, { quantity: 1000, costPriceMinor: -1 })).status === 422);
+  check('A receipt with no cost at all is refused', (await ssReceive(wcRice.data._id, { quantity: 1000 })).status === 422);
+
+  // ---- cost is held per BRANCH, not per workspace -----------------------------
+  const wcBranch = await api('/stores', { method: 'POST', token: ssToken, body: { name: `WA Branch ${wcStampS}`, address: 'Second shop', phone: '01700000001' } });
+  if (wcBranch.status === 201) {
+    const wcAt = { token: ssToken, storeId: wcBranch.data._id };
+    const wcOther = await api(`/supershop/products/${wcTin.data._id}`, wcAt);
+    check('A second branch starts with none of it, and no cost', (wcOther.data?.product?.stock?.quantityOnHand ?? 0) === 0 && (wcOther.data?.product?.stock?.costPriceMinor ?? 0) === 0, wcOther.data?.product?.stock);
+    await api(`/supershop/products/${wcTin.data._id}/stock`, { ...wcAt, method: 'POST', body: { quantity: 10, costPriceMinor: 9000 } });
+    check('Receiving there sets only that branch average', ((await api(`/supershop/products/${wcTin.data._id}`, wcAt)).data?.product?.stock?.costPriceMinor) === 9000);
+    check('...and the first branch is untouched', ((await ssApi(`/products/${wcTin.data._id}`)).data?.product?.stock?.costPriceMinor) === 1500);
+  } else {
+    check('A second branch could be created for the cost-isolation check', false, wcBranch.error);
+  }
+  check("Another workspace cannot read this one's stock cost", (await api(`/supershop/products/${wcTin.data._id}`, { token: phToken })).status === 403);
+
+  // Retire the fixtures.
+  for (const id of [wcRice.data._id, wcTin.data._id]) {
+    const onHand = (await ssApi(`/products/${id}`)).data?.product?.stock?.quantityOnHand ?? 0;
+    if (onHand !== 0) await ssApi(`/products/${id}/adjust`, { method: 'POST', body: { type: 'adjust', quantityDelta: -onHand, reason: 'Cost fixture' } });
+    await ssApi(`/products/${id}`, { method: 'DELETE' });
+  }
+
 
   // --- Customer on a sale, in every vertical -----------------------------------
   // Clothing has always been able to attach a customer at the till; these are the

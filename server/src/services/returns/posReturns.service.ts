@@ -64,7 +64,7 @@ class PosReturnService {
     // A refund goes back on a tender the branch actually takes.
     assertMethodsEnabled(store.paymentMethods ?? [], [input.refundMethod], POS_TENDER_DIALECT);
 
-    const prepared = this.prepareLines(sale, input.items);
+    const prepared = this.prepareLines(adapter, sale, input.items);
 
     // ---- hold the quantities ------------------------------------------------
     const held: { saleItemId: Types.ObjectId; quantity: number }[] = [];
@@ -119,6 +119,7 @@ class PosReturnService {
             quantity: entry.quantity,
             unitPriceMinor: entry.line.unitPriceMinor,
             costPriceMinorSnapshot: entry.line.costPriceMinor,
+            costMinor: entry.costMinor,
             lineTotalMinor: entry.lineTotalMinor,
             restock: entry.restock,
             ...(entry.line.allocations
@@ -203,7 +204,7 @@ class PosReturnService {
     const store = await StoreModel.findOne({ _id: ctx.storeId, tenantId: ctx.tenantId }).select('paymentMethods returnPrefix').lean();
     if (!store) throw ApiError.notFound('Branch not found');
 
-    const prepared = this.prepareLines(sale, input.items);
+    const prepared = this.prepareLines(adapter, sale, input.items);
     const creditMinor = prepared.reduce((sum, entry) => sum + entry.lineTotalMinor, 0);
 
     // Priced from the catalogue, never from the request, so the rule below is
@@ -290,6 +291,7 @@ class PosReturnService {
             quantity: entry.quantity,
             unitPriceMinor: entry.line.unitPriceMinor,
             costPriceMinorSnapshot: entry.line.costPriceMinor,
+            costMinor: entry.costMinor,
             lineTotalMinor: entry.lineTotalMinor,
             restock: entry.restock,
           })),
@@ -370,9 +372,9 @@ class PosReturnService {
    * that valued the returned goods differently from a refund would be a way to
    * launder money out of the till.
    */
-  private prepareLines(sale: ReturnableSale, items: RequestedReturnLine[]) {
+  private prepareLines(adapter: SaleReturnAdapter, sale: ReturnableSale, items: RequestedReturnLine[]) {
     const byId = new Map(sale.lines.map((line) => [String(line.saleItemId), line]));
-    const prepared: { line: ReturnableLine; quantity: number; restock: boolean; lineTotalMinor: number }[] = [];
+    const prepared: { line: ReturnableLine; quantity: number; restock: boolean; lineTotalMinor: number; costMinor: number }[] = [];
 
     for (const requested of items) {
       const line = byId.get(String(requested.saleItemId));
@@ -399,7 +401,9 @@ class PosReturnService {
         restock: requested.restock,
         // What was actually paid for these units: the line's own price, less
         // its share of any discount taken off the whole sale.
-        lineTotalMinor: this.refundFor(sale, line, requested.quantity),
+        lineTotalMinor: this.refundFor(adapter, sale, line, requested.quantity),
+        // And what they cost the shop, in the same unit.
+        costMinor: this.costFor(adapter, line, requested.quantity),
       });
     }
 
@@ -415,10 +419,20 @@ class PosReturnService {
    * line contributed. Integer arithmetic throughout, rounded down, so a refund
    * can never come to more than was taken.
    */
-  private refundFor(sale: { subtotalMinor: number; discountMinor: number }, line: ReturnableLine, quantity: number): number {
-    const gross = line.unitPriceMinor * quantity;
+  private refundFor(adapter: SaleReturnAdapter, sale: { subtotalMinor: number; discountMinor: number }, line: ReturnableLine, quantity: number): number {
+    // What these units were SOLD for. Not `unitPriceMinor * quantity`: a Super
+    // Shop weighs in grams and prices per kilogram, so that product is a
+    // thousand times the real figure and would refund a thousand times the
+    // money. Where a quantity really is a count of things - Pharmacy,
+    // Restaurant - the default is exactly that multiplication.
+    const gross = adapter.amountOf ? adapter.amountOf(line, quantity) : line.unitPriceMinor * quantity;
     if (sale.discountMinor <= 0 || sale.subtotalMinor <= 0) return gross;
     return Math.floor((gross * (sale.subtotalMinor - sale.discountMinor)) / sale.subtotalMinor);
+  }
+
+  /** What `quantity` of this line cost the shop, in the vertical's own unit. */
+  private costFor(adapter: SaleReturnAdapter, line: ReturnableLine, quantity: number): number {
+    return adapter.costOf ? adapter.costOf(line, quantity) : line.costPriceMinor * quantity;
   }
 
   /** The batches (earliest first) `quantity` units of this line came from. */

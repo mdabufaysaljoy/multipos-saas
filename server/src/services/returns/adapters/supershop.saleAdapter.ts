@@ -123,6 +123,7 @@ class SupershopSaleReturnAdapter implements SaleReturnAdapter {
         itemId: line.productId,
         label: line.nameSnapshot,
         detail: line.unitType === 'weight' ? 'by weight' : 'by piece',
+        unitType: line.unitType,
         quantity: line.quantity,
         returnedQuantity: line.returnedQuantity ?? 0,
         unitPriceMinor: line.unitPriceMinor,
@@ -159,6 +160,20 @@ class SupershopSaleReturnAdapter implements SaleReturnAdapter {
    * returned SO FAR, so a sale returned in several parts ends exactly where one
    * full return would - the shared loyalty maths does that part.
    */
+  /**
+   * A weighed line's quantity is in GRAMS and its prices are per KILOGRAM, so
+   * neither what it sold for nor what it cost is price times quantity. This is
+   * the same `lineAmount` the checkout used to charge for it, so a refund can
+   * never differ from what was taken.
+   */
+  amountOf(line: { unitPriceMinor: number; unitType?: 'each' | 'weight' }, quantity: number): number {
+    return lineAmount(line.unitPriceMinor, quantity, line.unitType ?? 'each');
+  }
+
+  costOf(line: { costPriceMinor: number; unitType?: 'each' | 'weight' }, quantity: number): number {
+    return lineAmount(line.costPriceMinor, quantity, line.unitType ?? 'each');
+  }
+
   async reverseLoyalty(ctx: TenantContext, saleId: Types.ObjectId, reason: string): Promise<void> {
     const sale = await ShopSaleModel.findOne({ _id: saleId, tenantId: ctx.tenantId }).select('loyalty saleNumber').lean();
     if (!sale?.loyalty) return;

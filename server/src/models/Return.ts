@@ -30,6 +30,13 @@ export interface ReturnItemDoc {
    * would stay on the books forever.
    */
   costPriceMinorSnapshot: number;
+  /**
+   * What the returned quantity COST, already worked out in the vertical's own
+   * unit. Absent on returns written before this existed, where a reader falls
+   * back to quantity x `costPriceMinorSnapshot` - right for a count of things,
+   * and what those rows have always reported.
+   */
+  costMinor?: number;
   lineTotalMinor: number;
   /** Whether the goods went back into sellable stock. */
   restock: boolean;
@@ -119,6 +126,7 @@ const returnItemSchema = new Schema<ReturnItemDoc>(
     unitPriceMinor: { type: Number, required: true, min: 0 },
     // Defaults to 0 so returns created before this field existed still load.
     costPriceMinorSnapshot: { type: Number, default: 0, min: 0 },
+    costMinor: { type: Number, default: null, min: 0 },
     lineTotalMinor: { type: Number, required: true, min: 0 },
     restock: { type: Boolean, default: true },
   },
