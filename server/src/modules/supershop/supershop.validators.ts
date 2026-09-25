@@ -5,7 +5,35 @@ import { SHOP_SALE_STATUSES } from '../../models/ShopSale';
 import { objectId, paginationSchema, searchSchema, paymentMethodKey } from '../common/common.validators';
 import { posCustomerSchema } from '../customers/customers.validators';
 
+/**
+ * A single item's price or cost: at most 1,000,000.00.
+ *
+ * Kept deliberately lower than a sale amount, because a unit price is
+ * MULTIPLIED by a quantity: this ceiling times the largest quantity a line may
+ * carry stays inside `Number.isSafeInteger`, so a line total can never silently
+ * lose precision. `createSale` re-checks the product anyway.
+ */
 const amount = z.number().int().min(0).max(100_000_000);
+
+/**
+ * Money that belongs to a whole sale - a payment, or a discount.
+ *
+ * A basket is not bounded by what one item costs: a supershop takes wholesale
+ * runs and appliance sales, and a payment row has to be able to carry one. The
+ * ceiling is 100,000,000.00, which is also just above the most a till's money
+ * input will accept, so anything a cashier can type is something the server will
+ * take. Five rows at the ceiling still add up well inside a safe integer.
+ *
+ * It is a bound, not an absence of one: a mistyped amount is still refused, and
+ * the message says what the limit is instead of leaving the till with "the
+ * submitted data is not valid".
+ */
+export const MAX_SALE_AMOUNT_MINOR = 10_000_000_000;
+const saleAmount = z
+  .number()
+  .int('Amounts must be a whole number of poisha')
+  .min(0)
+  .max(MAX_SALE_AMOUNT_MINOR, 'One payment cannot be more than 100,000,000.00. Split it across tenders.');
 const text = (max: number) => z.string().trim().max(max);
 /**
  * Pieces, or grams for weighed goods.
@@ -111,10 +139,10 @@ export const createSaleSchema = z
       .max(200)
       .refine((items) => new Set(items.map((item) => String(item.productId))).size === items.length, 'List each product once'),
     payments: z
-      .array(z.object({ method: paymentMethodKey, amountMinor: amount }).strict())
+      .array(z.object({ method: paymentMethodKey, amountMinor: saleAmount }).strict())
       .min(1, 'Record how the customer paid')
-      .max(5),
-    discountMinor: amount.default(0),
+      .max(5, 'A sale can be split across at most five payment methods'),
+    discountMinor: saleAmount.default(0),
     customerId: objectId.optional(),
     customer: posCustomerSchema.optional(),
     /**

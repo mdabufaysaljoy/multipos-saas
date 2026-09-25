@@ -5943,6 +5943,107 @@ async function main() {
   check('An invalid Supershop range is rejected', (await ssApi('/reports?preset=forever')).status === 422);
 
 
+  // --- High-value sales and split payment -------------------------------------
+  // A supershop takes big baskets: a month's groceries, a wholesale run, a
+  // fridge. Runs after the analytics checks above, like the customer section
+  // below, so the exact figures they assert are already settled.
+  section('Supershop high-value split payment');
+
+  const hvStamp = String(Date.now()).slice(-6);
+  const hvMake = async (name, priceMinor) => {
+    const created = await ssProduct({ name: `${name} ${hvStamp}`, category: 'Household', unitType: 'each', priceMinor });
+    await ssReceive(created.data._id, { quantity: 500, costPriceMinor: Math.floor(priceMinor / 2) });
+    return created.data._id;
+  };
+  const tk = (taka) => taka * 100; // minor units, the only unit money travels in
+  const hvBig = await hvMake('Chest Freezer', tk(50_000));
+  const hvSmall = await hvMake('Rice Sack 50kg', tk(30_000));
+  check('Two high-value products are stocked', Boolean(hvBig && hvSmall));
+
+  /** A sale of whole units, paid by the given tenders. */
+  const hvSale = (lines, payments) =>
+    ssSale({ items: lines.map(([productId, quantity]) => ({ productId, quantity })), payments });
+
+  // ---- below, at, and above the reported ~Tk 80,000 threshold ----------------
+  const hvUnder = await hvSale([[hvBig, 1]], [{ method: 'cash', amountMinor: tk(50_000) }]);
+  check('Under Tk 80,000 completes', hvUnder.status === 201 && hvUnder.data?.totalMinor === tk(50_000), hvUnder.data?.totalMinor ?? hvUnder.error);
+
+  const hvAt80 = await hvSale([[hvBig, 1], [hvSmall, 1]], [{ method: 'cash', amountMinor: tk(40_000) }, { method: 'bkash', amountMinor: tk(40_000) }]);
+  check('Exactly Tk 80,000, split two ways, completes', hvAt80.status === 201 && hvAt80.data?.totalMinor === tk(80_000), hvAt80.data?.totalMinor ?? hvAt80.error);
+
+  const hvOver80 = await hvSale([[hvBig, 1], [hvSmall, 2]], [{ method: 'cash', amountMinor: tk(60_000) }, { method: 'card', amountMinor: tk(50_000) }]);
+  check('Above Tk 80,000 completes - the reported failure does not reproduce', hvOver80.status === 201 && hvOver80.data?.totalMinor === tk(110_000), hvOver80.data?.totalMinor ?? hvOver80.error);
+
+  const hv100k = await hvSale([[hvBig, 2]], [{ method: 'cash', amountMinor: tk(100_000) }]);
+  check('Tk 100,000 on one tender completes', hv100k.status === 201 && hv100k.data?.totalMinor === tk(100_000), hv100k.data?.totalMinor ?? hv100k.error);
+
+  // ---- the exact basket from the report: 250k as 100k + 75k + 75k -----------
+  const hv250k = await hvSale(
+    [[hvBig, 5]],
+    [{ method: 'cash', amountMinor: tk(100_000) }, { method: 'bkash', amountMinor: tk(75_000) }, { method: 'card', amountMinor: tk(75_000) }],
+  );
+  check('Tk 250,000 across three tenders completes', hv250k.status === 201 && hv250k.data?.totalMinor === tk(250_000), hv250k.data?.totalMinor ?? hv250k.error);
+  check('...paid to the paisa, with no change', hv250k.data?.paidMinor === tk(250_000) && hv250k.data?.changeMinor === 0, { paid: hv250k.data?.paidMinor, change: hv250k.data?.changeMinor });
+
+  // ---- half a million, four tenders ------------------------------------------
+  const hv500k = await hvSale(
+    [[hvBig, 10]],
+    [
+      { method: 'cash', amountMinor: tk(200_000) },
+      { method: 'bkash', amountMinor: tk(150_000) },
+      { method: 'card', amountMinor: tk(100_000) },
+      { method: 'bank', amountMinor: tk(50_000) },
+    ],
+  );
+  check('Tk 500,000 across four tenders completes', hv500k.status === 201 && hv500k.data?.totalMinor === tk(500_000), hv500k.data?.totalMinor ?? hv500k.error);
+  check('...every paisa is accounted for, with nothing over', hv500k.data?.paidMinor === tk(500_000) && hv500k.data?.changeMinor === 0, { paid: hv500k.data?.paidMinor, change: hv500k.data?.changeMinor });
+  check('...and each tender is stored exactly as it was taken', JSON.stringify((hv500k.data?.payments ?? []).map((row) => row.amountMinor)) === JSON.stringify([tk(200_000), tk(150_000), tk(100_000), tk(50_000)]), hv500k.data?.payments);
+
+  // ---- a sale larger than any ONE tender may be ------------------------------
+  // A single payment row is capped at Tk 1,000,000; a sale is not, because it
+  // can be split. This is the real ceiling, and it is far above Tk 80,000.
+  const hvHuge = await hvSale([[hvBig, 30]], [{ method: 'cash', amountMinor: tk(750_000) }, { method: 'bank', amountMinor: tk(750_000) }]);
+  check('Tk 1,500,000 completes when split across two tenders', hvHuge.status === 201 && hvHuge.data?.totalMinor === tk(1_500_000), hvHuge.data?.totalMinor ?? hvHuge.error);
+  const hvOneRow = await hvSale([[hvBig, 30]], [{ method: 'cash', amountMinor: tk(1_500_000) }]);
+  check('...and also as ONE tender of Tk 1,500,000, which used to be refused', hvOneRow.status === 201 && hvOneRow.data?.totalMinor === tk(1_500_000), hvOneRow.data?.totalMinor ?? hvOneRow.error);
+
+  // The ceiling is still a ceiling, and it now says so instead of "the
+  // submitted data is not valid".
+  const hvOverCeiling = await hvSale([[hvBig, 1]], [{ method: 'cash', amountMinor: 10_000_000_001 }]);
+  check('A payment above the ceiling is refused', hvOverCeiling.status === 422, hvOverCeiling.status);
+  check('...and the refusal names the field and the limit', /100,000,000/.test(JSON.stringify(hvOverCeiling.error?.details ?? '')) && JSON.stringify(hvOverCeiling.error?.details ?? '').includes('amountMinor'), hvOverCeiling.error?.details);
+
+  // ---- change, and who may give it -------------------------------------------
+  const hvChange = await hvSale([[hvBig, 2]], [{ method: 'cash', amountMinor: tk(120_000) }]);
+  check('Cash over the total is change, not revenue', hvChange.status === 201 && hvChange.data?.totalMinor === tk(100_000) && hvChange.data?.changeMinor === tk(20_000), hvChange.data ?? hvChange.error);
+  const hvCardOver = await hvSale([[hvBig, 2]], [{ method: 'card', amountMinor: tk(120_000) }]);
+  check('A card over the total is refused - change comes out of the drawer', hvCardOver.status === 400, hvCardOver.error?.message);
+  const hvMixedChange = await hvSale([[hvBig, 3]], [{ method: 'bkash', amountMinor: tk(100_000) }, { method: 'cash', amountMinor: tk(60_000) }]);
+  check('In a split, only the cash part may overshoot', hvMixedChange.status === 201 && hvMixedChange.data?.changeMinor === tk(10_000), hvMixedChange.data ?? hvMixedChange.error);
+
+  // ---- payments that do not add up -------------------------------------------
+  const hvShort = await hvSale([[hvBig, 5]], [{ method: 'cash', amountMinor: tk(100_000) }, { method: 'bkash', amountMinor: tk(75_000) }]);
+  check('A split that is short of the total is refused', hvShort.status === 400, hvShort.error?.message);
+  check('...and says how short, in minor units', hvShort.error?.details?.totalMinor === tk(250_000) && hvShort.error?.details?.paidMinor === tk(175_000), hvShort.error?.details);
+  check('A tender the branch does not take is refused', (await hvSale([[hvBig, 1]], [{ method: 'crypto', amountMinor: tk(50_000) }])).status === 400);
+  check('A negative payment is refused', (await hvSale([[hvBig, 1]], [{ method: 'cash', amountMinor: -tk(50_000) }])).status === 422);
+  check('A fractional payment is refused', (await hvSale([[hvBig, 1]], [{ method: 'cash', amountMinor: 5_000_000.5 }])).status === 422);
+  check('More than five tenders is refused', (await hvSale([[hvBig, 1]], ['cash', 'bkash', 'card', 'bank', 'nagad', 'other'].map((method) => ({ method, amountMinor: tk(10_000) })))).status === 422);
+
+  // ---- the money is exact, and the stock moved exactly once ------------------
+  const hvSold = 1 + 1 + 1 + 2 + 5 + 10 + 30 + 30 + 2 + 3; // completed sales of the big product
+  const hvBigOnHand = (await ssApi(`/products/${hvBig}`)).data?.product?.stock?.quantityOnHand;
+  check('Every completed high-value sale took its stock exactly once', hvBigOnHand === 500 - hvSold, { onHand: hvBigOnHand, expected: 500 - hvSold });
+  check('No refused sale took any', ((await ssApi(`/products/${hvSmall}`)).data?.product?.stock?.quantityOnHand) === 500 - (1 + 2));
+
+  // Retire the fixtures so later exact-count checks are not disturbed.
+  for (const id of [hvBig, hvSmall]) {
+    const onHand = (await ssApi(`/products/${id}`)).data?.product?.stock?.quantityOnHand ?? 0;
+    if (onHand !== 0) await ssApi(`/products/${id}/adjust`, { method: 'POST', body: { type: 'adjust', quantityDelta: -onHand, reason: 'High-value fixture' } });
+    await ssApi(`/products/${id}`, { method: 'DELETE' });
+  }
+
+
   // --- Customer on a sale, in every vertical -----------------------------------
   // Clothing has always been able to attach a customer at the till; these are the
   // same rules in the other three. Runs last in each vertical's data so the

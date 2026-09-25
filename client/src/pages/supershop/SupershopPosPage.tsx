@@ -266,7 +266,19 @@ export function SupershopPosPage() {
       setReceiptFor(sale._id);
       void queryClient.invalidateQueries({ queryKey: ['supershop'] });
     },
-    onError: (err) => toast.error(err instanceof ApiError ? err.message : 'Could not complete the sale'),
+    onError: (err) => {
+      if (!(err instanceof ApiError)) {
+        toast.error('Could not complete the sale');
+        return;
+      }
+      // A schema refusal carries the field that failed and why. Without it the
+      // till shows only "The submitted data is not valid", which tells a cashier
+      // nothing about which amount to correct.
+      const [field, detail] = Object.entries(err.fieldErrors)[0] ?? [];
+      toast.error(detail ?? err.message, {
+        description: detail && field ? `Check: ${field.replace(/\.\d+\./g, ' ').replace(/\./g, ' ')}` : undefined,
+      });
+    },
   });
 
   const canComplete = cart.length > 0 && payments.isSettled && !complete.isPending;

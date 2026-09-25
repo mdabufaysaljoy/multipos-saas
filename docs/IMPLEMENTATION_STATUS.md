@@ -645,3 +645,109 @@ and needs the owner at the keyboard.
 
 **Not touched:** Clothing, Restaurant, Pharmacy. **Still open:** CI (audit Issue
 10) remains red for the timezone reason documented above.
+
+## 2026-09-26 — Phase 3: high-value sales and split payment
+
+Audit Issue 4, which the audit could not reproduce from reading alone. It can now
+be stated precisely. Super Shop only; **no shared code changed**.
+
+### What the ~Tk 80,000 threshold actually was: nothing
+
+Traced the whole request — POS state → `usePayments`/`computePayments` →
+`tenderedRows` → payload → `createSaleSchema` → controller → `supershopService`
+→ `settleTender` → `ShopSale`. Then probed the schema directly, and then drove
+real sales end to end.
+
+**There is no limit at or near Tk 80,000, and there never was.** Before any
+change, sales at Tk 50,000 / 80,000 / 110,000 / 100,000 / 250,000 (the reported
+basket, 100k + 75k + 75k across three tenders) and 500,000 across four tenders
+all completed. Each of these is now a standing assertion.
+
+Ruled out, each by inspection:
+
+| Suspected cause | Finding |
+|---|---|
+| Integer schema | `z.number().int()` throughout; correct |
+| Decimal precision | None exists — money is integer minor units end to end |
+| Frontend input type | `parseMoneyToMinor` splits the string; no `parseFloat(x) * 100` |
+| JSON parsing | Client sends plain integers; verified |
+| Database type | `ShopSale` validates `Number.isSafeInteger`; no cap |
+| Aggregation logic | `computePayments` is integer-only, no division |
+| **Max constraint** | **The one real limit — but at Tk 1,000,000, not 80,000** |
+
+### The real defect
+
+`supershop.validators.ts` used **one** `amount` schema, capped at 100,000,000
+minor (**Tk 1,000,000**), for both a unit price and a payment row. A basket is
+not bounded by what one item costs, so a single tender above Tk 1,000,000 was
+refused — and refused as a bare `422 "The submitted data is not valid"`, with no
+indication of which field or what the limit was. That is the message in the
+report, and an illegible refusal at *some* large amount is exactly what gets
+remembered as "about eighty thousand".
+
+**Clothing, the reference vertical, has no upper bound on a payment at all**
+(`positiveMinorAmount` — safe integer, positive, no max). The cap is something
+the three newer verticals introduced.
+
+### The fix
+
+Two ceilings instead of one, because the two quantities are not alike:
+
+- `amount` — a unit price or cost — **stays at Tk 1,000,000**, deliberately. A
+  unit price is MULTIPLIED by a quantity, and this ceiling times the largest
+  quantity a line may carry stays inside `Number.isSafeInteger`, so a line total
+  can never silently lose precision.
+- `saleAmount` — a payment row or a whole-sale discount — **Tk 100,000,000.00**
+  (`MAX_SALE_AMOUNT_MINOR`), with a message that names the limit and says to
+  split across tenders. Five rows at the ceiling still add up well inside a safe
+  integer.
+
+This is a bound, not the removal of one: a mistyped amount is still refused, and
+now says why.
+
+**The client/server mismatch closes without touching shared code.** `MoneyInput`
+accepts at most Tk 99,999,999.99; the new server ceiling is Tk 100,000,000.00,
+just above it. Every amount a till can physically type is now an amount the
+server will take, so `features/payments/PaymentPanel` (shared with all four
+verticals) needed no change.
+
+**The till now says what is wrong.** `SupershopPosPage`'s sale error handler
+reads `ApiError.fieldErrors` — which already existed and was simply unused — and
+shows the field-level message instead of "The submitted data is not valid".
+
+Preserved unchanged: exact minor-unit precision, split-payment validation,
+remaining-payable, cash-tendered and change, `settleTender`'s three rules
+(enabled method, covers the total, only cash may exceed), the guarded stock
+decrement that is the duplicate-sale protection, and backend authority — the
+request still carries no prices.
+
+### Proof that other POS types are unaffected
+
+Three files changed, none shared:
+`server/src/modules/supershop/supershop.validators.ts` ·
+`client/src/pages/supershop/SupershopPosPage.tsx` · `scripts/smoke-test.mjs`.
+`amount` and `saleAmount` are module-private to Super Shop's validators.
+
+**Flagged, not changed:** Pharmacy and Restaurant carry the *identical*
+`max(100_000_000)` payment cap and therefore the same latent limitation. Out of
+scope here; worth a decision.
+
+### Verification
+
+- `npm run lint` ✅ · `npm run typecheck` ✅ · `npm run build` ✅
+- `npm test` — **3314 passed, 0 failed** (was 3289; **25 net new assertions**).
+
+New section *"Supershop high-value split payment"*: under / exactly / above
+Tk 80,000; Tk 100,000 on one tender; **Tk 250,000 across three tenders, paid to
+the paisa with no change**; Tk 500,000 across four, with every tender stored
+exactly as taken; Tk 1,500,000 both split and — now — as a single tender, which
+the old cap refused; a payment above the new ceiling refused *with the field and
+the limit named*; cash over the total becoming change; a card over the total
+refused; only the cash part of a split overshooting; a short split refused with
+its shortfall in minor units; an unaccepted tender, a negative amount, a
+fractional amount and a sixth tender all refused; and — the duplicate-sale
+check — every completed sale taking its stock exactly once while no refused sale
+took any.
+
+**Not touched:** Clothing, Restaurant, Pharmacy. **Still open:** CI (audit Issue
+10). **Browser pass:** still outstanding for the same reason as Phase 2.
