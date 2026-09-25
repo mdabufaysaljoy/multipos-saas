@@ -85,6 +85,17 @@ export interface ShopSaleLine {
   returnedQuantity?: number;
 }
 
+/** What an exchange replaced, carried on the replacement sale for its receipt. */
+export interface ShopSaleExchange {
+  returnId: string | null;
+  returnNumber: string;
+  originalSaleId: string;
+  originalSaleNumber: string;
+  /** Refund value of the returned goods, applied here instead of paid out. */
+  creditMinor: number;
+  returnedItems: { nameSnapshot: string; detailSnapshot: string; quantity: number; unitType: string; lineTotalMinor: number }[];
+}
+
 export interface ShopSale {
   _id: string;
   saleNumber: string;
@@ -101,6 +112,8 @@ export interface ShopSale {
   /** Value returned against this sale, and whether nothing is left to return. */
   returnedTotalMinor?: number;
   fullyReturned?: boolean;
+  /** Present only on the REPLACEMENT side of an exchange. */
+  exchange?: ShopSaleExchange | null;
   soldAt: string;
   cashierNameSnapshot: string;
   voidedAt: string | null;
@@ -184,4 +197,38 @@ export interface ShopDashboard {
   /** Stock is not a period: these describe the shelf right now. */
   lowStock: { productId: string; name: string; unitType: ShopUnitType; reorderLevel: number; quantityOnHand: number }[];
   lowStockCount: number;
+}
+
+
+/** What the till sends to exchange goods. No prices: the server values both sides. */
+export interface ShopExchangeInput {
+  items: { saleItemId: string; quantity: number; restock: boolean }[];
+  replacement: {
+    items: { productId: string; quantity: number }[];
+    /** Empty when the replacement costs exactly what came back. */
+    payments: { method: string; amountMinor: number }[];
+  };
+  reason: string;
+  /** Makes a double submission return the first exchange instead of a second one. */
+  idempotencyKey: string;
+}
+
+/** The return an exchange wrote, with the replacement sale it paid for. */
+export interface ShopExchange {
+  _id: string;
+  returnNumber: string;
+  saleNumberSnapshot: string;
+  totalMinor: number;
+  returnedAt: string;
+  exchange: {
+    saleId: string;
+    saleNumber: string;
+    refundableMinor: number;
+    replacementSubtotalMinor: number;
+    replacementTotalMinor: number;
+    extraPayableMinor: number;
+  } | null;
+  replacementSale?: { saleId: string; saleNumber: string; totalMinor: number; paidMinor: number; changeMinor: number };
+  /** True when this response replayed an exchange that had already happened. */
+  replayed?: boolean;
 }

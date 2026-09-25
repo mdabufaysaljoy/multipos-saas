@@ -315,7 +315,29 @@ class SupershopService {
 
   // =================================================================== sales
 
-  async createSale(ctx: TenantContext, input: CreateSaleInput) {
+  /**
+   * A till sale, and the replacement side of an exchange.
+   *
+   * `options.exchange` is INTERNAL - it is never reachable from a request body.
+   * When it is present the returned goods' refund value has already been earned
+   * by the customer, so it pays for part of this basket: the tenders only have
+   * to cover what is left. Everything else - pricing, VAT, stock, the ledger,
+   * the customer's lifetime value - follows the ordinary rules, which is the
+   * point of routing an exchange through here instead of writing a second
+   * checkout.
+   */
+  async createSale(
+    ctx: TenantContext,
+    input: CreateSaleInput,
+    options: {
+      exchange?: {
+        originalSaleId: Types.ObjectId;
+        originalSaleNumber: string;
+        creditMinor: number;
+        returnedItems: { nameSnapshot: string; detailSnapshot: string; quantity: number; unitType: string; lineTotalMinor: number }[];
+      };
+    } = {},
+  ) {
     const entitlement = await entitlementService.forTenant(ctx.tenantId);
     entitlementService.assertUsable(entitlement);
     await entitlementService.assertCanRecordSale(ctx.tenantId, entitlement, 'supershop');
@@ -359,10 +381,20 @@ class SupershopService {
     if (totalMinor <= 0) {
       throw ApiError.validation('A basket must come to more than nothing after points.', { reason: 'LOYALTY_NOTHING_PAYABLE' });
     }
-    // Enabled for the branch, covering the total, change only out of cash:
-    // the same three rules every POS settles by.
+    // An exchange credit is money the customer has already handed over once, on
+    // the sale being returned. It pays for this basket before any tender does.
+    const creditMinor = options.exchange?.creditMinor ?? 0;
+    if (creditMinor > totalMinor) {
+      // The caller checks this first; this is the backstop that keeps a credit
+      // from ever turning into cash out of the drawer.
+      throw ApiError.validation('The exchange credit is worth more than the replacement basket.', { reason: 'EXCHANGE_CREDIT_EXCEEDS_TOTAL' });
+    }
+    const payableMinor = totalMinor - creditMinor;
+
+    // Enabled for the branch, covering what is still payable, change only out of
+    // cash: the same three rules every POS settles by.
     const { paidMinor, changeMinor } = settleTender({
-      totalMinor,
+      totalMinor: payableMinor,
       tendered: input.payments,
       accepted: store.paymentMethods ?? [],
       dialect: POS_TENDER_DIALECT,
@@ -474,6 +506,18 @@ class SupershopService {
           : null,
         note: input.note,
         status: 'completed',
+        ...(options.exchange
+          ? {
+              exchange: {
+                returnId: null,
+                returnNumber: '',
+                originalSaleId: options.exchange.originalSaleId,
+                originalSaleNumber: options.exchange.originalSaleNumber,
+                creditMinor,
+                returnedItems: options.exchange.returnedItems,
+              },
+            }
+          : {}),
         soldAt,
         cashierId: ctx.userId,
         cashierNameSnapshot: ctx.userName,

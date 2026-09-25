@@ -24,6 +24,7 @@ import type {
   ReceiveStockInput,
   UpdateProductInput,
   CreateReturnInput,
+  CreateExchangeInput,
 } from './supershop.validators';
 
 type IdParams = { id: Types.ObjectId };
@@ -149,6 +150,39 @@ export const createReturn = asyncHandler(async (req: Request, res: Response) => 
     targetLabel: result.returnNumber,
     newValue: { saleNumber: result.saleNumberSnapshot, totalMinor: result.totalMinor, reason: result.reason },
   });
+  created(res, result);
+});
+
+/**
+ * An exchange: goods back, goods out, and the difference paid at the till.
+ * The engine re-values both sides on the server and refuses a cheaper swap.
+ */
+export const createExchange = asyncHandler(async (req: Request, res: Response) => {
+  const ctx = getContext(req);
+  const input = body<CreateExchangeInput>(req);
+  const result = await posReturnService.createExchange(ctx, supershopSaleReturnAdapter, {
+    saleId: params<IdParams>(req).id,
+    items: input.items,
+    reason: input.reason,
+    replacement: {
+      items: input.replacement.items.map((item) => ({ itemId: item.productId, quantity: item.quantity })),
+      payments: input.replacement.payments,
+    },
+    idempotencyKey: input.idempotencyKey,
+  });
+  await recordAudit(req, {
+    action: 'supershop.sale_exchanged',
+    targetTenantId: ctx.tenantId,
+    targetStoreId: ctx.storeId,
+    targetLabel: result.returnNumber,
+    newValue: {
+      returnId: String(result._id),
+      creditMinor: result.totalMinor,
+      replacementSaleId: String(result.exchange?.saleId ?? ''),
+      extraPayableMinor: result.exchange?.extraPayableMinor ?? 0,
+    },
+  });
+  // A replay is the same exchange, not a new one.
   created(res, result);
 });
 

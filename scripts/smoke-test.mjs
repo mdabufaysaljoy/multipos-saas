@@ -6043,6 +6043,229 @@ async function main() {
     await ssApi(`/products/${id}`, { method: 'DELETE' });
   }
 
+  // --- Exchange: goods back, goods out ----------------------------------------
+  // Super Shop could already take goods back for money. An exchange spends that
+  // refund value on replacement goods instead, which is a return and a sale
+  // joined at the till - so it goes through the same return engine and the same
+  // checkout, not a third one. Runs after the analytics checks, like everything
+  // else that adds sales.
+  section('Supershop exchange');
+
+  const exStamp = String(Date.now()).slice(-6);
+  const exMake = async (name, priceMinor, stock = 100) => {
+    const created = await ssProduct({ name: `${name} ${exStamp}`, category: 'Household', unitType: 'each', priceMinor });
+    await ssReceive(created.data._id, { quantity: stock, costPriceMinor: Math.floor(priceMinor / 2) });
+    return created.data._id;
+  };
+  const exSame = await exMake('Ex Kettle', 100_000);      // Tk 1,000
+  const exEqual = await exMake('Ex Toaster', 100_000);    // Tk 1,000, a different product
+  const exDearer = await exMake('Ex Blender', 150_000);   // Tk 1,500
+  const exCheaper = await exMake('Ex Mug', 60_000);       // Tk 600
+  check('Four exchange fixtures are stocked', [exSame, exEqual, exDearer, exCheaper].every(Boolean));
+
+  const exOnHand = async (id) => (await ssApi(`/products/${id}`)).data?.product?.stock?.quantityOnHand ?? 0;
+  /** A fresh sale of two kettles, so each case below has its own to exchange. */
+  const exOriginal = async () => {
+    const sale = await ssSale({ items: [{ productId: exSame, quantity: 2 }], payments: [{ method: 'cash', amountMinor: 200_000 }] });
+    return sale.data;
+  };
+  const exKey = (label) => `ex-${exStamp}-${label}`;
+  const exPost = (saleId, body) => ssApi(`/sales/${saleId}/exchange`, { method: 'POST', body });
+
+  // ---- same product, like for like ------------------------------------------
+  const exSale1 = await exOriginal();
+  const exBeforeSame = await exOnHand(exSame);
+  const ex1 = await exPost(exSale1._id, {
+    items: [{ saleItemId: exSale1.items[0]._id, quantity: 1, restock: true }],
+    replacement: { items: [{ productId: exSame, quantity: 1 }], payments: [] },
+    reason: 'Faulty on opening',
+    idempotencyKey: exKey('same'),
+  });
+  check('Like for like exchanges with nothing to pay', ex1.status === 201 && ex1.data?.exchange?.extraPayableMinor === 0, ex1.data?.exchange ?? ex1.error);
+  check('...the return is recorded as an exchange, not a refund', ex1.data?.refundMethod === 'exchange' && ex1.data?.totalMinor === 100_000, { method: ex1.data?.refundMethod, total: ex1.data?.totalMinor });
+  check('...a replacement sale was created and linked', Boolean(ex1.data?.exchange?.saleId && ex1.data?.exchange?.saleNumber), ex1.data?.exchange);
+  check('...and the shelf is where it started: one back, one out', (await exOnHand(exSame)) === exBeforeSame, { before: exBeforeSame, after: await exOnHand(exSame) });
+  check('...the original sale now shows the line returned', ((await ssApi(`/sales/${exSale1._id}`)).data?.items?.[0]?.returnedQuantity) === 1);
+
+  // ---- a different product at the same price --------------------------------
+  const exSale2 = await exOriginal();
+  const exEqualBefore = await exOnHand(exEqual);
+  const ex2 = await exPost(exSale2._id, {
+    items: [{ saleItemId: exSale2.items[0]._id, quantity: 1, restock: true }],
+    replacement: { items: [{ productId: exEqual, quantity: 1 }], payments: [] },
+    reason: 'Wanted the toaster instead',
+    idempotencyKey: exKey('equal'),
+  });
+  check('A different product at the same price needs no payment', ex2.status === 201 && ex2.data?.exchange?.extraPayableMinor === 0, ex2.data?.exchange ?? ex2.error);
+  check('...and the replacement left the shelf', (await exOnHand(exEqual)) === exEqualBefore - 1);
+
+  // ---- a dearer replacement, paid on one tender ------------------------------
+  const exSale3 = await exOriginal();
+  const ex3 = await exPost(exSale3._id, {
+    items: [{ saleItemId: exSale3.items[0]._id, quantity: 1, restock: true }],
+    replacement: { items: [{ productId: exDearer, quantity: 1 }], payments: [{ method: 'cash', amountMinor: 50_000 }] },
+    reason: 'Upgraded to the blender',
+    idempotencyKey: exKey('dearer'),
+  });
+  check('A dearer replacement collects exactly the difference', ex3.status === 201 && ex3.data?.exchange?.extraPayableMinor === 50_000, ex3.data?.exchange ?? ex3.error);
+  const ex3Sale = (await ssApi(`/sales/${ex3.data?.exchange?.saleId}`)).data;
+  check('...the replacement sale records the credit and what was taken', ex3Sale?.exchange?.creditMinor === 100_000 && ex3Sale?.paidMinor === 50_000 && ex3Sale?.totalMinor === 150_000, {
+    credit: ex3Sale?.exchange?.creditMinor,
+    paid: ex3Sale?.paidMinor,
+    total: ex3Sale?.totalMinor,
+  });
+  check('...and names the sale it replaced, both ways', ex3Sale?.exchange?.originalSaleNumber === exSale3.saleNumber && ex3Sale?.exchange?.returnNumber === ex3.data?.returnNumber, ex3Sale?.exchange);
+
+  // ---- split payment for the difference --------------------------------------
+  const exSale4 = await exOriginal();
+  const ex4 = await exPost(exSale4._id, {
+    items: [{ saleItemId: exSale4.items[0]._id, quantity: 1, restock: true }],
+    replacement: {
+      items: [{ productId: exDearer, quantity: 1 }],
+      payments: [{ method: 'cash', amountMinor: 30_000 }, { method: 'bkash', amountMinor: 20_000 }],
+    },
+    reason: 'Upgrade, paid two ways',
+    idempotencyKey: exKey('split'),
+  });
+  check('The difference can be split across tenders', ex4.status === 201 && ex4.data?.exchange?.extraPayableMinor === 50_000, ex4.data?.exchange ?? ex4.error);
+  check('...and both tenders are on the replacement sale', ((await ssApi(`/sales/${ex4.data?.exchange?.saleId}`)).data?.payments ?? []).length === 2);
+
+  // ---- cash over the difference is change ------------------------------------
+  const exSale5 = await exOriginal();
+  const ex5 = await exPost(exSale5._id, {
+    items: [{ saleItemId: exSale5.items[0]._id, quantity: 1, restock: true }],
+    replacement: { items: [{ productId: exDearer, quantity: 1 }], payments: [{ method: 'cash', amountMinor: 60_000 }] },
+    reason: 'Paid with a bigger note',
+    idempotencyKey: exKey('change'),
+  });
+  check('Cash over the difference comes back as change', ex5.status === 201 && ((await ssApi(`/sales/${ex5.data?.exchange?.saleId}`)).data?.changeMinor) === 10_000, ex5.error);
+
+  // ---- the rules -------------------------------------------------------------
+  const exSale6 = await exOriginal();
+  const exCheaperBefore = await exOnHand(exCheaper);
+  const exTooCheap = await exPost(exSale6._id, {
+    items: [{ saleItemId: exSale6.items[0]._id, quantity: 1, restock: true }],
+    replacement: { items: [{ productId: exCheaper, quantity: 1 }], payments: [] },
+    reason: 'Trading down',
+    idempotencyKey: exKey('cheap'),
+  });
+  check('A cheaper replacement is refused', exTooCheap.status === 422 && exTooCheap.error?.details?.reason === 'EXCHANGE_CHEAPER_REPLACEMENT', exTooCheap.error);
+  check('...and nothing moved: no stock, no return on the sale', (await exOnHand(exCheaper)) === exCheaperBefore && ((await ssApi(`/sales/${exSale6._id}`)).data?.items?.[0]?.returnedQuantity ?? 0) === 0);
+
+  const exShort = await exPost(exSale6._id, {
+    items: [{ saleItemId: exSale6.items[0]._id, quantity: 1, restock: true }],
+    replacement: { items: [{ productId: exDearer, quantity: 1 }], payments: [{ method: 'cash', amountMinor: 30_000 }] },
+    reason: 'Not enough handed over',
+    idempotencyKey: exKey('short'),
+  });
+  check('A payment short of the difference is refused', exShort.status === 400, exShort.error?.message);
+  check('...and that sale is still fully exchangeable', ((await ssApi(`/sales/${exSale6._id}`)).data?.items?.[0]?.returnedQuantity ?? 0) === 0);
+
+  check(
+    'More than was bought cannot be exchanged',
+    (await exPost(exSale6._id, {
+      items: [{ saleItemId: exSale6.items[0]._id, quantity: 99, restock: true }],
+      replacement: { items: [{ productId: exDearer, quantity: 1 }], payments: [{ method: 'cash', amountMinor: 1_000_000 }] },
+      reason: 'Too many',
+      idempotencyKey: exKey('toomany'),
+    })).status === 400,
+  );
+  check(
+    'A replacement that is not in this shop is refused',
+    (await exPost(exSale6._id, {
+      items: [{ saleItemId: exSale6.items[0]._id, quantity: 1, restock: true }],
+      replacement: { items: [{ productId: exSale6._id, quantity: 1 }], payments: [] },
+      reason: 'Nonsense product',
+      idempotencyKey: exKey('noprod'),
+    })).status === 400,
+  );
+  check(
+    'An exchange needs a reason and a request key',
+    (await exPost(exSale6._id, { items: [{ saleItemId: exSale6.items[0]._id, quantity: 1, restock: true }], replacement: { items: [{ productId: exDearer, quantity: 1 }], payments: [] } })).status === 422,
+  );
+
+  // ---- the same submission twice ---------------------------------------------
+  const exSale7 = await exOriginal();
+  const exBody = {
+    items: [{ saleItemId: exSale7.items[0]._id, quantity: 1, restock: true }],
+    replacement: { items: [{ productId: exDearer, quantity: 1 }], payments: [{ method: 'cash', amountMinor: 50_000 }] },
+    reason: 'Double click',
+    idempotencyKey: exKey('dup'),
+  };
+  const exFirst = await exPost(exSale7._id, exBody);
+  const exAgain = await exPost(exSale7._id, exBody);
+  check('The first submission goes through', exFirst.status === 201, exFirst.error);
+  check('The same key returns the SAME exchange, not a second one', exAgain.status === 201 && exAgain.data?.returnNumber === exFirst.data?.returnNumber && exAgain.data?.replayed === true, {
+    first: exFirst.data?.returnNumber,
+    again: exAgain.data?.returnNumber,
+  });
+  check('...and only one replacement sale exists for it', exAgain.data?.exchange?.saleId === exFirst.data?.exchange?.saleId);
+  check('...and only one unit came back off the original sale', ((await ssApi(`/sales/${exSale7._id}`)).data?.items?.[0]?.returnedQuantity) === 1);
+
+  // ---- the credit is what was PAID, not today's price ------------------------
+  const exSale8 = await exOriginal();
+  await ssApi(`/products/${exSame}`, { method: 'PATCH', body: { priceMinor: 500_000 } });
+  const ex8 = await exPost(exSale8._id, {
+    items: [{ saleItemId: exSale8.items[0]._id, quantity: 1, restock: true }],
+    replacement: { items: [{ productId: exDearer, quantity: 1 }], payments: [{ method: 'cash', amountMinor: 50_000 }] },
+    reason: 'Price went up since',
+    idempotencyKey: exKey('oldprice'),
+  });
+  check('The returned goods are valued at what was PAID, not at the new shelf price', ex8.status === 201 && ex8.data?.totalMinor === 100_000, { credit: ex8.data?.totalMinor, error: ex8.error });
+  await ssApi(`/products/${exSame}`, { method: 'PATCH', body: { priceMinor: 100_000 } });
+
+  // ---- the exchange receipt ---------------------------------------------------
+  const exReceipt = await ssApi(`/sales/${ex3.data?.exchange?.saleId}/receipt`);
+  check('The replacement sale has a receipt of its own', exReceipt.status === 200 && exReceipt.data?.sale?.saleNumber === ex3.data?.exchange?.saleNumber, exReceipt.error);
+  check('...naming the sale it replaced and the return', exReceipt.data?.sale?.exchange?.originalSaleNumber === exSale3.saleNumber && Boolean(exReceipt.data?.sale?.exchange?.returnNumber), exReceipt.data?.sale?.exchange);
+  check('...the credit and what came back', exReceipt.data?.sale?.exchange?.creditMinor === 100_000 && (exReceipt.data?.sale?.exchange?.returnedItems ?? []).length === 1, exReceipt.data?.sale?.exchange);
+  check('...the branch, the date and the tender, from the shared receipt branch', Boolean(exReceipt.data?.store?.name) && Boolean(exReceipt.data?.sale?.soldAt) && (exReceipt.data?.sale?.payments ?? []).length === 1, exReceipt.data?.store?.name);
+  check('The exchange is listed with the returns', ((await ssApi('/returns?limit=50')).data ?? []).some((row) => row.returnNumber === ex3.data?.returnNumber && row.refundMethod === 'exchange'));
+
+  // ---- who may do it -----------------------------------------------------------
+  const exSale9 = await exOriginal();
+  const exDenied = (token) =>
+    api(`/supershop/sales/${exSale9._id}/exchange`, {
+      method: 'POST',
+      token,
+      body: {
+        items: [{ saleItemId: exSale9.items[0]._id, quantity: 1, restock: true }],
+        replacement: { items: [{ productId: exDearer, quantity: 1 }], payments: [{ method: 'cash', amountMinor: 50_000 }] },
+        reason: 'Not allowed',
+        idempotencyKey: exKey(`denied-${Math.random().toString(36).slice(2, 8)}`),
+      },
+    });
+  check('An exchange needs a session', (await exDenied(undefined)).status === 401);
+  check('Another workspace cannot exchange against this sale', (await exDenied(phToken)).status === 403);
+  // A till with sales but no returns permission, and vice versa.
+  const exStoreId = (await api('/stores', { token: ssToken })).data?.[0]?._id;
+  const exTillCreated = await api('/staff', {
+    method: 'POST',
+    token: ssToken,
+    body: {
+      name: 'Exchange Till',
+      email: `ssex${exStamp}@example.com`,
+      password: 'Password@123',
+      storeId: exStoreId,
+      extraPermissions: ['sales.create', 'sales.view', 'products.view'],
+    },
+  });
+  const exTill = { id: exTillCreated.data?.id, token: (await login(`ssex${exStamp}@example.com`, 'Password@123')).token };
+  check('A till is created for the exchange permission checks', exTillCreated.status === 201 && Boolean(exTill.token), exTillCreated.error);
+  check('A till without returns.create cannot exchange', (await exDenied(exTill.token)).status === 403);
+  await api(`/staff/${exTill.id}`, { method: 'PATCH', token: ssToken, body: { extraPermissions: ['returns.create', 'sales.view', 'products.view'] } });
+  check('A till without sales.create cannot exchange either', (await exDenied(exTill.token)).status === 403);
+  await api(`/staff/${exTill.id}`, { method: 'PATCH', token: ssToken, body: { extraPermissions: ['returns.create', 'sales.create', 'sales.view', 'products.view'] } });
+  const exAllowed = await exDenied(exTill.token);
+  check('With both permissions the same till can', exAllowed.status === 201, exAllowed.error);
+
+  // Retire the fixtures: later checks count products by exact value.
+  for (const id of [exSame, exEqual, exDearer, exCheaper]) {
+    const onHand = await exOnHand(id);
+    if (onHand !== 0) await ssApi(`/products/${id}/adjust`, { method: 'POST', body: { type: 'adjust', quantityDelta: -onHand, reason: 'Exchange fixture' } });
+    await ssApi(`/products/${id}`, { method: 'DELETE' });
+  }
+
 
   // --- Customer on a sale, in every vertical -----------------------------------
   // Clothing has always been able to attach a customer at the till; these are the

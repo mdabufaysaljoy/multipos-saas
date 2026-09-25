@@ -9,6 +9,8 @@ import type {
   ShopReceipt,
   ShopReports,
   ShopSale,
+  ShopExchange,
+  ShopExchangeInput,
 } from '@/types/supershop';
 import type { SaleCustomerFields } from '@/features/customers/CustomerPicker';
 import type { PosLedgerRow, PosReturn, PosReturnInput } from '@/types/domain';
@@ -55,6 +57,8 @@ export const supershopApi = {
   voidSale: (id: string, reason: string) => post<ShopSale>(`/supershop/sales/${id}/void`, { reason }),
   /** A return against a completed sale: chosen lines, money back on a tender. */
   createReturn: (id: string, body: PosReturnInput) => post<PosReturn>(`/supershop/sales/${id}/return`, body),
+  /** An exchange: goods back, goods out, the difference settled at the till. */
+  createExchange: (id: string, body: ShopExchangeInput) => post<ShopExchange>(`/supershop/sales/${id}/exchange`, body),
   returns: (params?: Query) => getPaginated<PosReturn>('/supershop/returns', params),
 
   dashboard: (params?: Query) => get<ShopDashboard>('/supershop/dashboard', params),

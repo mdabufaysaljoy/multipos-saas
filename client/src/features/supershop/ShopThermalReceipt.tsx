@@ -38,6 +38,18 @@ export function ShopThermalReceipt({ payload }: { payload: ShopReceipt }) {
 
       <div className="r-rule" />
 
+      {/* The replacement side of an exchange says so, and names what it replaced. */}
+      {sale.exchange && (
+        <>
+          <div className="r-center r-bold">EXCHANGE</div>
+          <div className="r-center r-sm">
+            against {sale.exchange.originalSaleNumber}
+            {sale.exchange.returnNumber ? ` · ${sale.exchange.returnNumber}` : ''}
+          </div>
+          <div className="r-rule" />
+        </>
+      )}
+
       <table>
         <tbody>
           <tr>
@@ -88,6 +100,26 @@ export function ShopThermalReceipt({ payload }: { payload: ShopReceipt }) {
         </tbody>
       </table>
 
+      {sale.exchange && sale.exchange.returnedItems.length > 0 && (
+        <>
+          <div className="r-rule" />
+          <div className="r-bold r-sm">Returned</div>
+          <table>
+            <tbody>
+              {sale.exchange.returnedItems.map((item, index) => (
+                <tr key={`${item.nameSnapshot}-${index}`}>
+                  <td className="r-sm">
+                    {item.nameSnapshot}
+                    {item.detailSnapshot ? ` (${item.detailSnapshot})` : ''} x{item.quantity}
+                  </td>
+                  <td className="r-sm r-right">{money(item.lineTotalMinor)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </>
+      )}
+
       <div className="r-rule" />
 
       <table>
@@ -106,6 +138,18 @@ export function ShopThermalReceipt({ payload }: { payload: ShopReceipt }) {
             <td className="r-bold">Total</td>
             <td className="r-right r-bold">{money(sale.totalMinor)}</td>
           </tr>
+          {sale.exchange && (
+            <tr>
+              <td>Returned goods</td>
+              <td className="r-right">-{money(sale.exchange.creditMinor)}</td>
+            </tr>
+          )}
+          {sale.exchange && (
+            <tr>
+              <td className="r-bold">Difference to pay</td>
+              <td className="r-right r-bold">{money(Math.max(0, sale.totalMinor - sale.exchange.creditMinor))}</td>
+            </tr>
+          )}
           {sale.vatMinor > 0 && (
             <tr>
               <td className="r-sm">VAT included</td>

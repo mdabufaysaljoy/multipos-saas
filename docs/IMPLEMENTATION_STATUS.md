@@ -751,3 +751,124 @@ took any.
 
 **Not touched:** Clothing, Restaurant, Pharmacy. **Still open:** CI (audit Issue
 10). **Browser pass:** still outstanding for the same reason as Phase 2.
+
+## 2026-09-26 — Phase 4: Exchange (Super Shop)
+
+Audit Issue 5, the one flagged **High risk**. Super Shop only; Clothing untouched.
+
+### What an exchange is here
+
+A return and a sale joined at the till. The returned goods' refund value pays for
+replacement goods instead of being paid out, and the customer settles whatever is
+left. It is built from the parts that already exist — the shared return engine
+and Super Shop's own checkout — so stock, VAT, split payment, cash change, the
+ledger and the customer's lifetime value all follow the ordinary rules. **No
+second checkout and no second receipt engine were written.**
+
+### The seam, and why Pharmacy and Restaurant are provably unaffected
+
+`SaleReturnAdapter` gained an **optional** `exchange` capability
+(`SaleExchangeAdapter`: `quote`, `create`, `cancel`, `link`). Only Super Shop
+implements it. `posReturnService.createExchange` refuses outright when a vertical
+has not provided one, and `posReturnService.create` — the ordinary return path
+every vertical uses — was **not changed**.
+
+The one shared refactor is `prepareLines`, the line-validation both paths now
+share. It was extracted verbatim, deliberately: an exchange that valued the
+returned goods differently from a refund would be a way to launder money out of
+the till. The existing Pharmacy, Restaurant and Super Shop return assertions all
+still pass, which is what proves the extraction changed nothing.
+
+Restaurant has nothing to swap — the food is gone. Pharmacy trading one batch for
+another needs an expiry and dispensing decision that is its own piece of work.
+Both are left as they were.
+
+### Order of operations
+
+No multi-document transactions, so ordering is the correctness argument:
+
+```
+validate the returned lines  -> refund value from the ORIGINAL sale prices
+quote the replacement        -> today's catalogue prices, server-side
+rule: replacement >= refund  -> nobody is paid out for trading down
+hold the returned quantities -> atomic, guarded, releasable
+create the replacement sale  -> takes its stock; tenders cover only the difference
+put the returned goods back  -> unless the till says they are damaged
+write the return             -> THE COMMIT POINT, carrying the idempotency key
+```
+
+Each failure undoes the steps already taken. **The return document is written
+last of the steps that can fail** — so unlike the ordinary return path (see
+`AUDIT-2026-09-25.md` N1, still open) a half-finished exchange cannot be mistaken
+for a finished one. The bookkeeping after the commit point is best-effort and
+logged rather than thrown: it must not leave the customer holding goods and the
+till showing an error.
+
+### Rules the backend enforces
+
+Nothing is trusted from the client — **no prices are sent at all**.
+
+| Rule | Where |
+|---|---|
+| Sale belongs to this workspace *and* branch | `findSale` scopes on both |
+| Returnable quantity | `prepareLines`, per line, against what is left |
+| Replacement priced from the catalogue | `quote`, never from the request |
+| **Replacement may not be cheaper** | 422 `EXCHANGE_CHEAPER_REPLACEMENT` |
+| Payment covers the difference | `settleTender`, same three rules as the till |
+| Only cash may overshoot | `settleTender` |
+| Inventory | the inventory adapter, both directions |
+| Permissions | `returns.create` **and** `sales.create` |
+| Duplicate submission | unique `idempotencyKey`, replay returns the first |
+
+The credit is **what was paid**, not today's shelf price: it comes from the
+original sale line and shares out any discount that sale had, exactly as a refund
+does. A test pins this by raising the catalogue price between the sale and the
+exchange.
+
+**On loyalty:** Clothing has to subtract the restored point value from the
+exchange credit, because its returns do not apportion the sale discount. Super
+Shop needs no such step — its stored `discountMinor` already includes the loyalty
+discount, so `refundFor` has already excluded the points-funded share. The points
+themselves still come back through the existing `reverseLoyalty` hook.
+
+### Receipt
+
+The replacement sale's own receipt, through the existing Super Shop receipt
+architecture (`ShopThermalReceipt`, the shared receipt branch for header, logo,
+footer and paper width). It gains an `EXCHANGE` banner naming the original sale
+and the return number, the returned-goods credit and the difference paid, and a
+"Returned" block listing what came back. Branch, date/time, tenders and branding
+come from the existing layout unchanged.
+
+### Model and API
+
+- `ShopSale.exchange` — optional, defaults null, so sales taken before exchanges
+  existed load unchanged. Carries the original sale, the credit, the return
+  number and a snapshot of what came back.
+- `POST /supershop/sales/:id/exchange` — `returns.create` at the route,
+  `sales.create` in the engine.
+- Client: `ShopExchangeDialog` (Super Shop only). `PosReturnDialog`, shared with
+  Pharmacy and Restaurant, was **not touched**.
+
+### Verification
+
+- `npm run lint` ✅ · `npm run typecheck` ✅ · `npm run build` ✅
+- `npm test` — **3351 passed, 0 failed** (was 3314; **37 net new assertions**),
+  green on the first run.
+
+Covering every case asked for: **same product** exchanged like for like with the
+shelf ending where it started; **a different product at the same price** with
+nothing to pay; **a dearer replacement** collecting exactly the difference;
+**a cheaper replacement refused** with nothing moved — no stock, no return on the
+sale; **split payment** for the difference across two tenders; **insufficient
+payment** refused with the sale still fully exchangeable; **cash over the
+difference** coming back as change; **inventory** checked in both directions on
+every case; **duplicate request** — the same key returning the same exchange,
+one replacement sale, one unit off the original; **unauthorized access** — no
+session, another workspace, a till missing `returns.create`, a till missing
+`sales.create`, and the same till succeeding once it holds both; and **receipt
+generation** — the replacement's own receipt naming the original sale, the
+return, the credit, what came back, the branch, the date and the tender.
+
+**Not touched:** Clothing, Restaurant, Pharmacy. **Still open:** CI (audit Issue
+10), the ordinary return path's N1 ordering, and the browser pass.

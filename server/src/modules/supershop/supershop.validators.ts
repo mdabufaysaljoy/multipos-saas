@@ -179,6 +179,52 @@ export const createReturnSchema = z
   })
   .strict();
 
+/**
+ * An exchange: the same returned lines a refund would take, plus the
+ * replacement basket and whatever the customer pays on top.
+ *
+ * No prices are sent. The server values the returned goods from the ORIGINAL
+ * sale and the replacement from today's catalogue, which is what makes the
+ * "not cheaper" rule something a till cannot talk its way around.
+ */
+export const createExchangeSchema = z
+  .object({
+    items: z
+      .array(
+        z
+          .object({
+            saleItemId: objectId,
+            quantity: z.number().int().min(1).max(MAX_BASE_QUANTITY),
+            /** False leaves the goods out of stock: damaged, opened, expired. */
+            restock: z.boolean().default(true),
+          })
+          .strict(),
+      )
+      .min(1, 'Choose at least one line to exchange')
+      .max(100),
+    replacement: z
+      .object({
+        items: z
+          .array(z.object({ productId: objectId, quantity: baseQuantity }).strict())
+          .min(1, 'Choose the replacement goods')
+          .max(200)
+          .refine((items) => new Set(items.map((item) => String(item.productId))).size === items.length, 'List each replacement product once'),
+        /** Empty when the replacement costs exactly what came back. */
+        payments: z
+          .array(z.object({ method: paymentMethodKey, amountMinor: saleAmount }).strict())
+          .max(5, 'An exchange can be split across at most five payment methods')
+          .default([]),
+      })
+      .strict(),
+    reason: z.string().trim().min(3, 'Give a reason for the exchange').max(300),
+    /**
+     * Makes a repeated submission - a double click, a retried request - return
+     * the first exchange instead of running it a second time.
+     */
+    idempotencyKey: z.string().trim().min(8, 'An exchange needs a request key').max(100),
+  })
+  .strict();
+
 export const voidSaleSchema = z.object({ reason: z.string().trim().min(3, 'Give a reason').max(200) }).strict();
 
 export const listSalesSchema = searchSchema.extend({
@@ -196,3 +242,4 @@ export type ListMovementsInput = z.infer<typeof listMovementsSchema>;
 export type CreateSaleInput = z.infer<typeof createSaleSchema>;
 export type ListSalesInput = z.infer<typeof listSalesSchema>;
 export type CreateReturnInput = z.infer<typeof createReturnSchema>;
+export type CreateExchangeInput = z.infer<typeof createExchangeSchema>;

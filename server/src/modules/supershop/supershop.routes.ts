@@ -21,6 +21,7 @@ import {
   receiveStockSchema,
   updateProductSchema,
   createReturnSchema,
+  createExchangeSchema,
   voidSaleSchema,
 } from './supershop.validators';
 import { posLedgerQuerySchema } from '../../services/inventory/posLedger';
@@ -99,6 +100,16 @@ router.post(
   requirePermission(PERMISSIONS.RETURNS_CREATE),
   validate({ params: idParam, body: createReturnSchema }),
   controller.createReturn,
+);
+// An exchange against a completed sale: the returned goods pay for replacement
+// goods and the customer settles the difference. It creates a sale as well as a
+// return, so the engine checks `sales.create` on top of this.
+router.post(
+  '/sales/:id/exchange',
+  requireActiveSubscription,
+  requirePermission(PERMISSIONS.RETURNS_CREATE),
+  validate({ params: idParam, body: createExchangeSchema }),
+  controller.createExchange,
 );
 router.get('/returns', requirePermission(PERMISSIONS.RETURNS_VIEW), validate({ query: listSalesSchema }), controller.listReturns);
 
