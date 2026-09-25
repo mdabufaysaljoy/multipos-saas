@@ -91,7 +91,15 @@ The branch must also turn the program on in store settings (`loyalty.enabled`, `
 `pointValueMinor`). The client mirrors the vertical list in `useLoyaltyAccess`, for rendering only —
 every loyalty route checks the entitlement and the permission again on the server.
 
-## 7. At the till
+## 7. Where it appears
+
+Navigation and Settings ask the same question the entitlement does, through one helper
+(`isLoyaltyVertical` in `features/loyalty/useLoyaltyAccess`): a Super Shop workspace now has the
+**Loyalty** screen in its sidebar and the **Loyalty** tab in Settings, where the program is switched
+on and the earn rate and point value are set. Both are rendering decisions; the server checks the
+entitlement and the permission again on every loyalty route.
+
+## 8. At the till
 
 `SupershopPosPage` gained what the Clothing till has: a Card button beside the customer picker, a
 card code typed into (or scanned at) the same search box, the member strip with the balance and its

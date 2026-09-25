@@ -106,3 +106,20 @@ purpose.
 
 Task 08 builds the return engine on `restore` — Clothing's return path still calls
 `inventoryService.increase` directly, and moving it is that task's job, not this one's.
+
+## The Super Shop inventory screen
+
+The first client of `/stock-ledger` is the Super Shop **Inventory** screen (`/shop-inventory`):
+
+- **Stock** — every product with what is on hand, its average cost and what that is worth, with
+  Receive and Adjust (the same dialogs the catalogue uses, shared in
+  `client/src/features/supershop/stockDialogs.tsx` so the two screens cannot drift apart).
+- **Stock ledger** — the shared ledger, filtered by movement type. Append-only, and the screen says
+  so: nothing here can be edited.
+
+Above both, `GET /supershop/inventory-summary` answers what the branch holds: stock value at
+weighted average cost, the same stock at shelf price, and how many products are low or out. It is
+counted from the catalogue, not from the stock rows, so a product that has never been received still
+counts as out of stock. Weighed goods hold a cost per kilogram against a quantity in grams, so their
+value is divided by 1,000; stock below zero (an authorised out-of-stock sale) is worth nothing
+rather than cancelling another product out.

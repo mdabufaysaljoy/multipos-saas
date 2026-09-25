@@ -10,7 +10,7 @@ const VERTICAL_ONLY_PATHS: Record<string, string[]> = {
   clothing: ['/sales', '/returns', '/catalogue', '/categories', '/inventory'],
   restaurant: ['/menu', '/tables', '/orders', '/kitchen', '/shifts'],
   pharmacy: ['/medicines', '/stock', '/pharmacy-sales'],
-  supershop: ['/shop-products', '/shop-sales'],
+  supershop: ['/shop-products', '/shop-inventory', '/shop-sales'],
 };
 
 const matches = (pathname: string, prefix: string) => pathname === prefix || pathname.startsWith(`${prefix}/`);

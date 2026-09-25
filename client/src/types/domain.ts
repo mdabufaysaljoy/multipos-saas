@@ -1042,6 +1042,28 @@ export interface PosReturnInput {
   refundMethod: string;
 }
 
+/**
+ * One stock movement, in the shape every vertical reports (`/stock-ledger`).
+ * `itemDetail` is the vertical's own second line: a SKU, a batch, or a unit.
+ */
+export interface PosLedgerRow {
+  id: string;
+  at: string;
+  itemId: string;
+  itemLabel: string;
+  itemDetail: string;
+  type: string;
+  /** Signed: negative took stock out, positive put it back. */
+  quantityChange: number;
+  balanceBefore: number;
+  balanceAfter: number;
+  reason: string;
+  referenceType: string | null;
+  referenceId: string | null;
+  referenceNumber: string;
+  by: string;
+}
+
 /** A recorded return, as any vertical reports it. */
 export interface PosReturn {
   _id: string;

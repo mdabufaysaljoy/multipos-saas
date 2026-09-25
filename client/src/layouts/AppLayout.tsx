@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { Navigate, NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { isPathAllowedForVertical } from '@/lib/verticalRoutes';
+import { isLoyaltyVertical } from '@/features/loyalty/useLoyaltyAccess';
 import { PageFallback } from '@/lib/lazyPage';
 import {
   BarChart3,
@@ -71,6 +72,9 @@ interface NavItem {
   ownerOnly?: boolean;
 }
 
+/** The POS types that run a card program, as the loyalty feature defines them. */
+const LOYALTY_NAV_VERTICALS = ['clothing', 'restaurant', 'pharmacy', 'supershop'].filter(isLoyaltyVertical);
+
 const NAV_SECTIONS: { heading: string; items: NavItem[] }[] = [
   {
     heading: 'Sell',
@@ -97,13 +101,14 @@ const NAV_SECTIONS: { heading: string; items: NavItem[] }[] = [
       { to: '/medicines', label: 'Medicines', icon: Pill, anyOf: ['products.view'], verticals: ['pharmacy'] },
       { to: '/stock', label: 'Stock & expiry', icon: Boxes, anyOf: ['inventory.view'], verticals: ['pharmacy'] },
       { to: '/shop-products', label: 'Products & stock', icon: ShoppingBasket, anyOf: ['products.view'], verticals: ['supershop'] },
+      { to: '/shop-inventory', label: 'Inventory', icon: Boxes, anyOf: ['inventory.view'], verticals: ['supershop'] },
     ],
   },
   {
     heading: 'People',
     items: [
       { to: '/customers', label: 'Customers', icon: UsersRound, anyOf: ['customers.view'] },
-      { to: '/loyalty', label: 'Loyalty', icon: Gift, anyOf: ['loyalty.view', 'loyalty.manage'], feature: 'loyaltyProgram', verticals: ['clothing'] },
+      { to: '/loyalty', label: 'Loyalty', icon: Gift, anyOf: ['loyalty.view', 'loyalty.manage'], feature: 'loyaltyProgram', verticals: LOYALTY_NAV_VERTICALS },
       { to: '/marketing', label: 'Marketing', icon: Megaphone, anyOf: ['marketing.view'] },
       { to: '/staff', label: 'Staff', icon: Users, anyOf: ['staff.view'] },
       { to: '/roles', label: 'Roles', icon: ShieldCheck, anyOf: ['roles.view'] },

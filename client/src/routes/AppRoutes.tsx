@@ -53,6 +53,7 @@ const PharmacySalesPage = lazyPage(() => import('@/pages/pharmacy/PharmacySalesP
 
 // Supershop POS
 const ShopProductsPage = lazyPage(() => import('@/pages/supershop/ShopProductsPage'), 'ShopProductsPage');
+const ShopInventoryPage = lazyPage(() => import('@/pages/supershop/ShopInventoryPage'), 'ShopInventoryPage');
 const ShopSalesPage = lazyPage(() => import('@/pages/supershop/ShopSalesPage'), 'ShopSalesPage');
 
 // Shared workspace screens
@@ -233,6 +234,14 @@ export function AppRoutes() {
           element={
             <ProtectedRoute anyOf={['products.view']}>
               <ShopProductsPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/shop-inventory"
+          element={
+            <ProtectedRoute anyOf={['inventory.view']}>
+              <ShopInventoryPage />
             </ProtectedRoute>
           }
         />

@@ -1,6 +1,7 @@
 import { del, get, getPaginated, patch, post } from './client';
 import type {
   ShopDashboard,
+  ShopInventorySummary,
   ShopMovement,
   ShopProduct,
   ShopProductDetail,
@@ -10,7 +11,7 @@ import type {
   ShopSale,
 } from '@/types/supershop';
 import type { SaleCustomerFields } from '@/features/customers/CustomerPicker';
-import type { PosReturn, PosReturnInput } from '@/types/domain';
+import type { PosLedgerRow, PosReturn, PosReturnInput } from '@/types/domain';
 
 type Query = Record<string, unknown>;
 
@@ -43,6 +44,9 @@ export const supershopApi = {
   adjustStock: (id: string, body: { type: 'adjust' | 'write_off'; quantityDelta: number; reason: string }) =>
     post<{ stock: { quantityOnHand: number }; previousOnHand: number }>(`/supershop/products/${id}/adjust`, body),
   movements: (params?: Query) => getPaginated<ShopMovement>('/supershop/movements', params),
+  /** The branch's whole stock ledger, in the shape every vertical reports. */
+  stockLedger: (params?: Query) => getPaginated<PosLedgerRow>('/supershop/stock-ledger', params),
+  inventorySummary: () => get<ShopInventorySummary>('/supershop/inventory-summary'),
 
   createSale: (body: ShopSaleInput) => post<ShopSale>('/supershop/sales', body),
   sales: (params?: Query) => getPaginated<ShopSale>('/supershop/sales', params),

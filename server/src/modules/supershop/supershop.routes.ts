@@ -52,6 +52,7 @@ router.delete('/products/:id', requireActiveSubscription, requirePermission(PERM
 router.post('/products/:id/stock', requireActiveSubscription, requirePermission(PERMISSIONS.INVENTORY_ADJUST), validate({ params: idParam, body: receiveStockSchema }), controller.receiveStock);
 router.post('/products/:id/adjust', requireActiveSubscription, requirePermission(PERMISSIONS.INVENTORY_ADJUST), validate({ params: idParam, body: adjustStockSchema }), controller.adjustStock);
 router.get('/movements', requirePermission(PERMISSIONS.INVENTORY_VIEW), validate({ query: listMovementsSchema }), controller.listMovements);
+router.get('/inventory-summary', requirePermission(PERMISSIONS.INVENTORY_VIEW), controller.inventorySummary);
 // The same ledger in the shape every vertical reports; see services/inventory/posLedger.
 router.get('/stock-ledger', requirePermission(PERMISSIONS.INVENTORY_VIEW), validate({ query: posLedgerQuerySchema }), stockLedger);
 

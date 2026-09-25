@@ -86,6 +86,11 @@ export const adjustStock = asyncHandler(async (req: Request, res: Response) => {
   ok(res, result);
 });
 
+/** The cards above the inventory screen: what is on the shelf and what it is worth. */
+export const inventorySummary = asyncHandler(async (req: Request, res: Response) => {
+  ok(res, await supershopService.inventorySummary(getContext(req)));
+});
+
 export const listMovements = asyncHandler(async (req: Request, res: Response) => {
   const result = await supershopService.listMovements(getContext(req), query<ListMovementsInput>(req));
   paginated(res, result.items, buildPageMeta(result.page, result.limit, result.total));

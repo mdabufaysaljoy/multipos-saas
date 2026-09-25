@@ -20,6 +20,7 @@ import { PageHeader } from '@/components/PageHeader';
 import { PermissionGate } from '@/components/PermissionGate';
 import { ThermalReceipt } from '@/features/receipt/ThermalReceipt';
 import { LoyaltySettingsCard } from '@/features/loyalty/LoyaltySettingsCard';
+import { isLoyaltyVertical } from '@/features/loyalty/useLoyaltyAccess';
 import { LabelSettingsCard } from '@/features/barcode/LabelSettingsCard';
 import { TenderSettingsCard } from '@/features/payments/TenderSettingsCard';
 import { PrinterSettingsCard } from '@/features/printing/PrinterSettingsCard';
@@ -195,7 +196,7 @@ export function SettingsPage() {
           <TabsTrigger value="tax">Tax &amp; payments</TabsTrigger>
           {(session?.tenant?.vertical ?? 'clothing') === 'clothing' && <TabsTrigger value="labels">Labels</TabsTrigger>}
           {(session?.tenant?.vertical ?? 'clothing') === 'clothing' && <TabsTrigger value="printer">Printer</TabsTrigger>}
-          {(session?.tenant?.vertical ?? 'clothing') === 'clothing' && <TabsTrigger value="loyalty">Loyalty</TabsTrigger>}
+          {isLoyaltyVertical(session?.tenant?.vertical) && <TabsTrigger value="loyalty">Loyalty</TabsTrigger>}
           <TabsTrigger value="account">My account</TabsTrigger>
         </TabsList>
 

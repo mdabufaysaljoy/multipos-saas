@@ -54,6 +54,16 @@ export interface ShopMovement {
   createdAt: string;
 }
 
+/** What the branch holds right now: the cards above the inventory screen. */
+export interface ShopInventorySummary {
+  productCount: number;
+  /** At weighted average cost, and at the shelf price. */
+  stockValueMinor: number;
+  retailValueMinor: number;
+  outOfStock: number;
+  lowStock: number;
+}
+
 export interface ShopProductDetail {
   product: ShopProduct;
   movements: ShopMovement[];

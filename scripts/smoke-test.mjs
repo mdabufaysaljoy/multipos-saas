@@ -8114,6 +8114,64 @@ async function main() {
   check('Reading the ledger needs a session', (await api('/supershop/stock-ledger')).status === 401);
   check('Another workspace cannot read this one’s ledger', (await ledgerOf('/supershop', phToken)).status === 403);
 
+  // --- What the shelf is worth (Super Shop inventory screen) -------------------
+  // The cards above the Inventory screen. Counted from the CATALOGUE, so a
+  // product that has never been received still counts as out of stock, and
+  // weighed goods keep their cost per kilogram against a quantity in grams.
+  section('Inventory summary (Super Shop)');
+
+  const invSummary = async () => (await ssApi('/inventory-summary')).data;
+  const invBefore = await invSummary();
+  check(
+    'The summary answers with the five figures the screen shows',
+    invBefore &&
+      ['productCount', 'stockValueMinor', 'retailValueMinor', 'outOfStock', 'lowStock'].every((key) => typeof invBefore[key] === 'number'),
+    invBefore,
+  );
+
+  const invProduct = (await ssApi('/products', {
+    method: 'POST',
+    body: { name: `Inv Counted Rice ${Date.now()}`, category: 'Inventory test', unitType: 'each', priceMinor: 12_000, reorderLevel: 4 },
+  })).data;
+  const invNew = await invSummary();
+  check('A product that was never received counts as out of stock', invNew.outOfStock === invBefore.outOfStock + 1 && invNew.productCount === invBefore.productCount + 1, {
+    before: invBefore.outOfStock,
+    after: invNew.outOfStock,
+  });
+
+  await ssApi(`/products/${invProduct._id}/stock`, { method: 'POST', body: { quantity: 10, costPriceMinor: 500 } });
+  const invReceived = await invSummary();
+  check('Receiving 10 pieces at ৳5 adds exactly ৳50 of stock value', invReceived.stockValueMinor === invNew.stockValueMinor + 5_000, {
+    before: invNew.stockValueMinor,
+    after: invReceived.stockValueMinor,
+  });
+  check('And the product is no longer counted as out of stock', invReceived.outOfStock === invNew.outOfStock - 1);
+  check('Shelf value uses the selling price, not the cost', invReceived.retailValueMinor === invNew.retailValueMinor + 120_000, {
+    before: invNew.retailValueMinor,
+    after: invReceived.retailValueMinor,
+  });
+
+  // At or below the reorder level, but not empty: low, not out.
+  await ssApi(`/products/${invProduct._id}/adjust`, { method: 'POST', body: { type: 'adjust', quantityDelta: -7, reason: 'Counted down to the reorder level' } });
+  const invLow = await invSummary();
+  check('At the reorder level the product is low, not out', invLow.lowStock === invReceived.lowStock + 1 && invLow.outOfStock === invReceived.outOfStock);
+
+  // Weighed goods: the cost is per kilogram against a quantity in grams.
+  const invWeighed = (await ssApi('/products', {
+    method: 'POST',
+    body: { name: `Inv Weighed Dal ${Date.now()}`, category: 'Inventory test', unitType: 'weight', priceMinor: 20_000, reorderLevel: 0 },
+  })).data;
+  const invBeforeWeight = await invSummary();
+  await ssApi(`/products/${invWeighed._id}/stock`, { method: 'POST', body: { quantity: 2_500, costPriceMinor: 16_000 } });
+  const invAfterWeight = await invSummary();
+  check('2.5 kg at ৳160 per kg is worth ৳400, not 2,500 times the price', invAfterWeight.stockValueMinor === invBeforeWeight.stockValueMinor + 40_000, {
+    before: invBeforeWeight.stockValueMinor,
+    after: invAfterWeight.stockValueMinor,
+  });
+
+  check('The summary needs a session', (await api('/supershop/inventory-summary')).status === 401);
+  check('Another workspace cannot read this one’s stock value', (await api('/supershop/inventory-summary', { token: phToken })).status === 403);
+
 
   // --- Selling what the system says is gone, in every vertical -----------------
   // The same permission, the same narrow rule as Clothing: it covers "there is

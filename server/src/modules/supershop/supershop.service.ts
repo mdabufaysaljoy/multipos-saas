@@ -212,6 +212,75 @@ class SupershopService {
     return { stock: updated, previousOnHand: updated.quantityOnHand - delta, product: { _id: product._id, name: product.name, unitType: product.unitType } };
   }
 
+  /**
+   * What the shelf is worth in this branch, in one aggregate.
+   *
+   * Counted from the catalogue, not from the stock rows, so a product that has
+   * never been received still counts as out of stock. Weighed goods keep their
+   * cost per kilogram against a quantity in grams, which is why the value is
+   * divided by 1,000 for them. Stock below zero (an authorised out-of-stock
+   * sale) is worth nothing rather than cancelling another product out.
+   */
+  async inventorySummary(ctx: TenantContext) {
+    const perUnit = (price: string) => ({
+      $floor: {
+        $divide: [
+          { $multiply: [{ $max: ['$onHand', 0] }, price] },
+          { $cond: [{ $eq: ['$unitType', 'weight'] }, 1000, 1] },
+        ],
+      },
+    });
+
+    const [totals] = await ShopProductModel.aggregate<{
+      productCount: number;
+      stockValueMinor: number;
+      retailValueMinor: number;
+      outOfStock: number;
+      lowStock: number;
+    }>([
+      { $match: { tenantId: ctx.tenantId, deletedAt: null } },
+      {
+        $lookup: {
+          from: ShopStockModel.collection.name,
+          let: { productId: '$_id' },
+          pipeline: [
+            { $match: { $expr: { $eq: ['$productId', '$$productId'] }, tenantId: ctx.tenantId, storeId: ctx.storeId } },
+            { $project: { quantityOnHand: 1, costPriceMinor: 1 } },
+          ],
+          as: 'stock',
+        },
+      },
+      {
+        $addFields: {
+          onHand: { $ifNull: [{ $arrayElemAt: ['$stock.quantityOnHand', 0] }, 0] },
+          costPriceMinor: { $ifNull: [{ $arrayElemAt: ['$stock.costPriceMinor', 0] }, 0] },
+        },
+      },
+      {
+        $group: {
+          _id: null,
+          productCount: { $sum: 1 },
+          stockValueMinor: { $sum: perUnit('$costPriceMinor') },
+          retailValueMinor: { $sum: perUnit('$priceMinor') },
+          outOfStock: { $sum: { $cond: [{ $lte: ['$onHand', 0] }, 1, 0] } },
+          lowStock: {
+            $sum: {
+              $cond: [{ $and: [{ $gt: ['$reorderLevel', 0] }, { $gt: ['$onHand', 0] }, { $lte: ['$onHand', '$reorderLevel'] }] }, 1, 0],
+            },
+          },
+        },
+      },
+    ]);
+
+    return {
+      productCount: totals?.productCount ?? 0,
+      stockValueMinor: totals?.stockValueMinor ?? 0,
+      retailValueMinor: totals?.retailValueMinor ?? 0,
+      outOfStock: totals?.outOfStock ?? 0,
+      lowStock: totals?.lowStock ?? 0,
+    };
+  }
+
   async listMovements(ctx: TenantContext, input: ListMovementsInput) {
     const { page, limit, skip } = resolvePage(input);
     const filter: Record<string, unknown> = { tenantId: ctx.tenantId, storeId: ctx.storeId };
