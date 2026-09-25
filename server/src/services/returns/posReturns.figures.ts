@@ -29,9 +29,16 @@ export async function returnFiguresFor(
   ctx: TenantContext,
   vertical: PosVertical,
   range: { from: Date; to: Date },
+  /**
+   * Narrows it further. Defaults to this till's branch, which is what every
+   * caller wanted until Super Shop's analytics grew a branch picker and a
+   * customer filter. Anything passed here is ANDed with the tenant and the
+   * range; pass `{}` for every branch.
+   */
+  extraScope: Record<string, unknown> = { storeId: ctx.storeId },
 ): Promise<ReturnFigures> {
   const [row] = await ReturnModel.aggregate<ReturnFigures>([
-    { $match: { tenantId: ctx.tenantId, storeId: ctx.storeId, vertical, returnedAt: { $gte: range.from, $lte: range.to } } },
+    { $match: { tenantId: ctx.tenantId, ...extraScope, vertical, returnedAt: { $gte: range.from, $lte: range.to } } },
     {
       $group: {
         _id: null,
@@ -72,9 +79,11 @@ export async function returnsByDay(
   vertical: PosVertical,
   range: { from: Date; to: Date },
   timezone: string,
+  /** As `returnFiguresFor`: defaults to this till's branch. */
+  extraScope: Record<string, unknown> = { storeId: ctx.storeId },
 ): Promise<Map<string, { totalMinor: number; costMinor: number }>> {
   const rows = await ReturnModel.aggregate<{ _id: string; totalMinor: number; costMinor: number }>([
-    { $match: { tenantId: ctx.tenantId, storeId: ctx.storeId, vertical, returnedAt: { $gte: range.from, $lte: range.to } } },
+    { $match: { tenantId: ctx.tenantId, ...extraScope, vertical, returnedAt: { $gte: range.from, $lte: range.to } } },
     {
       $group: {
         _id: { $dateToString: { format: '%Y-%m-%d', date: '$returnedAt', timezone } },
@@ -115,10 +124,12 @@ export async function recentReturns(
   vertical: PosVertical,
   range: { from: Date; to: Date },
   limit = 10,
+  /** As `returnFiguresFor`: defaults to this till's branch. */
+  extraScope: Record<string, unknown> = { storeId: ctx.storeId },
 ) {
   const rows = await ReturnModel.find({
     tenantId: ctx.tenantId,
-    storeId: ctx.storeId,
+    ...extraScope,
     vertical,
     returnedAt: { $gte: range.from, $lte: range.to },
   })

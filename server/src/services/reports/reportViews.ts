@@ -44,6 +44,22 @@ export function supershopReportView(data: Row, currency: string): PrintableRepor
       section('trend', 'Daily sales', [text('date', 'Day'), number('salesCount', 'Sales'), money('netSalesMinor', 'Net sales'), money('vatMinor', 'VAT'), money('grossProfitMinor', 'Profit')], asRows(data.trend)),
       section('products', 'Best sellers', [text('name', 'Product'), number('quantity', 'Sold'), money('revenueMinor', 'Revenue'), money('profitMinor', 'Profit')], asRows(data.products)),
       section('departments', 'Departments', [text('department', 'Department'), number('lines', 'Lines'), money('revenueMinor', 'Revenue'), money('profitMinor', 'Profit')], asRows(data.departments)),
+      section('brands', 'Brands', [text('brand', 'Brand'), number('quantity', 'Sold'), money('revenueMinor', 'Revenue'), money('profitMinor', 'Profit')], asRows(data.brands)),
+      section(
+        'staff',
+        'Staff',
+        [text('name', 'Cashier'), number('salesCount', 'Sales'), money('netSalesMinor', 'Net sales'), money('discountsMinor', 'Discounts'), money('profitMinor', 'Profit')],
+        asRows(data.staff),
+      ),
+      // Only printed when more than one branch is in scope; a single-branch
+      // report would just repeat its own total.
+      section(
+        'branches',
+        'Branches',
+        [text('name', 'Branch'), number('salesCount', 'Sales'), money('netSalesMinor', 'Net sales'), money('profitMinor', 'Profit')],
+        asRows(data.branchBreakdown).length > 1 ? asRows(data.branchBreakdown) : [],
+      ),
+      section('customers', 'Top customers', [text('name', 'Customer'), number('salesCount', 'Sales'), money('netSalesMinor', 'Net sales')], asRows(data.customers)),
       section(
         'vatRates',
         'VAT by rate',

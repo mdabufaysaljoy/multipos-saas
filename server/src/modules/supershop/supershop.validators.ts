@@ -2,7 +2,8 @@ import { z } from 'zod';
 import { SHOP_UNIT_TYPES } from '../../models/ShopProduct';
 import { MAX_BASE_QUANTITY } from '../../models/shopUnits';
 import { SHOP_SALE_STATUSES } from '../../models/ShopSale';
-import { objectId, paginationSchema, searchSchema, paymentMethodKey } from '../common/common.validators';
+import { objectId, paginationSchema, searchSchema, paymentMethodKey, calendarDate } from '../common/common.validators';
+import { RANGE_PRESETS } from '../reports/reports.validators';
 import { posCustomerSchema } from '../customers/customers.validators';
 
 /**
@@ -254,6 +255,47 @@ export const listSalesSchema = searchSchema.extend({
   from: isoDate.optional(),
   to: isoDate.optional(),
 });
+
+/**
+ * Advanced Analytics filters.
+ *
+ * Two kinds, and the difference matters:
+ *   SALE-level  branch, staff, payment method, customer - they choose which
+ *               sales are counted, so every figure narrows with them.
+ *   LINE-level  category, brand, product - they choose which LINES are of
+ *               interest. They narrow the sale set to the sales containing such
+ *               a line and narrow the per-line breakdowns, and the `selection`
+ *               block reports those lines on their own. Sale totals stay sale
+ *               totals: a basket is not re-costed because one line was asked
+ *               about.
+ */
+export const shopAnalyticsSchema = z
+  .object({
+    preset: z.enum(RANGE_PRESETS).default('last7'),
+    from: calendarDate.optional(),
+    to: calendarDate.optional(),
+    /** 'current' (default), 'all' or one branch id. Anything but your own branch needs admin. */
+    branch: z.union([z.literal('current'), z.literal('all'), objectId]).default('current'),
+    staffId: objectId.optional(),
+    customerId: objectId.optional(),
+    paymentMethod: paymentMethodKey.optional(),
+    category: z.string().trim().max(60).optional(),
+    brand: z.string().trim().max(80).optional(),
+    productId: objectId.optional(),
+    /** How many rows each breakdown returns. */
+    limit: z.coerce.number().int().min(1).max(50).default(10),
+  })
+  .strict()
+  .superRefine((data, ctx) => {
+    if (data.preset === 'custom' && (!data.from || !data.to)) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['from'], message: 'A custom range needs both a start and an end date' });
+    }
+    if (data.from && data.to && data.from > data.to) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['to'], message: 'The end date must be after the start date' });
+    }
+  });
+
+export type ShopAnalyticsInput = z.infer<typeof shopAnalyticsSchema>;
 
 export type CreateProductInput = z.infer<typeof createProductSchema>;
 export type UpdateProductInput = z.infer<typeof updateProductSchema>;

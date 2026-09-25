@@ -5,7 +5,7 @@ import { authenticate } from '../../middleware/auth';
 import { requirePermission } from '../../middleware/rbac';
 import { resolveTenant } from '../../middleware/tenant';
 import { requireActiveSubscription, requireSubscribedAccess } from '../../middleware/subscription';
-import { analyticsRangeSchema, dashboardRangeSchema } from '../reports/reports.validators';
+import { dashboardRangeSchema } from '../reports/reports.validators';
 import { requireVertical } from '../../middleware/vertical';
 import { validate } from '../../middleware/validate';
 import { idParam } from '../common/common.validators';
@@ -23,6 +23,7 @@ import {
   createReturnSchema,
   createExchangeSchema,
   holdSaleSchema,
+  shopAnalyticsSchema,
   voidSaleSchema,
 } from './supershop.validators';
 import { posLedgerQuerySchema } from '../../services/inventory/posLedger';
@@ -155,7 +156,7 @@ router.get(
   '/reports',
   requirePermission(PERMISSIONS.REPORTS_VIEW),
   requireEntitlement('advancedAnalytics'),
-  validate({ query: analyticsRangeSchema }),
+  validate({ query: shopAnalyticsSchema }),
   controller.reports,
 );
 
@@ -166,7 +167,7 @@ router.get(
   '/reports/print',
   requirePermission(PERMISSIONS.REPORTS_VIEW),
   requireEntitlement('advancedAnalytics'),
-  validate({ query: analyticsRangeSchema }),
+  validate({ query: shopAnalyticsSchema }),
   controller.printReports,
 );
 

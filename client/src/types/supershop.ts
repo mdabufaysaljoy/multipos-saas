@@ -128,6 +128,51 @@ export interface ShopReceipt {
 
 export interface ShopReports {
   range: { from: string; to: string; label: string; preset: string };
+  /** What the server actually applied. `branch` is what it GAVE, not what was asked. */
+  filters: {
+    branch: string;
+    requestedBranch: string;
+    staffId: string | null;
+    customerId: string | null;
+    paymentMethod: string | null;
+    category: string | null;
+    brand: string | null;
+    productId: string | null;
+  };
+  /**
+   * False when a filter is on that a return cannot be attributed to — a
+   * cashier, a tender or a line. Returns are then left out of the figures
+   * rather than subtracted wrongly.
+   */
+  returnsAttributable: boolean;
+  /** The branches this user may choose between. One, for a non-admin. */
+  branches: { _id: string; name: string }[];
+  /** Only when a department, brand or product filter is on: those lines alone. */
+  selection: {
+    lines: number;
+    salesCount: number;
+    quantity: number;
+    revenueMinor: number;
+    vatMinor: number;
+    costMinor: number;
+    profitMinor: number;
+    marginBps: number;
+  } | null;
+  staff: {
+    userId: string;
+    name: string;
+    salesCount: number;
+    netSalesMinor: number;
+    vatMinor: number;
+    costMinor: number;
+    discountsMinor: number;
+    profitMinor: number;
+    marginBps: number;
+    averageBasketMinor: number;
+  }[];
+  brands: { brand: string; lines: number; quantity: number; revenueMinor: number; vatMinor: number; costMinor: number; profitMinor: number; marginBps: number }[];
+  branchBreakdown: { storeId: string; name: string; salesCount: number; netSalesMinor: number; vatMinor: number; costMinor: number; profitMinor: number; marginBps: number }[];
+  customers: { customerId: string; name: string; salesCount: number; netSalesMinor: number; averageBasketMinor: number }[];
   totals: {
     salesCount: number;
     /** What was charged. */

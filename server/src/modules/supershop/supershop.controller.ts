@@ -20,7 +20,7 @@ import { supershopReportsService } from './supershopReports.service';
 import { streamReportPdf } from '../../services/reports/reportPrint';
 import { supershopReportView } from '../../services/reports/reportViews';
 import { storeCurrency } from '../../services/reports/storeCurrency';
-import type { AnalyticsRangeInput, DashboardRangeInput } from '../reports/reports.validators';
+import type { DashboardRangeInput } from '../reports/reports.validators';
 import type {
   AdjustStockInput,
   CreateProductInput,
@@ -33,6 +33,7 @@ import type {
   CreateReturnInput,
   CreateExchangeInput,
   HoldSaleInput,
+  ShopAnalyticsInput,
 } from './supershop.validators';
 
 type IdParams = { id: Types.ObjectId };
@@ -239,12 +240,12 @@ export const dashboard = asyncHandler(async (req: Request, res: Response) => {
 });
 
 export const reports = asyncHandler(async (req: Request, res: Response) => {
-  ok(res, await supershopReportsService.report(getContext(req), query<AnalyticsRangeInput>(req)));
+  ok(res, await supershopReportsService.report(getContext(req), query<ShopAnalyticsInput>(req)));
 });
 
 /** The same report as a PDF: what the screen shows, printed. */
 export const printReports = asyncHandler(async (req: Request, res: Response) => {
   const ctx = getContext(req);
-  const data = await supershopReportsService.report(ctx, query<AnalyticsRangeInput>(req));
+  const data = await supershopReportsService.report(ctx, query<ShopAnalyticsInput>(req));
   await streamReportPdf(ctx, res, supershopReportView(data as unknown as Record<string, unknown>, await storeCurrency(ctx)));
 });

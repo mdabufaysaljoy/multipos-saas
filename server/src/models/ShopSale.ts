@@ -185,5 +185,12 @@ const shopSaleSchema = new Schema<ShopSaleDoc>(
 shopSaleSchema.index({ tenantId: 1, storeId: 1, saleNumber: 1 }, { unique: true });
 shopSaleSchema.index({ tenantId: 1, storeId: 1, soldAt: -1 });
 shopSaleSchema.index({ tenantId: 1, status: 1, soldAt: 1 });
+/**
+ * Advanced Analytics: every one of its aggregations starts from this branch's
+ * completed sales in a window. The `(tenantId, storeId, soldAt)` index above
+ * cannot serve it without also scanning voided sales, and the
+ * `(tenantId, status, soldAt)` one spans every branch.
+ */
+shopSaleSchema.index({ tenantId: 1, storeId: 1, status: 1, soldAt: -1 });
 
 export const ShopSaleModel = model<ShopSaleDoc>('ShopSale', shopSaleSchema);

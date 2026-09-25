@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { format, parseISO } from 'date-fns';
-import { Ban, Clock, CreditCard, Layers, Percent, ReceiptText, ShoppingBasket, Snowflake, Trash2, TrendingUp } from 'lucide-react';
+import { Ban, Building2, Clock, CreditCard, Filter, Layers, Percent, ReceiptText, ShoppingBasket, Snowflake, Tags, Trash2, TrendingUp, Users } from 'lucide-react';
 import { EmptyState, LoadingState } from '@/components/states';
 import { PageHeader } from '@/components/PageHeader';
 import { AdvancedAnalyticsLocked } from '@/features/reports/AdvancedAnalyticsLocked';
@@ -11,6 +11,7 @@ import { PrintReportButton } from '@/features/reports/PrintReportButton';
 import { REPORT_PRESETS, RangePicker, isRangeReady, rangeParams, type RangeValue } from '@/features/reports/RangePicker';
 import { ApiError } from '@/api/client';
 import { supershopApi } from '@/api/supershop';
+import { AnalyticsFilters, NO_FILTERS, analyticsParams, type AnalyticsFilterValue } from '@/features/supershop/AnalyticsFilters';
 import { formatMoney } from '@/lib/money';
 import { formatQuantity, formatVatRate } from '@/lib/supershop';
 import { useAuth } from '@/hooks/useAuth';
@@ -27,10 +28,12 @@ export function SupershopReportsPage() {
   const money = (minor: number) => formatMoney(minor, currency);
   const hasAdvanced = session?.entitlement?.features?.advancedReports ?? false;
   const [range, setRange] = React.useState<RangeValue>({ preset: 'last30', from: '', to: '' });
+  const [filters, setFilters] = React.useState<AnalyticsFilterValue>(NO_FILTERS);
+  const params = { ...rangeParams(range), ...analyticsParams(filters) };
 
   const { data, isLoading, error } = useQuery({
-    queryKey: ['supershop', 'reports', range],
-    queryFn: () => supershopApi.reports(rangeParams(range)),
+    queryKey: ['supershop', 'reports', range, filters],
+    queryFn: () => supershopApi.reports(params),
     enabled: hasAdvanced && isRangeReady(range),
     retry: false,
   });
@@ -52,9 +55,32 @@ export function SupershopReportsPage() {
             ? `${data.range.label} · ${format(parseISO(data.range.from), 'dd MMM')} – ${format(parseISO(data.range.to), 'dd MMM yyyy')}`
             : 'Margin, VAT, best sellers, busy hours and dead stock'
         }
-        actions={<PrintReportButton path="/supershop/reports/print" params={rangeParams(range)} disabled={!data} />}
+        actions={<PrintReportButton path="/supershop/reports/print" params={params} disabled={!data} />}
       />
       <RangePicker value={range} onChange={setRange} presets={REPORT_PRESETS} />
+      <AnalyticsFilters value={filters} onChange={setFilters} branches={data?.branches ?? []} customers={data?.customers ?? []} />
+
+      {/* Returns cannot be pinned to a cashier, a tender or a single line, so
+          under those filters they are left out rather than subtracted wrongly. */}
+      {data && !data.returnsAttributable && (
+        <p className="rounded-md border border-dashed px-3 py-2 text-xs text-muted-foreground">
+          Refunds are left out of these figures: a return records the goods and the customer, not which cashier sold them, which tender
+          paid for them, or which line they came from. Clear those filters to include returns.
+        </p>
+      )}
+
+      {/* A line filter selects LINES, not baskets, and says so rather than
+          letting the totals above be read as if they were about those lines. */}
+      {data?.selection && (
+        <AnalyticsCard title="The lines you filtered to" icon={<Filter className="h-4 w-4" />}>
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+            <AnalyticsStat label="Lines" value={String(data.selection.lines)} hint={`in ${data.selection.salesCount} sale(s)`} />
+            <AnalyticsStat label="Revenue" value={money(data.selection.revenueMinor)} hint="before any sale discount" />
+            <AnalyticsStat label="Cost" value={money(data.selection.costMinor)} />
+            <AnalyticsStat label="Profit" value={money(data.selection.profitMinor)} hint={`${formatBps(data.selection.marginBps)} margin`} />
+          </div>
+        </AnalyticsCard>
+      )}
 
       {isLoading && <LoadingState label="Crunching the numbers…" />}
       {error && !isLocked(error) && <EmptyState title="Could not load the reports" description="Please try again." />}
@@ -122,6 +148,59 @@ export function SupershopReportsPage() {
           </div>
 
           <div className="grid gap-4 lg:grid-cols-3">
+            <AnalyticsCard title="Staff" icon={<Users className="h-4 w-4" />} className="lg:col-span-2" isEmpty={data.staff.length === 0} empty="Nobody sold anything in this period">
+              <table className="w-full text-sm">
+                <thead className="text-xs text-muted-foreground">
+                  <tr>
+                    <th className="pb-1 text-left font-medium">Cashier</th>
+                    <th className="pb-1 text-right font-medium">Sales</th>
+                    <th className="pb-1 text-right font-medium">Net sales</th>
+                    <th className="pb-1 text-right font-medium">Basket</th>
+                    <th className="pb-1 text-right font-medium">Discounts</th>
+                    <th className="pb-1 text-right font-medium">Profit</th>
+                    <th className="pb-1 text-right font-medium">Margin</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {data.staff.map((row) => (
+                    <tr key={row.userId} className="border-t">
+                      <td className="py-1.5">{row.name}</td>
+                      <td className="tabular py-1.5 text-right">{row.salesCount}</td>
+                      <td className="tabular py-1.5 text-right">{money(row.netSalesMinor)}</td>
+                      <td className="tabular py-1.5 text-right">{money(row.averageBasketMinor)}</td>
+                      <td className="tabular py-1.5 text-right">{money(row.discountsMinor)}</td>
+                      <td className="tabular py-1.5 text-right">{money(row.profitMinor)}</td>
+                      <td className="tabular py-1.5 text-right">{formatBps(row.marginBps)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </AnalyticsCard>
+
+            <AnalyticsCard title="Brands" icon={<Tags className="h-4 w-4" />} isEmpty={data.brands.length === 0} empty="Nothing branded sold">
+              <BarList
+                rows={data.brands.map((row) => ({ key: row.brand, label: row.brand, value: row.revenueMinor, detail: `${money(row.profitMinor)} profit · ${formatBps(row.marginBps)}` }))}
+                formatValue={money}
+              />
+            </AnalyticsCard>
+
+            {/* Only worth a card when more than one branch is in view. */}
+            {data.branchBreakdown.length > 1 && (
+              <AnalyticsCard title="Branches" icon={<Building2 className="h-4 w-4" />}>
+                <BarList
+                  rows={data.branchBreakdown.map((row) => ({ key: row.storeId, label: row.name, value: row.netSalesMinor, detail: `${money(row.profitMinor)} profit · ${row.salesCount} sales` }))}
+                  formatValue={money}
+                />
+              </AnalyticsCard>
+            )}
+
+            <AnalyticsCard title="Top customers" icon={<Users className="h-4 w-4" />} isEmpty={data.customers.length === 0} empty="Every sale this period was a walk-in">
+              <BarList
+                rows={data.customers.map((row) => ({ key: row.customerId, label: row.name, value: row.netSalesMinor, detail: `${row.salesCount} sale(s) · ${money(row.averageBasketMinor)} basket` }))}
+                formatValue={money}
+              />
+            </AnalyticsCard>
+
             <AnalyticsCard title="Departments" icon={<Layers className="h-4 w-4" />} isEmpty={data.departments.length === 0} empty="No sales">
               <BarList
                 rows={data.departments.map((row) => ({ key: row.department, label: row.department, value: row.revenueMinor, detail: `${row.lines} line(s) · profit ${money(row.profitMinor)}` }))}

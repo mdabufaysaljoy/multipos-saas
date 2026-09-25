@@ -6776,6 +6776,161 @@ async function main() {
     await ssApi(`/products/${row._id}`, { method: 'DELETE' });
   }
 
+  // --- Advanced Analytics: the dimensions and the filters -----------------------
+  // Sales can be looked at by staff, department, brand, product, branch,
+  // payment method and customer, alone or together. Sale-level filters narrow
+  // everything; line-level ones (department, brand, product) narrow the line
+  // breakdowns and report those lines in `selection`.
+  section('Supershop advanced analytics');
+
+  const anStamp = String(Date.now()).slice(-6);
+  const anDept = `AN Dept ${anStamp}`;
+  const anBrandA = `AN Brand A ${anStamp}`;
+  const anBrandB = `AN Brand B ${anStamp}`;
+  const anMake = async (name, brand, priceMinor) => {
+    const created = await ssProduct({ name: `${name} ${anStamp}`, category: anDept, brand, unitType: 'each', priceMinor });
+    await ssReceive(created.data._id, { quantity: 100, costPriceMinor: Math.floor(priceMinor / 2) });
+    return created.data._id;
+  };
+  const anA = await anMake('AN Alpha', anBrandA, 10_000);
+  const anB = await anMake('AN Beta', anBrandB, 20_000);
+  check('Analytics fixtures are stocked', Boolean(anA && anB));
+
+  // A till of its own, so "by staff" has something unambiguous to report.
+  const anStores = (await api('/stores', { token: ssToken })).data ?? [];
+  const anHome = anStores[0]._id;
+  const anOther = anStores.find((row) => String(row._id) !== String(anHome));
+  const anTillCreated = await api('/staff', {
+    method: 'POST',
+    token: ssToken,
+    body: { name: `AN Till ${anStamp}`, email: `ssan${anStamp}@example.com`, password: 'Password@123', storeId: anHome, extraPermissions: ['sales.create', 'sales.view', 'products.view', 'reports.view', 'customers.view', 'customers.create'] },
+  });
+  const anTill = { id: anTillCreated.data?.id, token: (await login(`ssan${anStamp}@example.com`, 'Password@123')).token };
+  check('An analytics till is created', anTillCreated.status === 201 && Boolean(anTill.token), anTillCreated.error);
+
+  // Admin sells Alpha for cash; the till sells Beta on bKash, to a customer.
+  const anSaleAdmin = await ssSale({ items: [{ productId: anA, quantity: 2 }], payments: [{ method: 'cash', amountMinor: 20_000 }] });
+  check('The admin sale lands', anSaleAdmin.status === 201, anSaleAdmin.error);
+  const anCustomerPhone = `0177${anStamp}`;
+  const anSaleTill = await api('/supershop/sales', {
+    method: 'POST',
+    token: anTill.token,
+    body: { items: [{ productId: anB, quantity: 1 }], payments: [{ method: 'bkash', amountMinor: 20_000 }], customer: { name: `AN Buyer ${anStamp}`, phone: anCustomerPhone } },
+  });
+  check("The till's sale lands", anSaleTill.status === 201, anSaleTill.error);
+
+  const anReport = (params) => ssApi(`/reports?${new URLSearchParams({ preset: 'today', ...params })}`);
+
+  // ---- by department, brand and product (line-level) --------------------------
+  const anByDept = await anReport({ category: anDept });
+  check('A department filter selects its lines', anByDept.status === 200 && anByDept.data?.selection?.lines === 2, anByDept.data?.selection ?? anByDept.error);
+  check('...and values them: 2 Alpha at 100 plus 1 Beta at 200', anByDept.data?.selection?.revenueMinor === 40_000, anByDept.data?.selection);
+  check('...over the two sales that contain them', anByDept.data?.selection?.salesCount === 2, anByDept.data?.selection);
+  check('...and the department breakdown shows only it', (anByDept.data?.departments ?? []).length === 1 && anByDept.data.departments[0].department === anDept, anByDept.data?.departments);
+
+  const anByBrand = await anReport({ brand: anBrandA });
+  check('A brand filter selects only that brand', anByBrand.data?.selection?.lines === 1 && anByBrand.data?.selection?.revenueMinor === 20_000, anByBrand.data?.selection);
+  check('...and the brand breakdown names it alone', (anByBrand.data?.brands ?? []).length === 1 && anByBrand.data.brands[0].brand === anBrandA, anByBrand.data?.brands);
+  check('...with its cost and profit', anByBrand.data?.brands?.[0]?.costMinor === 10_000 && anByBrand.data.brands[0].profitMinor === 10_000, anByBrand.data?.brands?.[0]);
+
+  const anByProduct = await anReport({ productId: anB });
+  check('A product filter selects only that product', anByProduct.data?.selection?.quantity === 1 && anByProduct.data?.selection?.revenueMinor === 20_000, anByProduct.data?.selection);
+  check('...and the product breakdown is just it', (anByProduct.data?.products ?? []).length === 1 && String(anByProduct.data.products[0].productId) === String(anB));
+
+  check('With no line filter there is no selection block', (await anReport({})).data?.selection === null);
+
+  // ---- by staff ----------------------------------------------------------------
+  const anByStaff = await anReport({ staffId: anTill.id });
+  check('A staff filter counts only their sales', anByStaff.data?.totals?.salesCount === 1 && anByStaff.data?.totals?.grossSalesMinor === 20_000, anByStaff.data?.totals);
+  check('...and the staff breakdown names them', (anByStaff.data?.staff ?? []).length === 1 && anByStaff.data.staff[0].name === `AN Till ${anStamp}`, anByStaff.data?.staff);
+  // Profit must agree between the header and the dimension: same definition,
+  // same numbers, no second way of working it out.
+  check(
+    'Profit is the same figure in the totals and in the staff row',
+    anByStaff.data?.staff?.[0]?.profitMinor === anByStaff.data?.totals?.grossProfitMinor,
+    { staff: anByStaff.data?.staff?.[0]?.profitMinor, totals: anByStaff.data?.totals?.grossProfitMinor },
+  );
+  // A return records the goods and the customer, not which cashier sold them -
+  // so under a staff filter refunds are left out rather than subtracted wrongly.
+  check('...because refunds are left out when they cannot be attributed', anByStaff.data?.returnsAttributable === false && anByStaff.data?.totals?.returnAmountMinor === 0, {
+    attributable: anByStaff.data?.returnsAttributable,
+    returned: anByStaff.data?.totals?.returnAmountMinor,
+  });
+  check('With no such filter refunds are counted again', (await anReport({})).data?.returnsAttributable === true);
+  check('...and it is net sales less VAT less cost', anByStaff.data?.totals?.grossProfitMinor === anByStaff.data.totals.netSalesMinor - anByStaff.data.totals.vatMinor - anByStaff.data.totals.costMinor, anByStaff.data?.totals);
+
+  // ---- by payment method and customer ------------------------------------------
+  const anByPayment = await anReport({ paymentMethod: 'bkash', category: anDept });
+  check('A payment filter counts only sales taken that way', anByPayment.data?.selection?.lines === 1 && anByPayment.data?.selection?.revenueMinor === 20_000, anByPayment.data?.selection);
+  const anCustomer = ((await api(`/customers?search=${anCustomerPhone}`, { token: ssToken })).data ?? [])[0];
+  const anByCustomer = await anReport({ customerId: anCustomer?._id });
+  check('A customer filter counts only their sales', anByCustomer.data?.totals?.salesCount === 1, anByCustomer.data?.totals);
+  check('...and the customer breakdown names them', (anByCustomer.data?.customers ?? []).some((row) => row.name === `AN Buyer ${anStamp}`), anByCustomer.data?.customers);
+
+  // ---- combined -------------------------------------------------------------------
+  const anCombined = await anReport({ staffId: anTill.id, brand: anBrandB });
+  check('Staff and brand together narrow to one line', anCombined.data?.selection?.lines === 1 && anCombined.data?.selection?.revenueMinor === 20_000, anCombined.data?.selection);
+  const anCombinedMiss = await anReport({ staffId: anTill.id, brand: anBrandA });
+  check('...and a combination nothing matches is empty, not everything', (anCombinedMiss.data?.selection?.lines ?? 0) === 0 && (anCombinedMiss.data?.brands ?? []).length === 0, anCombinedMiss.data?.selection);
+  check('The report says which filters it applied', anCombined.data?.filters?.brand === anBrandB && String(anCombined.data?.filters?.staffId) === String(anTill.id), anCombined.data?.filters);
+
+  // ---- date range -------------------------------------------------------------------
+  check("Yesterday shows none of today's sales", ((await anReport({ preset: 'yesterday', category: anDept })).data?.selection?.lines ?? 0) === 0);
+  check('A 30-day window still finds them', ((await anReport({ preset: 'last30', category: anDept })).data?.selection?.lines ?? 0) === 2);
+  check('An invalid preset is refused', (await anReport({ preset: 'forever' })).status === 422);
+  check('A custom range with no dates is refused', (await anReport({ preset: 'custom' })).status === 422);
+  check('An unknown filter is refused', (await anReport({ nonsense: 'x' })).status === 422);
+
+  // ---- by branch, and who may ask -----------------------------------------------
+  if (anOther) {
+    const anAtOther = { token: ssToken, storeId: anOther._id };
+    await api(`/supershop/products/${anA}/stock`, { ...anAtOther, method: 'POST', body: { quantity: 10, costPriceMinor: 5000 } });
+    await api('/supershop/sales', { ...anAtOther, method: 'POST', body: { items: [{ productId: anA, quantity: 1 }], payments: [{ method: 'cash', amountMinor: 10_000 }] } });
+
+    const anHere = await anReport({ category: anDept });
+    check('This branch sees only its own sales', anHere.data?.selection?.lines === 2, anHere.data?.selection);
+    const anAll = await anReport({ branch: 'all', category: anDept });
+    check('An admin asking for all branches sees them all', anAll.data?.selection?.lines === 3, anAll.data?.selection);
+    check('...broken down by branch', (anAll.data?.branchBreakdown ?? []).length === 2, anAll.data?.branchBreakdown);
+    check('...each named', (anAll.data?.branchBreakdown ?? []).every((row) => Boolean(row.name)), anAll.data?.branchBreakdown);
+    const anNamed = await anReport({ branch: String(anOther._id), category: anDept });
+    check('An admin can ask for one named branch', anNamed.data?.selection?.lines === 1, anNamed.data?.selection);
+
+    // A till is not an admin: asking for everything, or for somebody else's
+    // branch, quietly gives it its own rather than an error or a leak.
+    const anTillAll = await api(`/supershop/reports?preset=today&branch=all&category=${encodeURIComponent(anDept)}`, { token: anTill.token });
+    check('A non-admin asking for all branches gets only its own', anTillAll.status === 200 && anTillAll.data?.selection?.lines === 2, anTillAll.data?.selection ?? anTillAll.error);
+    const anTillOther = await api(`/supershop/reports?preset=today&branch=${anOther._id}&category=${encodeURIComponent(anDept)}`, { token: anTill.token });
+    check("...and asking for another branch gets its own, not that one", anTillOther.status === 200 && anTillOther.data?.selection?.lines === 2, anTillOther.data?.selection);
+    check('...with only its own branch offered in the picker', (anTillAll.data?.branches ?? []).length === 1, anTillAll.data?.branches);
+    check('An admin is offered every branch', ((await anReport({})).data?.branches ?? []).length === 2);
+  } else {
+    check('A second branch exists for the analytics branch checks', false, anStores.map((row) => row.name));
+  }
+
+  // ---- who may read it at all -------------------------------------------------------
+  check('Analytics needs a session', (await api('/supershop/reports?preset=today')).status === 401);
+  check("Another workspace cannot read this one's analytics", (await api('/supershop/reports?preset=today', { token: phToken })).status === 403);
+  const anNoReports = await api('/staff', {
+    method: 'POST',
+    token: ssToken,
+    body: { name: `AN NoReports ${anStamp}`, email: `ssanr${anStamp}@example.com`, password: 'Password@123', storeId: anHome, extraPermissions: ['sales.create', 'products.view'] },
+  });
+  check('A till without reports.view can be created', anNoReports.status === 201, anNoReports.error);
+  const anNoReportsToken = (await login(`ssanr${anStamp}@example.com`, 'Password@123')).token;
+  check('A till without reports.view cannot read analytics', (await api('/supershop/reports?preset=today', { token: anNoReportsToken })).status === 403);
+  check('The printed report follows the same filters', (await fetchFile(`/supershop/reports/print?preset=today&brand=${encodeURIComponent(anBrandA)}`, { token: ssToken })).status === 200);
+
+  // Retire the fixtures.
+  for (const id of [anA, anB]) {
+    for (const store of anStores) {
+      const at = { token: ssToken, storeId: store._id };
+      const onHand = (await api(`/supershop/products/${id}`, at)).data?.product?.stock?.quantityOnHand ?? 0;
+      if (onHand !== 0) await api(`/supershop/products/${id}/adjust`, { ...at, method: 'POST', body: { type: 'adjust', quantityDelta: -onHand, reason: 'Analytics fixture' } });
+    }
+    await ssApi(`/products/${id}`, { method: 'DELETE' });
+  }
+
 
   // --- Customer on a sale, in every vertical -----------------------------------
   // Clothing has always been able to attach a customer at the till; these are the

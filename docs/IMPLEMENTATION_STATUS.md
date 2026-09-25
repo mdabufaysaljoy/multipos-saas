@@ -1267,3 +1267,108 @@ which is outside this task.
 
 **Not touched:** Clothing, Restaurant, Pharmacy. **Still open:** CI (audit Issue
 10), N1 on the ordinary return path, the browser pass.
+
+## 2026-09-26 — Phase 9: Advanced Analytics
+
+Audit Issue 12. Full specification: **`docs/SUPERSHOP_ANALYTICS.md`** (new).
+Super Shop only.
+
+### Audited first
+
+The page already had more than the audit gave it credit for: totals, trend,
+products, departments, VAT by rate, busy hours, payments, discounts, voids,
+write-offs, dead stock and returns. What it had **none** of was a way to ask a
+question: one branch, no filters, no staff and no brand.
+
+Clothing was read as a reference for **behaviour only** — specifically its
+`storeScope`, which is the security-critical part. Its clothing-specific metrics
+(variants, categories-as-entities) were deliberately left there.
+
+**The money vocabulary was not touched.** `grossSales`, `returns`, `netSales`,
+`cost`, `grossProfit` and margin still mean exactly what
+`docs/ANALYTICS_PARITY.md` says, and cost is still the weighted average of
+`docs/SUPERSHOP_COSTING.md`. No second way of working profit out was introduced.
+
+### New dimensions
+
+`staff`, `brands`, `branchBreakdown` and `customers`, beside the existing
+products, departments, VAT rates, hours and payments. Each carries the standard
+figures — sales, quantity, revenue/net, VAT, cost, profit, margin — at its own
+grain, and the printed PDF gained the same sections.
+
+### Filters, and the distinction that matters
+
+**Sale-level** (`branch`, `staffId`, `paymentMethod`, `customerId`) choose which
+sales are counted, so every figure narrows. **Line-level** (`category`, `brand`,
+`productId`) choose which LINES are of interest: they narrow the sale set to
+sales containing such a line, narrow the per-line blocks, and report those lines
+on their own in a new `selection` block.
+
+**`totals` stays sale-level under a line filter** — a basket is not re-costed
+because one line in it was asked about, and a sale discount cannot honestly be
+attributed to one line. The screen labels `selection` "the lines you filtered to"
+rather than letting the header be misread.
+
+### Two real problems found by the tests
+
+**1. Filtered reports subtracted unrelated refunds.** A `Return` records the
+goods, the branch, the date and the customer — not which cashier sold them, which
+tender paid, or which line a filter was aimed at. Filtering by one cashier still
+subtracted **every** refund in the period, producing a **large negative profit
+for a cashier who had sold perfectly well** (−409,194 against a true 10,000).
+Refunds now narrow by branch, date and customer, and under a staff, payment or
+line filter they are **left out entirely** — `returnsAttributable: false`, and
+the screen says why. `returnFiguresFor`/`returnsByDay`/`recentReturns` gained an
+optional scope argument, defaulted, so Pharmacy and Restaurant are unchanged.
+
+**2. The write-off aggregation had no `$sort`.** MongoDB does not promise an
+order out of `$group`, so the same report could print its write-offs in a
+different order each time — which is the intermittent "printing the same report
+twice gives the same document" failure seen twice over these phases (6005 vs
+6015 bytes). Now sorted, so the printed report is deterministic. **That flake was
+not the wallet-ledger one and not a test problem; it was a real defect in this
+service.**
+
+### Branch safety
+
+`storeScope()` mirrors Clothing exactly: `all` and a named branch are an
+admin's to ask for, and anyone else is **quietly given their own** rather than
+refused — so a shared dashboard link shows a branch manager their own numbers
+instead of leaking another shop's. It is applied to the `$match` of every
+aggregation, so filtering happens in the query, never in the client. The response
+carries `branches` — the branches this user may choose between, which is **one**
+for a non-admin, so the picker cannot offer what they may not see.
+
+### Performance
+
+Everything is aggregation; no report pulls sales into the server or the browser
+to count them there. All aggregations share one `$match` — tenant, branch scope,
+`completed`, window — now indexed as `{tenantId, storeId, status, soldAt}`.
+Breakdowns are `$limit`-ed by the request (default 10, max 50), so rows returned
+do not grow with the shop.
+
+### Verification
+
+- `npm run lint` ✅ · `npm run typecheck` ✅ · `npm run build` ✅
+- `npm test` — **3545 passed, 0 failed** (was 3500; **45 net new assertions**).
+
+Covering: **staff** (its own sales, named, profit agreeing with the header);
+**department**, **brand** and **product** each selecting their lines and valuing
+them; **payment method**; **customer**; **combined** staff+brand, and a
+combination nothing matches coming back empty rather than unfiltered; the echoed
+`filters`; **date range** — yesterday excluding today, a 30-day window including
+it, an invalid preset, a custom range with no dates, an unknown filter;
+**branch** — this branch alone, an admin seeing all with a per-branch breakdown,
+an admin naming one branch, **a non-admin asking for "all" or for another branch
+getting only their own**, and the picker offering one branch to a non-admin and
+all to an admin; **permission isolation** — no session, another workspace, a till
+without `reports.view`; **profit consistency** in both directions; and the
+printed report following the same filters.
+
+**Noted, not changed:** day and hour buckets use the server process timezone via
+the shared `reportTimezone()`. The range is built in the same timezone so they
+agree with each other; fixing it properly needs a timezone on `Store` and a
+change to a helper every vertical uses, so it is a platform decision.
+
+**Not touched:** Clothing, Restaurant, Pharmacy. **Still open:** CI (audit Issue
+10), N1 on the ordinary return path, the browser pass.
