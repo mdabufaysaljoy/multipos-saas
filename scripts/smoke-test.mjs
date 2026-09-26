@@ -5660,6 +5660,76 @@ async function main() {
   check('A zero quantity is rejected', (await ssReceive(soap.data._id, { quantity: 0, costPriceMinor: 1 })).status === 422);
   check('A fractional quantity is rejected (weights are whole grams)', (await ssReceive(rice.data._id, { quantity: 1.5, costPriceMinor: 1 })).status === 422);
 
+  // ---- How much of one product a branch may hold ------------------------------
+  // Two unit systems share one `quantity` field, so a single ceiling cannot
+  // serve both: 1,000,000 is a million pieces, but for weighed goods it is
+  // 1,000,000 GRAMS - exactly 1000 kg, which a supershop passes in one delivery
+  // of rice. The schema now bounds by the widest unit and the service narrows it
+  // once the product's `unitType` is known.
+  //
+  // Each delivery is counted back off afterwards, so the fixture never holds a
+  // balance larger than one correction can clear, and the plan meter and the
+  // dead-stock report (both asserted by exact value below) see it retired.
+  const ssQtyKg = await ssProduct({ name: `Ceiling Rice ${Date.now()}`, category: 'Grocery', unitType: 'weight', priceMinor: 8000 });
+  const ssQtyPieces = await ssProduct({ name: `Ceiling Straws ${Date.now()}`, category: 'Household', unitType: 'each', priceMinor: 100 });
+  const ssQtyOnHand = async (id) => (await ssApi(`/products/${id}`)).data?.product?.stock?.quantityOnHand ?? 0;
+  const ssQtyReset = async (id) => {
+    const onHand = await ssQtyOnHand(id);
+    if (onHand !== 0) await ssApi(`/products/${id}/adjust`, { method: 'POST', body: { type: 'adjust', quantityDelta: -onHand, reason: 'Ceiling fixture reset' } });
+  };
+  /** Receives a quantity on its own, then leaves the shelf empty again. */
+  const ssQtyTake = async (fixture, quantity) => {
+    const res = await ssReceive(fixture.data._id, { quantity, costPriceMinor: 500 });
+    const onHand = await ssQtyOnHand(fixture.data._id);
+    await ssQtyReset(fixture.data._id);
+    return { status: res.status, onHand, error: res.error };
+  };
+
+  const ssQtyAt1000 = await ssQtyTake(ssQtyKg, 1_000_000);
+  check('Exactly 1000 kg can be received', ssQtyAt1000.status === 201 && ssQtyAt1000.onHand === 1_000_000, ssQtyAt1000);
+  const ssQtyAbove = await ssQtyTake(ssQtyKg, 1_500_000);
+  check('More than 1000 kg can be received (1500 kg)', ssQtyAbove.status === 201 && ssQtyAbove.onHand === 1_500_000, ssQtyAbove);
+  const ssQtyOldClientWall = await ssQtyTake(ssQtyKg, 10_000_000);
+  check('And 10 tonnes, past the old 9999 kg the till would accept', ssQtyOldClientWall.status === 201 && ssQtyOldClientWall.onHand === 10_000_000, ssQtyOldClientWall);
+  const ssQtyDecimal = await ssQtyTake(ssQtyKg, 1250);
+  check('A part-kilogram is still exact (1.25 kg = 1250 g)', ssQtyDecimal.status === 201 && ssQtyDecimal.onHand === 1250, ssQtyDecimal);
+  const ssQtyCeiling = await ssQtyTake(ssQtyKg, 100_000_000);
+  check('100 tonnes is accepted at the ceiling', ssQtyCeiling.status === 201 && ssQtyCeiling.onHand === 100_000_000, ssQtyCeiling);
+  check('Past the ceiling is refused', (await ssQtyTake(ssQtyKg, 100_000_001)).status === 422);
+
+  // Pieces keep the lower ceiling: the schema would take it, the service does not.
+  check('A million pieces is accepted', (await ssQtyTake(ssQtyPieces, 1_000_000)).status === 201);
+  const ssQtyPiecesTooMany = await ssQtyTake(ssQtyPieces, 1_000_001);
+  check('More than a million PIECES is refused in the unit the till typed', ssQtyPiecesTooMany.status === 400 && /1000000/.test(ssQtyPiecesTooMany.error?.message ?? ''), ssQtyPiecesTooMany.error);
+
+  // Genuinely invalid numbers are still refused, whatever the unit.
+  check('A negative quantity is refused', (await ssQtyTake(ssQtyKg, -5)).status === 422);
+  const ssQtyRawReceive = (json) =>
+    fetch(`${BASE}/supershop/products/${ssQtyKg.data._id}/stock`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${ssToken}` },
+      body: json,
+    }).then((res) => res.status);
+  check('NaN is refused', (await ssQtyRawReceive('{"quantity":"NaN","costPriceMinor":100}')) === 422);
+  check('Infinity is refused', (await ssQtyRawReceive('{"quantity":1e999,"costPriceMinor":100}')) === 422);
+  check('A null quantity is refused', (await ssQtyRawReceive('{"quantity":null,"costPriceMinor":100}')) === 422);
+
+  // A count correction and a reorder level are quantities too.
+  check('A branch can count more than 1000 kg in one correction', (await ssApi(`/products/${ssQtyKg.data._id}/adjust`, { method: 'POST', body: { type: 'adjust', quantityDelta: 2_000_000, reason: 'Counted the whole godown' } })).status === 200);
+  await ssQtyReset(ssQtyKg.data._id);
+  check('A reorder level above 1000 kg is allowed on a weighed product', (await ssApi(`/products/${ssQtyKg.data._id}`, { method: 'PATCH', body: { reorderLevel: 5_000_000 } })).status === 200);
+  const ssQtyReorderTooBig = await ssApi(`/products/${ssQtyPieces.data._id}`, { method: 'PATCH', body: { reorderLevel: 1_000_001 } });
+  check('But not on a product sold by the piece', ssQtyReorderTooBig.status === 400, ssQtyReorderTooBig.error);
+
+  // Retire the fixtures: the plan meter counts products and the dead-stock
+  // report lists them by exact value, both asserted further down.
+  for (const fixture of [ssQtyKg, ssQtyPieces]) {
+    await ssQtyReset(fixture.data._id);
+    await ssApi(`/products/${fixture.data._id}`, { method: 'DELETE' });
+  }
+  const ssQtyGone = await Promise.all([ssApi(`/products/${ssQtyKg.data._id}`), ssApi(`/products/${ssQtyPieces.data._id}`)]);
+  check('The quantity-ceiling fixtures are retired', ssQtyGone.every((res) => res.status === 404), ssQtyGone.map((r) => r.status));
+
   const scanned = await ssApi('/products/lookup?barcode=8941100500019');
   check('A scanned barcode finds the product with its stock', scanned.status === 200 && scanned.data?._id === soap.data._id && scanned.data?.stock?.quantityOnHand === 40, scanned.data ?? scanned.error);
   check('An unknown barcode is 404', (await ssApi('/products/lookup?barcode=0000000')).status === 404);
@@ -5671,6 +5741,94 @@ async function main() {
     JSON.stringify(ssDepartments.map((row) => row.name)) === JSON.stringify(['Grocery', 'Household', 'Personal care']) && ssDepartments.every((row) => row.itemCount > 0),
     ssDepartments,
   );
+
+  // --- The till's item list: paging, and the department/brand filters ----------
+  // The POS asks for this list with `activeOnly`, a page at a time. It used to
+  // ask for nothing at all until the cashier typed something, and only ever for
+  // one page of 30; it now browses the shelf from the moment it opens and pages
+  // as it is scrolled. Both filters are applied by the SERVER, so they narrow the
+  // whole catalogue rather than the page already in the browser.
+  section('Supershop POS item list: paging and filters');
+
+  const ssPosList = (params) => ssApi(`/products?${new URLSearchParams({ activeOnly: 'true', ...params })}`);
+  const ssBaseline = (await ssPosList({ limit: 1 })).meta?.total ?? 0;
+  const ssBaseGrocery = (await ssPosList({ limit: 1, category: 'Grocery' })).meta?.total ?? 0;
+
+  // 45 products, so the till's 40-per-page list genuinely has a second page.
+  const ssFilterStamp = String(Date.now()).slice(-6);
+  const ssFilterIds = [];
+  for (let i = 0; i < 45; i += 1) {
+    const created = await ssProduct({
+      name: `Filter Item ${ssFilterStamp}-${String(i).padStart(2, '0')}`,
+      brand: i % 3 === 0 ? 'Fresh' : i % 3 === 1 ? 'Pran' : '',
+      category: i % 2 === 0 ? 'Grocery' : 'Household',
+      priceMinor: 1000 + i,
+    });
+    ssFilterIds.push(created.data?._id);
+  }
+  check('45 products are created for the paging and filter checks', ssFilterIds.length === 45 && ssFilterIds.every(Boolean));
+
+  // ---- no filter: every sellable product, first page only --------------------
+  const ssPage1 = await ssPosList({ limit: 40 });
+  check('With no filter the till lists the whole catalogue', ssPage1.meta?.total === ssBaseline + 45, { total: ssPage1.meta?.total, expected: ssBaseline + 45 });
+  check('...but sends only the first page', (ssPage1.data ?? []).length === 40 && ssPage1.meta?.totalPages === 2, { returned: ssPage1.data?.length, totalPages: ssPage1.meta?.totalPages });
+  const ssPage2 = await ssPosList({ limit: 40, page: 2 });
+  check('...and the second page is the rest', (ssPage2.data ?? []).length === ssBaseline + 45 - 40, { returned: ssPage2.data?.length });
+  const ssPage1Ids = new Set((ssPage1.data ?? []).map((row) => row._id));
+  check('...with no product on both pages', (ssPage2.data ?? []).every((row) => !ssPage1Ids.has(row._id)));
+  check('Out-of-stock products are listed, not hidden', (ssPage1.data ?? []).some((row) => (row.stock?.quantityOnHand ?? 0) === 0));
+
+  // ---- the brand list the dropdown is built from -----------------------------
+  // The brand list is the managed catalogue: rows, with what carries each one.
+  const ssBrands = (await ssApi('/brands')).data ?? [];
+  const ssBrandNames = ssBrands.map((row) => row.name);
+  check('The brand list offers the brands in use', ['Fresh', 'Pran', 'Lux'].every((name) => ssBrandNames.includes(name)), ssBrandNames);
+  check('...never a blank one', !ssBrandNames.some((name) => !name || !name.trim()), ssBrandNames);
+  check('...and reports how many products carry each', (ssBrands.find((row) => row.name === 'Fresh')?.productCount ?? 0) === 15, ssBrands.find((row) => row.name === 'Fresh'));
+  check('...sorted for a dropdown', JSON.stringify(ssBrandNames) === JSON.stringify([...ssBrandNames].sort((a, b) => a.localeCompare(b))), ssBrandNames);
+
+  // ---- one filter at a time --------------------------------------------------
+  const ssByCategory = await ssPosList({ limit: 100, category: 'Grocery' });
+  check('Category only: 23 of the new products are Grocery', ssByCategory.meta?.total === ssBaseGrocery + 23, { total: ssByCategory.meta?.total, expected: ssBaseGrocery + 23 });
+  check('...and every row really is', (ssByCategory.data ?? []).every((row) => row.category === 'Grocery'));
+
+  const ssByBrand = await ssPosList({ limit: 100, brand: 'Fresh' });
+  check('Brand only: 15 products carry Fresh', ssByBrand.meta?.total === 15, ssByBrand.meta);
+  check('...and every row really does', (ssByBrand.data ?? []).every((row) => row.brand === 'Fresh'));
+
+  // ---- both together --------------------------------------------------------
+  const ssBoth = await ssPosList({ limit: 100, category: 'Grocery', brand: 'Fresh' });
+  check('Both filters narrow to the 8 Fresh products in Grocery', ssBoth.meta?.total === 8, ssBoth.meta);
+  check('...and both hold on every row', (ssBoth.data ?? []).every((row) => row.brand === 'Fresh' && row.category === 'Grocery'));
+  check('A brand the shop does not carry returns nothing, not everything', (await ssPosList({ limit: 10, brand: `Nope ${ssFilterStamp}` })).meta?.total === 0);
+
+  // ---- search together with the filters -------------------------------------
+  const ssSearchBrand = await ssPosList({ limit: 100, search: `Filter Item ${ssFilterStamp}`, brand: 'Pran' });
+  check('Search and a brand filter apply together', ssSearchBrand.meta?.total === 15, ssSearchBrand.meta);
+  const ssSearchBoth = await ssPosList({ limit: 100, search: `Filter Item ${ssFilterStamp}`, category: 'Household', brand: 'Fresh' });
+  check('Search with both filters applies all three', ssSearchBoth.meta?.total === 7, ssSearchBoth.meta);
+  check('A search that matches nothing in that brand is empty', (await ssPosList({ limit: 10, search: 'Miniket', brand: 'Fresh' })).meta?.total === 0);
+
+  // ---- the scanner is untouched by any of it --------------------------------
+  check('A barcode lookup still ignores the filters entirely', (await ssApi('/products/lookup?barcode=8941100500019')).data?._id === soap.data._id);
+
+  // ---- isolation ------------------------------------------------------------
+  // The catalogue is workspace-wide by design (stock is what is per branch), so
+  // the boundary that matters here is the workspace one.
+  check('The item list needs a session', (await api('/supershop/products?activeOnly=true')).status === 401);
+  check('The brand list needs one too', (await api('/supershop/brands')).status === 401);
+  check("Another workspace cannot read this one's products", (await api('/supershop/products?activeOnly=true', { token: phToken })).status === 403);
+  check("Another workspace cannot read this one's brands", (await api('/supershop/brands', { token: phToken })).status === 403);
+  check('A malformed brand filter is refused', (await ssPosList({ limit: 10, brand: 'x'.repeat(81) })).status === 422);
+
+  // Retire the 45: the plan meter and the dead-stock report below both count
+  // products by exact value. They hold no stock, so they delete cleanly.
+  for (const id of ssFilterIds) await ssApi(`/products/${id}`, { method: 'DELETE' });
+  check('The filter fixtures are retired', (await ssPosList({ limit: 1 })).meta?.total === ssBaseline, (await ssPosList({ limit: 1 })).meta);
+  // The brand itself SURVIVES its products: a name the shop has used is part of
+  // the catalogue until it is removed on purpose. What drops to zero is the
+  // count of products carrying it.
+  check('...while the brand itself stays in the catalogue, now carrying nothing', ((await ssApi('/brands')).data ?? []).find((row) => row.name === 'Fresh')?.productCount === 0);
 
   const ssSale = (body) => ssApi('/sales', { method: 'POST', body });
   const basket = await ssSale({ items: [{ productId: soap.data._id, quantity: 3 }, { productId: rice.data._id, quantity: 1500 }], payments: [{ method: 'cash', amountMinor: 30_000 }] });
@@ -5789,6 +5947,1122 @@ async function main() {
     ssR?.deadStock,
   );
   check('An invalid Supershop range is rejected', (await ssApi('/reports?preset=forever')).status === 422);
+
+
+  // --- High-value sales and split payment -------------------------------------
+  // A supershop takes big baskets: a month's groceries, a wholesale run, a
+  // fridge. Runs after the analytics checks above, like the customer section
+  // below, so the exact figures they assert are already settled.
+  section('Supershop high-value split payment');
+
+  const hvStamp = String(Date.now()).slice(-6);
+  const hvMake = async (name, priceMinor) => {
+    const created = await ssProduct({ name: `${name} ${hvStamp}`, category: 'Household', unitType: 'each', priceMinor });
+    await ssReceive(created.data._id, { quantity: 500, costPriceMinor: Math.floor(priceMinor / 2) });
+    return created.data._id;
+  };
+  const tk = (taka) => taka * 100; // minor units, the only unit money travels in
+  const hvBig = await hvMake('Chest Freezer', tk(50_000));
+  const hvSmall = await hvMake('Rice Sack 50kg', tk(30_000));
+  check('Two high-value products are stocked', Boolean(hvBig && hvSmall));
+
+  /** A sale of whole units, paid by the given tenders. */
+  const hvSale = (lines, payments) =>
+    ssSale({ items: lines.map(([productId, quantity]) => ({ productId, quantity })), payments });
+
+  // ---- below, at, and above the reported ~Tk 80,000 threshold ----------------
+  const hvUnder = await hvSale([[hvBig, 1]], [{ method: 'cash', amountMinor: tk(50_000) }]);
+  check('Under Tk 80,000 completes', hvUnder.status === 201 && hvUnder.data?.totalMinor === tk(50_000), hvUnder.data?.totalMinor ?? hvUnder.error);
+
+  const hvAt80 = await hvSale([[hvBig, 1], [hvSmall, 1]], [{ method: 'cash', amountMinor: tk(40_000) }, { method: 'bkash', amountMinor: tk(40_000) }]);
+  check('Exactly Tk 80,000, split two ways, completes', hvAt80.status === 201 && hvAt80.data?.totalMinor === tk(80_000), hvAt80.data?.totalMinor ?? hvAt80.error);
+
+  const hvOver80 = await hvSale([[hvBig, 1], [hvSmall, 2]], [{ method: 'cash', amountMinor: tk(60_000) }, { method: 'card', amountMinor: tk(50_000) }]);
+  check('Above Tk 80,000 completes - the reported failure does not reproduce', hvOver80.status === 201 && hvOver80.data?.totalMinor === tk(110_000), hvOver80.data?.totalMinor ?? hvOver80.error);
+
+  const hv100k = await hvSale([[hvBig, 2]], [{ method: 'cash', amountMinor: tk(100_000) }]);
+  check('Tk 100,000 on one tender completes', hv100k.status === 201 && hv100k.data?.totalMinor === tk(100_000), hv100k.data?.totalMinor ?? hv100k.error);
+
+  // ---- the exact basket from the report: 250k as 100k + 75k + 75k -----------
+  const hv250k = await hvSale(
+    [[hvBig, 5]],
+    [{ method: 'cash', amountMinor: tk(100_000) }, { method: 'bkash', amountMinor: tk(75_000) }, { method: 'card', amountMinor: tk(75_000) }],
+  );
+  check('Tk 250,000 across three tenders completes', hv250k.status === 201 && hv250k.data?.totalMinor === tk(250_000), hv250k.data?.totalMinor ?? hv250k.error);
+  check('...paid to the paisa, with no change', hv250k.data?.paidMinor === tk(250_000) && hv250k.data?.changeMinor === 0, { paid: hv250k.data?.paidMinor, change: hv250k.data?.changeMinor });
+
+  // ---- half a million, four tenders ------------------------------------------
+  const hv500k = await hvSale(
+    [[hvBig, 10]],
+    [
+      { method: 'cash', amountMinor: tk(200_000) },
+      { method: 'bkash', amountMinor: tk(150_000) },
+      { method: 'card', amountMinor: tk(100_000) },
+      { method: 'bank', amountMinor: tk(50_000) },
+    ],
+  );
+  check('Tk 500,000 across four tenders completes', hv500k.status === 201 && hv500k.data?.totalMinor === tk(500_000), hv500k.data?.totalMinor ?? hv500k.error);
+  check('...every paisa is accounted for, with nothing over', hv500k.data?.paidMinor === tk(500_000) && hv500k.data?.changeMinor === 0, { paid: hv500k.data?.paidMinor, change: hv500k.data?.changeMinor });
+  check('...and each tender is stored exactly as it was taken', JSON.stringify((hv500k.data?.payments ?? []).map((row) => row.amountMinor)) === JSON.stringify([tk(200_000), tk(150_000), tk(100_000), tk(50_000)]), hv500k.data?.payments);
+
+  // ---- a sale larger than any ONE tender may be ------------------------------
+  // A single payment row is capped at Tk 1,000,000; a sale is not, because it
+  // can be split. This is the real ceiling, and it is far above Tk 80,000.
+  const hvHuge = await hvSale([[hvBig, 30]], [{ method: 'cash', amountMinor: tk(750_000) }, { method: 'bank', amountMinor: tk(750_000) }]);
+  check('Tk 1,500,000 completes when split across two tenders', hvHuge.status === 201 && hvHuge.data?.totalMinor === tk(1_500_000), hvHuge.data?.totalMinor ?? hvHuge.error);
+  const hvOneRow = await hvSale([[hvBig, 30]], [{ method: 'cash', amountMinor: tk(1_500_000) }]);
+  check('...and also as ONE tender of Tk 1,500,000, which used to be refused', hvOneRow.status === 201 && hvOneRow.data?.totalMinor === tk(1_500_000), hvOneRow.data?.totalMinor ?? hvOneRow.error);
+
+  // The ceiling is still a ceiling, and it now says so instead of "the
+  // submitted data is not valid".
+  const hvOverCeiling = await hvSale([[hvBig, 1]], [{ method: 'cash', amountMinor: 10_000_000_001 }]);
+  check('A payment above the ceiling is refused', hvOverCeiling.status === 422, hvOverCeiling.status);
+  check('...and the refusal names the field and the limit', /100,000,000/.test(JSON.stringify(hvOverCeiling.error?.details ?? '')) && JSON.stringify(hvOverCeiling.error?.details ?? '').includes('amountMinor'), hvOverCeiling.error?.details);
+
+  // ---- change, and who may give it -------------------------------------------
+  const hvChange = await hvSale([[hvBig, 2]], [{ method: 'cash', amountMinor: tk(120_000) }]);
+  check('Cash over the total is change, not revenue', hvChange.status === 201 && hvChange.data?.totalMinor === tk(100_000) && hvChange.data?.changeMinor === tk(20_000), hvChange.data ?? hvChange.error);
+  const hvCardOver = await hvSale([[hvBig, 2]], [{ method: 'card', amountMinor: tk(120_000) }]);
+  check('A card over the total is refused - change comes out of the drawer', hvCardOver.status === 400, hvCardOver.error?.message);
+  const hvMixedChange = await hvSale([[hvBig, 3]], [{ method: 'bkash', amountMinor: tk(100_000) }, { method: 'cash', amountMinor: tk(60_000) }]);
+  check('In a split, only the cash part may overshoot', hvMixedChange.status === 201 && hvMixedChange.data?.changeMinor === tk(10_000), hvMixedChange.data ?? hvMixedChange.error);
+
+  // ---- payments that do not add up -------------------------------------------
+  const hvShort = await hvSale([[hvBig, 5]], [{ method: 'cash', amountMinor: tk(100_000) }, { method: 'bkash', amountMinor: tk(75_000) }]);
+  check('A split that is short of the total is refused', hvShort.status === 400, hvShort.error?.message);
+  check('...and says how short, in minor units', hvShort.error?.details?.totalMinor === tk(250_000) && hvShort.error?.details?.paidMinor === tk(175_000), hvShort.error?.details);
+  check('A tender the branch does not take is refused', (await hvSale([[hvBig, 1]], [{ method: 'crypto', amountMinor: tk(50_000) }])).status === 400);
+  check('A negative payment is refused', (await hvSale([[hvBig, 1]], [{ method: 'cash', amountMinor: -tk(50_000) }])).status === 422);
+  check('A fractional payment is refused', (await hvSale([[hvBig, 1]], [{ method: 'cash', amountMinor: 5_000_000.5 }])).status === 422);
+  check('More than five tenders is refused', (await hvSale([[hvBig, 1]], ['cash', 'bkash', 'card', 'bank', 'nagad', 'other'].map((method) => ({ method, amountMinor: tk(10_000) })))).status === 422);
+
+  // ---- the money is exact, and the stock moved exactly once ------------------
+  const hvSold = 1 + 1 + 1 + 2 + 5 + 10 + 30 + 30 + 2 + 3; // completed sales of the big product
+  const hvBigOnHand = (await ssApi(`/products/${hvBig}`)).data?.product?.stock?.quantityOnHand;
+  check('Every completed high-value sale took its stock exactly once', hvBigOnHand === 500 - hvSold, { onHand: hvBigOnHand, expected: 500 - hvSold });
+  check('No refused sale took any', ((await ssApi(`/products/${hvSmall}`)).data?.product?.stock?.quantityOnHand) === 500 - (1 + 2));
+
+  // Retire the fixtures so later exact-count checks are not disturbed.
+  for (const id of [hvBig, hvSmall]) {
+    const onHand = (await ssApi(`/products/${id}`)).data?.product?.stock?.quantityOnHand ?? 0;
+    if (onHand !== 0) await ssApi(`/products/${id}/adjust`, { method: 'POST', body: { type: 'adjust', quantityDelta: -onHand, reason: 'High-value fixture' } });
+    await ssApi(`/products/${id}`, { method: 'DELETE' });
+  }
+
+  // --- Exchange: goods back, goods out ----------------------------------------
+  // Super Shop could already take goods back for money. An exchange spends that
+  // refund value on replacement goods instead, which is a return and a sale
+  // joined at the till - so it goes through the same return engine and the same
+  // checkout, not a third one. Runs after the analytics checks, like everything
+  // else that adds sales.
+  section('Supershop exchange');
+
+  const exStamp = String(Date.now()).slice(-6);
+  const exMake = async (name, priceMinor, stock = 100) => {
+    const created = await ssProduct({ name: `${name} ${exStamp}`, category: 'Household', unitType: 'each', priceMinor });
+    await ssReceive(created.data._id, { quantity: stock, costPriceMinor: Math.floor(priceMinor / 2) });
+    return created.data._id;
+  };
+  const exSame = await exMake('Ex Kettle', 100_000);      // Tk 1,000
+  const exEqual = await exMake('Ex Toaster', 100_000);    // Tk 1,000, a different product
+  const exDearer = await exMake('Ex Blender', 150_000);   // Tk 1,500
+  const exCheaper = await exMake('Ex Mug', 60_000);       // Tk 600
+  check('Four exchange fixtures are stocked', [exSame, exEqual, exDearer, exCheaper].every(Boolean));
+
+  const exOnHand = async (id) => (await ssApi(`/products/${id}`)).data?.product?.stock?.quantityOnHand ?? 0;
+  /** A fresh sale of two kettles, so each case below has its own to exchange. */
+  const exOriginal = async () => {
+    const sale = await ssSale({ items: [{ productId: exSame, quantity: 2 }], payments: [{ method: 'cash', amountMinor: 200_000 }] });
+    return sale.data;
+  };
+  const exKey = (label) => `ex-${exStamp}-${label}`;
+  const exPost = (saleId, body) => ssApi(`/sales/${saleId}/exchange`, { method: 'POST', body });
+
+  // ---- same product, like for like ------------------------------------------
+  const exSale1 = await exOriginal();
+  const exBeforeSame = await exOnHand(exSame);
+  const ex1 = await exPost(exSale1._id, {
+    items: [{ saleItemId: exSale1.items[0]._id, quantity: 1, restock: true }],
+    replacement: { items: [{ productId: exSame, quantity: 1 }], payments: [] },
+    reason: 'Faulty on opening',
+    idempotencyKey: exKey('same'),
+  });
+  check('Like for like exchanges with nothing to pay', ex1.status === 201 && ex1.data?.exchange?.extraPayableMinor === 0, ex1.data?.exchange ?? ex1.error);
+  check('...the return is recorded as an exchange, not a refund', ex1.data?.refundMethod === 'exchange' && ex1.data?.totalMinor === 100_000, { method: ex1.data?.refundMethod, total: ex1.data?.totalMinor });
+  check('...a replacement sale was created and linked', Boolean(ex1.data?.exchange?.saleId && ex1.data?.exchange?.saleNumber), ex1.data?.exchange);
+  check('...and the shelf is where it started: one back, one out', (await exOnHand(exSame)) === exBeforeSame, { before: exBeforeSame, after: await exOnHand(exSame) });
+  check('...the original sale now shows the line returned', ((await ssApi(`/sales/${exSale1._id}`)).data?.items?.[0]?.returnedQuantity) === 1);
+
+  // ---- a different product at the same price --------------------------------
+  const exSale2 = await exOriginal();
+  const exEqualBefore = await exOnHand(exEqual);
+  const ex2 = await exPost(exSale2._id, {
+    items: [{ saleItemId: exSale2.items[0]._id, quantity: 1, restock: true }],
+    replacement: { items: [{ productId: exEqual, quantity: 1 }], payments: [] },
+    reason: 'Wanted the toaster instead',
+    idempotencyKey: exKey('equal'),
+  });
+  check('A different product at the same price needs no payment', ex2.status === 201 && ex2.data?.exchange?.extraPayableMinor === 0, ex2.data?.exchange ?? ex2.error);
+  check('...and the replacement left the shelf', (await exOnHand(exEqual)) === exEqualBefore - 1);
+
+  // ---- a dearer replacement, paid on one tender ------------------------------
+  const exSale3 = await exOriginal();
+  const ex3 = await exPost(exSale3._id, {
+    items: [{ saleItemId: exSale3.items[0]._id, quantity: 1, restock: true }],
+    replacement: { items: [{ productId: exDearer, quantity: 1 }], payments: [{ method: 'cash', amountMinor: 50_000 }] },
+    reason: 'Upgraded to the blender',
+    idempotencyKey: exKey('dearer'),
+  });
+  check('A dearer replacement collects exactly the difference', ex3.status === 201 && ex3.data?.exchange?.extraPayableMinor === 50_000, ex3.data?.exchange ?? ex3.error);
+  const ex3Sale = (await ssApi(`/sales/${ex3.data?.exchange?.saleId}`)).data;
+  check('...the replacement sale records the credit and what was taken', ex3Sale?.exchange?.creditMinor === 100_000 && ex3Sale?.paidMinor === 50_000 && ex3Sale?.totalMinor === 150_000, {
+    credit: ex3Sale?.exchange?.creditMinor,
+    paid: ex3Sale?.paidMinor,
+    total: ex3Sale?.totalMinor,
+  });
+  check('...and names the sale it replaced, both ways', ex3Sale?.exchange?.originalSaleNumber === exSale3.saleNumber && ex3Sale?.exchange?.returnNumber === ex3.data?.returnNumber, ex3Sale?.exchange);
+
+  // ---- split payment for the difference --------------------------------------
+  const exSale4 = await exOriginal();
+  const ex4 = await exPost(exSale4._id, {
+    items: [{ saleItemId: exSale4.items[0]._id, quantity: 1, restock: true }],
+    replacement: {
+      items: [{ productId: exDearer, quantity: 1 }],
+      payments: [{ method: 'cash', amountMinor: 30_000 }, { method: 'bkash', amountMinor: 20_000 }],
+    },
+    reason: 'Upgrade, paid two ways',
+    idempotencyKey: exKey('split'),
+  });
+  check('The difference can be split across tenders', ex4.status === 201 && ex4.data?.exchange?.extraPayableMinor === 50_000, ex4.data?.exchange ?? ex4.error);
+  check('...and both tenders are on the replacement sale', ((await ssApi(`/sales/${ex4.data?.exchange?.saleId}`)).data?.payments ?? []).length === 2);
+
+  // ---- cash over the difference is change ------------------------------------
+  const exSale5 = await exOriginal();
+  const ex5 = await exPost(exSale5._id, {
+    items: [{ saleItemId: exSale5.items[0]._id, quantity: 1, restock: true }],
+    replacement: { items: [{ productId: exDearer, quantity: 1 }], payments: [{ method: 'cash', amountMinor: 60_000 }] },
+    reason: 'Paid with a bigger note',
+    idempotencyKey: exKey('change'),
+  });
+  check('Cash over the difference comes back as change', ex5.status === 201 && ((await ssApi(`/sales/${ex5.data?.exchange?.saleId}`)).data?.changeMinor) === 10_000, ex5.error);
+
+  // ---- the rules -------------------------------------------------------------
+  const exSale6 = await exOriginal();
+  const exCheaperBefore = await exOnHand(exCheaper);
+  const exTooCheap = await exPost(exSale6._id, {
+    items: [{ saleItemId: exSale6.items[0]._id, quantity: 1, restock: true }],
+    replacement: { items: [{ productId: exCheaper, quantity: 1 }], payments: [] },
+    reason: 'Trading down',
+    idempotencyKey: exKey('cheap'),
+  });
+  check('A cheaper replacement is refused', exTooCheap.status === 422 && exTooCheap.error?.details?.reason === 'EXCHANGE_CHEAPER_REPLACEMENT', exTooCheap.error);
+  check('...and nothing moved: no stock, no return on the sale', (await exOnHand(exCheaper)) === exCheaperBefore && ((await ssApi(`/sales/${exSale6._id}`)).data?.items?.[0]?.returnedQuantity ?? 0) === 0);
+
+  const exShort = await exPost(exSale6._id, {
+    items: [{ saleItemId: exSale6.items[0]._id, quantity: 1, restock: true }],
+    replacement: { items: [{ productId: exDearer, quantity: 1 }], payments: [{ method: 'cash', amountMinor: 30_000 }] },
+    reason: 'Not enough handed over',
+    idempotencyKey: exKey('short'),
+  });
+  check('A payment short of the difference is refused', exShort.status === 400, exShort.error?.message);
+  check('...and that sale is still fully exchangeable', ((await ssApi(`/sales/${exSale6._id}`)).data?.items?.[0]?.returnedQuantity ?? 0) === 0);
+
+  check(
+    'More than was bought cannot be exchanged',
+    (await exPost(exSale6._id, {
+      items: [{ saleItemId: exSale6.items[0]._id, quantity: 99, restock: true }],
+      replacement: { items: [{ productId: exDearer, quantity: 1 }], payments: [{ method: 'cash', amountMinor: 1_000_000 }] },
+      reason: 'Too many',
+      idempotencyKey: exKey('toomany'),
+    })).status === 400,
+  );
+  check(
+    'A replacement that is not in this shop is refused',
+    (await exPost(exSale6._id, {
+      items: [{ saleItemId: exSale6.items[0]._id, quantity: 1, restock: true }],
+      replacement: { items: [{ productId: exSale6._id, quantity: 1 }], payments: [] },
+      reason: 'Nonsense product',
+      idempotencyKey: exKey('noprod'),
+    })).status === 400,
+  );
+  check(
+    'An exchange needs a reason and a request key',
+    (await exPost(exSale6._id, { items: [{ saleItemId: exSale6.items[0]._id, quantity: 1, restock: true }], replacement: { items: [{ productId: exDearer, quantity: 1 }], payments: [] } })).status === 422,
+  );
+
+  // ---- the same submission twice ---------------------------------------------
+  const exSale7 = await exOriginal();
+  const exBody = {
+    items: [{ saleItemId: exSale7.items[0]._id, quantity: 1, restock: true }],
+    replacement: { items: [{ productId: exDearer, quantity: 1 }], payments: [{ method: 'cash', amountMinor: 50_000 }] },
+    reason: 'Double click',
+    idempotencyKey: exKey('dup'),
+  };
+  const exFirst = await exPost(exSale7._id, exBody);
+  const exAgain = await exPost(exSale7._id, exBody);
+  check('The first submission goes through', exFirst.status === 201, exFirst.error);
+  check('The same key returns the SAME exchange, not a second one', exAgain.status === 201 && exAgain.data?.returnNumber === exFirst.data?.returnNumber && exAgain.data?.replayed === true, {
+    first: exFirst.data?.returnNumber,
+    again: exAgain.data?.returnNumber,
+  });
+  check('...and only one replacement sale exists for it', exAgain.data?.exchange?.saleId === exFirst.data?.exchange?.saleId);
+  check('...and only one unit came back off the original sale', ((await ssApi(`/sales/${exSale7._id}`)).data?.items?.[0]?.returnedQuantity) === 1);
+
+  // ---- the credit is what was PAID, not today's price ------------------------
+  const exSale8 = await exOriginal();
+  await ssApi(`/products/${exSame}`, { method: 'PATCH', body: { priceMinor: 500_000 } });
+  const ex8 = await exPost(exSale8._id, {
+    items: [{ saleItemId: exSale8.items[0]._id, quantity: 1, restock: true }],
+    replacement: { items: [{ productId: exDearer, quantity: 1 }], payments: [{ method: 'cash', amountMinor: 50_000 }] },
+    reason: 'Price went up since',
+    idempotencyKey: exKey('oldprice'),
+  });
+  check('The returned goods are valued at what was PAID, not at the new shelf price', ex8.status === 201 && ex8.data?.totalMinor === 100_000, { credit: ex8.data?.totalMinor, error: ex8.error });
+  await ssApi(`/products/${exSame}`, { method: 'PATCH', body: { priceMinor: 100_000 } });
+
+  // ---- the exchange receipt ---------------------------------------------------
+  const exReceipt = await ssApi(`/sales/${ex3.data?.exchange?.saleId}/receipt`);
+  check('The replacement sale has a receipt of its own', exReceipt.status === 200 && exReceipt.data?.sale?.saleNumber === ex3.data?.exchange?.saleNumber, exReceipt.error);
+  check('...naming the sale it replaced and the return', exReceipt.data?.sale?.exchange?.originalSaleNumber === exSale3.saleNumber && Boolean(exReceipt.data?.sale?.exchange?.returnNumber), exReceipt.data?.sale?.exchange);
+  check('...the credit and what came back', exReceipt.data?.sale?.exchange?.creditMinor === 100_000 && (exReceipt.data?.sale?.exchange?.returnedItems ?? []).length === 1, exReceipt.data?.sale?.exchange);
+  check('...the branch, the date and the tender, from the shared receipt branch', Boolean(exReceipt.data?.store?.name) && Boolean(exReceipt.data?.sale?.soldAt) && (exReceipt.data?.sale?.payments ?? []).length === 1, exReceipt.data?.store?.name);
+  check('The exchange is listed with the returns', ((await ssApi('/returns?limit=50')).data ?? []).some((row) => row.returnNumber === ex3.data?.returnNumber && row.refundMethod === 'exchange'));
+
+  // ---- who may do it -----------------------------------------------------------
+  const exSale9 = await exOriginal();
+  const exDenied = (token) =>
+    api(`/supershop/sales/${exSale9._id}/exchange`, {
+      method: 'POST',
+      token,
+      body: {
+        items: [{ saleItemId: exSale9.items[0]._id, quantity: 1, restock: true }],
+        replacement: { items: [{ productId: exDearer, quantity: 1 }], payments: [{ method: 'cash', amountMinor: 50_000 }] },
+        reason: 'Not allowed',
+        idempotencyKey: exKey(`denied-${Math.random().toString(36).slice(2, 8)}`),
+      },
+    });
+  check('An exchange needs a session', (await exDenied(undefined)).status === 401);
+  check('Another workspace cannot exchange against this sale', (await exDenied(phToken)).status === 403);
+  // A till with sales but no returns permission, and vice versa.
+  // Tills made for these checks are RETIRED when their section is done: the
+  // plan allows a handful of staff, and a test that quietly eats them all
+  // starves the sections that come after it.
+  const retireTill = async (id) => {
+    if (id) await api(`/staff/${id}`, { method: 'DELETE', token: ssToken });
+  };
+  const exStoreId = (await api('/stores', { token: ssToken })).data?.[0]?._id;
+  const exTillCreated = await api('/staff', {
+    method: 'POST',
+    token: ssToken,
+    body: {
+      name: 'Exchange Till',
+      email: `ssex${exStamp}@example.com`,
+      password: 'Password@123',
+      storeId: exStoreId,
+      extraPermissions: ['sales.create', 'sales.view', 'products.view'],
+    },
+  });
+  const exTill = { id: exTillCreated.data?.id, token: (await login(`ssex${exStamp}@example.com`, 'Password@123')).token };
+  check('A till is created for the exchange permission checks', exTillCreated.status === 201 && Boolean(exTill.token), exTillCreated.error);
+  check('A till without returns.create cannot exchange', (await exDenied(exTill.token)).status === 403);
+  await api(`/staff/${exTill.id}`, { method: 'PATCH', token: ssToken, body: { extraPermissions: ['returns.create', 'sales.view', 'products.view'] } });
+  check('A till without sales.create cannot exchange either', (await exDenied(exTill.token)).status === 403);
+  await api(`/staff/${exTill.id}`, { method: 'PATCH', token: ssToken, body: { extraPermissions: ['returns.create', 'sales.create', 'sales.view', 'products.view'] } });
+  const exAllowed = await exDenied(exTill.token);
+  check('With both permissions the same till can', exAllowed.status === 201, exAllowed.error);
+
+  // Retire the fixtures: later checks count products by exact value.
+  for (const id of [exSame, exEqual, exDearer, exCheaper]) {
+    const onHand = await exOnHand(id);
+    if (onHand !== 0) await ssApi(`/products/${id}/adjust`, { method: 'POST', body: { type: 'adjust', quantityDelta: -onHand, reason: 'Exchange fixture' } });
+    await ssApi(`/products/${id}`, { method: 'DELETE' });
+  }
+
+  // --- Brands -------------------------------------------------------------------
+  // Built the same way departments are: the product carries the NAME, the
+  // collection is the list of names, and the list is everything written down
+  // plus everything products actually use. Brand is INDEPENDENT of the
+  // department - a product has either, both or neither.
+  section('Supershop brands');
+
+  const brStamp = String(Date.now()).slice(-6);
+  const brApi = (path, opts = {}) => ssApi(`/brands${path}`, opts);
+  const brName = `Pusti ${brStamp}`;
+
+  const brCreated = await brApi('', { method: 'POST', body: { name: brName, sortOrder: 5 } });
+  check('A brand can be created', brCreated.status === 201 && brCreated.data?.name === brName, brCreated.error);
+  check('The same name again is refused', (await brApi('', { method: 'POST', body: { name: brName } })).status === 409);
+  check('...and so is the same name in different clothes', (await brApi('', { method: 'POST', body: { name: `  ${brName.toUpperCase()}  ` } })).status === 409);
+  check('A nameless brand is refused', (await brApi('', { method: 'POST', body: { name: '   ' } })).status === 422);
+  check('A brand name over 80 characters is refused', (await brApi('', { method: 'POST', body: { name: 'x'.repeat(81) } })).status === 422);
+  check('Unknown fields are refused', (await brApi('', { method: 'POST', body: { name: `Other ${brStamp}`, colour: 'red' } })).status === 422);
+
+  const brRow = () => brApi('?includeInactive=true').then((res) => (res.data ?? []).find((row) => row.name === brName));
+  check('It is listed, carrying nothing yet', (await brRow())?.productCount === 0);
+  check('The list can be searched', ((await brApi(`?search=${encodeURIComponent(`Pusti ${brStamp}`)}`)).data ?? []).some((row) => row.name === brName));
+  check('...and a search that matches nothing comes back empty', ((await brApi(`?search=nothinglikethis${brStamp}`)).data ?? []).length === 0);
+
+  // ---- assigning it to a product ---------------------------------------------
+  const brProduct = await ssProduct({ name: `Branded Biscuit ${brStamp}`, brand: brName, category: 'Household', priceMinor: 5000 });
+  check('A product can be created under the brand', brProduct.status === 201 && brProduct.data?.brand === brName, brProduct.error);
+  check('...and the brand now says one product carries it', (await brRow())?.productCount === 1);
+  check('Filtering products by the brand finds it', ((await ssApi(`/products?brand=${encodeURIComponent(brName)}&limit=50`)).meta?.total) === 1);
+
+  // A brand nobody wrote down first still joins the list when a product uses it.
+  const brTyped = `Typed ${brStamp}`;
+  const brTypedProduct = await ssProduct({ name: `Typed Brand Item ${brStamp}`, brand: brTyped, category: 'Household', priceMinor: 4000 });
+  check('A brand typed straight onto a product joins the list', brTypedProduct.status === 201 && ((await brApi('')).data ?? []).some((row) => row.name === brTyped));
+
+  // ---- a product with NO brand is still perfectly valid ----------------------
+  const brNone = await ssProduct({ name: `Unbranded Rice ${brStamp}`, category: 'Household', priceMinor: 3000 });
+  check('A product with no brand is still valid', brNone.status === 201 && (brNone.data?.brand ?? '') === '');
+  check('...and "no brand" never becomes a brand in the list', !((await brApi('?includeInactive=true')).data ?? []).some((row) => !row.name || !row.name.trim()));
+
+  // ---- renaming moves the products, but never the sales ----------------------
+  const brSale = await ssSale({ items: [{ productId: brProduct.data._id, quantity: 1 }], payments: [{ method: 'cash', amountMinor: 5000 }] });
+  check('A sale under the brand records it', brSale.status === 201 && brSale.data?.items?.[0]?.brandSnapshot === brName, brSale.data?.items?.[0]);
+  const brRenamed = `Pusti Foods ${brStamp}`;
+  const brUpdate = await brApi(`/${brCreated.data._id}`, { method: 'PATCH', body: { name: brRenamed } });
+  check('A brand can be renamed', brUpdate.status === 200 && brUpdate.data?.name === brRenamed, brUpdate.error);
+  check('...every product carrying it moved', ((await ssApi(`/products/${brProduct.data._id}`)).data?.product?.brand) === brRenamed);
+  check('...and the sale keeps the name it was sold under', ((await ssApi(`/sales/${brSale.data._id}`)).data?.items?.[0]?.brandSnapshot) === brName);
+  check('...renaming onto a name already taken is refused', (await brApi(`/${brCreated.data._id}`, { method: 'PATCH', body: { name: brTyped } })).status === 409);
+
+  // ---- hiding and showing ------------------------------------------------------
+  const brHide = await brApi(`/${brCreated.data._id}`, { method: 'PATCH', body: { isActive: false } });
+  check('A brand can be hidden', brHide.status === 200 && brHide.data?.isActive === false, brHide.error);
+  check('...it drops out of the till list', !((await brApi('')).data ?? []).some((row) => row.name === brRenamed));
+  check('...but is still there when the owner asks for everything', ((await brApi('?includeInactive=true')).data ?? []).some((row) => row.name === brRenamed));
+  const brHiddenUse = await ssProduct({ name: `Late Arrival ${brStamp}`, brand: brRenamed, category: 'Household', priceMinor: 1000 });
+  check('...new goods cannot be put under a hidden brand', brHiddenUse.status === 400 && brHiddenUse.error?.details?.reason === 'BRAND_HIDDEN', brHiddenUse.error);
+  check('...while the products already carrying it are untouched', ((await ssApi(`/products/${brProduct.data._id}`)).data?.product?.brand) === brRenamed);
+  await brApi(`/${brCreated.data._id}`, { method: 'PATCH', body: { isActive: true } });
+  check('Showing it again makes it usable', (await ssProduct({ name: `Back On Sale ${brStamp}`, brand: brRenamed, category: 'Household', priceMinor: 1000 })).status === 201);
+
+  // ---- removing ----------------------------------------------------------------
+  const brInUse = await brApi(`/${brCreated.data._id}`, { method: 'DELETE' });
+  check('A brand still on products cannot be removed', brInUse.status === 409 && brInUse.error?.details?.reason === 'BRAND_IN_USE', brInUse.error);
+  const brSpare = await brApi('', { method: 'POST', body: { name: `Spare ${brStamp}` } });
+  check('A brand nothing carries can be removed', (await brApi(`/${brSpare.data._id}`, { method: 'DELETE' })).status === 200);
+  check('...and its name is free again', (await brApi('', { method: 'POST', body: { name: `Spare ${brStamp}` } })).status === 201);
+  check('An unknown brand id is 404', (await brApi(`/${brProduct.data._id}`, { method: 'DELETE' })).status === 404);
+
+  // ---- departments are untouched by any of it ---------------------------------
+  check(
+    'Brand and department are independent: the product has both',
+    (await ssApi(`/products/${brProduct.data._id}`)).data?.product?.category === 'Household' &&
+      (await ssApi(`/products/${brProduct.data._id}`)).data?.product?.brand === brRenamed,
+  );
+  check('Filtering by department still ignores the brand', ((await ssApi('/products?category=Household&limit=100')).meta?.total ?? 0) > 1);
+  check('Both together narrow further', ((await ssApi(`/products?category=Household&brand=${encodeURIComponent(brRenamed)}&limit=50`)).meta?.total) === 2);
+
+  // ---- import ------------------------------------------------------------------
+  const brSheet = await uploadSheet('/supershop/imports/preview', {
+    token: ssToken,
+    // `productCsv` directly: the import section's own `sheetFor` wrapper is
+    // declared further down the file and is not in scope here.
+    bytes: productCsv([[`Imported Brandy ${brStamp}`, '90', '', 'Household', `Sheet Brand ${brStamp}`, 'Piece', '0', '0', '', '']], {
+      headers: ['Product', 'Price', 'Barcode', 'Department', 'Brand', 'Sold by', 'VAT rate', 'Reorder level', 'Opening stock', 'Cost price'],
+    }),
+  });
+  const brSheetRun = await api(`/supershop/imports/${brSheet.data?.importId}/commit`, { method: 'POST', token: ssToken, body: { skipInvalidRows: false } });
+  check('A brand column in a sheet still imports', brSheetRun.status === 200 && brSheetRun.data?.summary?.itemsCreated === 1, brSheetRun.data?.summary ?? brSheetRun.error);
+  check('...and the brand it named joined the list', ((await brApi('')).data ?? []).some((row) => row.name === `Sheet Brand ${brStamp}`));
+  check('...with the product carrying it', ((await ssApi(`/products?brand=${encodeURIComponent(`Sheet Brand ${brStamp}`)}&limit=10`)).meta?.total) === 1);
+
+  // ---- who may manage them -----------------------------------------------------
+  check('The brand list needs a session', (await api('/supershop/brands')).status === 401);
+  check("Another workspace cannot read this one's brands", (await api('/supershop/brands', { token: phToken })).status === 403);
+  check("Another workspace cannot create one here", (await api('/supershop/brands', { method: 'POST', token: phToken, body: { name: 'Sneaky' } })).status === 403);
+  check("Another workspace cannot rename this one's brand", (await api(`/supershop/brands/${brCreated.data._id}`, { method: 'PATCH', token: phToken, body: { name: 'Stolen' } })).status === 403);
+  // The exchange till holds products.view but no categories.* permission.
+  check('A till may READ the brands', (await api('/supershop/brands', { token: exTill.token })).status === 200);
+  check('...but not create one', (await api('/supershop/brands', { method: 'POST', token: exTill.token, body: { name: `Nope ${brStamp}` } })).status === 403);
+  check('...nor rename one', (await api(`/supershop/brands/${brCreated.data._id}`, { method: 'PATCH', token: exTill.token, body: { name: 'Nope' } })).status === 403);
+  check('...nor remove one', (await api(`/supershop/brands/${brCreated.data._id}`, { method: 'DELETE', token: exTill.token })).status === 403);
+
+  // The exchange section's till was still needed here; it can go now.
+  await retireTill(exTill.id);
+
+  // Retire the products these checks made; the brands stay, as a catalogue does.
+  for (const row of (await ssApi(`/products?search=${brStamp}&limit=100`)).data ?? []) {
+    const onHand = row.stock?.quantityOnHand ?? 0;
+    if (onHand !== 0) await ssApi(`/products/${row._id}/adjust`, { method: 'POST', body: { type: 'adjust', quantityDelta: -onHand, reason: 'Brand fixture' } });
+    await ssApi(`/products/${row._id}`, { method: 'DELETE' });
+  }
+
+  // --- Stock cost and profit ----------------------------------------------------
+  // Super Shop values stock at WEIGHTED AVERAGE COST, per piece or per kilogram.
+  // Receiving at a new price moves the average; it never replaces it, and it
+  // never rewrites what an earlier sale already cost. Everything that touches
+  // cost - a sale, a return, an exchange, a write-off, the ledger, the dashboard
+  // and analytics - has to agree on the same number.
+  section('Supershop stock cost and profit');
+
+  const wcStampS = String(Date.now()).slice(-6);
+  const wcKg = (taka) => taka * 100;   // minor units per kilogram
+  const wcG = (kilos) => kilos * 1000; // grams
+
+  // ---- the canonical case: 100 kg @ 100 + 100 kg @ 120 = 200 kg @ 110 --------
+  const wcRice = await ssProduct({ name: `WA Rice ${wcStampS}`, category: 'Household', unitType: 'weight', priceMinor: wcKg(200) });
+  const wcFirst = await ssReceive(wcRice.data._id, { quantity: wcG(100), costPriceMinor: wcKg(100) });
+  check('A first delivery sets the cost', wcFirst.data?.costPriceMinor === wcKg(100) && wcFirst.data?.quantityOnHand === wcG(100), wcFirst.data);
+  const wcSecond = await ssReceive(wcRice.data._id, { quantity: wcG(100), costPriceMinor: wcKg(120) });
+  check('100 kg @ 100 plus 100 kg @ 120 averages to 110', wcSecond.data?.costPriceMinor === wcKg(110) && wcSecond.data?.quantityOnHand === wcG(200), wcSecond.data);
+
+  // ---- the same cost again leaves it alone ------------------------------------
+  const wcSame = await ssReceive(wcRice.data._id, { quantity: wcG(50), costPriceMinor: wcKg(110) });
+  check('Receiving at the same cost does not move the average', wcSame.data?.costPriceMinor === wcKg(110) && wcSame.data?.quantityOnHand === wcG(250), wcSame.data);
+
+  // ---- a cheaper delivery pulls it down ---------------------------------------
+  // 250 kg @ 110 + 250 kg @ 90  ->  (27500 + 22500) / 500 = 100
+  const wcCheaper = await ssReceive(wcRice.data._id, { quantity: wcG(250), costPriceMinor: wcKg(90) });
+  check('A cheaper delivery pulls the average down, it does not replace it', wcCheaper.data?.costPriceMinor === wcKg(100) && wcCheaper.data?.quantityOnHand === wcG(500), wcCheaper.data);
+
+  // ---- part-kilogram deliveries stay exact ------------------------------------
+  // 500 kg @ 100 + 0.5 kg @ 200 -> (5,000,000 + 10,000) / 500.5 kg = 10019.98.. -> 10020 per kg
+  const wcDecimal = await ssReceive(wcRice.data._id, { quantity: 500, costPriceMinor: wcKg(200) });
+  check('A half-kilo delivery is weighted by its real weight', wcDecimal.data?.quantityOnHand === wcG(500) + 500, wcDecimal.data);
+  // (500,000 g x 10,000 + 500 g x 20,000) / 500,500 g = 10,009.98... per kg
+  check('...and the average moves by only what it is worth', wcDecimal.data?.costPriceMinor === 10_010, wcDecimal.data?.costPriceMinor);
+
+  // ---- a sale costs the average at the moment it is taken ---------------------
+  const wcBefore = wcDecimal.data.costPriceMinor;
+  const wcSale = await ssSale({ items: [{ productId: wcRice.data._id, quantity: wcG(2) }], payments: [{ method: 'cash', amountMinor: wcKg(400) }] });
+  check('A sale is costed at the average per KILOGRAM, not per gram', wcSale.data?.costMinor === Math.floor((wcBefore * wcG(2) + 500) / 1000), {
+    costMinor: wcSale.data?.costMinor,
+    expected: Math.floor((wcBefore * wcG(2) + 500) / 1000),
+  });
+  check('...and profit is revenue less VAT less that cost', wcSale.data?.totalMinor === wcKg(400) && wcSale.data?.costMinor < wcSale.data?.totalMinor, wcSale.data?.costMinor);
+
+  // A later delivery must not rewrite what that sale already cost.
+  const wcSoldCost = wcSale.data.costMinor;
+  await ssReceive(wcRice.data._id, { quantity: wcG(10), costPriceMinor: wcKg(500) });
+  check('A later delivery never rewrites what an earlier sale cost', ((await ssApi(`/sales/${wcSale.data._id}`)).data?.costMinor) === wcSoldCost);
+
+  // ---- a return gives back the cost of the goods, in the same units ----------
+  const wcDashBefore = (await ssApi('/dashboard?preset=today')).data?.kpis;
+  const wcReturn = await ssApi(`/sales/${wcSale.data._id}/return`, {
+    method: 'POST',
+    body: { items: [{ saleItemId: wcSale.data.items[0]._id, quantity: wcG(1), restock: true }], reason: 'Half of it came back', refundMethod: 'cash' },
+  });
+  check('A weighed return is accepted', wcReturn.status === 201, wcReturn.error);
+  // 1 kg of a 2 kg sale at 200/kg is 200 back - NOT 200,000, which is what
+  // `unitPrice x grams` gives and what this used to refund.
+  check('A weighed return gives back what was charged, not a thousand times it', wcReturn.data?.totalMinor === wcKg(200), {
+    refunded: wcReturn.data?.totalMinor,
+    expected: wcKg(200),
+  });
+  check('...and never more than the sale itself took', wcReturn.data?.totalMinor <= wcSale.data?.totalMinor, {
+    refunded: wcReturn.data?.totalMinor,
+    saleTotal: wcSale.data?.totalMinor,
+  });
+  check('...with the returned line recording what those goods cost', (wcReturn.data?.items?.[0]?.costMinor ?? -1) === Math.floor((wcSoldCost * wcG(1) + wcG(1)) / wcG(2)), {
+    costMinor: wcReturn.data?.items?.[0]?.costMinor,
+  });
+  const wcDashAfter = (await ssApi('/dashboard?preset=today')).data?.kpis;
+  // Half the weight came back, so half the cost did. Anything near 1000x this
+  // is the per-kilogram cost being multiplied by a number of GRAMS.
+  const wcExpectedReturnedCost = Math.floor((wcSoldCost * wcG(1) + Math.floor(wcG(2) / 2)) / wcG(2));
+  check(
+    'A return takes back the cost of the goods, not a thousand times it',
+    Math.abs((wcDashAfter.grossProfitMinor - wcDashBefore.grossProfitMinor + (wcDashAfter.refundedMinor - wcDashBefore.refundedMinor)) - wcExpectedReturnedCost) <= 2,
+    {
+      profitBefore: wcDashBefore.grossProfitMinor,
+      profitAfter: wcDashAfter.grossProfitMinor,
+      refundedDelta: wcDashAfter.refundedMinor - wcDashBefore.refundedMinor,
+      expectedReturnedCost: wcExpectedReturnedCost,
+    },
+  );
+  check('...and the goods are back on the shelf', ((await ssApi(`/products/${wcRice.data._id}`)).data?.product?.stock?.quantityOnHand) > 0);
+
+  // ---- an exchange costs its replacement the same way -------------------------
+  const wcSale2 = await ssSale({ items: [{ productId: wcRice.data._id, quantity: wcG(1) }], payments: [{ method: 'cash', amountMinor: wcKg(200) }] });
+  const wcEx = await ssApi(`/sales/${wcSale2.data._id}/exchange`, {
+    method: 'POST',
+    body: {
+      items: [{ saleItemId: wcSale2.data.items[0]._id, quantity: wcG(1), restock: true }],
+      replacement: { items: [{ productId: wcRice.data._id, quantity: wcG(1) }], payments: [] },
+      reason: 'Swapped for fresher rice',
+      idempotencyKey: `wc-${wcStampS}-ex`,
+    },
+  });
+  check('An exchange of weighed goods completes', wcEx.status === 201, wcEx.error);
+  const wcExSale = (await ssApi(`/sales/${wcEx.data?.exchange?.saleId}`)).data;
+  check('...and its replacement is costed per kilogram like any other sale', wcExSale?.costMinor > 0 && wcExSale?.costMinor < wcExSale?.totalMinor * 10, {
+    cost: wcExSale?.costMinor,
+    total: wcExSale?.totalMinor,
+  });
+
+  // ---- adjustments and write-offs -------------------------------------------
+  const wcCostNow = (await ssApi(`/products/${wcRice.data._id}`)).data?.product?.stock?.costPriceMinor;
+  await ssApi(`/products/${wcRice.data._id}/adjust`, { method: 'POST', body: { type: 'write_off', quantityDelta: -wcG(1), reason: 'Spoiled' } });
+  check('A write-off removes weight without touching the average cost', ((await ssApi(`/products/${wcRice.data._id}`)).data?.product?.stock?.costPriceMinor) === wcCostNow);
+  await ssApi(`/products/${wcRice.data._id}/adjust`, { method: 'POST', body: { type: 'adjust', quantityDelta: wcG(1), reason: 'Found it again' } });
+  check('...and a count correction does not either', ((await ssApi(`/products/${wcRice.data._id}`)).data?.product?.stock?.costPriceMinor) === wcCostNow);
+
+  // ---- what the shelf is worth ------------------------------------------------
+  const wcSummary = (await ssApi('/inventory-summary')).data;
+  const wcOnHandNow = (await ssApi(`/products/${wcRice.data._id}`)).data?.product?.stock?.quantityOnHand;
+  check('Stock value is the weight times the average cost per kilogram', typeof wcSummary?.stockValueMinor === 'number' && wcSummary.stockValueMinor >= Math.floor((wcOnHandNow * wcCostNow) / 1000), {
+    stockValue: wcSummary?.stockValueMinor,
+    thisProduct: Math.floor((wcOnHandNow * wcCostNow) / 1000),
+  });
+
+  // ---- pieces are the simple case, and must stay simple ----------------------
+  const wcTin = await ssProduct({ name: `WA Tin ${wcStampS}`, category: 'Household', unitType: 'each', priceMinor: 5000 });
+  await ssReceive(wcTin.data._id, { quantity: 100, costPriceMinor: 1000 });
+  await ssReceive(wcTin.data._id, { quantity: 100, costPriceMinor: 2000 });
+  check('By the piece, the same average applies', ((await ssApi(`/products/${wcTin.data._id}`)).data?.product?.stock?.costPriceMinor) === 1500);
+  const wcTinSale = await ssSale({ items: [{ productId: wcTin.data._id, quantity: 2 }], payments: [{ method: 'cash', amountMinor: 10_000 }] });
+  check('...and a sale of two costs twice the average', wcTinSale.data?.costMinor === 3000, wcTinSale.data?.costMinor);
+
+  // ---- nonsense is refused ----------------------------------------------------
+  check('A zero-quantity receipt is refused', (await ssReceive(wcRice.data._id, { quantity: 0, costPriceMinor: 100 })).status === 422);
+  check('A negative-quantity receipt is refused', (await ssReceive(wcRice.data._id, { quantity: -5, costPriceMinor: 100 })).status === 422);
+  check('A fractional gram is refused', (await ssReceive(wcRice.data._id, { quantity: 1.5, costPriceMinor: 100 })).status === 422);
+  check('A negative cost is refused', (await ssReceive(wcRice.data._id, { quantity: 1000, costPriceMinor: -1 })).status === 422);
+  check('A receipt with no cost at all is refused', (await ssReceive(wcRice.data._id, { quantity: 1000 })).status === 422);
+
+  // ---- cost is held per BRANCH, not per workspace -----------------------------
+  const wcBranch = await api('/stores', { method: 'POST', token: ssToken, body: { name: `WA Branch ${wcStampS}`, address: 'Second shop', phone: '01700000001' } });
+  if (wcBranch.status === 201) {
+    const wcAt = { token: ssToken, storeId: wcBranch.data._id };
+    const wcOther = await api(`/supershop/products/${wcTin.data._id}`, wcAt);
+    check('A second branch starts with none of it, and no cost', (wcOther.data?.product?.stock?.quantityOnHand ?? 0) === 0 && (wcOther.data?.product?.stock?.costPriceMinor ?? 0) === 0, wcOther.data?.product?.stock);
+    await api(`/supershop/products/${wcTin.data._id}/stock`, { ...wcAt, method: 'POST', body: { quantity: 10, costPriceMinor: 9000 } });
+    check('Receiving there sets only that branch average', ((await api(`/supershop/products/${wcTin.data._id}`, wcAt)).data?.product?.stock?.costPriceMinor) === 9000);
+    check('...and the first branch is untouched', ((await ssApi(`/products/${wcTin.data._id}`)).data?.product?.stock?.costPriceMinor) === 1500);
+  } else {
+    check('A second branch could be created for the cost-isolation check', false, wcBranch.error);
+  }
+  check("Another workspace cannot read this one's stock cost", (await api(`/supershop/products/${wcTin.data._id}`, { token: phToken })).status === 403);
+
+  // Retire the fixtures.
+  for (const id of [wcRice.data._id, wcTin.data._id]) {
+    const onHand = (await ssApi(`/products/${id}`)).data?.product?.stock?.quantityOnHand ?? 0;
+    if (onHand !== 0) await ssApi(`/products/${id}/adjust`, { method: 'POST', body: { type: 'adjust', quantityDelta: -onHand, reason: 'Cost fixture' } });
+    await ssApi(`/products/${id}`, { method: 'DELETE' });
+  }
+
+  // --- Sale hold ----------------------------------------------------------------
+  // A basket put aside is NOT a sale. It takes no stock, no money and no points,
+  // and it lives in its own collection so nothing that counts trade can mistake
+  // it for any. Resuming CLAIMS it, atomically, which is what makes a held sale
+  // impossible to complete twice.
+  section('Supershop sale hold');
+
+  const hdStamp = String(Date.now()).slice(-6);
+  const ssStoreIdForHold = (await api('/stores', { token: ssToken })).data?.[0]?._id;
+  const hdApi = (path, opts = {}) => ssApi(`/held-sales${path}`, opts);
+  const hdProduct = await ssProduct({ name: `Hold Item ${hdStamp}`, category: 'Household', unitType: 'each', priceMinor: 12_500 });
+  await ssReceive(hdProduct.data._id, { quantity: 40, costPriceMinor: 6000 });
+  const hdOnHand = async () => (await ssApi(`/products/${hdProduct.data._id}`)).data?.product?.stock?.quantityOnHand ?? 0;
+  const hdStockBefore = await hdOnHand();
+  const hdSalesBefore = (await ssApi('/sales?limit=1')).meta?.total ?? 0;
+
+  // ---- holding -----------------------------------------------------------------
+  const hdHold = await hdApi('', {
+    method: 'POST',
+    body: {
+      items: [{ productId: hdProduct.data._id, quantity: 3 }],
+      label: `Blue basket ${hdStamp}`,
+      discountMinor: 500,
+      customer: { name: 'Held Customer', phone: `019${hdStamp}0` },
+    },
+  });
+  check('A basket can be held', hdHold.status === 201 && /^HOLD-\d+$/.test(hdHold.data?.holdNumber ?? ''), hdHold.data ?? hdHold.error);
+  check('...it takes NO stock', (await hdOnHand()) === hdStockBefore, { before: hdStockBefore, after: await hdOnHand() });
+  check('...it records NO sale', ((await ssApi('/sales?limit=1')).meta?.total ?? 0) === hdSalesBefore);
+  check('...and it is not a sale that can be read back as one', (await ssApi(`/sales/${hdHold.data._id}`)).status === 404);
+
+  const hdList = (await hdApi('')).data ?? [];
+  const hdRow = hdList.find((row) => row._id === hdHold.data._id);
+  check('It appears on this branch list with what it is worth', hdRow?.itemCount === 1 && hdRow?.estimatedTotalMinor === 3 * 12_500 - 500, hdRow);
+  check('...naming the cashier who held it, and when', Boolean(hdRow?.heldByNameSnapshot) && Boolean(hdRow?.createdAt), hdRow);
+  check('...and saying when it will expire on its own', new Date(hdRow.expiresAt) > new Date(hdRow.createdAt), { created: hdRow?.createdAt, expires: hdRow?.expiresAt });
+  const hdAgeDays = (new Date(hdRow.expiresAt) - new Date(hdRow.createdAt)) / 86_400_000;
+  check('...seven days after it was held', Math.round(hdAgeDays) === 7, hdAgeDays);
+
+  // ---- resuming -----------------------------------------------------------------
+  const hdResume = await hdApi(`/${hdHold.data._id}/resume`, { method: 'POST', body: {} });
+  check('It can be resumed', hdResume.status === 200 && hdResume.data?.holdNumber === hdHold.data.holdNumber, hdResume.error);
+  check('...with its lines, quantities and discount', hdResume.data?.items?.length === 1 && hdResume.data.items[0].quantity === 3 && hdResume.data?.discountMinor === 500, hdResume.data);
+  check('...the customer that was on it', hdResume.data?.customerDraft?.name === 'Held Customer', hdResume.data?.customerDraft);
+  check('...and its label', hdResume.data?.label === `Blue basket ${hdStamp}`);
+  check('...priced from the catalogue, not from what was stored', hdResume.data?.items?.[0]?.product?.priceMinor === 12_500 && hdResume.data.items[0].priceChanged === false, hdResume.data?.items?.[0]);
+  check('Resuming CLAIMS it: it is gone from the list', !((await hdApi('')).data ?? []).some((row) => row._id === hdHold.data._id));
+  check('...and cannot be resumed a second time', (await hdApi(`/${hdHold.data._id}/resume`, { method: 'POST', body: {} })).status === 404);
+
+  // ---- a price that moved while it sat ------------------------------------------
+  const hdHold2 = await hdApi('', { method: 'POST', body: { items: [{ productId: hdProduct.data._id, quantity: 1 }] } });
+  await ssApi(`/products/${hdProduct.data._id}`, { method: 'PATCH', body: { priceMinor: 20_000 } });
+  const hdResume2 = await hdApi(`/${hdHold2.data._id}/resume`, { method: 'POST', body: {} });
+  check('A basket comes back at TODAY\'s price, and says so', hdResume2.data?.items?.[0]?.product?.priceMinor === 20_000 && hdResume2.data.items[0].priceChanged === true, hdResume2.data?.items?.[0]);
+  check('...and reports what it was held at', hdResume2.data?.items?.[0]?.pricedAtHoldMinor === 12_500);
+  await ssApi(`/products/${hdProduct.data._id}`, { method: 'PATCH', body: { priceMinor: 12_500 } });
+
+  // ---- a product that vanished ---------------------------------------------------
+  const hdGone = await ssProduct({ name: `Hold Vanishing ${hdStamp}`, category: 'Household', priceMinor: 1000 });
+  const hdHold3 = await hdApi('', { method: 'POST', body: { items: [{ productId: hdProduct.data._id, quantity: 1 }, { productId: hdGone.data._id, quantity: 1 }] } });
+  await ssApi(`/products/${hdGone.data._id}`, { method: 'DELETE' });
+  const hdResume3 = await hdApi(`/${hdHold3.data._id}/resume`, { method: 'POST', body: {} });
+  check('A line whose product has gone is reported, not silently sold', hdResume3.data?.items?.length === 1 && (hdResume3.data?.dropped ?? []).length === 1, hdResume3.data?.dropped);
+
+  // ---- two tills, one basket -------------------------------------------------------
+  const hdRace = await hdApi('', { method: 'POST', body: { items: [{ productId: hdProduct.data._id, quantity: 2 }] } });
+  const hdBoth = await Promise.all([
+    hdApi(`/${hdRace.data._id}/resume`, { method: 'POST', body: {} }),
+    hdApi(`/${hdRace.data._id}/resume`, { method: 'POST', body: {} }),
+  ]);
+  check('Two tills opening the same basket: exactly one gets it', hdBoth.filter((res) => res.status === 200).length === 1 && hdBoth.filter((res) => res.status === 404).length === 1, hdBoth.map((res) => res.status));
+  check('...so a held sale can never be completed twice', ((await hdApi('')).data ?? []).every((row) => row._id !== hdRace.data._id));
+
+  // ---- finishing one for real --------------------------------------------------
+  const hdHold4 = await hdApi('', { method: 'POST', body: { items: [{ productId: hdProduct.data._id, quantity: 2 }] } });
+  const hdResume4 = await hdApi(`/${hdHold4.data._id}/resume`, { method: 'POST', body: {} });
+  const hdStockAtResume = await hdOnHand();
+  check('Resuming still takes no stock', hdStockAtResume === hdStockBefore);
+  const hdSale = await ssSale({
+    items: hdResume4.data.items.map((line) => ({ productId: line.product._id, quantity: line.quantity })),
+    payments: [{ method: 'cash', amountMinor: 25_000 }],
+  });
+  check('The resumed basket completes as an ordinary sale', hdSale.status === 201 && hdSale.data?.totalMinor === 25_000, hdSale.error);
+  check('...and only THEN does the stock move', (await hdOnHand()) === hdStockBefore - 2);
+
+  // ---- discarding -------------------------------------------------------------------
+  const hdHold5 = await hdApi('', { method: 'POST', body: { items: [{ productId: hdProduct.data._id, quantity: 1 }] } });
+  check('A cashier can discard a held sale', (await hdApi(`/${hdHold5.data._id}`, { method: 'DELETE' })).status === 200);
+  check('...and it is gone', (await hdApi(`/${hdHold5.data._id}/resume`, { method: 'POST', body: {} })).status === 404);
+  check('Discarding one that never existed is 404', (await hdApi(`/${hdProduct.data._id}`, { method: 'DELETE' })).status === 404);
+
+  // ---- validation --------------------------------------------------------------------
+  check('An empty basket cannot be held', (await hdApi('', { method: 'POST', body: { items: [] } })).status === 422);
+  check('A basket of goods from another shop cannot be held', (await hdApi('', { method: 'POST', body: { items: [{ productId: hdHold.data._id, quantity: 1 }] } })).status === 400);
+  check('The same product twice in one basket is refused', (await hdApi('', { method: 'POST', body: { items: [{ productId: hdProduct.data._id, quantity: 1 }, { productId: hdProduct.data._id, quantity: 2 }] } })).status === 422);
+  check('Unknown fields are refused', (await hdApi('', { method: 'POST', body: { items: [{ productId: hdProduct.data._id, quantity: 1 }], totalMinor: 1 } })).status === 422);
+
+  // ---- one branch cannot reach another's --------------------------------------------
+  // The plan caps this workspace at two branches and the costing section already
+  // made the second, so this reuses it rather than asking for a third.
+  const hdStores = (await api('/stores', { token: ssToken })).data ?? [];
+  const hdOtherStore = hdStores.find((row) => String(row._id) !== String(ssStoreIdForHold));
+  const hdMine = await hdApi('', { method: 'POST', body: { items: [{ productId: hdProduct.data._id, quantity: 1 }], label: 'Branch A basket' } });
+  if (hdOtherStore) {
+    const hdAt = { token: ssToken, storeId: hdOtherStore._id };
+    check("Another branch does not see this branch's held sales", !((await api('/supershop/held-sales', hdAt)).data ?? []).some((row) => row._id === hdMine.data._id));
+    check("...cannot resume one", (await api(`/supershop/held-sales/${hdMine.data._id}/resume`, { ...hdAt, method: 'POST', body: {} })).status === 404);
+    check("...and cannot discard one", (await api(`/supershop/held-sales/${hdMine.data._id}`, { ...hdAt, method: 'DELETE' })).status === 404);
+    check('...while its own branch still has it', ((await hdApi('')).data ?? []).some((row) => row._id === hdMine.data._id));
+  } else {
+    check('A second branch exists for the hold-isolation check', false, hdStores.map((row) => row.name));
+  }
+  check('Another workspace cannot read these held sales', (await api('/supershop/held-sales', { token: phToken })).status === 403);
+  check('Another workspace cannot hold here', (await api('/supershop/held-sales', { method: 'POST', token: phToken, body: { items: [{ productId: hdProduct.data._id, quantity: 1 }] } })).status === 403);
+  check('A held sale needs a session', (await api('/supershop/held-sales')).status === 401);
+
+  // ---- who may do what ----------------------------------------------------------------
+  const hdTillCreated = await api('/staff', {
+    method: 'POST',
+    token: ssToken,
+    body: { name: 'Hold Till', email: `sshold${hdStamp}@example.com`, password: 'Password@123', storeId: ssStoreIdForHold, extraPermissions: ['sales.view', 'products.view'] },
+  });
+  const hdTill = { id: hdTillCreated.data?.id, token: (await login(`sshold${hdStamp}@example.com`, 'Password@123')).token };
+  check('A till that may only VIEW sales can see the held list', (await api('/supershop/held-sales', { token: hdTill.token })).status === 200);
+  check('...but cannot hold one', (await api('/supershop/held-sales', { method: 'POST', token: hdTill.token, body: { items: [{ productId: hdProduct.data._id, quantity: 1 }] } })).status === 403);
+  check('...nor resume one', (await api(`/supershop/held-sales/${hdMine.data._id}/resume`, { method: 'POST', token: hdTill.token, body: {} })).status === 403);
+
+  // Another cashier's basket needs the permission that voids a sale.
+  await api(`/staff/${hdTill.id}`, { method: 'PATCH', token: ssToken, body: { extraPermissions: ['sales.view', 'sales.create', 'products.view'] } });
+  check("A cashier cannot discard another cashier's basket", (await api(`/supershop/held-sales/${hdMine.data._id}`, { method: 'DELETE', token: hdTill.token })).status === 403);
+  const hdTheirs = await api('/supershop/held-sales', { method: 'POST', token: hdTill.token, body: { items: [{ productId: hdProduct.data._id, quantity: 1 }] } });
+  check('...but may always discard their own', (await api(`/supershop/held-sales/${hdTheirs.data._id}`, { method: 'DELETE', token: hdTill.token })).status === 200);
+  await api(`/staff/${hdTill.id}`, { method: 'PATCH', token: ssToken, body: { extraPermissions: ['sales.view', 'sales.create', 'sales.cancel', 'products.view'] } });
+  check('With sales.cancel a supervisor may discard anyone\'s', (await api(`/supershop/held-sales/${hdMine.data._id}`, { method: 'DELETE', token: hdTill.token })).status === 200);
+
+  await retireTill(hdTill.id);
+
+  // Retire the fixture.
+  const hdLeft = await hdOnHand();
+  if (hdLeft !== 0) await ssApi(`/products/${hdProduct.data._id}/adjust`, { method: 'POST', body: { type: 'adjust', quantityDelta: -hdLeft, reason: 'Hold fixture' } });
+  await ssApi(`/products/${hdProduct.data._id}`, { method: 'DELETE' });
+
+  // --- Quick product creation from the till -------------------------------------
+  // A barcode nothing answers to becomes a product without leaving the till.
+  // It goes through the ORDINARY product endpoint, so everything the Products
+  // screen enforces is enforced here: the same validation, the same uniqueness,
+  // the same plan limit, the same permission.
+  section('Supershop quick product creation');
+
+  const qcStamp = String(Date.now()).slice(-6);
+  const qcBarcode = `QC${qcStamp}`;
+
+  check('A barcode nothing carries is a 404, which is what opens the form', (await ssApi(`/products/lookup?barcode=${qcBarcode}`)).status === 404);
+
+  const qcMade = await ssProduct({ name: `Quick Item ${qcStamp}`, barcode: qcBarcode, unitType: 'each', priceMinor: 7500, category: 'Household' });
+  check('The scanned barcode becomes a product', qcMade.status === 201 && qcMade.data?.barcode === qcBarcode, qcMade.error);
+  check('...kept exactly as it was scanned', qcMade.data?.barcode === qcBarcode);
+  const qcFound = await ssApi(`/products/lookup?barcode=${qcBarcode}`);
+  check('...and the very next scan finds it', qcFound.status === 200 && qcFound.data?._id === qcMade.data._id, qcFound.error);
+  check('...with its unit and price as given', qcMade.data?.unitType === 'each' && qcMade.data?.priceMinor === 7500);
+
+  // ---- by weight, the other unit the till offers -------------------------------
+  const qcKg = await ssProduct({ name: `Quick Loose ${qcStamp}`, barcode: `QCW${qcStamp}`, unitType: 'weight', priceMinor: 9000 });
+  check('A weighed product can be created the same way', qcKg.status === 201 && qcKg.data?.unitType === 'weight', qcKg.error);
+  check('An invented unit is refused', (await ssProduct({ name: `Quick Bad Unit ${qcStamp}`, barcode: `QCU${qcStamp}`, unitType: 'litre', priceMinor: 100 })).status === 422);
+  // Omitting it is not an error: the catalogue has always defaulted to pieces,
+  // and the till's form simply never leaves it empty.
+  const qcNoUnit = await ssProduct({ name: `Quick Default Unit ${qcStamp}`, barcode: `QCD${qcStamp}`, priceMinor: 100 });
+  check('Leaving the unit out falls back to pieces, as it always has', qcNoUnit.status === 201 && qcNoUnit.data?.unitType === 'each');
+
+  // ---- the required fields ------------------------------------------------------
+  check('A product with no name is refused', (await ssProduct({ barcode: `QCN${qcStamp}`, unitType: 'each', priceMinor: 100 })).status === 422);
+  check('A blank name is refused', (await ssProduct({ name: '   ', barcode: `QCB${qcStamp}`, unitType: 'each', priceMinor: 100 })).status === 422);
+  check('A product with no price is refused', (await ssProduct({ name: `Quick No Price ${qcStamp}`, barcode: `QCP${qcStamp}`, unitType: 'each' })).status === 422);
+  check('A negative price is refused', (await ssProduct({ name: `Quick Neg ${qcStamp}`, barcode: `QCG${qcStamp}`, unitType: 'each', priceMinor: -1 })).status === 422);
+  check('A barcode with spaces or symbols is refused', (await ssProduct({ name: `Quick Bad Code ${qcStamp}`, barcode: 'not a barcode!', unitType: 'each', priceMinor: 100 })).status === 422);
+  check('A barcode over 64 characters is refused', (await ssProduct({ name: `Quick Long ${qcStamp}`, barcode: 'A'.repeat(65), unitType: 'each', priceMinor: 100 })).status === 422);
+
+  // ---- uniqueness ----------------------------------------------------------------
+  const qcDup = await ssProduct({ name: `Quick Other ${qcStamp}`, barcode: qcBarcode, unitType: 'each', priceMinor: 100 });
+  check('A barcode already in use is refused', qcDup.status === 409, qcDup.error?.message);
+  check('...and no second product was made', ((await ssApi(`/products?search=Quick Other ${qcStamp}`)).data ?? []).length === 0);
+
+  // Two tills scanning and creating the same new barcode at the same instant.
+  // The read-then-write check cannot see the other request; the unique index can.
+  const qcRaceCode = `QCR${qcStamp}`;
+  const qcRace = await Promise.all([
+    ssProduct({ name: `Quick Race A ${qcStamp}`, barcode: qcRaceCode, unitType: 'each', priceMinor: 100 }),
+    ssProduct({ name: `Quick Race B ${qcStamp}`, barcode: qcRaceCode, unitType: 'each', priceMinor: 100 }),
+  ]);
+  check('Two tills creating the same barcode at once: exactly one wins', qcRace.filter((res) => res.status === 201).length === 1 && qcRace.filter((res) => res.status === 409).length === 1, qcRace.map((res) => res.status));
+  check('...so one barcode still means one product', ((await ssApi(`/products?search=Quick Race&limit=20`)).data ?? []).filter((row) => row.barcode === qcRaceCode).length === 1);
+
+  // ---- department, brand and their ownership ---------------------------------------
+  const qcDept = `Quick Dept ${qcStamp}`;
+  const qcBrandName = `Quick Brand ${qcStamp}`;
+  const qcWithBoth = await ssProduct({ name: `Quick Both ${qcStamp}`, barcode: `QCX${qcStamp}`, unitType: 'each', priceMinor: 500, category: qcDept, brand: qcBrandName });
+  check('A new department and brand typed at the till are accepted', qcWithBoth.status === 201 && qcWithBoth.data?.category === qcDept && qcWithBoth.data?.brand === qcBrandName, qcWithBoth.error);
+  check('...the department joins the catalogue', ((await ssApi('/categories')).data ?? []).some((row) => row.name === qcDept));
+  check('...and so does the brand', ((await ssApi('/brands')).data ?? []).some((row) => row.name === qcBrandName));
+
+  // A department or brand the owner has retired cannot take new goods.
+  const qcHiddenDept = ((await ssApi('/categories?includeInactive=true')).data ?? []).find((row) => row.name === qcDept);
+  await ssApi(`/categories/${qcHiddenDept.id}`, { method: 'PATCH', body: { isActive: false } });
+  const qcIntoHiddenDept = await ssProduct({ name: `Quick Hidden Dept ${qcStamp}`, barcode: `QCH1${qcStamp}`, unitType: 'each', priceMinor: 100, category: qcDept });
+  check('A hidden department cannot take a new product', qcIntoHiddenDept.status === 400 && qcIntoHiddenDept.error?.details?.reason === 'CATEGORY_HIDDEN', qcIntoHiddenDept.error);
+
+  const qcHiddenBrand = ((await ssApi('/brands?includeInactive=true')).data ?? []).find((row) => row.name === qcBrandName);
+  await ssApi(`/brands/${qcHiddenBrand.id}`, { method: 'PATCH', body: { isActive: false } });
+  const qcIntoHiddenBrand = await ssProduct({ name: `Quick Hidden Brand ${qcStamp}`, barcode: `QCH2${qcStamp}`, unitType: 'each', priceMinor: 100, brand: qcBrandName });
+  check('A hidden brand cannot take a new product either', qcIntoHiddenBrand.status === 400 && qcIntoHiddenBrand.error?.details?.reason === 'BRAND_HIDDEN', qcIntoHiddenBrand.error);
+
+  // ---- isolation -------------------------------------------------------------------
+  check('Creating a product needs a session', (await api('/supershop/products', { method: 'POST', body: { name: 'X', priceMinor: 1 } })).status === 401);
+  check('Another workspace cannot create a product here', (await api('/supershop/products', { method: 'POST', token: phToken, body: { name: 'X', barcode: `QCZ${qcStamp}`, priceMinor: 1 } })).status === 403);
+  check("...and cannot see this one's new product by its barcode", (await api(`/supershop/products/lookup?barcode=${qcBarcode}`, { token: phToken })).status === 403);
+
+  // ---- who may do it -----------------------------------------------------------------
+  const qcTillCreated = await api('/staff', {
+    method: 'POST',
+    token: ssToken,
+    body: { name: 'Quick Till', email: `ssqc${qcStamp}@example.com`, password: 'Password@123', storeId: ssStoreIdForHold, extraPermissions: ['sales.create', 'sales.view', 'products.view'] },
+  });
+  const qcTill = { id: qcTillCreated.data?.id, token: (await login(`ssqc${qcStamp}@example.com`, 'Password@123')).token };
+  check('A till without products.create cannot add one', (await api('/supershop/products', { method: 'POST', token: qcTill.token, body: { name: `Quick Denied ${qcStamp}`, barcode: `QCY${qcStamp}`, unitType: 'each', priceMinor: 100 } })).status === 403);
+  check('...though it can still scan for one', (await api(`/supershop/products/lookup?barcode=${qcBarcode}`, { token: qcTill.token })).status === 200);
+  await api(`/staff/${qcTill.id}`, { method: 'PATCH', token: ssToken, body: { extraPermissions: ['sales.create', 'sales.view', 'products.view', 'products.create'] } });
+  const qcAllowed = await api('/supershop/products', { method: 'POST', token: qcTill.token, body: { name: `Quick Allowed ${qcStamp}`, barcode: `QCA${qcStamp}`, unitType: 'each', priceMinor: 100 } });
+  check('With products.create the same till can', qcAllowed.status === 201, qcAllowed.error);
+
+  // ---- and it sells straight away -----------------------------------------------------
+  await ssReceive(qcMade.data._id, { quantity: 5, costPriceMinor: 4000 });
+  const qcSale = await ssSale({ items: [{ productId: qcMade.data._id, quantity: 1 }], payments: [{ method: 'cash', amountMinor: 7500 }] });
+  check('A product created at the till sells like any other', qcSale.status === 201 && qcSale.data?.items?.[0]?.barcodeSnapshot === qcBarcode, qcSale.error);
+
+  await retireTill(qcTill.id);
+
+  // Retire the fixtures.
+  for (const row of (await ssApi(`/products?search=Quick&limit=100`)).data ?? []) {
+    const onHand = row.stock?.quantityOnHand ?? 0;
+    if (onHand !== 0) await ssApi(`/products/${row._id}/adjust`, { method: 'POST', body: { type: 'adjust', quantityDelta: -onHand, reason: 'Quick-create fixture' } });
+    await ssApi(`/products/${row._id}`, { method: 'DELETE' });
+  }
+
+  // --- Advanced Analytics: the dimensions and the filters -----------------------
+  // Sales can be looked at by staff, department, brand, product, branch,
+  // payment method and customer, alone or together. Sale-level filters narrow
+  // everything; line-level ones (department, brand, product) narrow the line
+  // breakdowns and report those lines in `selection`.
+  section('Supershop advanced analytics');
+
+  const anStamp = String(Date.now()).slice(-6);
+  const anDept = `AN Dept ${anStamp}`;
+  const anBrandA = `AN Brand A ${anStamp}`;
+  const anBrandB = `AN Brand B ${anStamp}`;
+  const anMake = async (name, brand, priceMinor) => {
+    const created = await ssProduct({ name: `${name} ${anStamp}`, category: anDept, brand, unitType: 'each', priceMinor });
+    await ssReceive(created.data._id, { quantity: 100, costPriceMinor: Math.floor(priceMinor / 2) });
+    return created.data._id;
+  };
+  const anA = await anMake('AN Alpha', anBrandA, 10_000);
+  const anB = await anMake('AN Beta', anBrandB, 20_000);
+  check('Analytics fixtures are stocked', Boolean(anA && anB));
+
+  // A till of its own, so "by staff" has something unambiguous to report.
+  const anStores = (await api('/stores', { token: ssToken })).data ?? [];
+  const anHome = anStores[0]._id;
+  const anOther = anStores.find((row) => String(row._id) !== String(anHome));
+  const anTillCreated = await api('/staff', {
+    method: 'POST',
+    token: ssToken,
+    body: { name: `AN Till ${anStamp}`, email: `ssan${anStamp}@example.com`, password: 'Password@123', storeId: anHome, extraPermissions: ['sales.create', 'sales.view', 'products.view', 'reports.view', 'customers.view', 'customers.create'] },
+  });
+  const anTill = { id: anTillCreated.data?.id, token: (await login(`ssan${anStamp}@example.com`, 'Password@123')).token };
+  check('An analytics till is created', anTillCreated.status === 201 && Boolean(anTill.token), anTillCreated.error);
+
+  // Admin sells Alpha for cash; the till sells Beta on bKash, to a customer.
+  const anSaleAdmin = await ssSale({ items: [{ productId: anA, quantity: 2 }], payments: [{ method: 'cash', amountMinor: 20_000 }] });
+  check('The admin sale lands', anSaleAdmin.status === 201, anSaleAdmin.error);
+  const anCustomerPhone = `0177${anStamp}`;
+  const anSaleTill = await api('/supershop/sales', {
+    method: 'POST',
+    token: anTill.token,
+    body: { items: [{ productId: anB, quantity: 1 }], payments: [{ method: 'bkash', amountMinor: 20_000 }], customer: { name: `AN Buyer ${anStamp}`, phone: anCustomerPhone } },
+  });
+  check("The till's sale lands", anSaleTill.status === 201, anSaleTill.error);
+
+  const anReport = (params) => ssApi(`/reports?${new URLSearchParams({ preset: 'today', ...params })}`);
+
+  // ---- by department, brand and product (line-level) --------------------------
+  const anByDept = await anReport({ category: anDept });
+  check('A department filter selects its lines', anByDept.status === 200 && anByDept.data?.selection?.lines === 2, anByDept.data?.selection ?? anByDept.error);
+  check('...and values them: 2 Alpha at 100 plus 1 Beta at 200', anByDept.data?.selection?.revenueMinor === 40_000, anByDept.data?.selection);
+  check('...over the two sales that contain them', anByDept.data?.selection?.salesCount === 2, anByDept.data?.selection);
+  check('...and the department breakdown shows only it', (anByDept.data?.departments ?? []).length === 1 && anByDept.data.departments[0].department === anDept, anByDept.data?.departments);
+
+  const anByBrand = await anReport({ brand: anBrandA });
+  check('A brand filter selects only that brand', anByBrand.data?.selection?.lines === 1 && anByBrand.data?.selection?.revenueMinor === 20_000, anByBrand.data?.selection);
+  check('...and the brand breakdown names it alone', (anByBrand.data?.brands ?? []).length === 1 && anByBrand.data.brands[0].brand === anBrandA, anByBrand.data?.brands);
+  check('...with its cost and profit', anByBrand.data?.brands?.[0]?.costMinor === 10_000 && anByBrand.data.brands[0].profitMinor === 10_000, anByBrand.data?.brands?.[0]);
+
+  const anByProduct = await anReport({ productId: anB });
+  check('A product filter selects only that product', anByProduct.data?.selection?.quantity === 1 && anByProduct.data?.selection?.revenueMinor === 20_000, anByProduct.data?.selection);
+  check('...and the product breakdown is just it', (anByProduct.data?.products ?? []).length === 1 && String(anByProduct.data.products[0].productId) === String(anB));
+
+  check('With no line filter there is no selection block', (await anReport({})).data?.selection === null);
+
+  // ---- by staff ----------------------------------------------------------------
+  const anByStaff = await anReport({ staffId: anTill.id });
+  check('A staff filter counts only their sales', anByStaff.data?.totals?.salesCount === 1 && anByStaff.data?.totals?.grossSalesMinor === 20_000, anByStaff.data?.totals);
+  check('...and the staff breakdown names them', (anByStaff.data?.staff ?? []).length === 1 && anByStaff.data.staff[0].name === `AN Till ${anStamp}`, anByStaff.data?.staff);
+  // Profit must agree between the header and the dimension: same definition,
+  // same numbers, no second way of working it out.
+  check(
+    'Profit is the same figure in the totals and in the staff row',
+    anByStaff.data?.staff?.[0]?.profitMinor === anByStaff.data?.totals?.grossProfitMinor,
+    { staff: anByStaff.data?.staff?.[0]?.profitMinor, totals: anByStaff.data?.totals?.grossProfitMinor },
+  );
+  // A return records the goods and the customer, not which cashier sold them -
+  // so under a staff filter refunds are left out rather than subtracted wrongly.
+  check('...because refunds are left out when they cannot be attributed', anByStaff.data?.returnsAttributable === false && anByStaff.data?.totals?.returnAmountMinor === 0, {
+    attributable: anByStaff.data?.returnsAttributable,
+    returned: anByStaff.data?.totals?.returnAmountMinor,
+  });
+  check('With no such filter refunds are counted again', (await anReport({})).data?.returnsAttributable === true);
+  check('...and it is net sales less VAT less cost', anByStaff.data?.totals?.grossProfitMinor === anByStaff.data.totals.netSalesMinor - anByStaff.data.totals.vatMinor - anByStaff.data.totals.costMinor, anByStaff.data?.totals);
+
+  // ---- by payment method and customer ------------------------------------------
+  const anByPayment = await anReport({ paymentMethod: 'bkash', category: anDept });
+  check('A payment filter counts only sales taken that way', anByPayment.data?.selection?.lines === 1 && anByPayment.data?.selection?.revenueMinor === 20_000, anByPayment.data?.selection);
+  const anCustomer = ((await api(`/customers?search=${anCustomerPhone}`, { token: ssToken })).data ?? [])[0];
+  const anByCustomer = await anReport({ customerId: anCustomer?._id });
+  check('A customer filter counts only their sales', anByCustomer.data?.totals?.salesCount === 1, anByCustomer.data?.totals);
+  check('...and the customer breakdown names them', (anByCustomer.data?.customers ?? []).some((row) => row.name === `AN Buyer ${anStamp}`), anByCustomer.data?.customers);
+
+  // ---- combined -------------------------------------------------------------------
+  const anCombined = await anReport({ staffId: anTill.id, brand: anBrandB });
+  check('Staff and brand together narrow to one line', anCombined.data?.selection?.lines === 1 && anCombined.data?.selection?.revenueMinor === 20_000, anCombined.data?.selection);
+  const anCombinedMiss = await anReport({ staffId: anTill.id, brand: anBrandA });
+  check('...and a combination nothing matches is empty, not everything', (anCombinedMiss.data?.selection?.lines ?? 0) === 0 && (anCombinedMiss.data?.brands ?? []).length === 0, anCombinedMiss.data?.selection);
+  check('The report says which filters it applied', anCombined.data?.filters?.brand === anBrandB && String(anCombined.data?.filters?.staffId) === String(anTill.id), anCombined.data?.filters);
+
+  // ---- date range -------------------------------------------------------------------
+  check("Yesterday shows none of today's sales", ((await anReport({ preset: 'yesterday', category: anDept })).data?.selection?.lines ?? 0) === 0);
+  check('A 30-day window still finds them', ((await anReport({ preset: 'last30', category: anDept })).data?.selection?.lines ?? 0) === 2);
+  check('An invalid preset is refused', (await anReport({ preset: 'forever' })).status === 422);
+  check('A custom range with no dates is refused', (await anReport({ preset: 'custom' })).status === 422);
+  check('An unknown filter is refused', (await anReport({ nonsense: 'x' })).status === 422);
+
+  // ---- by branch, and who may ask -----------------------------------------------
+  if (anOther) {
+    const anAtOther = { token: ssToken, storeId: anOther._id };
+    await api(`/supershop/products/${anA}/stock`, { ...anAtOther, method: 'POST', body: { quantity: 10, costPriceMinor: 5000 } });
+    await api('/supershop/sales', { ...anAtOther, method: 'POST', body: { items: [{ productId: anA, quantity: 1 }], payments: [{ method: 'cash', amountMinor: 10_000 }] } });
+
+    const anHere = await anReport({ category: anDept });
+    check('This branch sees only its own sales', anHere.data?.selection?.lines === 2, anHere.data?.selection);
+    const anAll = await anReport({ branch: 'all', category: anDept });
+    check('An admin asking for all branches sees them all', anAll.data?.selection?.lines === 3, anAll.data?.selection);
+    check('...broken down by branch', (anAll.data?.branchBreakdown ?? []).length === 2, anAll.data?.branchBreakdown);
+    check('...each named', (anAll.data?.branchBreakdown ?? []).every((row) => Boolean(row.name)), anAll.data?.branchBreakdown);
+    const anNamed = await anReport({ branch: String(anOther._id), category: anDept });
+    check('An admin can ask for one named branch', anNamed.data?.selection?.lines === 1, anNamed.data?.selection);
+
+    // A till is not an admin: asking for everything, or for somebody else's
+    // branch, quietly gives it its own rather than an error or a leak.
+    const anTillAll = await api(`/supershop/reports?preset=today&branch=all&category=${encodeURIComponent(anDept)}`, { token: anTill.token });
+    check('A non-admin asking for all branches gets only its own', anTillAll.status === 200 && anTillAll.data?.selection?.lines === 2, anTillAll.data?.selection ?? anTillAll.error);
+    const anTillOther = await api(`/supershop/reports?preset=today&branch=${anOther._id}&category=${encodeURIComponent(anDept)}`, { token: anTill.token });
+    check("...and asking for another branch gets its own, not that one", anTillOther.status === 200 && anTillOther.data?.selection?.lines === 2, anTillOther.data?.selection);
+    check('...with only its own branch offered in the picker', (anTillAll.data?.branches ?? []).length === 1, anTillAll.data?.branches);
+    check('An admin is offered every branch', ((await anReport({})).data?.branches ?? []).length === 2);
+  } else {
+    check('A second branch exists for the analytics branch checks', false, anStores.map((row) => row.name));
+  }
+
+  // ---- who may read it at all -------------------------------------------------------
+  check('Analytics needs a session', (await api('/supershop/reports?preset=today')).status === 401);
+  check("Another workspace cannot read this one's analytics", (await api('/supershop/reports?preset=today', { token: phToken })).status === 403);
+  const anNoReports = await api('/staff', {
+    method: 'POST',
+    token: ssToken,
+    body: { name: `AN NoReports ${anStamp}`, email: `ssanr${anStamp}@example.com`, password: 'Password@123', storeId: anHome, extraPermissions: ['sales.create', 'products.view'] },
+  });
+  check('A till without reports.view can be created', anNoReports.status === 201, anNoReports.error);
+  const anNoReportsToken = (await login(`ssanr${anStamp}@example.com`, 'Password@123')).token;
+  check('A till without reports.view cannot read analytics', (await api('/supershop/reports?preset=today', { token: anNoReportsToken })).status === 403);
+  check('The printed report follows the same filters', (await fetchFile(`/supershop/reports/print?preset=today&brand=${encodeURIComponent(anBrandA)}`, { token: ssToken })).status === 200);
+
+  await retireTill(anTill.id);
+  await retireTill(anNoReports.data?.id);
+
+  // Retire the fixtures.
+  for (const id of [anA, anB]) {
+    for (const store of anStores) {
+      const at = { token: ssToken, storeId: store._id };
+      const onHand = (await api(`/supershop/products/${id}`, at)).data?.product?.stock?.quantityOnHand ?? 0;
+      if (onHand !== 0) await api(`/supershop/products/${id}/adjust`, { ...at, method: 'POST', body: { type: 'adjust', quantityDelta: -onHand, reason: 'Analytics fixture' } });
+    }
+    await ssApi(`/products/${id}`, { method: 'DELETE' });
+  }
+
+  // --- The Branches screen: last 30 days per branch -----------------------------
+  // The owner's list of their own shops. Clothing has had this; Super Shop does
+  // it with its OWN arithmetic, because its prices include VAT and Clothing's
+  // do not - so VAT comes out before profit here.
+  section('Supershop branch overview');
+
+  const boStamp = String(Date.now()).slice(-6);
+  const boStores = (await api('/stores', { token: ssToken })).data ?? [];
+  const boHome = boStores[0]._id;
+  const boOther = boStores.find((row) => String(row._id) !== String(boHome));
+
+  const boGet = () => ssApi('/branches-overview');
+  const boFirst = await boGet();
+  check('An admin gets the branch overview', boFirst.status === 200 && Array.isArray(boFirst.data?.rows), boFirst.error);
+
+  // ---- the window ----------------------------------------------------------------
+  const boFrom = new Date(boFirst.data.range.from);
+  const boTo = new Date(boFirst.data.range.to);
+  const boExpectedFrom = new Date();
+  boExpectedFrom.setHours(0, 0, 0, 0);
+  boExpectedFrom.setDate(boExpectedFrom.getDate() - 29);
+  check('It covers 30 calendar days', boFirst.data?.range?.days === 30 && boFirst.data?.range?.label === 'Last 30 days', boFirst.data?.range);
+  check('...starting at midnight 29 days ago, in the shop\'s own day', Math.abs(boFrom.getTime() - boExpectedFrom.getTime()) < 2000, { from: boFrom.toISOString(), expected: boExpectedFrom.toISOString() });
+  check('...and running to the end of today', boTo.getHours() === 23 && boTo.getMinutes() === 59 && boTo > new Date(), boTo.toISOString());
+  check('...so a sale made right now is inside it', boFrom < new Date() && boTo > new Date());
+
+  // ---- every branch appears, even one that sold nothing ---------------------------
+  check('Every branch has a row, whether it traded or not', (boFirst.data?.rows ?? []).length === boStores.length, {
+    rows: (boFirst.data?.rows ?? []).length,
+    stores: boStores.length,
+  });
+  check('...each named and flagged', (boFirst.data?.rows ?? []).every((row) => Boolean(row.name) && typeof row.isActive === 'boolean'));
+  check('...and a branch with no trade reads as zero, not as missing', (boFirst.data?.rows ?? []).every((row) => row.salesCount > 0 || (row.netSalesMinor === 0 && row.grossProfitMinor === 0 && row.returnCount === 0)), boFirst.data?.rows);
+
+  // ---- the figures agree with the definitions -------------------------------------
+  check(
+    'Profit is net sales less VAT less cost, on every row',
+    (boFirst.data?.rows ?? []).every((row) => row.grossProfitMinor === row.netSalesMinor - row.vatMinor - row.costMinor),
+    boFirst.data?.rows,
+  );
+  check(
+    'Net sales is what was charged less what came back',
+    (boFirst.data?.rows ?? []).every((row) => row.netSalesMinor === row.grossSalesMinor - row.returnAmountMinor),
+    boFirst.data?.rows,
+  );
+  check(
+    'The totals are the rows added up',
+    boFirst.data?.totals?.netSalesMinor === (boFirst.data?.rows ?? []).reduce((sum, row) => sum + row.netSalesMinor, 0) &&
+      boFirst.data?.totals?.grossProfitMinor === (boFirst.data?.rows ?? []).reduce((sum, row) => sum + row.grossProfitMinor, 0),
+    boFirst.data?.totals,
+  );
+  check('Pieces and grams are counted apart', (boFirst.data?.rows ?? []).every((row) => typeof row.piecesSold === 'number' && typeof row.gramsSold === 'number'));
+
+  // ---- a sale moves ONE branch, and leaves the other exactly as it was ------------
+  if (boOther) {
+    const rowFor = (report, id) => (report.data?.rows ?? []).find((row) => String(row.id) === String(id));
+    const boBeforeHome = rowFor(boFirst, boHome);
+    const boBeforeOther = rowFor(boFirst, boOther._id);
+
+    const boProduct = await ssProduct({ name: `BO Item ${boStamp}`, category: 'Household', unitType: 'each', priceMinor: 30_000 });
+    await ssReceive(boProduct.data._id, { quantity: 10, costPriceMinor: 10_000 });
+    const boSale = await ssSale({ items: [{ productId: boProduct.data._id, quantity: 2 }], payments: [{ method: 'cash', amountMinor: 60_000 }] });
+    check('A sale is made in the home branch', boSale.status === 201, boSale.error);
+
+    const boAfter = await boGet();
+    const boAfterHome = rowFor(boAfter, boHome);
+    const boAfterOther = rowFor(boAfter, boOther._id);
+
+    check('The home branch gains exactly that sale', boAfterHome.netSalesMinor === boBeforeHome.netSalesMinor + 60_000 && boAfterHome.salesCount === boBeforeHome.salesCount + 1, {
+      before: boBeforeHome.netSalesMinor,
+      after: boAfterHome.netSalesMinor,
+    });
+    check('...and exactly its profit: 600 charged, 200 cost, no VAT', boAfterHome.grossProfitMinor === boBeforeHome.grossProfitMinor + 40_000, {
+      before: boBeforeHome.grossProfitMinor,
+      after: boAfterHome.grossProfitMinor,
+    });
+    check('The OTHER branch does not move at all', boAfterOther.netSalesMinor === boBeforeOther.netSalesMinor && boAfterOther.salesCount === boBeforeOther.salesCount, {
+      before: boBeforeOther,
+      after: boAfterOther,
+    });
+    check('...nor does its stock value', boAfterOther.stockValueMinor === boBeforeOther.stockValueMinor);
+    check('The home branch holds the stock it received', boAfterHome.stockValueMinor >= boBeforeHome.stockValueMinor, { before: boBeforeHome.stockValueMinor, after: boAfterHome.stockValueMinor });
+
+    // A refund in one branch comes off that branch only.
+    const boReturn = await ssApi(`/sales/${boSale.data._id}/return`, {
+      method: 'POST',
+      body: { items: [{ saleItemId: boSale.data.items[0]._id, quantity: 1, restock: true }], reason: 'One came back', refundMethod: 'cash' },
+    });
+    check('A refund is taken in the home branch', boReturn.status === 201, boReturn.error);
+    const boAfterReturn = await boGet();
+    check('...and comes off that branch alone', rowFor(boAfterReturn, boHome).returnAmountMinor === boBeforeHome.returnAmountMinor + 30_000 && rowFor(boAfterReturn, boOther._id).returnAmountMinor === boBeforeOther.returnAmountMinor, {
+      home: rowFor(boAfterReturn, boHome).returnAmountMinor,
+      other: rowFor(boAfterReturn, boOther._id).returnAmountMinor,
+    });
+    check('...reducing that branch net sales by what was refunded', rowFor(boAfterReturn, boHome).netSalesMinor === boAfterHome.netSalesMinor - 30_000);
+
+    // Retire it.
+    const boLeft = (await ssApi(`/products/${boProduct.data._id}`)).data?.product?.stock?.quantityOnHand ?? 0;
+    if (boLeft !== 0) await ssApi(`/products/${boProduct.data._id}/adjust`, { method: 'POST', body: { type: 'adjust', quantityDelta: -boLeft, reason: 'Branch overview fixture' } });
+    await ssApi(`/products/${boProduct.data._id}`, { method: 'DELETE' });
+  } else {
+    check('A second branch exists for the branch-overview checks', false, boStores.map((row) => row.name));
+  }
+
+  // ---- who may compare branches ------------------------------------------------------
+  check('The branch overview needs a session', (await api('/supershop/branches-overview')).status === 401);
+  check("Another workspace cannot read this one's branches", (await api('/supershop/branches-overview', { token: phToken })).status === 403);
+  const boTillCreated = await api('/staff', {
+    method: 'POST',
+    token: ssToken,
+    body: { name: `BO Till ${boStamp}`, email: `ssbo${boStamp}@example.com`, password: 'Password@123', storeId: boHome, extraPermissions: ['sales.create', 'sales.view', 'products.view', 'reports.view'] },
+  });
+  check('A till is created for the branch-overview permission check', boTillCreated.status === 201, boTillCreated.error);
+  const boTillToken = (await login(`ssbo${boStamp}@example.com`, 'Password@123')).token;
+  check('A cashier - even one who may read reports - cannot compare branches', (await api('/supershop/branches-overview', { token: boTillToken })).status === 403);
+  await retireTill(boTillCreated.data?.id);
 
 
   // --- Customer on a sale, in every vertical -----------------------------------
@@ -8251,14 +9525,40 @@ async function main() {
   const ssNotEnough = await ssSellAs(ssTill.session.token, 4);
   check('Super Shop: the override does not cover "not enough", even with the permission', ssNotEnough.status === 400, ssNotEnough.error?.message);
 
-  // A product never received into this branch has no stock row and no cost basis.
+  // A product NEVER RECEIVED into this branch has no stock row at all, which is
+  // a different state from a row that has run down to zero. The override used to
+  // miss it: the guarded update matched no document, so the till was refused
+  // even holding the permission. That is the state a bulk import with no
+  // opening-stock column leaves behind, and equally a product added by hand and
+  // not yet delivered. It now behaves like any other out-of-stock product.
   const ssNever = await ssProduct({ name: `Never Received ${oosStamp}`, priceMinor: 1000 });
-  const ssNeverSold = await api('/supershop/sales', {
-    method: 'POST',
-    token: ssTill.session.token,
-    body: { items: [{ productId: ssNever.data._id, quantity: 1 }], payments: [{ method: 'cash', amountMinor: 1000 }] },
-  });
-  check('Super Shop: a product never received here is still refused', ssNeverSold.status === 400, ssNeverSold.error?.message);
+  const ssNeverSell = (token, quantity = 1) =>
+    api('/supershop/sales', {
+      method: 'POST',
+      token,
+      body: { items: [{ productId: ssNever.data._id, quantity }], payments: [{ method: 'cash', amountMinor: 10_000 }] },
+    });
+  const ssNeverStock = async () => (await ssApi(`/products/${ssNever.data._id}`)).data?.product?.stock;
+
+  // Without the permission it is refused, and no stock row is conjured up.
+  await api(`/staff/${ssTill.id}`, { method: 'PATCH', token: ssToken, body: { extraPermissions: TILL_PERMISSIONS } });
+  const ssNeverRefused = await ssNeverSell(ssTill.session.token);
+  check('Super Shop: a never-received product is refused without the permission', ssNeverRefused.status === 400, ssNeverRefused.error?.message);
+  check('Super Shop: and a refused sale creates no stock row', ((await ssNeverStock())?.quantityOnHand ?? 0) === 0, await ssNeverStock());
+
+  // With it, the sale goes through and the branch is left owing the goods.
+  await api(`/staff/${ssTill.id}`, { method: 'PATCH', token: ssToken, body: { extraPermissions: [...TILL_PERMISSIONS, 'sales.sellOutOfStock'] } });
+  const ssNeverSold = await ssNeverSell(ssTill.session.token, 3);
+  check('Super Shop: with the permission a never-received product CAN be sold', ssNeverSold.status === 201, ssNeverSold.error);
+  check('Super Shop: the line is flagged as an out-of-stock sale', ssNeverSold.data?.items?.[0]?.outOfStockOverride === true, ssNeverSold.data?.items?.[0]);
+  check('Super Shop: the stock row is created at the negative balance', (await ssNeverStock())?.quantityOnHand === -3, await ssNeverStock());
+  check('Super Shop: a branch that never bought the goods has no cost basis for them', ssNeverSold.data?.costMinor === 0, ssNeverSold.data?.costMinor);
+  const ssNeverLedger = (await api(`/supershop/stock-ledger?itemId=${ssNever.data._id}&limit=5`, { token: ssToken })).data ?? [];
+  check('Super Shop: the movement is in the ledger with the negative balance', ssNeverLedger[0]?.balanceAfter === -3 && ssNeverLedger[0]?.quantityChange === -3, ssNeverLedger[0]);
+  // The first delivery pays off the debt and sets the real average cost.
+  const ssNeverReceived = await ssReceive(ssNever.data._id, { quantity: 10, costPriceMinor: 400 });
+  check('Super Shop: the first delivery pays off what was already sold', ssNeverReceived.data?.quantityOnHand === 7, ssNeverReceived.data);
+  check('Super Shop: and sets the cost basis it never had', ssNeverReceived.data?.costPriceMinor === 400, ssNeverReceived.data);
 
   // --- Pharmacy ----------------------------------------------------------------
   const phStoreId = (await api('/stores', { token: phToken })).data?.[0]?._id;
@@ -9759,6 +11059,33 @@ async function main() {
   check('Super Shop: the opening stock was received into this branch', ssImported?.stock?.quantityOnHand === 20 && ssImported?.stock?.costPriceMinor === 15_000, ssImported?.stock);
   check('Super Shop: the opening stock is in the ledger, not a raw field write', ((await api(`/supershop/stock-ledger?itemId=${ssImported?._id}&limit=5`, { token: ssToken })).data ?? []).some((row) => row.quantityChange === 20));
   check('Super Shop: a weighed row is created as weighed', ((await ssApi(`/products?search=Imported Dal ${impStamp}`)).data ?? [])[0]?.unitType === 'weight');
+
+  // An imported product must behave exactly like one typed in by hand, and the
+  // interesting case is the row with NO opening stock: it is created with no
+  // stock record in this branch at all. The authorised out-of-stock sale used to
+  // miss precisely those products, which is how a shop could import its whole
+  // catalogue and then not be able to sell any of it.
+  const ssImpDal = ((await ssApi(`/products?search=Imported Dal ${impStamp}`)).data ?? [])[0];
+  check('Super Shop: a row with no opening stock has no stock in this branch', (ssImpDal?.stock?.quantityOnHand ?? 0) === 0, ssImpDal?.stock);
+  const ssImpSell = (token, quantity) =>
+    api('/supershop/sales', {
+      method: 'POST',
+      token,
+      body: { items: [{ productId: ssImpDal?._id, quantity }], payments: [{ method: 'cash', amountMinor: 50_000 }] },
+    });
+
+  await api(`/staff/${ssTill.id}`, { method: 'PATCH', token: ssToken, body: { extraPermissions: TILL_PERMISSIONS } });
+  const ssImpBlocked = await ssImpSell(ssTill.session.token, 500);
+  check('Super Shop: an imported product out of stock is blocked without the permission', ssImpBlocked.status === 400, ssImpBlocked.error?.message);
+
+  await api(`/staff/${ssTill.id}`, { method: 'PATCH', token: ssToken, body: { extraPermissions: [...TILL_PERMISSIONS, 'sales.sellOutOfStock'] } });
+  const ssImpAllowed = await ssImpSell(ssTill.session.token, 500);
+  check('Super Shop: an authorised till CAN sell an imported product that is out of stock', ssImpAllowed.status === 201, ssImpAllowed.error);
+  check('Super Shop: the imported line is flagged as an out-of-stock sale', ssImpAllowed.data?.items?.[0]?.outOfStockOverride === true, ssImpAllowed.data?.items?.[0]);
+  check('Super Shop: and an admin can too', (await ssImpSell(ssToken, 250)).status === 201);
+  const ssImpStock = (await ssApi(`/products/${ssImpDal?._id}`)).data?.product?.stock;
+  check('Super Shop: the branch now owes the goods it sold (750 g)', ssImpStock?.quantityOnHand === -750, ssImpStock);
+  check('Super Shop: the imported sale is in the stock ledger', ((await api(`/supershop/stock-ledger?itemId=${ssImpDal?._id}&limit=5`, { token: ssToken })).data ?? []).some((row) => row.quantityChange === -500));
   check('Super Shop: the new department joined the catalogue', ((await ssApi('/categories')).data ?? []).some((row) => row.name === `Imported ${impStamp}`));
   check('Super Shop: the same import cannot be committed twice', (await api(`/supershop/imports/${ssImpPreview.data.importId}/commit`, { method: 'POST', token: ssToken, body: { skipInvalidRows: true } })).status === 400);
   check('Super Shop: the history records what it created, never the file', ((await api('/supershop/imports', { token: ssToken })).data ?? []).some((row) => row.rowsImported === 2 && !('plan' in row)));

@@ -21,6 +21,7 @@ import { LoadingState } from '@/components/states';
 import { BarcodePrintDialog } from '@/features/barcode/BarcodePrintDialog';
 import { supershopApi } from '@/api/supershop';
 import { shopCategoriesApi } from '@/api/posCategories';
+import { shopBrandsApi } from '@/api/shopBrands';
 import { CategoryInput } from '@/features/catalogue/CategoryInput';
 import { formatMoney } from '@/lib/money';
 import { formatQuantity, formatVatRate, gramsToKgText, parseVatPercent, vatPercentText } from '@/lib/supershop';
@@ -355,7 +356,19 @@ function ProductDialog({
 
         <div className="grid gap-3 sm:grid-cols-2">
           <TextField id="shop-name" label="Name" value={name} max={120} onChange={setName} placeholder="Miniket rice" />
-          <TextField id="shop-brand" label="Brand" value={brand} max={80} onChange={setBrand} placeholder="Optional" />
+          {/* The managed brand list, and still free to type a new one: an
+              unknown brand joins the list, exactly as a department does. */}
+          <CategoryInput
+            id="shop-brand"
+            label="Brand"
+            value={brand}
+            onChange={setBrand}
+            api={shopBrandsApi}
+            queryKey="supershop"
+            kind="brands"
+            maxLength={80}
+            placeholder="Optional"
+          />
           <CategoryInput id="shop-category" label="Department" value={category} onChange={setCategory} api={shopCategoriesApi} queryKey="supershop" />
           <TextField id="shop-barcode" label="Barcode" value={barcode} max={64} onChange={setBarcode} placeholder="Scan or type" />
           <div className="space-y-1.5">

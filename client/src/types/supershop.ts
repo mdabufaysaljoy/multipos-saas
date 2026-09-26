@@ -85,6 +85,17 @@ export interface ShopSaleLine {
   returnedQuantity?: number;
 }
 
+/** What an exchange replaced, carried on the replacement sale for its receipt. */
+export interface ShopSaleExchange {
+  returnId: string | null;
+  returnNumber: string;
+  originalSaleId: string;
+  originalSaleNumber: string;
+  /** Refund value of the returned goods, applied here instead of paid out. */
+  creditMinor: number;
+  returnedItems: { nameSnapshot: string; detailSnapshot: string; quantity: number; unitType: string; lineTotalMinor: number }[];
+}
+
 export interface ShopSale {
   _id: string;
   saleNumber: string;
@@ -101,6 +112,8 @@ export interface ShopSale {
   /** Value returned against this sale, and whether nothing is left to return. */
   returnedTotalMinor?: number;
   fullyReturned?: boolean;
+  /** Present only on the REPLACEMENT side of an exchange. */
+  exchange?: ShopSaleExchange | null;
   soldAt: string;
   cashierNameSnapshot: string;
   voidedAt: string | null;
@@ -115,6 +128,51 @@ export interface ShopReceipt {
 
 export interface ShopReports {
   range: { from: string; to: string; label: string; preset: string };
+  /** What the server actually applied. `branch` is what it GAVE, not what was asked. */
+  filters: {
+    branch: string;
+    requestedBranch: string;
+    staffId: string | null;
+    customerId: string | null;
+    paymentMethod: string | null;
+    category: string | null;
+    brand: string | null;
+    productId: string | null;
+  };
+  /**
+   * False when a filter is on that a return cannot be attributed to — a
+   * cashier, a tender or a line. Returns are then left out of the figures
+   * rather than subtracted wrongly.
+   */
+  returnsAttributable: boolean;
+  /** The branches this user may choose between. One, for a non-admin. */
+  branches: { _id: string; name: string }[];
+  /** Only when a department, brand or product filter is on: those lines alone. */
+  selection: {
+    lines: number;
+    salesCount: number;
+    quantity: number;
+    revenueMinor: number;
+    vatMinor: number;
+    costMinor: number;
+    profitMinor: number;
+    marginBps: number;
+  } | null;
+  staff: {
+    userId: string;
+    name: string;
+    salesCount: number;
+    netSalesMinor: number;
+    vatMinor: number;
+    costMinor: number;
+    discountsMinor: number;
+    profitMinor: number;
+    marginBps: number;
+    averageBasketMinor: number;
+  }[];
+  brands: { brand: string; lines: number; quantity: number; revenueMinor: number; vatMinor: number; costMinor: number; profitMinor: number; marginBps: number }[];
+  branchBreakdown: { storeId: string; name: string; salesCount: number; netSalesMinor: number; vatMinor: number; costMinor: number; profitMinor: number; marginBps: number }[];
+  customers: { customerId: string; name: string; salesCount: number; netSalesMinor: number; averageBasketMinor: number }[];
   totals: {
     salesCount: number;
     /** What was charged. */
@@ -184,4 +242,118 @@ export interface ShopDashboard {
   /** Stock is not a period: these describe the shelf right now. */
   lowStock: { productId: string; name: string; unitType: ShopUnitType; reorderLevel: number; quantityOnHand: number }[];
   lowStockCount: number;
+}
+
+
+/** What the till sends to exchange goods. No prices: the server values both sides. */
+export interface ShopExchangeInput {
+  items: { saleItemId: string; quantity: number; restock: boolean }[];
+  replacement: {
+    items: { productId: string; quantity: number }[];
+    /** Empty when the replacement costs exactly what came back. */
+    payments: { method: string; amountMinor: number }[];
+  };
+  reason: string;
+  /** Makes a double submission return the first exchange instead of a second one. */
+  idempotencyKey: string;
+}
+
+/** The return an exchange wrote, with the replacement sale it paid for. */
+export interface ShopExchange {
+  _id: string;
+  returnNumber: string;
+  saleNumberSnapshot: string;
+  totalMinor: number;
+  returnedAt: string;
+  exchange: {
+    saleId: string;
+    saleNumber: string;
+    refundableMinor: number;
+    replacementSubtotalMinor: number;
+    replacementTotalMinor: number;
+    extraPayableMinor: number;
+  } | null;
+  replacementSale?: { saleId: string; saleNumber: string; totalMinor: number; paidMinor: number; changeMinor: number };
+  /** True when this response replayed an exchange that had already happened. */
+  replayed?: boolean;
+}
+
+
+/** A basket put aside, as the held-sales list shows it. */
+export interface ShopHeldSaleRow {
+  _id: string;
+  holdNumber: string;
+  label: string;
+  itemCount: number;
+  /** What it came to when parked. The catalogue decides again on resume. */
+  estimatedTotalMinor: number;
+  customerName: string;
+  heldByNameSnapshot: string;
+  heldBy: string;
+  createdAt: string;
+  expiresAt: string;
+}
+
+/** What the till sends to park a basket. No prices: the server reads them. */
+export interface ShopHoldInput {
+  items: { productId: string; quantity: number }[];
+  label?: string;
+  discountMinor?: number;
+  customerId?: string;
+  customer?: { name: string; phone: string; email?: string };
+  loyaltyCardNumber?: string;
+  note?: string;
+}
+
+/** A resumed basket, re-priced from the catalogue. */
+export interface ShopResumedSale {
+  holdNumber: string;
+  label: string;
+  items: { quantity: number; product: ShopProduct; priceChanged: boolean; pricedAtHoldMinor: number }[];
+  /** Lines whose product no longer exists and could not come back. */
+  dropped: string[];
+  customerId: string | null;
+  customerDraft: { name: string; phone: string } | null;
+  discountMinor: number;
+  loyaltyCardNumber: string;
+  note: string;
+  heldByNameSnapshot: string;
+  createdAt: string;
+}
+
+
+/** One branch's last 30 days, for the Branches screen. */
+export interface ShopBranchOverviewRow {
+  id: string;
+  name: string;
+  code: string;
+  isActive: boolean;
+  salesCount: number;
+  lines: number;
+  /** Counted apart: adding pieces to grams would be adding apples to rice. */
+  piecesSold: number;
+  gramsSold: number;
+  grossSalesMinor: number;
+  returnCount: number;
+  returnAmountMinor: number;
+  netSalesMinor: number;
+  vatMinor: number;
+  costMinor: number;
+  grossProfitMinor: number;
+  marginBps: number;
+  averageBasketMinor: number;
+  stockValueMinor: number;
+}
+
+export interface ShopBranchOverview {
+  range: { from: string; to: string; label: string; days: number };
+  rows: ShopBranchOverviewRow[];
+  totals: {
+    salesCount: number;
+    grossSalesMinor: number;
+    returnAmountMinor: number;
+    netSalesMinor: number;
+    grossProfitMinor: number;
+    stockValueMinor: number;
+  };
 }

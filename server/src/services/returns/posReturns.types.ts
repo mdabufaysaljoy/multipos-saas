@@ -17,6 +17,11 @@ export interface ReturnableLine {
   unitPriceMinor: number;
   /** Carried from the sale so returned goods take their cost out of profit too. */
   costPriceMinor: number;
+  /**
+   * How the quantity is measured, where that is not simply "one of them".
+   * Super Shop weighs in grams and prices per kilogram; nothing else sets it.
+   */
+  unitType?: 'each' | 'weight';
   /** A pharmacy line names the batches it was dispensed from. */
   allocations?: { batchId: Types.ObjectId; batchNumber: string; quantity: number; costPriceMinor: number }[];
 }
@@ -70,4 +75,74 @@ export interface SaleReturnAdapter {
    * implement it; the engine calls it if it is there.
    */
   reverseLoyalty?(ctx: TenantContext, saleId: Types.ObjectId, reason: string): Promise<void>;
+  /**
+   * What `quantity` of this line was SOLD for, and what it COST.
+   *
+   * The default - unit price times quantity - is right wherever a quantity is a
+   * count of things, which is Pharmacy and Restaurant. It is WRONG for Super
+   * Shop's weighed goods, where the quantity is in grams and the price is per
+   * kilogram, so `20,000 x 1000` is a thousand times the real figure. A vertical
+   * that measures in anything other than whole units implements these.
+   */
+  amountOf?(line: ReturnableLine, quantity: number): number;
+  costOf?(line: ReturnableLine, quantity: number): number;
+  /**
+   * Exchange support. OPTIONAL, and implemented by Super Shop only: the engine
+   * refuses an exchange when a vertical has not provided it, so Pharmacy and
+   * Restaurant behave exactly as they did. A restaurant has nothing to swap -
+   * the food is gone - and a pharmacy trading one batch for another needs an
+   * expiry and dispensing decision that is its own piece of work.
+   */
+  exchange?: SaleExchangeAdapter;
+}
+
+/** A replacement basket, priced by the server from the catalogue. */
+export interface ExchangeQuote {
+  /** Replacement goods at today's catalogue prices. */
+  subtotalMinor: number;
+  /** What the replacement sale will come to once the vertical's rules apply. */
+  totalMinor: number;
+  lines: { itemId: Types.ObjectId; label: string; detail: string; quantity: number; unitPriceMinor: number; lineTotalMinor: number }[];
+}
+
+/** The replacement sale, as the engine needs to report and unwind it. */
+export interface ReplacementSale {
+  saleId: Types.ObjectId;
+  saleNumber: string;
+  subtotalMinor: number;
+  totalMinor: number;
+  paidMinor: number;
+  changeMinor: number;
+}
+
+/** What a vertical must be able to do before it can offer exchanges. */
+export interface SaleExchangeAdapter {
+  /**
+   * Prices the replacement basket from the catalogue. Never from the request:
+   * the whole point of quoting server-side is that the cheaper-replacement rule
+   * is decided on prices the client cannot choose.
+   */
+  quote(ctx: TenantContext, items: { itemId: Types.ObjectId; quantity: number }[]): Promise<ExchangeQuote>;
+  /**
+   * Creates the replacement sale, with `creditMinor` already paid for by the
+   * returned goods. It takes its own stock and writes its own ledger rows, so
+   * an exchange moves inventory exactly as a return plus a sale would.
+   */
+  create(
+    ctx: TenantContext,
+    input: {
+      items: { itemId: Types.ObjectId; quantity: number }[];
+      payments: { method: string; amountMinor: number }[];
+      customerId: Types.ObjectId | null;
+      creditMinor: number;
+      originalSaleId: Types.ObjectId;
+      originalSaleNumber: string;
+      returnedItems: { nameSnapshot: string; detailSnapshot: string; quantity: number; unitType: string; lineTotalMinor: number }[];
+      note: string;
+    },
+  ): Promise<ReplacementSale>;
+  /** Undoes a replacement sale when the exchange could not be finished. */
+  cancel(ctx: TenantContext, saleId: Types.ObjectId, reason: string): Promise<void>;
+  /** Points the replacement sale back at the return that paid for it. */
+  link(ctx: TenantContext, saleId: Types.ObjectId, returnId: Types.ObjectId, returnNumber: string): Promise<void>;
 }

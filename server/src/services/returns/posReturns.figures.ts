@@ -29,9 +29,16 @@ export async function returnFiguresFor(
   ctx: TenantContext,
   vertical: PosVertical,
   range: { from: Date; to: Date },
+  /**
+   * Narrows it further. Defaults to this till's branch, which is what every
+   * caller wanted until Super Shop's analytics grew a branch picker and a
+   * customer filter. Anything passed here is ANDed with the tenant and the
+   * range; pass `{}` for every branch.
+   */
+  extraScope: Record<string, unknown> = { storeId: ctx.storeId },
 ): Promise<ReturnFigures> {
   const [row] = await ReturnModel.aggregate<ReturnFigures>([
-    { $match: { tenantId: ctx.tenantId, storeId: ctx.storeId, vertical, returnedAt: { $gte: range.from, $lte: range.to } } },
+    { $match: { tenantId: ctx.tenantId, ...extraScope, vertical, returnedAt: { $gte: range.from, $lte: range.to } } },
     {
       $group: {
         _id: null,
@@ -46,7 +53,16 @@ export async function returnFiguresFor(
               $map: {
                 input: '$items',
                 as: 'item',
-                in: { $cond: ['$$item.restock', { $multiply: ['$$item.quantity', { $ifNull: ['$$item.costPriceMinorSnapshot', 0] }] }, 0] },
+                // The cost the return recorded, already in the vertical's own
+                // unit. Returns written before that existed fall back to
+                // quantity x unit cost, which is what they have always reported.
+                in: {
+                  $cond: [
+                    '$$item.restock',
+                    { $ifNull: ['$$item.costMinor', { $multiply: ['$$item.quantity', { $ifNull: ['$$item.costPriceMinorSnapshot', 0] }] }] },
+                    0,
+                  ],
+                },
               },
             },
           },
@@ -57,15 +73,60 @@ export async function returnFiguresFor(
   return { count: row?.count ?? 0, totalMinor: row?.totalMinor ?? 0, costMinor: row?.costMinor ?? 0, units: row?.units ?? 0 };
 }
 
+/**
+ * The same figures, split by BRANCH, for an owner comparing their shops.
+ *
+ * One aggregation for every branch rather than one per branch, and the cost
+ * expression is the same one `returnFiguresFor` uses - so a branch overview and
+ * the analytics screen can never disagree about what a refund cost.
+ */
+export async function returnFiguresByStore(
+  ctx: TenantContext,
+  vertical: PosVertical,
+  range: { from: Date; to: Date },
+): Promise<Map<string, ReturnFigures>> {
+  const rows = await ReturnModel.aggregate<ReturnFigures & { _id: Types.ObjectId }>([
+    { $match: { tenantId: ctx.tenantId, vertical, returnedAt: { $gte: range.from, $lte: range.to } } },
+    {
+      $group: {
+        _id: '$storeId',
+        count: { $sum: 1 },
+        totalMinor: { $sum: '$totalMinor' },
+        units: { $sum: { $sum: '$items.quantity' } },
+        costMinor: {
+          $sum: {
+            $sum: {
+              $map: {
+                input: '$items',
+                as: 'item',
+                in: {
+                  $cond: [
+                    '$$item.restock',
+                    { $ifNull: ['$$item.costMinor', { $multiply: ['$$item.quantity', { $ifNull: ['$$item.costPriceMinorSnapshot', 0] }] }] },
+                    0,
+                  ],
+                },
+              },
+            },
+          },
+        },
+      },
+    },
+  ]);
+  return new Map(rows.map((row) => [String(row._id), { count: row.count, totalMinor: row.totalMinor, costMinor: row.costMinor, units: row.units }]));
+}
+
 /** Money and cost returned per day, keyed the way a trend groups its buckets. */
 export async function returnsByDay(
   ctx: TenantContext,
   vertical: PosVertical,
   range: { from: Date; to: Date },
   timezone: string,
+  /** As `returnFiguresFor`: defaults to this till's branch. */
+  extraScope: Record<string, unknown> = { storeId: ctx.storeId },
 ): Promise<Map<string, { totalMinor: number; costMinor: number }>> {
   const rows = await ReturnModel.aggregate<{ _id: string; totalMinor: number; costMinor: number }>([
-    { $match: { tenantId: ctx.tenantId, storeId: ctx.storeId, vertical, returnedAt: { $gte: range.from, $lte: range.to } } },
+    { $match: { tenantId: ctx.tenantId, ...extraScope, vertical, returnedAt: { $gte: range.from, $lte: range.to } } },
     {
       $group: {
         _id: { $dateToString: { format: '%Y-%m-%d', date: '$returnedAt', timezone } },
@@ -77,7 +138,16 @@ export async function returnsByDay(
               $map: {
                 input: '$items',
                 as: 'item',
-                in: { $cond: ['$$item.restock', { $multiply: ['$$item.quantity', { $ifNull: ['$$item.costPriceMinorSnapshot', 0] }] }, 0] },
+                // The cost the return recorded, already in the vertical's own
+                // unit. Returns written before that existed fall back to
+                // quantity x unit cost, which is what they have always reported.
+                in: {
+                  $cond: [
+                    '$$item.restock',
+                    { $ifNull: ['$$item.costMinor', { $multiply: ['$$item.quantity', { $ifNull: ['$$item.costPriceMinorSnapshot', 0] }] }] },
+                    0,
+                  ],
+                },
               },
             },
           },
@@ -97,10 +167,12 @@ export async function recentReturns(
   vertical: PosVertical,
   range: { from: Date; to: Date },
   limit = 10,
+  /** As `returnFiguresFor`: defaults to this till's branch. */
+  extraScope: Record<string, unknown> = { storeId: ctx.storeId },
 ) {
   const rows = await ReturnModel.find({
     tenantId: ctx.tenantId,
-    storeId: ctx.storeId,
+    ...extraScope,
     vertical,
     returnedAt: { $gte: range.from, $lte: range.to },
   })

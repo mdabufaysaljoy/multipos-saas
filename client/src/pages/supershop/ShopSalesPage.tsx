@@ -2,7 +2,7 @@ import * as React from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { format } from 'date-fns';
 import { toast } from 'sonner';
-import { Printer, Undo2 } from 'lucide-react';
+import { Printer, Repeat2, Undo2 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
@@ -16,6 +16,7 @@ import { PermissionGate } from '@/components/PermissionGate';
 import { SearchInput, useDebounced } from '@/components/SearchInput';
 import { ShopReceiptDialog } from '@/features/supershop/ShopReceiptDialog';
 import { PosReturnDialog } from '@/features/returns/PosReturnDialog';
+import { ShopExchangeDialog } from '@/features/supershop/ShopExchangeDialog';
 import { storeApi } from '@/api/endpoints';
 import { ApiError } from '@/api/client';
 import { supershopApi } from '@/api/supershop';
@@ -114,16 +115,39 @@ export function ShopSalesPage() {
         />
       </Card>
 
-      {open && <SaleDialog key={open._id} sale={open} currency={currency} onClose={() => setOpen(null)} onPrint={() => setReceiptFor(open._id)} />}
+      {open && (
+        <SaleDialog
+          key={open._id}
+          sale={open}
+          currency={currency}
+          onClose={() => setOpen(null)}
+          onPrint={() => setReceiptFor(open._id)}
+          onPrintSale={(id) => setReceiptFor(id)}
+        />
+      )}
       <ShopReceiptDialog saleId={receiptFor} onClose={() => setReceiptFor(null)} />
     </div>
   );
 }
 
-function SaleDialog({ sale, currency, onClose, onPrint }: { sale: ShopSale; currency: string; onClose: () => void; onPrint: () => void }) {
+function SaleDialog({
+  sale,
+  currency,
+  onClose,
+  onPrint,
+  onPrintSale,
+}: {
+  sale: ShopSale;
+  currency: string;
+  onClose: () => void;
+  onPrint: () => void;
+  /** Prints a different sale's receipt - the replacement an exchange created. */
+  onPrintSale?: (saleId: string) => void;
+}) {
   const queryClient = useQueryClient();
   const [voiding, setVoiding] = React.useState(false);
   const [returning, setReturning] = React.useState(false);
+  const [exchanging, setExchanging] = React.useState(false);
   const [reason, setReason] = React.useState('');
   const { data: posConfig } = useQuery({ queryKey: ['store', 'pos-config'], queryFn: storeApi.posConfig });
 
@@ -208,6 +232,17 @@ function SaleDialog({ sale, currency, onClose, onPrint }: { sale: ShopSale; curr
               </Button>
             </PermissionGate>
           )}
+          {/* An exchange writes a sale as well as a return, so it needs both. */}
+          {sale.status === 'completed' && !sale.fullyReturned && (
+            <PermissionGate anyOf={['returns.create']}>
+              <PermissionGate anyOf={['sales.create']}>
+                <Button variant="outline" onClick={() => setExchanging(true)}>
+                  <Repeat2 />
+                  Exchange
+                </Button>
+              </PermissionGate>
+            </PermissionGate>
+          )}
           {sale.status === 'completed' && (
             <PermissionGate anyOf={['sales.cancel']}>
               {voiding ? (
@@ -223,6 +258,21 @@ function SaleDialog({ sale, currency, onClose, onPrint }: { sale: ShopSale; curr
           )}
         </DialogFooter>
       </DialogContent>
+
+      {exchanging && (
+        <ShopExchangeDialog
+          sale={sale}
+          currency={currency}
+          posConfig={posConfig}
+          onClose={() => setExchanging(false)}
+          onDone={(replacementSaleId) => {
+            setExchanging(false);
+            onClose();
+            // The exchange receipt is the replacement sale's own.
+            onPrintSale?.(replacementSaleId);
+          }}
+        />
+      )}
 
       {returning && (
         <PosReturnDialog

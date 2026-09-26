@@ -39,6 +39,19 @@ export interface ShopSaleLine {
 /** What a sale did to a loyalty card: the shared snapshot, under this vertical's name. */
 export type ShopSaleLoyalty = SaleLoyaltySnapshot;
 
+/** The exchange this sale replaced, for the receipt and for tracing it back. */
+export interface ShopSaleExchange {
+  /** The return that paid for it. Filled in once that return is written. */
+  returnId: Types.ObjectId | null;
+  returnNumber: string;
+  originalSaleId: Types.ObjectId;
+  originalSaleNumber: string;
+  /** Refund value of the returned goods, applied here instead of paid out. */
+  creditMinor: number;
+  /** What came back, snapshotted at the time of the exchange, for the receipt. */
+  returnedItems: { nameSnapshot: string; detailSnapshot: string; quantity: number; unitType: string; lineTotalMinor: number }[];
+}
+
 export interface ShopSaleDoc extends BaseDoc {
   tenantId: Types.ObjectId;
   storeId: Types.ObjectId;
@@ -61,6 +74,12 @@ export interface ShopSaleDoc extends BaseDoc {
   /** Value returned against this sale so far, and whether nothing is left. */
   returnedTotalMinor?: number;
   fullyReturned?: boolean;
+  /**
+   * Set when this sale is the REPLACEMENT side of an exchange: the returned
+   * goods' refund value paid for part of it. Absent on every ordinary sale, so
+   * sales taken before exchanges existed load unchanged.
+   */
+  exchange?: ShopSaleExchange | null;
   soldAt: Date;
   cashierId: Types.ObjectId;
   cashierNameSnapshot: string;
@@ -124,6 +143,34 @@ const shopSaleSchema = new Schema<ShopSaleDoc>(
     status: { type: String, enum: [...SHOP_SALE_STATUSES], default: 'completed' },
     returnedTotalMinor: { type: Number, default: 0, min: 0 },
     fullyReturned: { type: Boolean, default: false },
+    exchange: {
+      type: new Schema(
+        {
+          returnId: { type: Schema.Types.ObjectId, ref: 'Return', default: null },
+          returnNumber: { type: String, default: '' },
+          originalSaleId: { type: Schema.Types.ObjectId, ref: 'ShopSale', required: true },
+          originalSaleNumber: { type: String, required: true },
+          creditMinor: minor,
+          returnedItems: {
+            type: [
+              new Schema(
+                {
+                  nameSnapshot: { type: String, required: true },
+                  detailSnapshot: { type: String, default: '' },
+                  quantity: { type: Number, required: true, min: 1 },
+                  unitType: { type: String, default: 'each' },
+                  lineTotalMinor: minor,
+                },
+                { _id: false },
+              ),
+            ],
+            default: [],
+          },
+        },
+        { _id: false },
+      ),
+      default: null,
+    },
     soldAt: { type: Date, required: true },
     cashierId: { type: Schema.Types.ObjectId, ref: 'User', required: true },
     cashierNameSnapshot: { type: String, required: true },
@@ -138,5 +185,12 @@ const shopSaleSchema = new Schema<ShopSaleDoc>(
 shopSaleSchema.index({ tenantId: 1, storeId: 1, saleNumber: 1 }, { unique: true });
 shopSaleSchema.index({ tenantId: 1, storeId: 1, soldAt: -1 });
 shopSaleSchema.index({ tenantId: 1, status: 1, soldAt: 1 });
+/**
+ * Advanced Analytics: every one of its aggregations starts from this branch's
+ * completed sales in a window. The `(tenantId, storeId, soldAt)` index above
+ * cannot serve it without also scanning voided sales, and the
+ * `(tenantId, status, soldAt)` one spans every branch.
+ */
+shopSaleSchema.index({ tenantId: 1, storeId: 1, status: 1, soldAt: -1 });
 
 export const ShopSaleModel = model<ShopSaleDoc>('ShopSale', shopSaleSchema);

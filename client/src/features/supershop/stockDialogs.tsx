@@ -9,7 +9,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { MoneyInput } from '@/components/MoneyInput';
 import { ApiError } from '@/api/client';
 import { supershopApi } from '@/api/supershop';
-import { formatQuantity, parseKgToGrams } from '@/lib/supershop';
+import { formatQuantity, MAX_PIECES, parseKgToGrams } from '@/lib/supershop';
 import type { ShopMovement, ShopProduct, ShopUnitType } from '@/types/supershop';
 
 /**
@@ -31,7 +31,8 @@ export const MOVEMENT_LABELS: Record<ShopMovement['type'], string> = {
 /** Parses a quantity for a unit type: whole pieces, or kilograms to grams. */
 export const parseQuantity = (raw: string, unitType: ShopUnitType): number | null => {
   if (unitType === 'weight') return parseKgToGrams(raw);
-  return /^\d{1,7}$/.test(raw.trim()) && Number(raw) > 0 ? Number(raw) : null;
+  const pieces = Number(raw.trim());
+  return /^\d{1,7}$/.test(raw.trim()) && pieces > 0 && pieces <= MAX_PIECES ? pieces : null;
 };
 
 export function TextField({

@@ -1,7 +1,7 @@
 import * as React from 'react';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { CreditCard, Minus, Plus, ScanBarcode, Scale, Trash2 } from 'lucide-react';
+import { CreditCard, Minus, PauseCircle, Plus, ScanBarcode, Scale, Trash2 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -17,22 +17,25 @@ import { LoyaltyCardDialog } from '@/features/loyalty/LoyaltyCardDialog';
 import { LoyaltyStrip } from '@/features/loyalty/LoyaltyStrip';
 import { isLoyaltyCardCode, maxRedeemablePoints, pointsForSpend } from '@/features/loyalty/loyaltyMath';
 import { useLoyaltyAccess } from '@/features/loyalty/useLoyaltyAccess';
-import { CategoryFilter } from '@/features/catalogue/CategoryFilter';
+import { ANY, PosFilters } from '@/features/supershop/PosFilters';
 import { loyaltyApi } from '@/api/endpoints';
 import type { LoyaltyLookup } from '@/types/domain';
 import { PaymentPanel } from '@/features/payments/PaymentPanel';
 import { tenderedRows } from '@/features/payments/paymentMath';
 import { usePayments } from '@/features/payments/usePayments';
 import { ShopReceiptDialog } from '@/features/supershop/ShopReceiptDialog';
+import { HeldSalesDialog } from '@/features/supershop/HeldSalesDialog';
+import { QuickCreateDialog } from '@/features/supershop/QuickCreateDialog';
 import { ApiError } from '@/api/client';
 import { storeApi } from '@/api/endpoints';
 import { supershopApi } from '@/api/supershop';
 import { shopCategoriesApi } from '@/api/posCategories';
+import { shopBrandsApi } from '@/api/shopBrands';
 import { formatMoney } from '@/lib/money';
 import { formatQuantity, gramsToKgText, lineAmount, parseKgToGrams } from '@/lib/supershop';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/hooks/useAuth';
-import type { ShopProduct } from '@/types/supershop';
+import type { ShopProduct, ShopResumedSale } from '@/types/supershop';
 import { tendersFromConfig } from '@/types/domain';
 
 interface CartLine {
@@ -67,19 +70,91 @@ export function SupershopPosPage() {
   // the shelf is right and the record is wrong. The server checks it again.
   const canSellOutOfStock = can('sales.sellOutOfStock');
   const [receiptFor, setReceiptFor] = React.useState<string | null>(null);
+  const [heldOpen, setHeldOpen] = React.useState(false);
+  // The barcode a scan could not find, waiting to become a product.
+  const [unknownBarcode, setUnknownBarcode] = React.useState<string | null>(null);
 
   // The departments this shop sells under, in the owner's order and without the
-  // ones they hid; picking one browses it without typing anything.
-  const { data: departments } = useQuery({ queryKey: ['supershop', 'categories', 'filter'], queryFn: () => shopCategoriesApi.list() });
-  const [department, setDepartment] = React.useState('all');
-  const browsing = search.length > 0 || department !== 'all';
+  // ones they hid, and the brands its products actually carry.
+  const { data: departments } = useQuery({ queryKey: ['supershop', 'categories', 'filter'], queryFn: () => shopCategoriesApi.list(), staleTime: 60_000 });
+  // The managed brand list, minus any the owner has hidden.
+  const { data: brandRows } = useQuery({ queryKey: ['supershop', 'brands', 'filter'], queryFn: () => shopBrandsApi.list(), staleTime: 60_000 });
+  const brands = React.useMemo(() => (brandRows ?? []).map((row) => row.name), [brandRows]);
+  const [department, setDepartment] = React.useState(ANY);
+  const [brand, setBrand] = React.useState(ANY);
 
-  const { data: results, isLoading } = useQuery({
-    queryKey: ['supershop', 'products', 'pos', search, department],
-    queryFn: () =>
-      supershopApi.products({ limit: 30, activeOnly: 'true', ...(search ? { search } : {}), ...(department !== 'all' ? { category: department } : {}) }),
-    enabled: browsing,
+  // A department or brand that stops existing (renamed, its last product sold
+  // off and deleted) quietly falls back to All rather than filtering the list
+  // down to nothing with a dropdown that shows a blank.
+  React.useEffect(() => {
+    if (department !== ANY && departments && !departments.some((row) => row.name === department)) setDepartment(ANY);
+  }, [departments, department]);
+  React.useEffect(() => {
+    if (brand !== ANY && brandRows && !brands.includes(brand)) setBrand(ANY);
+  }, [brandRows, brands, brand]);
+
+  const listRef = React.useRef<HTMLDivElement>(null);
+  const sentinelRef = React.useRef<HTMLDivElement>(null);
+
+  /**
+   * The till's item list.
+   *
+   * Paged, and shown from the moment the screen opens: the shelf is what a
+   * cashier browses when there is nothing to scan. The key holds the search text
+   * and BOTH filters, so changing any of them starts again at page 1 and pages
+   * from different filters never mix. Filtering happens on the server, so a
+   * department or brand applies to the whole catalogue rather than to the page
+   * already in the browser.
+   *
+   * Out-of-stock products are deliberately still listed - the row says so, and
+   * whether it can be tapped is the `sales.sellOutOfStock` question below.
+   */
+  const {
+    data: results,
+    isLoading,
+    hasNextPage,
+    fetchNextPage,
+    isFetchingNextPage,
+  } = useInfiniteQuery({
+    queryKey: ['supershop', 'products', 'pos', search, department, brand],
+    queryFn: ({ pageParam }) =>
+      supershopApi.products({
+        page: pageParam,
+        limit: 40,
+        activeOnly: 'true',
+        ...(search ? { search } : {}),
+        ...(department !== ANY ? { category: department } : {}),
+        ...(brand !== ANY ? { brand } : {}),
+      }),
+    initialPageParam: 1,
+    getNextPageParam: (last) => (last.meta.page < last.meta.totalPages ? last.meta.page + 1 : undefined),
+    staleTime: 10_000,
   });
+
+  // Every page loaded so far, as one list. Memoised so the rows below are not
+  // rebuilt on every unrelated render (a keystroke in the payment panel).
+  const products = React.useMemo(() => (results?.pages ?? []).flatMap((page) => page.items), [results]);
+  const totalMatching = results?.pages[0]?.meta.total ?? 0;
+
+  // A new search or filter shows its first page from the top.
+  React.useEffect(() => {
+    listRef.current?.scrollTo({ top: 0 });
+  }, [search, department, brand]);
+
+  // Infinite scroll: the next page loads as the end of the list comes into view.
+  // The "Load more" button below is the fallback when the observer cannot run.
+  React.useEffect(() => {
+    const sentinel = sentinelRef.current;
+    if (!sentinel || !hasNextPage) return;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries[0]?.isIntersecting && !isFetchingNextPage) void fetchNextPage();
+      },
+      { root: listRef.current, rootMargin: '300px' },
+    );
+    observer.observe(sentinel);
+    return () => observer.disconnect();
+  }, [hasNextPage, isFetchingNextPage, fetchNextPage]);
 
   const subtotal = cart.reduce((sum, line) => sum + lineAmount(line.product.priceMinor, line.quantity, line.product.unitType), 0);
   const discountMinor = Math.min(discount ?? 0, subtotal);
@@ -136,13 +211,25 @@ export function SupershopPosPage() {
     setLine(product, current + 1);
   };
 
+  // A till that may add to the catalogue is offered the chance to, rather than
+  // being told the beep went nowhere.
+  const canCreateProduct = can('products.create');
+
   const scan = useMutation({
     mutationFn: (barcode: string) => supershopApi.lookup(barcode),
     onSuccess: (product) => {
       add(product);
       setTerm('');
     },
-    onError: () => toast.error('No product has that barcode'),
+    onError: (err, barcode) => {
+      // Only "nothing has that barcode" opens the form. Anything else - a
+      // refused permission, a network failure - is reported as itself.
+      if (err instanceof ApiError && err.status === 404 && canCreateProduct) {
+        setUnknownBarcode(barcode);
+        return;
+      }
+      toast.error(err instanceof ApiError && err.status !== 404 ? err.message : 'No product has that barcode');
+    },
   });
 
   const attachCard = async (code: string): Promise<boolean> => {
@@ -180,6 +267,48 @@ export function SupershopPosPage() {
     scanRef.current?.focus();
   };
 
+  // How many baskets are waiting at this branch, for the button's badge.
+  const { data: heldSales } = useQuery({ queryKey: ['supershop', 'held-sales'], queryFn: () => supershopApi.heldSales(), staleTime: 10_000 });
+
+  /**
+   * Puts the basket aside. Nothing is sold: no stock moves, no money is taken
+   * and no points are awarded - the server stores what was in front of the
+   * cashier and prices it again when it comes back.
+   */
+  const hold = useMutation({
+    mutationFn: () =>
+      supershopApi.hold({
+        items: cart.map((line) => ({ productId: line.product._id, quantity: line.quantity })),
+        discountMinor,
+        ...saleCustomerFields(customer),
+        ...(loyaltyMember ? { loyaltyCardNumber: loyaltyMember.cardNumber } : {}),
+      }),
+    onSuccess: (result) => {
+      toast.success(`${result.holdNumber} held`, { description: 'Open it again from Held sales.' });
+      reset();
+      void queryClient.invalidateQueries({ queryKey: ['supershop', 'held-sales'] });
+    },
+    onError: (err) => toast.error(err instanceof ApiError ? err.message : 'Could not hold this sale'),
+  });
+
+  /** Puts a resumed basket back on the till, at today's prices. */
+  const restore = async (sale: ShopResumedSale) => {
+    setCart(sale.items.map((line) => ({ product: line.product, quantity: line.quantity })));
+    setDiscount(sale.discountMinor);
+    setCustomer(sale.customerDraft ? { name: sale.customerDraft.name, phone: sale.customerDraft.phone } : null);
+    payments.reset();
+    if (sale.loyaltyCardNumber) await attachCard(sale.loyaltyCardNumber);
+    if (sale.dropped.length > 0) {
+      toast.warning(`${sale.dropped.length} line(s) could not come back`, { description: sale.dropped.join(', ') });
+    }
+    const moved = sale.items.filter((line) => line.priceChanged);
+    if (moved.length > 0) {
+      toast.info('Prices have changed since this was held', { description: moved.map((line) => line.product.name).join(', ') });
+    }
+    toast.success(`${sale.holdNumber} reopened`);
+    scanRef.current?.focus();
+  };
+
   const complete = useMutation({
     mutationFn: () =>
       supershopApi.createSale({
@@ -199,7 +328,19 @@ export function SupershopPosPage() {
       setReceiptFor(sale._id);
       void queryClient.invalidateQueries({ queryKey: ['supershop'] });
     },
-    onError: (err) => toast.error(err instanceof ApiError ? err.message : 'Could not complete the sale'),
+    onError: (err) => {
+      if (!(err instanceof ApiError)) {
+        toast.error('Could not complete the sale');
+        return;
+      }
+      // A schema refusal carries the field that failed and why. Without it the
+      // till shows only "The submitted data is not valid", which tells a cashier
+      // nothing about which amount to correct.
+      const [field, detail] = Object.entries(err.fieldErrors)[0] ?? [];
+      toast.error(detail ?? err.message, {
+        description: detail && field ? `Check: ${field.replace(/\.\d+\./g, ' ').replace(/\./g, ' ')}` : undefined,
+      });
+    },
   });
 
   const canComplete = cart.length > 0 && payments.isSettled && !complete.isPending;
@@ -235,19 +376,31 @@ export function SupershopPosPage() {
               aria-label="Scan or search"
             />
           </form>
-          <CategoryFilter categories={(departments ?? []).map((row) => row.name)} value={department} onChange={setDepartment} />
+          <PosFilters
+            categories={(departments ?? []).map((row) => row.name)}
+            brands={brands}
+            category={department}
+            brand={brand}
+            onCategory={setDepartment}
+            onBrand={setBrand}
+          />
           <LimitAlert resource="monthlySales" />
         </CardHeader>
-        <CardContent className="scrollbar-thin min-h-0 flex-1 overflow-y-auto">
-          {!browsing ? (
-            <EmptyState title="Ready to scan" description="Scan, type a name, or pick a department to browse it." />
-          ) : isLoading ? (
-            <LoadingState label="Searching…" />
-          ) : (results?.items ?? []).length === 0 ? (
-            <EmptyState title="Nothing found" description="Try another name or barcode." />
+        <CardContent ref={listRef} className="scrollbar-thin min-h-0 flex-1 overflow-y-auto">
+          {isLoading ? (
+            <LoadingState label="Loading products…" />
+          ) : products.length === 0 ? (
+            <EmptyState
+              title="Nothing found"
+              description={
+                search || department !== ANY || brand !== ANY
+                  ? 'Try another name, barcode, department or brand.'
+                  : 'Add what you sell on Products & stock, and it will show up here.'
+              }
+            />
           ) : (
             <ul className="divide-y">
-              {(results?.items ?? []).map((product) => {
+              {products.map((product) => {
                 const onHand = product.stock?.quantityOnHand ?? 0;
                 const blocked = onHand <= 0 && !canSellOutOfStock;
                 return (
@@ -279,12 +432,31 @@ export function SupershopPosPage() {
               })}
             </ul>
           )}
+
+          {/* Loads the next page when scrolled into view; the button is the fallback. */}
+          <div ref={sentinelRef} className="h-px" aria-hidden />
+          {hasNextPage && (
+            <div className="flex justify-center py-3">
+              <Button type="button" variant="outline" size="sm" loading={isFetchingNextPage} onClick={() => void fetchNextPage()}>
+                Load more products
+              </Button>
+            </div>
+          )}
+          {!isLoading && products.length > 0 && !hasNextPage && totalMatching > 40 && (
+            <p className="py-3 text-center text-xs text-muted-foreground">All {totalMatching} products shown</p>
+          )}
         </CardContent>
       </Card>
 
       <Card className="flex min-h-0 flex-col">
         <CardHeader className="pb-2">
-          <CardTitle className="text-base">Basket · {cart.length} line(s)</CardTitle>
+          <div className="flex items-center justify-between gap-2">
+            <CardTitle className="text-base">Basket · {cart.length} line(s)</CardTitle>
+            <Button variant="outline" size="sm" onClick={() => setHeldOpen(true)}>
+              <PauseCircle />
+              Held{(heldSales ?? []).length > 0 ? ` · ${(heldSales ?? []).length}` : ''}
+            </Button>
+          </div>
         </CardHeader>
         <CardContent className="scrollbar-thin min-h-0 flex-1 space-y-4 overflow-y-auto">
           {cart.length === 0 ? (
@@ -394,11 +566,45 @@ export function SupershopPosPage() {
           <Button variant="outline" onClick={reset} disabled={cart.length === 0}>
             Clear
           </Button>
+          <Button variant="outline" disabled={cart.length === 0 || hold.isPending} loading={hold.isPending} onClick={() => hold.mutate()}>
+            <PauseCircle />
+            Hold
+          </Button>
           <Button className="flex-1" disabled={!canComplete} loading={complete.isPending} onClick={() => complete.mutate()}>
             Complete sale · {formatMoney(total, currency)}
           </Button>
         </div>
       </Card>
+
+      {unknownBarcode !== null && (
+        <QuickCreateDialog
+          key={unknownBarcode}
+          barcode={unknownBarcode}
+          currency={currency}
+          onClose={() => {
+            setUnknownBarcode(null);
+            scanRef.current?.focus();
+          }}
+          onCreated={(product) => {
+            setTerm('');
+            // A product created without an opening delivery has none on the
+            // shelf. `add` would refuse it with "Only 0 in stock", which is true
+            // but unhelpful two seconds after making it - so say what to do.
+            const onHand = product.stock?.quantityOnHand ?? 0;
+            if (onHand <= 0 && !canSellOutOfStock) {
+              toast.info(`${product.name} is in the catalogue, but none is in stock`, {
+                description: 'Record a delivery on Products & stock, or ask for permission to sell out of stock.',
+              });
+              return;
+            }
+            // Straight into the basket, so the scan finishes the way a scan of
+            // something already in the catalogue would have.
+            add(product);
+          }}
+        />
+      )}
+
+      {heldOpen && <HeldSalesDialog currency={currency} onClose={() => setHeldOpen(false)} onResumed={(sale) => void restore(sale)} />}
 
       {weighing && (
         <WeighDialog

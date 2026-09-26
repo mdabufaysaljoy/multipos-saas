@@ -9,6 +9,12 @@ import type {
   ShopReceipt,
   ShopReports,
   ShopSale,
+  ShopExchange,
+  ShopExchangeInput,
+  ShopBranchOverview,
+  ShopHeldSaleRow,
+  ShopHoldInput,
+  ShopResumedSale,
 } from '@/types/supershop';
 import type { SaleCustomerFields } from '@/features/customers/CustomerPicker';
 import type { PosLedgerRow, PosReturn, PosReturnInput } from '@/types/domain';
@@ -48,14 +54,28 @@ export const supershopApi = {
   inventorySummary: () => get<ShopInventorySummary>('/supershop/inventory-summary'),
 
   createSale: (body: ShopSaleInput) => post<ShopSale>('/supershop/sales', body),
+
+  /**
+   * Held sales: a basket put aside. None of these take stock, money or points.
+   * `resume` CLAIMS the basket - it is removed in the same atomic step, so two
+   * tills cannot both pick up the same one.
+   */
+  hold: (body: ShopHoldInput) => post<{ _id: string; holdNumber: string }>('/supershop/held-sales', body),
+  heldSales: () => get<ShopHeldSaleRow[]>('/supershop/held-sales'),
+  resumeHold: (id: string) => post<ShopResumedSale>(`/supershop/held-sales/${id}/resume`, {}),
+  removeHold: (id: string) => del<{ id: string; holdNumber: string }>(`/supershop/held-sales/${id}`),
   sales: (params?: Query) => getPaginated<ShopSale>('/supershop/sales', params),
   receipt: (id: string) => get<ShopReceipt>(`/supershop/sales/${id}/receipt`),
   voidSale: (id: string, reason: string) => post<ShopSale>(`/supershop/sales/${id}/void`, { reason }),
   /** A return against a completed sale: chosen lines, money back on a tender. */
   createReturn: (id: string, body: PosReturnInput) => post<PosReturn>(`/supershop/sales/${id}/return`, body),
+  /** An exchange: goods back, goods out, the difference settled at the till. */
+  createExchange: (id: string, body: ShopExchangeInput) => post<ShopExchange>(`/supershop/sales/${id}/exchange`, body),
   returns: (params?: Query) => getPaginated<PosReturn>('/supershop/returns', params),
 
   dashboard: (params?: Query) => get<ShopDashboard>('/supershop/dashboard', params),
+  /** Last 30 days per branch, for the Branches screen. Administrators only. */
+  branchOverview: () => get<ShopBranchOverview>('/supershop/branches-overview'),
   /** Advanced Analytics; the server refuses it on plans without the feature. */
   reports: (params?: Query) => get<ShopReports>('/supershop/reports', params),
 };

@@ -5,7 +5,7 @@ import { authenticate } from '../../middleware/auth';
 import { requirePermission } from '../../middleware/rbac';
 import { resolveTenant } from '../../middleware/tenant';
 import { requireActiveSubscription, requireSubscribedAccess } from '../../middleware/subscription';
-import { analyticsRangeSchema, dashboardRangeSchema } from '../reports/reports.validators';
+import { dashboardRangeSchema } from '../reports/reports.validators';
 import { requireVertical } from '../../middleware/vertical';
 import { validate } from '../../middleware/validate';
 import { idParam } from '../common/common.validators';
@@ -21,6 +21,9 @@ import {
   receiveStockSchema,
   updateProductSchema,
   createReturnSchema,
+  createExchangeSchema,
+  holdSaleSchema,
+  shopAnalyticsSchema,
   voidSaleSchema,
 } from './supershop.validators';
 import { posLedgerQuerySchema } from '../../services/inventory/posLedger';
@@ -28,6 +31,7 @@ import { stockLedger } from '../inventory/stockLedger.controller';
 import { posImportRouter } from '../posImports/posImports.routes';
 import { createCategory, listCategories, removeCategory, updateCategory } from '../posCategories/posCategories.controller';
 import { createPosCategorySchema, listPosCategoriesSchema, updatePosCategorySchema } from '../../services/catalogue/posCategories.service';
+import { createShopBrandSchema, listShopBrandsSchema, updateShopBrandSchema } from '../../services/catalogue/shopBrands.service';
 
 const router = Router();
 
@@ -45,6 +49,31 @@ router.use(authenticate, resolveTenant, requireVertical('supershop'), requireSub
 router.get('/products', requirePermission(PERMISSIONS.PRODUCTS_VIEW), validate({ query: listProductsSchema }), controller.listProducts);
 // Registered before `/products/:id` so "lookup" is never read as an id.
 router.get('/products/lookup', requirePermission(PERMISSIONS.PRODUCTS_VIEW), validate({ query: barcodeQuerySchema }), controller.lookupBarcode);
+// The brands the shop sells under. Independent of the department: a product
+// has both, either or neither. Managed with the same permissions a department
+// is, because it is the same kind of setting.
+router.get('/brands', requirePermission(PERMISSIONS.PRODUCTS_VIEW), validate({ query: listShopBrandsSchema }), controller.listBrands);
+router.post(
+  '/brands',
+  requireActiveSubscription,
+  requirePermission(PERMISSIONS.CATEGORIES_CREATE),
+  validate({ body: createShopBrandSchema }),
+  controller.createBrand,
+);
+router.patch(
+  '/brands/:id',
+  requireActiveSubscription,
+  requirePermission(PERMISSIONS.CATEGORIES_EDIT),
+  validate({ params: idParam, body: updateShopBrandSchema }),
+  controller.updateBrand,
+);
+router.delete(
+  '/brands/:id',
+  requireActiveSubscription,
+  requirePermission(PERMISSIONS.CATEGORIES_DELETE),
+  validate({ params: idParam }),
+  controller.removeBrand,
+);
 // The departments this workspace sells under; the same four routes in every POS
 // type whose items carry the category as a name (see services/catalogue).
 router.get('/categories', requirePermission(PERMISSIONS.PRODUCTS_VIEW), validate({ query: listPosCategoriesSchema }), listCategories);
@@ -97,7 +126,28 @@ router.post(
   validate({ params: idParam, body: createReturnSchema }),
   controller.createReturn,
 );
+// An exchange against a completed sale: the returned goods pay for replacement
+// goods and the customer settles the difference. It creates a sale as well as a
+// return, so the engine checks `sales.create` on top of this.
+router.post(
+  '/sales/:id/exchange',
+  requireActiveSubscription,
+  requirePermission(PERMISSIONS.RETURNS_CREATE),
+  validate({ params: idParam, body: createExchangeSchema }),
+  controller.createExchange,
+);
 router.get('/returns', requirePermission(PERMISSIONS.RETURNS_VIEW), validate({ query: listSalesSchema }), controller.listReturns);
+
+// ----------------------------------------------------------- held sales
+// A basket put aside. Nothing here completes a sale, so nothing here needs an
+// active subscription beyond the one the module already requires - but holding
+// is part of taking a sale, so it follows `sales.create`.
+router.post('/held-sales', requireActiveSubscription, requirePermission(PERMISSIONS.SALES_CREATE), validate({ body: holdSaleSchema }), controller.holdSale);
+router.get('/held-sales', requirePermission(PERMISSIONS.SALES_VIEW), controller.listHeldSales);
+router.post('/held-sales/:id/resume', requireActiveSubscription, requirePermission(PERMISSIONS.SALES_CREATE), validate({ params: idParam }), controller.resumeHeldSale);
+// Discarding your own needs only that; discarding someone else's needs
+// `sales.cancel`, which the service checks.
+router.delete('/held-sales/:id', requireActiveSubscription, requirePermission(PERMISSIONS.SALES_CREATE), validate({ params: idParam }), controller.removeHeldSale);
 
 router.get('/dashboard', requirePermission(PERMISSIONS.REPORTS_VIEW), validate({ query: dashboardRangeSchema }), controller.dashboard);
 
@@ -106,9 +156,15 @@ router.get(
   '/reports',
   requirePermission(PERMISSIONS.REPORTS_VIEW),
   requireEntitlement('advancedAnalytics'),
-  validate({ query: analyticsRangeSchema }),
+  validate({ query: shopAnalyticsSchema }),
   controller.reports,
 );
+
+// The last 30 days for every branch, on the Branches screen. Deliberately NOT
+// behind `advancedAnalytics`: it is the owner's own list of their own shops,
+// and gating it would mean the screen simply looked broken on most plans. The
+// service still refuses anyone who is not an administrator.
+router.get('/branches-overview', requirePermission(PERMISSIONS.REPORTS_VIEW), controller.branchOverview);
 
 // The same report as a PDF. Printing what the page already shows is part of
 // the report, so it is gated by the report's own permission and plan feature -
@@ -117,7 +173,7 @@ router.get(
   '/reports/print',
   requirePermission(PERMISSIONS.REPORTS_VIEW),
   requireEntitlement('advancedAnalytics'),
-  validate({ query: analyticsRangeSchema }),
+  validate({ query: shopAnalyticsSchema }),
   controller.printReports,
 );
 

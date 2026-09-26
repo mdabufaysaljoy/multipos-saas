@@ -9,6 +9,9 @@ import type { InventoryAdapter, Reservation, StockDescription, StockMoveRef, Sto
 
 type StockRecord = ShopStockDoc & { _id: Types.ObjectId };
 
+/** A unique-index violation, as MongoDB reports it. */
+const isDuplicateKey = (error: unknown) => (error as { code?: number } | null)?.code === 11000;
+
 /** What Super Shop needs back from a reservation to cost the sale line. */
 export interface ShopStockDetail {
   productName: string;
@@ -79,27 +82,52 @@ class SupershopInventoryAdapter implements InventoryAdapter<ShopStockDetail> {
     // permission may sell goods the system thinks are gone, and only then. A
     // product that still has SOME stock but not enough is refused as before -
     // this overrides "out of stock", not "not enough stock".
+    //
+    // `upsert` is what makes it work for a product that was never received into
+    // this branch. Such a product has NO stock row at all - the common case for
+    // a bulk import with no opening-stock column, and equally for a product
+    // added by hand and not yet delivered - and an update alone matched nothing,
+    // so the override silently did not apply to exactly the goods it was meant
+    // for. The insert starts the row at the negative balance the sale creates,
+    // which is the same state an existing row would have reached.
+    //
+    // A row that exists with SOME stock (more than zero, fewer than asked for)
+    // does not match `$lte: 0`, so the upsert tries to insert a second row for
+    // the same product and the unique index refuses it. That duplicate key is
+    // the "not enough stock" case, and it falls through to the error below.
     if (request.allowOutOfStock) {
-      const sold = await ShopStockModel.findOneAndUpdate(
-        { tenantId: ctx.tenantId, storeId: ctx.storeId, productId: request.itemId, quantityOnHand: { $lte: 0 } },
-        { $inc: { quantityOnHand: -request.quantity } },
-        { new: true },
-      ).lean<StockRecord>();
-      if (sold) {
-        return {
-          itemId: request.itemId,
-          quantity: request.quantity,
-          balanceAfter: sold.quantityOnHand,
-          detail: { productName: request.label, unitType: '', costPriceMinor: sold.costPriceMinor, outOfStockOverride: true },
-        };
+      try {
+        const sold = await ShopStockModel.findOneAndUpdate(
+          { tenantId: ctx.tenantId, storeId: ctx.storeId, productId: request.itemId, quantityOnHand: { $lte: 0 } },
+          {
+            $inc: { quantityOnHand: -request.quantity },
+            // A branch that never received these goods has no cost basis for
+            // them. Zero is recorded rather than guessed, so the first delivery
+            // sets the real average; the sale's own cost is zero and the ledger
+            // row is stamped `outOfStockOverride`, which is what a report needs
+            // to explain the margin.
+            $setOnInsert: { costPriceMinor: 0, lastReceivedAt: null },
+          },
+          { new: true, upsert: true },
+        ).lean<StockRecord>();
+        if (sold) {
+          return {
+            itemId: request.itemId,
+            quantity: request.quantity,
+            balanceAfter: sold.quantityOnHand,
+            detail: { productName: request.label, unitType: '', costPriceMinor: sold.costPriceMinor, outOfStockOverride: true },
+          };
+        }
+      } catch (error) {
+        // Not an out-of-stock sale after all: there is stock, just not enough.
+        if (!isDuplicateKey(error)) throw error;
       }
     }
 
     const product = await ShopProductModel.findOne({ _id: request.itemId, tenantId: ctx.tenantId }).select('unitType').lean();
     const stock = await ShopStockModel.findOne({ tenantId: ctx.tenantId, storeId: ctx.storeId, productId: request.itemId }).select('quantityOnHand').lean();
-    // A product never received into this branch has no stock row and no cost
-    // basis, which is a different problem from having run out; the override
-    // does not cover it.
+    // Either the branch holds some but not enough, or the till may not sell
+    // past zero. A product never received here reads as 0, which is true.
     throw ApiError.badRequest(
       `Only ${describeQuantity(stock?.quantityOnHand ?? 0, product?.unitType ?? 'each')} of ${request.label} is in stock in this branch.`,
       { productId: request.itemId, available: stock?.quantityOnHand ?? 0 },

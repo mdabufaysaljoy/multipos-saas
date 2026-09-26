@@ -23,6 +23,7 @@ import { PageHeader } from '@/components/PageHeader';
 import { LimitAlert } from '@/components/LimitAlert';
 import { PermissionGate } from '@/components/PermissionGate';
 import { ApiError } from '@/api/client';
+import { supershopApi } from '@/api/supershop';
 import { billingApi, reportApi, storeApi } from '@/api/endpoints';
 import { formatMoney } from '@/lib/money';
 import { useAuth } from '@/hooks/useAuth';
@@ -40,7 +41,7 @@ import type { StoreSettings } from '@/types/domain';
  * this screen shows how much headroom is left rather than failing at submit.
  */
 export function BranchesPage() {
-  const { activeStore, setActiveStore, refresh } = useAuth();
+  const { activeStore, setActiveStore, refresh, session } = useAuth();
   const currency = activeStore?.currency ?? 'BDT';
   const [editing, setEditing] = React.useState<StoreSettings | null>(null);
   const [creating, setCreating] = React.useState(false);
@@ -49,9 +50,22 @@ export function BranchesPage() {
 
   const { data: stores, isLoading } = useQuery({ queryKey: ['stores'], queryFn: storeApi.list });
   const { data: subscription } = useQuery({ queryKey: ['subscription', 'current'], queryFn: billingApi.current });
+  // Each vertical answers this from its own sales, with its own arithmetic.
+  // Clothing adds VAT on top of its prices; a Super Shop price includes it, so
+  // the two work profit out differently and must not share an endpoint.
+  const vertical = session?.tenant?.vertical ?? 'clothing';
+  const isSupershop = vertical === 'supershop';
+
   const { data: branchReport } = useQuery({
     queryKey: ['report', 'branches', 'page'],
     queryFn: () => reportApi.branches({ preset: 'last30', branch: 'all' }),
+    enabled: !isSupershop,
+    retry: false,
+  });
+  const { data: shopBranches, isLoading: shopBranchesLoading, error: shopBranchesError } = useQuery({
+    queryKey: ['supershop', 'branches-overview'],
+    queryFn: () => supershopApi.branchOverview(),
+    enabled: isSupershop,
     retry: false,
   });
 
@@ -97,6 +111,10 @@ export function BranchesPage() {
   const unlimited = maxStores === -1;
   const atLimit = !unlimited && stores.length >= maxStores;
   const statsFor = (id: string) => branchReport?.rows.find((r) => String(r.id) === String(id));
+  const shopStatsFor = (id: string) => shopBranches?.rows.find((r) => String(r.id) === String(id));
+  // Only an administrator may compare branches; for anyone else the server
+  // refuses and the cards simply carry no figures, as they always have.
+  const shopOverviewDenied = shopBranchesError instanceof ApiError && shopBranchesError.status === 403;
 
   return (
     <div className="space-y-5 p-4 lg:p-6">
@@ -125,6 +143,7 @@ export function BranchesPage() {
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
         {stores.map((store) => {
           const stats = statsFor(store._id);
+          const shopStats = shopStatsFor(store._id);
           const isCurrent = String(activeStore?.id) === String(store._id);
 
           return (
@@ -158,6 +177,23 @@ export function BranchesPage() {
                     <Metric label="Orders" value={String(stats.orders)} />
                     <Metric label="Stock value" value={formatMoney(stats.stockValueMinor, currency)} />
                   </dl>
+                )}
+
+                {/* Super Shop's own last-30-days line: net of refunds, with VAT
+                    taken out of profit because its prices include it. */}
+                {isSupershop && shopBranchesLoading && <p className="border-t pt-3 text-xs text-muted-foreground">Loading the last 30 days…</p>}
+                {isSupershop && shopStats && (
+                  <dl className="grid grid-cols-2 gap-2 border-t pt-3 text-sm">
+                    <Metric label="Net sales (30d)" value={formatMoney(shopStats.netSalesMinor, currency)} />
+                    <Metric label="Profit (30d)" value={formatMoney(shopStats.grossProfitMinor, currency)} />
+                    <Metric label="Sales" value={String(shopStats.salesCount)} />
+                    <Metric label="Refunded" value={formatMoney(shopStats.returnAmountMinor, currency)} />
+                    <Metric label="Average basket" value={formatMoney(shopStats.averageBasketMinor, currency)} />
+                    <Metric label="Stock value" value={formatMoney(shopStats.stockValueMinor, currency)} />
+                  </dl>
+                )}
+                {isSupershop && !shopBranchesLoading && !shopStats && !shopOverviewDenied && (
+                  <p className="border-t pt-3 text-xs text-muted-foreground">Nothing sold here in the last 30 days.</p>
                 )}
 
                 <div className="flex flex-wrap items-center gap-2 border-t pt-3">

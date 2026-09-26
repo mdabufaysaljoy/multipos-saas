@@ -9,11 +9,18 @@ import { listPosReturns } from '../../services/returns/posReturns.list';
 import { supershopSaleReturnAdapter } from '../../services/returns/adapters/supershop.saleAdapter';
 import { recordAudit } from '../../services/audit/audit.service';
 import { supershopService } from './supershop.service';
+import { heldSaleService } from './heldSales.service';
+import {
+  shopBrandService,
+  type CreateShopBrandInput,
+  type ListShopBrandsInput,
+  type UpdateShopBrandInput,
+} from '../../services/catalogue/shopBrands.service';
 import { supershopReportsService } from './supershopReports.service';
 import { streamReportPdf } from '../../services/reports/reportPrint';
 import { supershopReportView } from '../../services/reports/reportViews';
 import { storeCurrency } from '../../services/reports/storeCurrency';
-import type { AnalyticsRangeInput, DashboardRangeInput } from '../reports/reports.validators';
+import type { DashboardRangeInput } from '../reports/reports.validators';
 import type {
   AdjustStockInput,
   CreateProductInput,
@@ -24,6 +31,9 @@ import type {
   ReceiveStockInput,
   UpdateProductInput,
   CreateReturnInput,
+  CreateExchangeInput,
+  HoldSaleInput,
+  ShopAnalyticsInput,
 } from './supershop.validators';
 
 type IdParams = { id: Types.ObjectId };
@@ -32,6 +42,25 @@ type IdParams = { id: Types.ObjectId };
 export const listProducts = asyncHandler(async (req: Request, res: Response) => {
   const result = await supershopService.listProducts(getContext(req), query<ListProductsInput>(req));
   paginated(res, result.items, buildPageMeta(result.page, result.limit, result.total));
+});
+
+// ---------------------------------------------------------------- brands
+// The same four routes a department has, on the same design: the product keeps
+// the name, this is the list of names, and renaming one rewrites the products.
+export const listBrands = asyncHandler(async (req: Request, res: Response) => {
+  ok(res, await shopBrandService.list(getContext(req), query<ListShopBrandsInput>(req)));
+});
+
+export const createBrand = asyncHandler(async (req: Request, res: Response) => {
+  created(res, await shopBrandService.create(getContext(req), body<CreateShopBrandInput>(req)));
+});
+
+export const updateBrand = asyncHandler(async (req: Request, res: Response) => {
+  ok(res, await shopBrandService.update(getContext(req), params<IdParams>(req).id, body<UpdateShopBrandInput>(req)));
+});
+
+export const removeBrand = asyncHandler(async (req: Request, res: Response) => {
+  ok(res, await shopBrandService.remove(getContext(req), params<IdParams>(req).id));
 });
 
 export const lookupBarcode = asyncHandler(async (req: Request, res: Response) => {
@@ -147,6 +176,59 @@ export const createReturn = asyncHandler(async (req: Request, res: Response) => 
   created(res, result);
 });
 
+/**
+ * An exchange: goods back, goods out, and the difference paid at the till.
+ * The engine re-values both sides on the server and refuses a cheaper swap.
+ */
+export const createExchange = asyncHandler(async (req: Request, res: Response) => {
+  const ctx = getContext(req);
+  const input = body<CreateExchangeInput>(req);
+  const result = await posReturnService.createExchange(ctx, supershopSaleReturnAdapter, {
+    saleId: params<IdParams>(req).id,
+    items: input.items,
+    reason: input.reason,
+    replacement: {
+      items: input.replacement.items.map((item) => ({ itemId: item.productId, quantity: item.quantity })),
+      payments: input.replacement.payments,
+    },
+    idempotencyKey: input.idempotencyKey,
+  });
+  await recordAudit(req, {
+    action: 'supershop.sale_exchanged',
+    targetTenantId: ctx.tenantId,
+    targetStoreId: ctx.storeId,
+    targetLabel: result.returnNumber,
+    newValue: {
+      returnId: String(result._id),
+      creditMinor: result.totalMinor,
+      replacementSaleId: String(result.exchange?.saleId ?? ''),
+      extraPayableMinor: result.exchange?.extraPayableMinor ?? 0,
+    },
+  });
+  // A replay is the same exchange, not a new one.
+  created(res, result);
+});
+
+// ------------------------------------------------------------ held sales
+// A parked basket. It has taken no stock, no money and no points, so none of
+// these touches a sale, a ledger or a loyalty card.
+export const holdSale = asyncHandler(async (req: Request, res: Response) => {
+  created(res, await heldSaleService.hold(getContext(req), body<HoldSaleInput>(req)));
+});
+
+export const listHeldSales = asyncHandler(async (req: Request, res: Response) => {
+  ok(res, await heldSaleService.list(getContext(req)));
+});
+
+/** Resuming CLAIMS the basket: it is removed in the same atomic step. */
+export const resumeHeldSale = asyncHandler(async (req: Request, res: Response) => {
+  ok(res, await heldSaleService.resume(getContext(req), params<IdParams>(req).id));
+});
+
+export const removeHeldSale = asyncHandler(async (req: Request, res: Response) => {
+  ok(res, await heldSaleService.remove(getContext(req), params<IdParams>(req).id));
+});
+
 export const listReturns = asyncHandler(async (req: Request, res: Response) => {
   const ctx = getContext(req);
   const result = await listPosReturns(ctx, 'supershop', query<{ page?: number; limit?: number; search?: string }>(req));
@@ -158,12 +240,20 @@ export const dashboard = asyncHandler(async (req: Request, res: Response) => {
 });
 
 export const reports = asyncHandler(async (req: Request, res: Response) => {
-  ok(res, await supershopReportsService.report(getContext(req), query<AnalyticsRangeInput>(req)));
+  ok(res, await supershopReportsService.report(getContext(req), query<ShopAnalyticsInput>(req)));
 });
 
 /** The same report as a PDF: what the screen shows, printed. */
+/**
+ * The last 30 days per branch, for the Branches screen. Administrators only;
+ * the service refuses anyone else.
+ */
+export const branchOverview = asyncHandler(async (req: Request, res: Response) => {
+  ok(res, await supershopReportsService.branchOverview(getContext(req)));
+});
+
 export const printReports = asyncHandler(async (req: Request, res: Response) => {
   const ctx = getContext(req);
-  const data = await supershopReportsService.report(ctx, query<AnalyticsRangeInput>(req));
+  const data = await supershopReportsService.report(ctx, query<ShopAnalyticsInput>(req));
   await streamReportPdf(ctx, res, supershopReportView(data as unknown as Record<string, unknown>, await storeCurrency(ctx)));
 });

@@ -16,6 +16,9 @@ export function CategoryInput({
   onChange,
   api,
   queryKey,
+  kind = 'categories',
+  maxLength = 60,
+  placeholder = 'General',
 }: {
   id: string;
   label: string;
@@ -24,14 +27,22 @@ export function CategoryInput({
   api: ReturnType<typeof posCategoriesApi>;
   /** The vertical's cache key, e.g. 'supershop'. */
   queryKey: string;
+  /**
+   * Which name list this is, for the cache key and the placeholder. Defaults to
+   * categories, so every existing caller behaves exactly as before; Super Shop's
+   * brand field passes 'brands'.
+   */
+  kind?: 'categories' | 'brands';
+  maxLength?: number;
+  placeholder?: string;
 }) {
-  const { data } = useQuery({ queryKey: [queryKey, 'categories', 'options'], queryFn: () => api.list() });
+  const { data } = useQuery({ queryKey: [queryKey, kind, 'options'], queryFn: () => api.list() });
   const listId = `${id}-options`;
 
   return (
     <div className="space-y-1.5">
       <Label htmlFor={id}>{label}</Label>
-      <Input id={id} list={listId} value={value} maxLength={60} onChange={(event) => onChange(event.target.value)} placeholder="General" />
+      <Input id={id} list={listId} value={value} maxLength={maxLength} onChange={(event) => onChange(event.target.value)} placeholder={placeholder} />
       <datalist id={listId}>
         {(data ?? []).map((row) => (
           <option key={row.slug} value={row.name} />

@@ -13,6 +13,7 @@ import { resolvePage, searchRegex } from '../../utils/pagination';
 import { entitlementService } from '../../services/subscription/entitlement.service';
 import { customerService } from '../customers/customers.service';
 import { posCategoryService } from '../../services/catalogue/posCategories.service';
+import { shopBrandService } from '../../services/catalogue/shopBrands.service';
 import { loyaltyService } from '../loyalty/loyalty.service';
 import { pointsForSpend } from '../loyalty/loyalty.math';
 import { logger } from '../../utils/logger';
@@ -42,7 +43,7 @@ const isDuplicateKey = (error: unknown) => (error as { code?: number } | null)?.
 
 // The unit maths lives beside the model, so the inventory adapter can use it
 // without importing this module.
-import { describeQuantity, includedVat, lineAmount } from '../../models/shopUnits';
+import { describeMaxQuantity, describeQuantity, includedVat, lineAmount, maxQuantityFor } from '../../models/shopUnits';
 
 export { describeQuantity, includedVat, lineAmount };
 
@@ -68,6 +69,7 @@ class SupershopService {
     const filter: Record<string, unknown> = { tenantId: ctx.tenantId, deletedAt: null };
     if (input.activeOnly) filter.isActive = true;
     if (input.category) filter.category = input.category;
+    if (input.brand) filter.brand = input.brand;
     if (input.search) {
       const rx = searchRegex(input.search);
       filter.$or = [{ name: rx }, { brand: rx }, { barcode: rx }];
@@ -108,19 +110,40 @@ class SupershopService {
     const entitlement = await entitlementService.forTenant(ctx.tenantId);
     await entitlementService.assertCanAddProduct(ctx.tenantId, entitlement, 'supershop');
     const values = { ...input, category: input.category || 'General' };
+    // A reorder level is a quantity too, so the same unit ceiling applies.
+    this.assertWithinUnitMax(values.reorderLevel, { name: values.name, unitType: values.unitType }, 'reorder level');
     await this.assertUnique(ctx, values);
     // A department the shop has retired cannot take new goods; a new name joins
     // the catalogue so it can be managed like the rest.
     await posCategoryService.assertUsable(ctx, 'supershop', values.category);
-    const product = await ShopProductModel.create({ tenantId: ctx.tenantId, ...values, createdBy: ctx.userId });
-    return product.toObject();
+    // The same for the brand, which is independent of the department and
+    // optional: unbranded goods are most of a supershop's shelf.
+    await shopBrandService.assertUsable(ctx, values.brand);
+    try {
+      const product = await ShopProductModel.create({ tenantId: ctx.tenantId, ...values, createdBy: ctx.userId });
+      return product.toObject();
+    } catch (error) {
+      // Two identical creates at the same instant: the index caught what the
+      // check above could not. Same refusal, so a till cannot tell the
+      // difference between losing that race and being second in line.
+      if (isDuplicateKey(error)) throw ApiError.conflict('Another product already uses this barcode');
+      throw error;
+    }
   }
 
   async updateProduct(ctx: TenantContext, id: Types.ObjectId, input: UpdateProductInput) {
     const before = await this.findProduct(ctx, id);
+    if (input.reorderLevel !== undefined) this.assertWithinUnitMax(input.reorderLevel, before, 'reorder level');
     if (input.category) await posCategoryService.assertUsable(ctx, 'supershop', input.category);
+    if (input.brand !== undefined) await shopBrandService.assertUsable(ctx, input.brand);
     await this.assertUnique(ctx, { name: input.name ?? before.name, brand: input.brand ?? before.brand, barcode: input.barcode ?? before.barcode }, id);
-    const after = await ShopProductModel.findOneAndUpdate({ _id: id, tenantId: ctx.tenantId, deletedAt: null }, { $set: input }, { new: true, runValidators: true }).lean<ProductRecord>();
+    let after: ProductRecord | null;
+    try {
+      after = await ShopProductModel.findOneAndUpdate({ _id: id, tenantId: ctx.tenantId, deletedAt: null }, { $set: input }, { new: true, runValidators: true }).lean<ProductRecord>();
+    } catch (error) {
+      if (isDuplicateKey(error)) throw ApiError.conflict('Another product already uses this barcode');
+      throw error;
+    }
     if (!after) throw ApiError.notFound('Product not found');
     return { before, after };
   }
@@ -147,6 +170,7 @@ class SupershopService {
    */
   async receiveStock(ctx: TenantContext, productId: Types.ObjectId, input: ReceiveStockInput) {
     const product = await this.findProduct(ctx, productId);
+    this.assertWithinUnitMax(input.quantity, product);
     const key = { tenantId: ctx.tenantId, storeId: ctx.storeId, productId: product._id };
     const receive = () =>
       ShopStockModel.findOneAndUpdate(
@@ -197,6 +221,7 @@ class SupershopService {
   /** A counted correction or a write-off. Never below zero. */
   async adjustStock(ctx: TenantContext, productId: Types.ObjectId, input: AdjustStockInput) {
     const product = await this.findProduct(ctx, productId);
+    this.assertWithinUnitMax(input.quantityDelta, product, 'change');
     const delta = input.quantityDelta;
     const updated = await ShopStockModel.findOneAndUpdate(
       { tenantId: ctx.tenantId, storeId: ctx.storeId, productId: product._id, ...(delta < 0 ? { quantityOnHand: { $gte: -delta } } : {}) },
@@ -294,7 +319,29 @@ class SupershopService {
 
   // =================================================================== sales
 
-  async createSale(ctx: TenantContext, input: CreateSaleInput) {
+  /**
+   * A till sale, and the replacement side of an exchange.
+   *
+   * `options.exchange` is INTERNAL - it is never reachable from a request body.
+   * When it is present the returned goods' refund value has already been earned
+   * by the customer, so it pays for part of this basket: the tenders only have
+   * to cover what is left. Everything else - pricing, VAT, stock, the ledger,
+   * the customer's lifetime value - follows the ordinary rules, which is the
+   * point of routing an exchange through here instead of writing a second
+   * checkout.
+   */
+  async createSale(
+    ctx: TenantContext,
+    input: CreateSaleInput,
+    options: {
+      exchange?: {
+        originalSaleId: Types.ObjectId;
+        originalSaleNumber: string;
+        creditMinor: number;
+        returnedItems: { nameSnapshot: string; detailSnapshot: string; quantity: number; unitType: string; lineTotalMinor: number }[];
+      };
+    } = {},
+  ) {
     const entitlement = await entitlementService.forTenant(ctx.tenantId);
     entitlementService.assertUsable(entitlement);
     await entitlementService.assertCanRecordSale(ctx.tenantId, entitlement, 'supershop');
@@ -308,6 +355,7 @@ class SupershopService {
       const product = products.find((entry) => entry._id.equals(item.productId));
       if (!product) throw ApiError.badRequest('One of the items is not in this shop');
       if (!product.isActive) throw ApiError.badRequest(`${product.name} is not for sale right now`);
+      this.assertWithinUnitMax(item.quantity, product);
       const lineTotalMinor = lineAmount(product.priceMinor, item.quantity, product.unitType);
       if (!Number.isSafeInteger(lineTotalMinor)) throw ApiError.badRequest('That line is too large');
       return { product, quantity: item.quantity, lineTotalMinor, vatMinor: includedVat(lineTotalMinor, product.vatRateBps) };
@@ -337,10 +385,20 @@ class SupershopService {
     if (totalMinor <= 0) {
       throw ApiError.validation('A basket must come to more than nothing after points.', { reason: 'LOYALTY_NOTHING_PAYABLE' });
     }
-    // Enabled for the branch, covering the total, change only out of cash:
-    // the same three rules every POS settles by.
+    // An exchange credit is money the customer has already handed over once, on
+    // the sale being returned. It pays for this basket before any tender does.
+    const creditMinor = options.exchange?.creditMinor ?? 0;
+    if (creditMinor > totalMinor) {
+      // The caller checks this first; this is the backstop that keeps a credit
+      // from ever turning into cash out of the drawer.
+      throw ApiError.validation('The exchange credit is worth more than the replacement basket.', { reason: 'EXCHANGE_CREDIT_EXCEEDS_TOTAL' });
+    }
+    const payableMinor = totalMinor - creditMinor;
+
+    // Enabled for the branch, covering what is still payable, change only out of
+    // cash: the same three rules every POS settles by.
     const { paidMinor, changeMinor } = settleTender({
-      totalMinor,
+      totalMinor: payableMinor,
       tendered: input.payments,
       accepted: store.paymentMethods ?? [],
       dialect: POS_TENDER_DIALECT,
@@ -452,6 +510,18 @@ class SupershopService {
           : null,
         note: input.note,
         status: 'completed',
+        ...(options.exchange
+          ? {
+              exchange: {
+                returnId: null,
+                returnNumber: '',
+                originalSaleId: options.exchange.originalSaleId,
+                originalSaleNumber: options.exchange.originalSaleNumber,
+                creditMinor,
+                returnedItems: options.exchange.returnedItems,
+              },
+            }
+          : {}),
         soldAt,
         cashierId: ctx.userId,
         cashierNameSnapshot: ctx.userName,
@@ -687,6 +757,23 @@ class SupershopService {
 
   private withStock(product: ProductRecord, stock: Map<string, { quantityOnHand: number; costPriceMinor: number }>) {
     return { ...product, stock: stock.get(String(product._id)) ?? { quantityOnHand: 0, costPriceMinor: 0 } };
+  }
+
+  /**
+   * The quantity ceiling that actually applies to this product.
+   *
+   * The schema bounds every quantity by the widest any unit type allows,
+   * because it cannot see the product. Pieces are capped lower than grams, so
+   * the real limit is applied here, where `unitType` is known - and reported in
+   * the unit the person typed, not in grams.
+   */
+  private assertWithinUnitMax(quantity: number, product: { name: string; unitType: ShopUnitType }, what = 'quantity') {
+    if (Math.abs(quantity) > maxQuantityFor(product.unitType)) {
+      throw ApiError.badRequest(
+        `That ${what} is too large for ${product.name}. The most in one go is ${describeMaxQuantity(product.unitType)}.`,
+        { max: maxQuantityFor(product.unitType), unitType: product.unitType },
+      );
+    }
   }
 
   private async findProduct(ctx: TenantContext, id: Types.ObjectId) {

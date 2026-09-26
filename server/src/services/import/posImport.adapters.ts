@@ -8,6 +8,7 @@ import { supershopService } from '../../modules/supershop/supershop.service';
 import { pharmacyService } from '../../modules/pharmacy/pharmacy.service';
 import { restaurantService } from '../../modules/restaurant/restaurant.service';
 import { createProductSchema as createShopProductSchema } from '../../modules/supershop/supershop.validators';
+import { maxQuantityFor } from '../../models/shopUnits';
 import { createMedicineSchema } from '../../modules/pharmacy/pharmacy.validators';
 import { createMenuItemSchema } from '../../modules/restaurant/restaurant.validators';
 
@@ -132,8 +133,11 @@ const supershopAdapter: PosImportAdapter = {
     const unitRaw = text(row, 'unitType').toLowerCase();
     const unitType = unitRaw === '' ? 'each' : /kg|weight|gram|loose/.test(unitRaw) ? 'weight' : /piece|each|unit|pcs/.test(unitRaw) ? 'each' : null;
     const vat = vatRateBps(text(row, 'vatRate'));
-    const reorderLevel = wholeNumber(text(row, 'reorderLevel'), 1_000_000);
-    const stock = wholeNumber(text(row, 'stock'), 1_000_000);
+    // Weighed goods count in grams, so the ceiling depends on how the row says
+    // the product is sold. An unreadable `unitType` fails the row below anyway.
+    const quantityCeiling = maxQuantityFor(unitType ?? 'weight');
+    const reorderLevel = wholeNumber(text(row, 'reorderLevel'), quantityCeiling);
+    const stock = wholeNumber(text(row, 'stock'), quantityCeiling);
     const costMinor = money(text(row, 'costPrice') || '0');
     const active = flag(text(row, 'isActive'), true);
 
