@@ -320,3 +320,40 @@ export interface ShopResumedSale {
   heldByNameSnapshot: string;
   createdAt: string;
 }
+
+
+/** One branch's last 30 days, for the Branches screen. */
+export interface ShopBranchOverviewRow {
+  id: string;
+  name: string;
+  code: string;
+  isActive: boolean;
+  salesCount: number;
+  lines: number;
+  /** Counted apart: adding pieces to grams would be adding apples to rice. */
+  piecesSold: number;
+  gramsSold: number;
+  grossSalesMinor: number;
+  returnCount: number;
+  returnAmountMinor: number;
+  netSalesMinor: number;
+  vatMinor: number;
+  costMinor: number;
+  grossProfitMinor: number;
+  marginBps: number;
+  averageBasketMinor: number;
+  stockValueMinor: number;
+}
+
+export interface ShopBranchOverview {
+  range: { from: string; to: string; label: string; days: number };
+  rows: ShopBranchOverviewRow[];
+  totals: {
+    salesCount: number;
+    grossSalesMinor: number;
+    returnAmountMinor: number;
+    netSalesMinor: number;
+    grossProfitMinor: number;
+    stockValueMinor: number;
+  };
+}

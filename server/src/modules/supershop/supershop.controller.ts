@@ -244,6 +244,14 @@ export const reports = asyncHandler(async (req: Request, res: Response) => {
 });
 
 /** The same report as a PDF: what the screen shows, printed. */
+/**
+ * The last 30 days per branch, for the Branches screen. Administrators only;
+ * the service refuses anyone else.
+ */
+export const branchOverview = asyncHandler(async (req: Request, res: Response) => {
+  ok(res, await supershopReportsService.branchOverview(getContext(req)));
+});
+
 export const printReports = asyncHandler(async (req: Request, res: Response) => {
   const ctx = getContext(req);
   const data = await supershopReportsService.report(ctx, query<ShopAnalyticsInput>(req));

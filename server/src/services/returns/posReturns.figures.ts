@@ -73,6 +73,49 @@ export async function returnFiguresFor(
   return { count: row?.count ?? 0, totalMinor: row?.totalMinor ?? 0, costMinor: row?.costMinor ?? 0, units: row?.units ?? 0 };
 }
 
+/**
+ * The same figures, split by BRANCH, for an owner comparing their shops.
+ *
+ * One aggregation for every branch rather than one per branch, and the cost
+ * expression is the same one `returnFiguresFor` uses - so a branch overview and
+ * the analytics screen can never disagree about what a refund cost.
+ */
+export async function returnFiguresByStore(
+  ctx: TenantContext,
+  vertical: PosVertical,
+  range: { from: Date; to: Date },
+): Promise<Map<string, ReturnFigures>> {
+  const rows = await ReturnModel.aggregate<ReturnFigures & { _id: Types.ObjectId }>([
+    { $match: { tenantId: ctx.tenantId, vertical, returnedAt: { $gte: range.from, $lte: range.to } } },
+    {
+      $group: {
+        _id: '$storeId',
+        count: { $sum: 1 },
+        totalMinor: { $sum: '$totalMinor' },
+        units: { $sum: { $sum: '$items.quantity' } },
+        costMinor: {
+          $sum: {
+            $sum: {
+              $map: {
+                input: '$items',
+                as: 'item',
+                in: {
+                  $cond: [
+                    '$$item.restock',
+                    { $ifNull: ['$$item.costMinor', { $multiply: ['$$item.quantity', { $ifNull: ['$$item.costPriceMinorSnapshot', 0] }] }] },
+                    0,
+                  ],
+                },
+              },
+            },
+          },
+        },
+      },
+    },
+  ]);
+  return new Map(rows.map((row) => [String(row._id), { count: row.count, totalMinor: row.totalMinor, costMinor: row.costMinor, units: row.units }]));
+}
+
 /** Money and cost returned per day, keyed the way a trend groups its buckets. */
 export async function returnsByDay(
   ctx: TenantContext,

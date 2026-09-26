@@ -11,6 +11,7 @@ import type {
   ShopSale,
   ShopExchange,
   ShopExchangeInput,
+  ShopBranchOverview,
   ShopHeldSaleRow,
   ShopHoldInput,
   ShopResumedSale,
@@ -73,6 +74,8 @@ export const supershopApi = {
   returns: (params?: Query) => getPaginated<PosReturn>('/supershop/returns', params),
 
   dashboard: (params?: Query) => get<ShopDashboard>('/supershop/dashboard', params),
+  /** Last 30 days per branch, for the Branches screen. Administrators only. */
+  branchOverview: () => get<ShopBranchOverview>('/supershop/branches-overview'),
   /** Advanced Analytics; the server refuses it on plans without the feature. */
   reports: (params?: Query) => get<ShopReports>('/supershop/reports', params),
 };

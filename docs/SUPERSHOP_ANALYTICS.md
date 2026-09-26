@@ -103,3 +103,49 @@ timezone, so the range and the buckets agree with each other — a shop only see
 discrepancy if the server runs in a different timezone from the shop. Fixing it
 properly means a timezone on `Store` and a change to the shared helper every
 vertical uses, so it is a platform decision rather than a Super Shop one.
+
+
+## The Branches screen: last 30 days per branch
+
+`GET /supershop/branches-overview` — **administrators only**, `reports.view`.
+
+One row per branch of the workspace, covering the **last 30 calendar days**:
+sales count, lines, pieces and grams sold, charged, refunded, net, VAT, cost,
+profit, margin, average basket and stock value. Plus the totals across them.
+
+**A branch that sold nothing still has a row, reading zero.** A missing row would
+read as "no data" when the truth is "no trade", and an owner comparing shops
+needs to see the quiet one.
+
+### It is not Clothing's endpoint, on purpose
+
+Clothing has had `GET /reports/branches` for its owners, and the shared Branches
+screen has always called it. **Super Shop cannot use it**: Clothing adds VAT on
+top of its prices and takes profit as net less cost, while a Super Shop price
+*includes* VAT, so VAT has to come out before profit — as
+`docs/SUPERSHOP_COSTING.md` and the analytics screen both already do. Sharing the
+endpoint would have meant two screens disagreeing about one shop's profit.
+
+The screen therefore asks whichever endpoint belongs to the workspace's vertical.
+Pharmacy and Restaurant are untouched: they call Clothing's as they always have,
+are refused by its vertical guard as they always have been, and show no figures —
+exactly as before.
+
+### Window and timezone
+
+`resolveRange('last30')` — the same helper every other report uses, so "last 30
+days" means one thing across the product: **from local midnight 29 days ago to
+the end of today**, in the process timezone (see the limitation above).
+
+### Cost of what came back
+
+Refunds are deducted per branch using `returnFiguresByStore`, which shares its
+cost expression with `returnFiguresFor` — so the Branches screen and Advanced
+Analytics can never disagree about what a refund cost. Goods refunded but **not**
+restocked keep their cost against the shop.
+
+### Efficiency
+
+Four aggregations for any number of branches — never one per branch, and never a
+sale loaded to be counted in JavaScript. Stock is valued in the database, with a
+lookup to the product for its unit so weighed goods are divided by 1000.

@@ -6244,6 +6244,12 @@ async function main() {
   check('An exchange needs a session', (await exDenied(undefined)).status === 401);
   check('Another workspace cannot exchange against this sale', (await exDenied(phToken)).status === 403);
   // A till with sales but no returns permission, and vice versa.
+  // Tills made for these checks are RETIRED when their section is done: the
+  // plan allows a handful of staff, and a test that quietly eats them all
+  // starves the sections that come after it.
+  const retireTill = async (id) => {
+    if (id) await api(`/staff/${id}`, { method: 'DELETE', token: ssToken });
+  };
   const exStoreId = (await api('/stores', { token: ssToken })).data?.[0]?._id;
   const exTillCreated = await api('/staff', {
     method: 'POST',
@@ -6374,6 +6380,9 @@ async function main() {
   check('...but not create one', (await api('/supershop/brands', { method: 'POST', token: exTill.token, body: { name: `Nope ${brStamp}` } })).status === 403);
   check('...nor rename one', (await api(`/supershop/brands/${brCreated.data._id}`, { method: 'PATCH', token: exTill.token, body: { name: 'Nope' } })).status === 403);
   check('...nor remove one', (await api(`/supershop/brands/${brCreated.data._id}`, { method: 'DELETE', token: exTill.token })).status === 403);
+
+  // The exchange section's till was still needed here; it can go now.
+  await retireTill(exTill.id);
 
   // Retire the products these checks made; the brands stay, as a catalogue does.
   for (const row of (await ssApi(`/products?search=${brStamp}&limit=100`)).data ?? []) {
@@ -6671,6 +6680,8 @@ async function main() {
   await api(`/staff/${hdTill.id}`, { method: 'PATCH', token: ssToken, body: { extraPermissions: ['sales.view', 'sales.create', 'sales.cancel', 'products.view'] } });
   check('With sales.cancel a supervisor may discard anyone\'s', (await api(`/supershop/held-sales/${hdMine.data._id}`, { method: 'DELETE', token: hdTill.token })).status === 200);
 
+  await retireTill(hdTill.id);
+
   // Retire the fixture.
   const hdLeft = await hdOnHand();
   if (hdLeft !== 0) await ssApi(`/products/${hdProduct.data._id}/adjust`, { method: 'POST', body: { type: 'adjust', quantityDelta: -hdLeft, reason: 'Hold fixture' } });
@@ -6768,6 +6779,8 @@ async function main() {
   await ssReceive(qcMade.data._id, { quantity: 5, costPriceMinor: 4000 });
   const qcSale = await ssSale({ items: [{ productId: qcMade.data._id, quantity: 1 }], payments: [{ method: 'cash', amountMinor: 7500 }] });
   check('A product created at the till sells like any other', qcSale.status === 201 && qcSale.data?.items?.[0]?.barcodeSnapshot === qcBarcode, qcSale.error);
+
+  await retireTill(qcTill.id);
 
   // Retire the fixtures.
   for (const row of (await ssApi(`/products?search=Quick&limit=100`)).data ?? []) {
@@ -6921,6 +6934,9 @@ async function main() {
   check('A till without reports.view cannot read analytics', (await api('/supershop/reports?preset=today', { token: anNoReportsToken })).status === 403);
   check('The printed report follows the same filters', (await fetchFile(`/supershop/reports/print?preset=today&brand=${encodeURIComponent(anBrandA)}`, { token: ssToken })).status === 200);
 
+  await retireTill(anTill.id);
+  await retireTill(anNoReports.data?.id);
+
   // Retire the fixtures.
   for (const id of [anA, anB]) {
     for (const store of anStores) {
@@ -6930,6 +6946,123 @@ async function main() {
     }
     await ssApi(`/products/${id}`, { method: 'DELETE' });
   }
+
+  // --- The Branches screen: last 30 days per branch -----------------------------
+  // The owner's list of their own shops. Clothing has had this; Super Shop does
+  // it with its OWN arithmetic, because its prices include VAT and Clothing's
+  // do not - so VAT comes out before profit here.
+  section('Supershop branch overview');
+
+  const boStamp = String(Date.now()).slice(-6);
+  const boStores = (await api('/stores', { token: ssToken })).data ?? [];
+  const boHome = boStores[0]._id;
+  const boOther = boStores.find((row) => String(row._id) !== String(boHome));
+
+  const boGet = () => ssApi('/branches-overview');
+  const boFirst = await boGet();
+  check('An admin gets the branch overview', boFirst.status === 200 && Array.isArray(boFirst.data?.rows), boFirst.error);
+
+  // ---- the window ----------------------------------------------------------------
+  const boFrom = new Date(boFirst.data.range.from);
+  const boTo = new Date(boFirst.data.range.to);
+  const boExpectedFrom = new Date();
+  boExpectedFrom.setHours(0, 0, 0, 0);
+  boExpectedFrom.setDate(boExpectedFrom.getDate() - 29);
+  check('It covers 30 calendar days', boFirst.data?.range?.days === 30 && boFirst.data?.range?.label === 'Last 30 days', boFirst.data?.range);
+  check('...starting at midnight 29 days ago, in the shop\'s own day', Math.abs(boFrom.getTime() - boExpectedFrom.getTime()) < 2000, { from: boFrom.toISOString(), expected: boExpectedFrom.toISOString() });
+  check('...and running to the end of today', boTo.getHours() === 23 && boTo.getMinutes() === 59 && boTo > new Date(), boTo.toISOString());
+  check('...so a sale made right now is inside it', boFrom < new Date() && boTo > new Date());
+
+  // ---- every branch appears, even one that sold nothing ---------------------------
+  check('Every branch has a row, whether it traded or not', (boFirst.data?.rows ?? []).length === boStores.length, {
+    rows: (boFirst.data?.rows ?? []).length,
+    stores: boStores.length,
+  });
+  check('...each named and flagged', (boFirst.data?.rows ?? []).every((row) => Boolean(row.name) && typeof row.isActive === 'boolean'));
+  check('...and a branch with no trade reads as zero, not as missing', (boFirst.data?.rows ?? []).every((row) => row.salesCount > 0 || (row.netSalesMinor === 0 && row.grossProfitMinor === 0 && row.returnCount === 0)), boFirst.data?.rows);
+
+  // ---- the figures agree with the definitions -------------------------------------
+  check(
+    'Profit is net sales less VAT less cost, on every row',
+    (boFirst.data?.rows ?? []).every((row) => row.grossProfitMinor === row.netSalesMinor - row.vatMinor - row.costMinor),
+    boFirst.data?.rows,
+  );
+  check(
+    'Net sales is what was charged less what came back',
+    (boFirst.data?.rows ?? []).every((row) => row.netSalesMinor === row.grossSalesMinor - row.returnAmountMinor),
+    boFirst.data?.rows,
+  );
+  check(
+    'The totals are the rows added up',
+    boFirst.data?.totals?.netSalesMinor === (boFirst.data?.rows ?? []).reduce((sum, row) => sum + row.netSalesMinor, 0) &&
+      boFirst.data?.totals?.grossProfitMinor === (boFirst.data?.rows ?? []).reduce((sum, row) => sum + row.grossProfitMinor, 0),
+    boFirst.data?.totals,
+  );
+  check('Pieces and grams are counted apart', (boFirst.data?.rows ?? []).every((row) => typeof row.piecesSold === 'number' && typeof row.gramsSold === 'number'));
+
+  // ---- a sale moves ONE branch, and leaves the other exactly as it was ------------
+  if (boOther) {
+    const rowFor = (report, id) => (report.data?.rows ?? []).find((row) => String(row.id) === String(id));
+    const boBeforeHome = rowFor(boFirst, boHome);
+    const boBeforeOther = rowFor(boFirst, boOther._id);
+
+    const boProduct = await ssProduct({ name: `BO Item ${boStamp}`, category: 'Household', unitType: 'each', priceMinor: 30_000 });
+    await ssReceive(boProduct.data._id, { quantity: 10, costPriceMinor: 10_000 });
+    const boSale = await ssSale({ items: [{ productId: boProduct.data._id, quantity: 2 }], payments: [{ method: 'cash', amountMinor: 60_000 }] });
+    check('A sale is made in the home branch', boSale.status === 201, boSale.error);
+
+    const boAfter = await boGet();
+    const boAfterHome = rowFor(boAfter, boHome);
+    const boAfterOther = rowFor(boAfter, boOther._id);
+
+    check('The home branch gains exactly that sale', boAfterHome.netSalesMinor === boBeforeHome.netSalesMinor + 60_000 && boAfterHome.salesCount === boBeforeHome.salesCount + 1, {
+      before: boBeforeHome.netSalesMinor,
+      after: boAfterHome.netSalesMinor,
+    });
+    check('...and exactly its profit: 600 charged, 200 cost, no VAT', boAfterHome.grossProfitMinor === boBeforeHome.grossProfitMinor + 40_000, {
+      before: boBeforeHome.grossProfitMinor,
+      after: boAfterHome.grossProfitMinor,
+    });
+    check('The OTHER branch does not move at all', boAfterOther.netSalesMinor === boBeforeOther.netSalesMinor && boAfterOther.salesCount === boBeforeOther.salesCount, {
+      before: boBeforeOther,
+      after: boAfterOther,
+    });
+    check('...nor does its stock value', boAfterOther.stockValueMinor === boBeforeOther.stockValueMinor);
+    check('The home branch holds the stock it received', boAfterHome.stockValueMinor >= boBeforeHome.stockValueMinor, { before: boBeforeHome.stockValueMinor, after: boAfterHome.stockValueMinor });
+
+    // A refund in one branch comes off that branch only.
+    const boReturn = await ssApi(`/sales/${boSale.data._id}/return`, {
+      method: 'POST',
+      body: { items: [{ saleItemId: boSale.data.items[0]._id, quantity: 1, restock: true }], reason: 'One came back', refundMethod: 'cash' },
+    });
+    check('A refund is taken in the home branch', boReturn.status === 201, boReturn.error);
+    const boAfterReturn = await boGet();
+    check('...and comes off that branch alone', rowFor(boAfterReturn, boHome).returnAmountMinor === boBeforeHome.returnAmountMinor + 30_000 && rowFor(boAfterReturn, boOther._id).returnAmountMinor === boBeforeOther.returnAmountMinor, {
+      home: rowFor(boAfterReturn, boHome).returnAmountMinor,
+      other: rowFor(boAfterReturn, boOther._id).returnAmountMinor,
+    });
+    check('...reducing that branch net sales by what was refunded', rowFor(boAfterReturn, boHome).netSalesMinor === boAfterHome.netSalesMinor - 30_000);
+
+    // Retire it.
+    const boLeft = (await ssApi(`/products/${boProduct.data._id}`)).data?.product?.stock?.quantityOnHand ?? 0;
+    if (boLeft !== 0) await ssApi(`/products/${boProduct.data._id}/adjust`, { method: 'POST', body: { type: 'adjust', quantityDelta: -boLeft, reason: 'Branch overview fixture' } });
+    await ssApi(`/products/${boProduct.data._id}`, { method: 'DELETE' });
+  } else {
+    check('A second branch exists for the branch-overview checks', false, boStores.map((row) => row.name));
+  }
+
+  // ---- who may compare branches ------------------------------------------------------
+  check('The branch overview needs a session', (await api('/supershop/branches-overview')).status === 401);
+  check("Another workspace cannot read this one's branches", (await api('/supershop/branches-overview', { token: phToken })).status === 403);
+  const boTillCreated = await api('/staff', {
+    method: 'POST',
+    token: ssToken,
+    body: { name: `BO Till ${boStamp}`, email: `ssbo${boStamp}@example.com`, password: 'Password@123', storeId: boHome, extraPermissions: ['sales.create', 'sales.view', 'products.view', 'reports.view'] },
+  });
+  check('A till is created for the branch-overview permission check', boTillCreated.status === 201, boTillCreated.error);
+  const boTillToken = (await login(`ssbo${boStamp}@example.com`, 'Password@123')).token;
+  check('A cashier - even one who may read reports - cannot compare branches', (await api('/supershop/branches-overview', { token: boTillToken })).status === 403);
+  await retireTill(boTillCreated.data?.id);
 
 
   // --- Customer on a sale, in every vertical -----------------------------------

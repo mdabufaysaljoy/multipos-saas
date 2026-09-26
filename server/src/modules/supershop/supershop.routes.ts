@@ -160,6 +160,12 @@ router.get(
   controller.reports,
 );
 
+// The last 30 days for every branch, on the Branches screen. Deliberately NOT
+// behind `advancedAnalytics`: it is the owner's own list of their own shops,
+// and gating it would mean the screen simply looked broken on most plans. The
+// service still refuses anyone who is not an administrator.
+router.get('/branches-overview', requirePermission(PERMISSIONS.REPORTS_VIEW), controller.branchOverview);
+
 // The same report as a PDF. Printing what the page already shows is part of
 // the report, so it is gated by the report's own permission and plan feature -
 // not by Data export, which hands over the underlying rows and is sold apart.

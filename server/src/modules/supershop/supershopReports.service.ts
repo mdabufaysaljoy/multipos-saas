@@ -2,9 +2,11 @@ import type { Types } from 'mongoose';
 import type { ShopUnitType } from '../../models/ShopProduct';
 import { ShopSaleModel } from '../../models/ShopSale';
 import { ShopStockModel } from '../../models/ShopStock';
+import { ShopProductModel } from '../../models/ShopProduct';
+import { ApiError } from '../../utils/ApiError';
 import { ShopStockMovementModel } from '../../models/ShopStockMovement';
 import { resolveRange, reportTimezone } from '../reports/reports.service';
-import { NO_RETURNS, recentReturns, returnFiguresFor, returnsByDay } from '../../services/returns/posReturns.figures';
+import { NO_RETURNS, recentReturns, returnFiguresByStore, returnFiguresFor, returnsByDay } from '../../services/returns/posReturns.figures';
 import type { ReportRangeInput } from '../reports/reports.validators';
 import type { ShopAnalyticsInput } from './supershop.validators';
 import { StoreModel } from '../../models/Store';
@@ -496,6 +498,140 @@ class SupershopReportsService {
       writeOffs: { costMinor: writeOffRows.reduce((sum, row) => sum + row.costMinor, 0), byProduct: writeOffRows.slice(0, 10) },
       deadStock: dead,
     };
+  }
+
+  /**
+   * The last 30 days, one line per branch, for the Branches screen.
+   *
+   * Clothing has had this for its owners; this is the same idea with Super
+   * Shop's own arithmetic. It is NOT a copy: Clothing adds VAT on top of its
+   * prices and so takes profit as net less cost, while a Super Shop price
+   * INCLUDES VAT - so VAT has to come out before profit, exactly as
+   * `docs/SUPERSHOP_COSTING.md` says and exactly as the analytics screen does.
+   * Two screens disagreeing about one shop's profit would be worse than having
+   * neither.
+   *
+   * Administrators only, like Clothing's: comparing branches is an owner's
+   * view, and a cashier has no business seeing another shop's takings.
+   *
+   * Four aggregations for any number of branches - never one per branch, and
+   * never a sale loaded to be counted in JavaScript.
+   */
+  async branchOverview(ctx: TenantContext) {
+    if (!ctx.isAdmin) throw ApiError.forbidden('Only a workspace administrator can compare branches');
+
+    // The same 30-day window, in the same timezone, that every other report
+    // resolves - so "last 30 days" means one thing across the product.
+    const range = resolveRange({ preset: 'last30', granularity: 'day', branch: 'all', limit: 10 } as ReportRangeInput);
+    const window = { $gte: range.from, $lte: range.to };
+
+    const [stores, sales, returns, stock] = await Promise.all([
+      StoreModel.find({ tenantId: ctx.tenantId, deletedAt: null }).select('name code isActive').sort({ name: 1 }).lean(),
+      ShopSaleModel.aggregate<{ _id: Types.ObjectId; salesCount: number; grossSalesMinor: number; vatMinor: number; costMinor: number; lines: number; pieces: number; grams: number }>([
+        { $match: { tenantId: ctx.tenantId, status: 'completed', soldAt: window } },
+        {
+          $group: {
+            _id: '$storeId',
+            salesCount: { $sum: 1 },
+            grossSalesMinor: { $sum: '$totalMinor' },
+            vatMinor: { $sum: '$vatMinor' },
+            costMinor: { $sum: '$costMinor' },
+            lines: { $sum: { $size: '$items' } },
+            // Pieces and grams are counted apart: adding them together would be
+            // adding apples to rice.
+            pieces: {
+              $sum: {
+                $sum: {
+                  $map: { input: '$items', as: 'i', in: { $cond: [{ $eq: ['$$i.unitType', 'weight'] }, 0, '$$i.quantity'] } },
+                },
+              },
+            },
+            grams: {
+              $sum: {
+                $sum: {
+                  $map: { input: '$items', as: 'i', in: { $cond: [{ $eq: ['$$i.unitType', 'weight'] }, '$$i.quantity', 0] } },
+                },
+              },
+            },
+          },
+        },
+      ]),
+      returnFiguresByStore(ctx, 'supershop', range),
+      // What each branch is holding, valued at its own weighted average cost -
+      // per kilogram for weighed goods, so the lookup is what makes it right.
+      ShopStockModel.aggregate<{ _id: Types.ObjectId; stockValueMinor: number }>([
+        { $match: { tenantId: ctx.tenantId } },
+        { $lookup: { from: ShopProductModel.collection.name, localField: 'productId', foreignField: '_id', as: 'product' } },
+        { $addFields: { unitType: { $ifNull: [{ $arrayElemAt: ['$product.unitType', 0] }, 'each'] } } },
+        {
+          $group: {
+            _id: '$storeId',
+            stockValueMinor: {
+              $sum: {
+                $floor: {
+                  $divide: [
+                    { $multiply: [{ $max: ['$quantityOnHand', 0] }, '$costPriceMinor'] },
+                    { $cond: [{ $eq: ['$unitType', 'weight'] }, 1000, 1] },
+                  ],
+                },
+              },
+            },
+          },
+        },
+      ]),
+    ]);
+
+    const saleBy = new Map(sales.map((row) => [String(row._id), row]));
+    const stockBy = new Map(stock.map((row) => [String(row._id), row]));
+
+    const rows = stores.map((store) => {
+      const key = String(store._id);
+      const sale = saleBy.get(key);
+      const back = returns.get(key) ?? NO_RETURNS;
+
+      const grossSalesMinor = sale?.grossSalesMinor ?? 0;
+      const netSalesMinor = grossSalesMinor - back.totalMinor;
+      const vatMinor = sale?.vatMinor ?? 0;
+      // Goods that came back and went on the shelf take their cost with them;
+      // goods refunded and thrown away still cost the shop what they cost.
+      const costMinor = (sale?.costMinor ?? 0) - back.costMinor;
+      const grossProfitMinor = netSalesMinor - vatMinor - costMinor;
+
+      return {
+        id: store._id,
+        name: store.name,
+        code: store.code,
+        isActive: store.isActive,
+        salesCount: sale?.salesCount ?? 0,
+        lines: sale?.lines ?? 0,
+        piecesSold: sale?.pieces ?? 0,
+        gramsSold: sale?.grams ?? 0,
+        grossSalesMinor,
+        returnCount: back.count,
+        returnAmountMinor: back.totalMinor,
+        netSalesMinor,
+        vatMinor,
+        costMinor,
+        grossProfitMinor,
+        marginBps: marginBps(grossProfitMinor, netSalesMinor - vatMinor),
+        averageBasketMinor: sale?.salesCount ? Math.round(grossSalesMinor / sale.salesCount) : 0,
+        stockValueMinor: stockBy.get(key)?.stockValueMinor ?? 0,
+      };
+    });
+
+    const totals = rows.reduce(
+      (acc, row) => ({
+        salesCount: acc.salesCount + row.salesCount,
+        grossSalesMinor: acc.grossSalesMinor + row.grossSalesMinor,
+        returnAmountMinor: acc.returnAmountMinor + row.returnAmountMinor,
+        netSalesMinor: acc.netSalesMinor + row.netSalesMinor,
+        grossProfitMinor: acc.grossProfitMinor + row.grossProfitMinor,
+        stockValueMinor: acc.stockValueMinor + row.stockValueMinor,
+      }),
+      { salesCount: 0, grossSalesMinor: 0, returnAmountMinor: 0, netSalesMinor: 0, grossProfitMinor: 0, stockValueMinor: 0 },
+    );
+
+    return { range: { from: range.from, to: range.to, label: range.label, days: 30 }, rows, totals };
   }
 }
 
