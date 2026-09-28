@@ -12,7 +12,6 @@ import { MenuItemModel } from '../../models/MenuItem';
 import { WorkspaceMemberModel } from '../../models/WorkspaceMember';
 import { RestaurantOrderModel } from '../../models/RestaurantOrder';
 import { SupplierModel } from '../../models/Supplier';
-import { StorageObjectModel } from '../../models/StorageObject';
 import { SALE_STATUS } from '../../config/constants';
 import { DEFAULT_POS_VERTICAL, type PosVertical } from '../../config/verticals';
 import { MedicineModel } from '../../models/Medicine';
@@ -24,7 +23,6 @@ import { renewalGraceEndsAt } from './renewalPolicy';
 import { ROLES } from '../../config/constants';
 import { SubscriptionPlanModel, type PlanFeatures, type PlanLimits } from '../../models/SubscriptionPlan';
 import { ApiError } from '../../utils/ApiError';
-import { formatBytes } from '../../utils/formatBytes';
 
 export type FeatureKey = keyof PlanFeatures;
 export type LimitKey = keyof PlanLimits;
@@ -68,7 +66,6 @@ const NO_PLAN_FEATURES: PlanFeatures = {
   prioritySupport: false,
   smsMarketing: false,
   emailMarketing: false,
-  imageOptimization: false,
   loyaltyProgram: false,
   productImport: false,
   supplierManagement: false,
@@ -80,7 +77,6 @@ const NO_PLAN_LIMITS: PlanLimits = {
   maxStores: 0,
   maxMonthlySales: 0,
   maxCustomers: 0,
-  maxStorageBytes: 0,
   maxSuppliers: 0,
 };
 
@@ -103,7 +99,6 @@ const normalizeLimits = (limits: Partial<PlanLimits> | null | undefined): PlanLi
   maxStores: limits?.maxStores ?? -1,
   maxMonthlySales: limits?.maxMonthlySales ?? -1,
   maxCustomers: limits?.maxCustomers ?? -1,
-  maxStorageBytes: limits?.maxStorageBytes ?? -1,
   maxSuppliers: limits?.maxSuppliers ?? -1,
 });
 
@@ -118,7 +113,6 @@ const normalizeFeatures = (features: Partial<PlanFeatures> | null | undefined): 
   prioritySupport: features?.prioritySupport ?? false,
   smsMarketing: features?.smsMarketing ?? false,
   emailMarketing: features?.emailMarketing ?? false,
-  imageOptimization: features?.imageOptimization ?? false,
   loyaltyProgram: features?.loyaltyProgram ?? false,
   // The one feature that defaults to ON when a snapshot predates it: bulk
   // product import is part of every plan, so "missing means off" would lock
@@ -389,21 +383,6 @@ class EntitlementService {
   }
 
   /**
-   * Bytes held by the workspace, summed from the storage ledger.
-   *
-   * Summing beats a cached counter here: a counter can drift, and there is no
-   * way to reconcile it after the fact. Soft-deleted rows are excluded, so
-   * removing a file frees the quota it held.
-   */
-  async storageBytes(tenantId: Types.ObjectId): Promise<number> {
-    const [row] = await StorageObjectModel.aggregate<{ total: number }>([
-      { $match: { tenantId, deletedAt: null } },
-      { $group: { _id: null, total: { $sum: '$bytes' } } },
-    ]);
-    return row?.total ?? 0;
-  }
-
-  /**
    * Confirms a record that has ALREADY been created did not push the workspace
    * past its limit.
    *
@@ -456,41 +435,6 @@ class EntitlementService {
   }
 
   /**
-   * Bytes held by files created at or before `upTo`.
-   *
-   * The cumulative equivalent of the ordinal count used for the countable
-   * limits. Concurrent uploads each sum only themselves and their predecessors,
-   * so the earliest ones that fit are kept and only the genuine overflow rolls
-   * back. A plain "is the total over?" check makes every racing upload see the
-   * same over-quota total and undo itself, rejecting files that fitted.
-   */
-  async storageBytesUpTo(tenantId: Types.ObjectId, upTo: Types.ObjectId): Promise<number> {
-    const [row] = await StorageObjectModel.aggregate<{ total: number }>([
-      { $match: { tenantId, deletedAt: null, _id: { $lte: upTo } } },
-      { $group: { _id: null, total: { $sum: '$bytes' } } },
-    ]);
-    return row?.total ?? 0;
-  }
-
-  /**
-   * Storage is the one limit measured in a continuous quantity rather than a
-   * count, so it needs its own check: the incoming file must FIT, not merely
-   * find the workspace below the line.
-   */
-  async assertCanStore(tenantId: Types.ObjectId, entitlement: Entitlement, incomingBytes: number): Promise<void> {
-    const max = entitlement.limits?.maxStorageBytes ?? -1;
-    if (max === -1) return;
-
-    const used = await this.storageBytes(tenantId);
-    if (used + incomingBytes <= max) return;
-
-    throw ApiError.limitExceeded(
-      `Your ${entitlement.planName ?? 'current'} plan includes ${formatBytes(max)} of storage and ${formatBytes(used)} is in use. Upgrade or remove some files.`,
-      { limit: 'maxStorageBytes', max, current: used, incomingBytes },
-    );
-  }
-
-  /**
    * Current usage, counted for plan limits.
    *
    * Only ACTIVE resources count. That is what makes "remove or deactivate N
@@ -502,16 +446,15 @@ class EntitlementService {
   async usage(tenantId: Types.ObjectId) {
     // Resolved once so both vertical-specific meters agree on what they measure.
     const vertical = await verticalOfTenant(tenantId);
-    const [products, staff, stores, customers, monthlySales, storageBytes, suppliers] = await Promise.all([
+    const [products, staff, stores, customers, monthlySales, suppliers] = await Promise.all([
       this.countProducts(tenantId, vertical),
       this.countStaff(tenantId),
       this.countStores(tenantId),
       this.countCustomers(tenantId),
       this.countMonthlySales(tenantId, vertical),
-      this.storageBytes(tenantId),
       this.countSuppliers(tenantId),
     ]);
-    return { vertical, products, staff, stores, customers, monthlySales, storageBytes, suppliers };
+    return { vertical, products, staff, stores, customers, monthlySales, suppliers };
   }
 }
 

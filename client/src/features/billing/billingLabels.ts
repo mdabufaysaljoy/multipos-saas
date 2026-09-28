@@ -40,7 +40,6 @@ export const STATEMENT_CATEGORY_LABEL: Record<string, string> = {
   sms: 'SMS',
   email: 'Email',
   ai: 'AI',
-  storage: 'Storage',
   adjustment: 'Adjustment',
   refund: 'Refund',
   other: 'Other',

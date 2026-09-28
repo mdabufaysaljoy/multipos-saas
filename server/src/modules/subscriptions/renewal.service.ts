@@ -141,7 +141,7 @@ class RenewalService {
     const verdict = evaluateTransition(
       currentPlan ?? null,
       { code: target.code, name: target.name, tier: target.tier, interval: target.interval, limits: resolved.limits },
-      { vertical: usage.vertical, branches: usage.stores, staff: usage.staff, products: usage.products, customers: usage.customers, storageBytes: usage.storageBytes },
+      { vertical: usage.vertical, branches: usage.stores, staff: usage.staff, products: usage.products, customers: usage.customers },
     );
 
     await SubscriptionModel.updateOne(

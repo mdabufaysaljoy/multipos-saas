@@ -2,9 +2,9 @@ import { Schema, model, type Types } from 'mongoose';
 import type { BaseDoc } from './types';
 
 /**
- * A supplier the shop sources stock from (Clothing POS).
+ * A supplier the shop sources stock from (Clothing and Super Shop POS).
  *
- * WORKSPACE-LEVEL, deliberately: a clothing business buys from the same
+ * WORKSPACE-LEVEL, deliberately: a retail business buys from the same
  * wholesalers for every branch, so a supplier belongs to the workspace and all
  * of its branches see the same list. Products, customers and categories are
  * branch-scoped because they are branch inventory and branch footfall; a

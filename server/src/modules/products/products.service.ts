@@ -274,8 +274,7 @@ class ProductService {
     if (input.name !== undefined) product.name = input.name;
     if (input.description !== undefined) product.description = input.description;
     if (input.brand !== undefined) product.brand = input.brand;
-    // Replacing the image list frees the storage held by the images that were
-    // dropped. Without this, every re-upload permanently consumed more quota.
+    // Replacing the image list deletes owned files that are no longer used.
     let releasedImageKeys: string[] = [];
     if (input.images !== undefined) {
       releasedImageKeys = droppedKeys(

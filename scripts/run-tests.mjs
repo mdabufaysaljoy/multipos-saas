@@ -20,11 +20,16 @@
  *   KEEP_TEST_DB      Set to "true" to preserve the database for debugging.
  */
 import { spawn } from 'node:child_process';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import process from 'node:process';
+import { fileURLToPath } from 'node:url';
 import mongoose from 'mongoose';
 import { startMockBkash } from './mock-bkash.mjs';
 
-const ROOT = new URL('..', import.meta.url).pathname;
+const ROOT = fileURLToPath(new URL('..', import.meta.url));
+const TSX_CLI = fileURLToPath(new URL('../node_modules/tsx/dist/cli.mjs', import.meta.url));
 
 // Both this process and the throwaway API run as `test`, so the cleanup guard
 // can require it. Set before the guard reads it. `isDev` is unused in the app
@@ -88,6 +93,7 @@ if (unsafeReasons.length > 0) {
 const PORT = process.env.TEST_PORT ?? '4101';
 const API_BASE = `http://localhost:${PORT}/api`;
 const KEEP = process.env.KEEP_TEST_DB === 'true';
+const testUploadDir = mkdtempSync(join(tmpdir(), 'multipos-saas-test-uploads-'));
 
 // A local stand-in for the bKash API, so the real adapter and the full
 // checkout -> callback -> activation path run on every test run with no network
@@ -99,6 +105,7 @@ const childEnv = {
   MONGODB_URI: testUri,
   PORT,
   NODE_ENV: 'test',
+  STORAGE_LOCAL_DIR: testUploadDir,
   SMS_MOCK_ENABLED: 'true',
   BKASH_APP_KEY: mockBkash.credentials.appKey,
   BKASH_APP_SECRET: mockBkash.credentials.appSecret,
@@ -114,7 +121,7 @@ const run = (command, args, extraEnv = {}) =>
       cwd: ROOT,
       env: { ...childEnv, ...extraEnv },
       stdio: 'inherit',
-      shell: process.platform === 'win32',
+      shell: false,
     });
     child.on('exit', (code) => (code === 0 ? resolve() : reject(new Error(`${command} exited with ${code}`))));
     child.on('error', reject);
@@ -184,18 +191,28 @@ function teardown(server) {
     await stopServer(server);
     await mockBkash.close().catch(() => {});
 
-    if (KEEP) {
-      console.log(`\n  Kept ${testDbName} for debugging (KEEP_TEST_DB=true).\n`);
-      return null;
+    let cleanupError = null;
+    try {
+      if (KEEP) {
+        console.log(`\n  Kept ${testDbName} for debugging (KEEP_TEST_DB=true).`);
+      } else {
+        const dropped = await dropTestDatabase();
+        console.log(`\n  Cleaned up test database "${dropped}".`);
+      }
+    } catch (error) {
+      cleanupError = error;
     }
 
     try {
-      const dropped = await dropTestDatabase();
-      console.log(`\n  Cleaned up test database "${dropped}".\n`);
-      return null;
+      // Upload tests write real files. Keep those fixtures outside the checkout
+      // and remove only the unique directory created by this process.
+      rmSync(testUploadDir, { recursive: true, force: true });
+      console.log('  Cleaned up temporary upload fixtures.\n');
     } catch (error) {
-      return error;
+      cleanupError ??= error;
     }
+
+    return cleanupError;
   })();
 
   return teardownPromise;
@@ -226,7 +243,7 @@ for (const [signal, code] of [['SIGINT', 130], ['SIGTERM', 143]]) {
 
     void teardown(server).then((error) => {
       if (error) {
-        console.error(`  Test database cleanup failed: ${error.message}`);
+        console.error(`  Test cleanup failed: ${error.message}`);
         console.error(`  Remove it by hand with:  mongosh ${testDbName} --eval 'db.dropDatabase()'`);
       }
       process.exit(code);
@@ -240,11 +257,14 @@ try {
   console.log(`  Cleanup       : ${KEEP ? 'disabled (KEEP_TEST_DB=true)' : 'drops the test database when finished'}`);
   console.log('  The development database is not touched.\n');
 
-  server = spawn('npm', ['run', 'dev', '--workspace', 'server'], {
+  // Invoke the checked-in toolchain directly. Going through `npm` with
+  // `shell:true` makes Windows concatenate a command string and is both less
+  // safe and unreliable in restricted runners where cmd.exe cannot be spawned.
+  server = spawn(process.execPath, [TSX_CLI, 'server/src/server.ts'], {
     cwd: ROOT,
     env: childEnv,
     stdio: ['ignore', 'ignore', 'inherit'],
-    shell: process.platform === 'win32',
+    shell: false,
     detached: process.platform !== 'win32',
   });
 
@@ -253,8 +273,8 @@ try {
   // A fresh database every run: the suite soft-deletes products and consumes
   // stock, so it needs known state. This also covers the case where a previous
   // run was killed before its cleanup could happen.
-  await run('npm', ['run', 'seed', '--workspace', 'server', '--', '--reset']);
-  await run('node', ['scripts/smoke-test.mjs'], { API_BASE, BKASH_MOCK_URL: mockBkash.url });
+  await run(process.execPath, [TSX_CLI, 'server/src/seed/seed.ts', '--reset']);
+  await run(process.execPath, ['scripts/smoke-test.mjs'], { API_BASE, BKASH_MOCK_URL: mockBkash.url });
 } catch (error) {
   testFailure = error;
 } finally {
@@ -265,7 +285,7 @@ try {
 
 // A cleanup problem is reported, but never in place of a test failure.
 if (cleanupFailure) {
-  console.error(`  Test database cleanup failed: ${cleanupFailure.message}`);
+  console.error(`  Test cleanup failed: ${cleanupFailure.message}`);
   console.error(`  Remove it by hand with:  mongosh ${testDbName} --eval 'db.dropDatabase()'\n`);
 }
 if (testFailure) {

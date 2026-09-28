@@ -37,6 +37,9 @@ export const formatQuantity = (quantity: number, unitType: ShopUnitType) =>
 export const lineAmount = (unitPriceMinor: number, quantity: number, unitType: ShopUnitType) =>
   unitType === 'weight' ? Math.floor((unitPriceMinor * quantity + 500) / 1000) : unitPriceMinor * quantity;
 
+/** Mirrors the server's whole-unit, half-up Super Shop total rounding. */
+export const roundShopTotal = (minor: number): number => Math.floor((minor + 50) / 100) * 100;
+
 export const formatVatRate = (bps: number) => `${(bps / 100).toFixed(bps % 100 === 0 ? 0 : 2)}%`;
 
 /** "15" or "7.5" -> basis points; null if invalid. */
@@ -47,4 +50,5 @@ export function parseVatPercent(raw: string): number | null {
   return bps <= 10_000 ? bps : null;
 }
 
-export const vatPercentText = (bps: number) => (bps % 100 === 0 ? String(bps / 100) : (bps / 100).toFixed(2).replace(/0$/, ''));
+export const vatPercentText = (bps: number) =>
+  bps % 100 === 0 ? String(bps / 100) : (bps / 100).toFixed(2).replace(/0$/, '');

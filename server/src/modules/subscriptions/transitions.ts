@@ -1,5 +1,4 @@
 import type { SubscriptionPlanDoc } from '../../models/SubscriptionPlan';
-import { formatBytes } from '../../utils/formatBytes';
 
 export type TransitionKind = 'current' | 'upgrade' | 'cycle-change' | 'downgrade';
 
@@ -82,7 +81,6 @@ export interface TenantUsage {
   staff: number;
   products: number;
   customers: number;
-  storageBytes: number;
 }
 
 export interface PlanLimits {
@@ -90,7 +88,6 @@ export interface PlanLimits {
   maxStaff: number;
   maxProducts: number;
   maxCustomers: number;
-  maxStorageBytes: number;
 }
 
 /**
@@ -121,20 +118,6 @@ export function findLimitBreaches(usage: TenantUsage, limits: PlanLimits): Limit
   check('staff', 'staff', usage.staff, limits.maxStaff, 'Remove or deactivate');
   check('products', usage.vertical === 'restaurant' ? 'menu items' : 'products', usage.products, limits.maxProducts, 'Reduce by');
   check('customers', 'customers', usage.customers, limits.maxCustomers, 'Reduce by');
-
-  // Storage is bytes, so the generic counter's "remove N customers" phrasing
-  // would be nonsense. It gets its own message.
-  if (limits.maxStorageBytes !== -1 && usage.storageBytes > limits.maxStorageBytes) {
-    const excess = usage.storageBytes - limits.maxStorageBytes;
-    breaches.push({
-      resource: 'storage',
-      label: 'storage',
-      current: usage.storageBytes,
-      limit: limits.maxStorageBytes,
-      excess,
-      action: `Free up ${formatBytes(excess)} of files`,
-    });
-  }
 
   return breaches;
 }

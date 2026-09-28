@@ -78,8 +78,8 @@ export function HeldSalesDialog({
                   <p className="truncate text-xs text-muted-foreground">
                     {row.itemCount} line{row.itemCount === 1 ? '' : 's'} · {formatMoney(row.estimatedTotalMinor, currency)} ·{' '}
                     {row.heldByNameSnapshot} · {formatDistanceToNow(new Date(row.createdAt), { addSuffix: true })}
-                    {row.customerName ? ` · ${row.customerName}` : ''}
                   </p>
+                  {row.customerName && <p className="truncate text-xs font-medium">Customer: {row.customerName}</p>}
                 </div>
                 <Button size="sm" loading={resume.isPending && resume.variables === row._id} onClick={() => resume.mutate(row._id)}>
                   Open

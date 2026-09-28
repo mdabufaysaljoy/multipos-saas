@@ -324,7 +324,6 @@ export const billingApi = {
         stores: number;
         customers: number;
         monthlySales: number;
-        storageBytes: number;
       };
     }>('/subscriptions/current'),
   history: () =>
@@ -443,7 +442,7 @@ export interface UsageCharge {
   _id: string;
   tenantId: string;
   accountId: string | null;
-  service: 'sms' | 'email' | 'ai' | 'storage';
+  service: 'sms' | 'email' | 'ai';
   unit: string;
   quantity: number;
   unitPriceMinor: number;
@@ -917,7 +916,7 @@ export interface WalletReceiptView {
   balanceAfterMinor: number | null;
 }
 
-export type StatementCategory = 'topup' | 'subscription' | 'sms' | 'email' | 'ai' | 'storage' | 'adjustment' | 'refund' | 'other';
+export type StatementCategory = 'topup' | 'subscription' | 'sms' | 'email' | 'ai' | 'adjustment' | 'refund' | 'other';
 
 export interface StatementEntry {
   id: string;

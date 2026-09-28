@@ -23,7 +23,6 @@ export const WALLET_SOURCES = [
   'sms',
   'email',
   'ai',
-  'storage',
   'addon',
   'refund',
   'transfer',
@@ -68,7 +67,7 @@ export interface WalletTransactionDoc extends BaseDoc {
   idempotencyKey: string | null;
   /** Set on a compensating row: the row it corrects. */
   reversalOfTransactionId: Types.ObjectId | null;
-  referenceType: 'topup' | 'subscription' | 'sms' | 'email' | 'ai' | 'storage' | 'refund' | 'adjustment' | 'transfer' | null;
+  referenceType: 'topup' | 'subscription' | 'sms' | 'email' | 'ai' | 'refund' | 'adjustment' | 'transfer' | null;
   referenceId: Types.ObjectId | null;
   performedBy: Types.ObjectId | null;
   performedByNameSnapshot: string;
@@ -98,7 +97,7 @@ const walletTxSchema = new Schema<WalletTransactionDoc>(
     reversalOfTransactionId: { type: Schema.Types.ObjectId, ref: 'WalletTransaction', default: null },
     referenceType: {
       type: String,
-      enum: ['topup', 'subscription', 'sms', 'email', 'ai', 'storage', 'refund', 'adjustment', 'transfer', null],
+      enum: ['topup', 'subscription', 'sms', 'email', 'ai', 'refund', 'adjustment', 'transfer', null],
       default: null,
     },
     referenceId: { type: Schema.Types.ObjectId, default: null },

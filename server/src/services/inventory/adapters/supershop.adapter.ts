@@ -126,8 +126,8 @@ class SupershopInventoryAdapter implements InventoryAdapter<ShopStockDetail> {
 
     const product = await ShopProductModel.findOne({ _id: request.itemId, tenantId: ctx.tenantId }).select('unitType').lean();
     const stock = await ShopStockModel.findOne({ tenantId: ctx.tenantId, storeId: ctx.storeId, productId: request.itemId }).select('quantityOnHand').lean();
-    // Either the branch holds some but not enough, or the till may not sell
-    // past zero. A product never received here reads as 0, which is true.
+    // The branch holds some but not enough. A zero or missing balance is handled
+    // above; the Super Shop checkout requires a note before that sale persists.
     throw ApiError.badRequest(
       `Only ${describeQuantity(stock?.quantityOnHand ?? 0, product?.unitType ?? 'each')} of ${request.label} is in stock in this branch.`,
       { productId: request.itemId, available: stock?.quantityOnHand ?? 0 },

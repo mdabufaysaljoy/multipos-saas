@@ -55,17 +55,9 @@ export const PLAN_SECTIONS: PlanSection[] = [
     ],
   },
   {
-    heading: 'Storage',
-    blurb: 'Product photos and receipt logos.',
-    rows: [
-      { kind: 'limit', key: 'maxStorageBytes', label: 'File storage', format: 'bytes' },
-      {
-        kind: 'flag',
-        key: 'imageOptimization',
-        label: 'Automatic Image Optimization & WebP Conversion',
-        hint: 'Large photos are resized, compressed and converted to WebP on upload, so high-resolution images cost a fraction of your quota.',
-      },
-    ],
+    heading: 'Images',
+    blurb: 'Product photos and receipt logos are available on every plan.',
+    rows: [{ kind: 'always', label: 'Product photos and receipt logos' }],
   },
   {
     heading: 'Point of sale',
@@ -145,7 +137,7 @@ export const PLAN_SECTIONS: PlanSection[] = [
       { kind: 'flag', key: 'advancedReports', label: 'Product and variant performance' },
       { kind: 'flag', key: 'advancedReports', label: 'Payment, return and staff analysis' },
       { kind: 'flag', key: 'advancedReports', label: 'Inventory valuation' },
-      { kind: 'flag', key: 'exportData', label: 'Data export (CSV, Excel, JSON, PDF)', hint: 'Download customers, products, sales, inventory, returns and loyalty data.', upsell: true },
+      { kind: 'flag', key: 'exportData', label: 'Data export (CSV, Excel, JSON, PDF)', hint: 'Download the catalogue, customers, sales, payments, stock and other operational data for your POS type.', upsell: true },
       { kind: 'flag', key: 'multiStore', label: 'Branch performance comparison' },
     ],
   },
@@ -187,7 +179,6 @@ export const FEATURE_LABELS: Record<string, string> = {
   prioritySupport: 'Priority support',
   smsMarketing: 'SMS marketing',
   emailMarketing: 'Email marketing',
-  imageOptimization: 'Automatic image optimization',
   loyaltyProgram: 'Loyalty program',
 };
 
@@ -273,12 +264,6 @@ export function upgradeHighlights(from: SubscriptionPlan, to: SubscriptionPlan):
     highlights.push(`${formatLimit(afterStores)} branches instead of ${formatLimit(beforeStores)}`);
   }
 
-  const beforeStorage = from.limits.maxStorageBytes;
-  const afterStorage = to.limits.maxStorageBytes;
-  if (beforeStorage !== undefined && afterStorage !== undefined && beforeStorage !== -1 && afterStorage > beforeStorage) {
-    highlights.push(`${formatLimit(afterStorage, 'bytes')} storage`);
-  }
-
   // ---- new capabilities ---------------------------------------------------
   const gained = CATALOG_FEATURE_KEYS.filter((key) => !from.features[key] && to.features[key]);
   for (const key of gained) {
@@ -306,7 +291,6 @@ const UPGRADE_PHRASES: Record<string, string> = {
   advancedReports: 'Advanced Analytics',
   smsMarketing: 'SMS marketing',
   emailMarketing: 'email marketing',
-  imageOptimization: 'automatic image optimization and WebP conversion',
   loyaltyProgram: 'the loyalty program',
   prioritySupport: 'priority support',
   salesReports: 'sales reports',
@@ -336,7 +320,6 @@ export function upgradeGains(from: SubscriptionPlan, to: SubscriptionPlan): stri
     { key: 'maxProducts', noun: 'products' },
     { key: 'maxMonthlySales', noun: 'monthly transactions' },
     { key: 'maxCustomers', noun: 'customers' },
-    { key: 'maxStorageBytes', noun: 'storage', format: 'bytes' },
   ];
 
   for (const { key, noun, format } of LIMIT_NOUNS) {

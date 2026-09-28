@@ -17,8 +17,17 @@ import { shopBrandService } from '../../services/catalogue/shopBrands.service';
 import { loyaltyService } from '../loyalty/loyalty.service';
 import { pointsForSpend } from '../loyalty/loyalty.math';
 import { logger } from '../../utils/logger';
-import { shopMovementRow, supershopInventoryAdapter, type ShopReservation } from '../../services/inventory/adapters/supershop.adapter';
-import { POS_TENDER_DIALECT, settleTender, stampTenderLabels, tenderLabels } from '../../services/pos/paymentMethods.service';
+import {
+  shopMovementRow,
+  supershopInventoryAdapter,
+  type ShopReservation,
+} from '../../services/inventory/adapters/supershop.adapter';
+import {
+  POS_TENDER_DIALECT,
+  settleTender,
+  stampTenderLabels,
+  tenderLabels,
+} from '../../services/pos/paymentMethods.service';
 import { resolveDashboardWindow } from '../reports/reports.service';
 import { returnFiguresFor } from '../../services/returns/posReturns.figures';
 import type { DashboardRangeInput } from '../reports/reports.validators';
@@ -41,9 +50,22 @@ const escapeRegex = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$
 const exact = (value: string) => new RegExp(`^${escapeRegex(value)}$`, 'i');
 const isDuplicateKey = (error: unknown) => (error as { code?: number } | null)?.code === 11000;
 
+/** EAN-13 check digit for a twelve-digit body. */
+const eanCheckDigit = (body: string): number => {
+  const sum = body.split('').reduce((total, digit, index) => total + Number(digit) * (index % 2 === 0 ? 1 : 3), 0);
+  return (10 - (sum % 10)) % 10;
+};
+
 // The unit maths lives beside the model, so the inventory adapter can use it
 // without importing this module.
-import { describeMaxQuantity, describeQuantity, includedVat, lineAmount, maxQuantityFor } from '../../models/shopUnits';
+import {
+  describeMaxQuantity,
+  describeQuantity,
+  includedVat,
+  lineAmount,
+  maxQuantityFor,
+  roundShopTotal,
+} from '../../models/shopUnits';
 
 export { describeQuantity, includedVat, lineAmount };
 
@@ -76,32 +98,59 @@ class SupershopService {
     }
     if (input.lowStockOnly) {
       // Products at or below their reorder level in this branch (or with no stock record at all).
-      const stocked = await ShopStockModel.find({ tenantId: ctx.tenantId, storeId: ctx.storeId }).select('productId quantityOnHand').lean();
+      const stocked = await ShopStockModel.find({ tenantId: ctx.tenantId, storeId: ctx.storeId })
+        .select('productId quantityOnHand')
+        .lean();
       const onHand = new Map(stocked.map((row) => [String(row.productId), row.quantityOnHand]));
-      const candidates = await ShopProductModel.find({ ...filter, reorderLevel: { $gt: 0 } }).select('_id reorderLevel').lean();
-      filter._id = { $in: candidates.filter((p) => (onHand.get(String(p._id)) ?? 0) <= p.reorderLevel).map((p) => p._id) };
+      const candidates = await ShopProductModel.find({ ...filter, reorderLevel: { $gt: 0 } })
+        .select('_id reorderLevel')
+        .lean();
+      filter._id = {
+        $in: candidates.filter((p) => (onHand.get(String(p._id)) ?? 0) <= p.reorderLevel).map((p) => p._id),
+      };
     }
 
     const [items, total] = await Promise.all([
       ShopProductModel.find(filter).sort({ category: 1, name: 1 }).skip(skip).limit(limit).lean<ProductRecord[]>(),
       ShopProductModel.countDocuments(filter),
     ]);
-    const stock = await this.stockFor(ctx, items.map((item) => item._id));
+    const stock = await this.stockFor(
+      ctx,
+      items.map((item) => item._id),
+    );
     return { items: items.map((item) => this.withStock(item, stock)), page, limit, total };
   }
 
   /** The scanner path: one exact barcode in this workspace, with this branch's stock. */
   async lookupBarcode(ctx: TenantContext, barcode: string) {
-    const product = await ShopProductModel.findOne({ tenantId: ctx.tenantId, deletedAt: null, barcode }).lean<ProductRecord>();
+    const product = await ShopProductModel.findOne({
+      tenantId: ctx.tenantId,
+      deletedAt: null,
+      barcode,
+    }).lean<ProductRecord>();
     if (!product) throw ApiError.notFound('No product has that barcode');
     return this.withStock(product, await this.stockFor(ctx, [product._id]));
+  }
+
+  /** Allocate an unused in-store EAN-13 code for this workspace's shop catalogue. */
+  async generateBarcode(ctx: TenantContext): Promise<string> {
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+      const body = `200${String(Math.floor(Math.random() * 1_000_000_000)).padStart(9, '0')}`;
+      const candidate = `${body}${eanCheckDigit(body)}`;
+      const taken = await ShopProductModel.exists({ tenantId: ctx.tenantId, deletedAt: null, barcode: candidate });
+      if (!taken) return candidate;
+    }
+    throw ApiError.internal('Could not allocate a unique barcode. Please try again.');
   }
 
   async getProduct(ctx: TenantContext, id: Types.ObjectId) {
     const product = await this.findProduct(ctx, id);
     const [stock, movements] = await Promise.all([
       this.stockFor(ctx, [product._id]),
-      ShopStockMovementModel.find({ tenantId: ctx.tenantId, storeId: ctx.storeId, productId: product._id }).sort({ createdAt: -1, _id: -1 }).limit(20).lean(),
+      ShopStockMovementModel.find({ tenantId: ctx.tenantId, storeId: ctx.storeId, productId: product._id })
+        .sort({ createdAt: -1, _id: -1 })
+        .limit(20)
+        .lean(),
     ]);
     return { product: this.withStock(product, stock), movements };
   }
@@ -136,10 +185,18 @@ class SupershopService {
     if (input.reorderLevel !== undefined) this.assertWithinUnitMax(input.reorderLevel, before, 'reorder level');
     if (input.category) await posCategoryService.assertUsable(ctx, 'supershop', input.category);
     if (input.brand !== undefined) await shopBrandService.assertUsable(ctx, input.brand);
-    await this.assertUnique(ctx, { name: input.name ?? before.name, brand: input.brand ?? before.brand, barcode: input.barcode ?? before.barcode }, id);
+    await this.assertUnique(
+      ctx,
+      { name: input.name ?? before.name, brand: input.brand ?? before.brand, barcode: input.barcode ?? before.barcode },
+      id,
+    );
     let after: ProductRecord | null;
     try {
-      after = await ShopProductModel.findOneAndUpdate({ _id: id, tenantId: ctx.tenantId, deletedAt: null }, { $set: input }, { new: true, runValidators: true }).lean<ProductRecord>();
+      after = await ShopProductModel.findOneAndUpdate(
+        { _id: id, tenantId: ctx.tenantId, deletedAt: null },
+        { $set: input },
+        { new: true, runValidators: true },
+      ).lean<ProductRecord>();
     } catch (error) {
       if (isDuplicateKey(error)) throw ApiError.conflict('Another product already uses this barcode');
       throw error;
@@ -156,9 +213,14 @@ class SupershopService {
       { $group: { _id: null, quantity: { $sum: '$quantityOnHand' } } },
     ]);
     if ((held?.quantity ?? 0) > 0) {
-      throw ApiError.conflict(`${describeQuantity(held.quantity, product.unitType)} of ${product.name} is still in stock. Sell or write it off first.`);
+      throw ApiError.conflict(
+        `${describeQuantity(held.quantity, product.unitType)} of ${product.name} is still in stock. Sell or write it off first.`,
+      );
     }
-    await ShopProductModel.updateOne({ _id: id, tenantId: ctx.tenantId }, { $set: { deletedAt: new Date(), isActive: false } });
+    await ShopProductModel.updateOne(
+      { _id: id, tenantId: ctx.tenantId },
+      { $set: { deletedAt: new Date(), isActive: false } },
+    );
     return { id };
   }
 
@@ -180,10 +242,18 @@ class SupershopService {
             $set: {
               costPriceMinor: {
                 $let: {
-                  vars: { onHand: { $max: [{ $ifNull: ['$quantityOnHand', 0] }, 0] }, cost: { $ifNull: ['$costPriceMinor', 0] } },
+                  vars: {
+                    onHand: { $max: [{ $ifNull: ['$quantityOnHand', 0] }, 0] },
+                    cost: { $ifNull: ['$costPriceMinor', 0] },
+                  },
                   in: {
                     $round: [
-                      { $divide: [{ $add: [{ $multiply: ['$$onHand', '$$cost'] }, input.quantity * input.costPriceMinor] }, { $add: ['$$onHand', input.quantity] }] },
+                      {
+                        $divide: [
+                          { $add: [{ $multiply: ['$$onHand', '$$cost'] }, input.quantity * input.costPriceMinor] },
+                          { $add: ['$$onHand', input.quantity] },
+                        ],
+                      },
                       0,
                     ],
                   },
@@ -224,17 +294,34 @@ class SupershopService {
     this.assertWithinUnitMax(input.quantityDelta, product, 'change');
     const delta = input.quantityDelta;
     const updated = await ShopStockModel.findOneAndUpdate(
-      { tenantId: ctx.tenantId, storeId: ctx.storeId, productId: product._id, ...(delta < 0 ? { quantityOnHand: { $gte: -delta } } : {}) },
+      {
+        tenantId: ctx.tenantId,
+        storeId: ctx.storeId,
+        productId: product._id,
+        ...(delta < 0 ? { quantityOnHand: { $gte: -delta } } : {}),
+      },
       { $inc: { quantityOnHand: delta } },
       { new: true },
     ).lean<StockRecord>();
     if (!updated) {
-      const stock = await ShopStockModel.findOne({ tenantId: ctx.tenantId, storeId: ctx.storeId, productId: product._id }).lean();
+      const stock = await ShopStockModel.findOne({
+        tenantId: ctx.tenantId,
+        storeId: ctx.storeId,
+        productId: product._id,
+      }).lean();
       if (!stock) throw ApiError.badRequest(`${product.name} has no stock in this branch yet. Receive stock first.`);
-      throw ApiError.badRequest(`Only ${describeQuantity(stock.quantityOnHand, product.unitType)} of ${product.name} is on hand.`);
+      throw ApiError.badRequest(
+        `Only ${describeQuantity(stock.quantityOnHand, product.unitType)} of ${product.name} is on hand.`,
+      );
     }
-    await ShopStockMovementModel.create(shopMovementRow(ctx, product, input.type, delta, updated.quantityOnHand, { reason: input.reason }));
-    return { stock: updated, previousOnHand: updated.quantityOnHand - delta, product: { _id: product._id, name: product.name, unitType: product.unitType } };
+    await ShopStockMovementModel.create(
+      shopMovementRow(ctx, product, input.type, delta, updated.quantityOnHand, { reason: input.reason }),
+    );
+    return {
+      stock: updated,
+      previousOnHand: updated.quantityOnHand - delta,
+      product: { _id: product._id, name: product.name, unitType: product.unitType },
+    };
   }
 
   /**
@@ -290,7 +377,17 @@ class SupershopService {
           outOfStock: { $sum: { $cond: [{ $lte: ['$onHand', 0] }, 1, 0] } },
           lowStock: {
             $sum: {
-              $cond: [{ $and: [{ $gt: ['$reorderLevel', 0] }, { $gt: ['$onHand', 0] }, { $lte: ['$onHand', '$reorderLevel'] }] }, 1, 0],
+              $cond: [
+                {
+                  $and: [
+                    { $gt: ['$reorderLevel', 0] },
+                    { $gt: ['$onHand', 0] },
+                    { $lte: ['$onHand', '$reorderLevel'] },
+                  ],
+                },
+                1,
+                0,
+              ],
             },
           },
         },
@@ -338,7 +435,13 @@ class SupershopService {
         originalSaleId: Types.ObjectId;
         originalSaleNumber: string;
         creditMinor: number;
-        returnedItems: { nameSnapshot: string; detailSnapshot: string; quantity: number; unitType: string; lineTotalMinor: number }[];
+        returnedItems: {
+          nameSnapshot: string;
+          detailSnapshot: string;
+          quantity: number;
+          unitType: string;
+          lineTotalMinor: number;
+        }[];
       };
     } = {},
   ) {
@@ -346,11 +449,17 @@ class SupershopService {
     entitlementService.assertUsable(entitlement);
     await entitlementService.assertCanRecordSale(ctx.tenantId, entitlement, 'supershop');
 
-    const store = await StoreModel.findOne({ _id: ctx.storeId, tenantId: ctx.tenantId }).select('paymentMethods invoicePrefix').lean();
+    const store = await StoreModel.findOne({ _id: ctx.storeId, tenantId: ctx.tenantId })
+      .select('paymentMethods invoicePrefix')
+      .lean();
     if (!store) throw ApiError.notFound('Branch not found');
 
     // ---- price from the catalogue -----------------------------------------
-    const products = await ShopProductModel.find({ _id: { $in: input.items.map((item) => item.productId) }, tenantId: ctx.tenantId, deletedAt: null }).lean<ProductRecord[]>();
+    const products = await ShopProductModel.find({
+      _id: { $in: input.items.map((item) => item.productId) },
+      tenantId: ctx.tenantId,
+      deletedAt: null,
+    }).lean<ProductRecord[]>();
     const priced = input.items.map((item) => {
       const product = products.find((entry) => entry._id.equals(item.productId));
       if (!product) throw ApiError.badRequest('One of the items is not in this shop');
@@ -358,12 +467,18 @@ class SupershopService {
       this.assertWithinUnitMax(item.quantity, product);
       const lineTotalMinor = lineAmount(product.priceMinor, item.quantity, product.unitType);
       if (!Number.isSafeInteger(lineTotalMinor)) throw ApiError.badRequest('That line is too large');
-      return { product, quantity: item.quantity, lineTotalMinor, vatMinor: includedVat(lineTotalMinor, product.vatRateBps) };
+      return {
+        product,
+        quantity: item.quantity,
+        lineTotalMinor,
+        vatMinor: includedVat(lineTotalMinor, product.vatRateBps),
+      };
     });
 
     // ---- money --------------------------------------------------------------
     const subtotalMinor = priced.reduce((sum, line) => sum + line.lineTotalMinor, 0);
-    if (input.discountMinor > 0 && !ctx.can(PERMISSIONS.SALES_DISCOUNT)) throw ApiError.forbidden('You do not have permission to give a discount');
+    if (input.discountMinor > 0 && !ctx.can(PERMISSIONS.SALES_DISCOUNT))
+      throw ApiError.forbidden('You do not have permission to give a discount');
     if (input.discountMinor > subtotalMinor) throw ApiError.badRequest('The discount cannot exceed the subtotal');
 
     // ---- loyalty -------------------------------------------------------------
@@ -378,12 +493,18 @@ class SupershopService {
     }
     const loyaltyDiscountMinor = loyalty ? input.redeemPoints * loyalty.settings.pointValueMinor : 0;
     if (loyaltyDiscountMinor > subtotalMinor - input.discountMinor) {
-      throw ApiError.validation('Those points are worth more than this basket.', { reason: 'LOYALTY_DISCOUNT_TOO_LARGE' });
+      throw ApiError.validation('Those points are worth more than this basket.', {
+        reason: 'LOYALTY_DISCOUNT_TOO_LARGE',
+      });
     }
 
-    const totalMinor = subtotalMinor - input.discountMinor - loyaltyDiscountMinor;
+    const unroundedTotalMinor = subtotalMinor - input.discountMinor - loyaltyDiscountMinor;
+    const totalMinor = roundShopTotal(unroundedTotalMinor);
+    const roundingMinor = totalMinor - unroundedTotalMinor;
     if (totalMinor <= 0) {
-      throw ApiError.validation('A basket must come to more than nothing after points.', { reason: 'LOYALTY_NOTHING_PAYABLE' });
+      throw ApiError.validation('A basket must come to at least one whole currency unit after discounts and points.', {
+        reason: 'LOYALTY_NOTHING_PAYABLE',
+      });
     }
     // An exchange credit is money the customer has already handed over once, on
     // the sale being returned. It pays for this basket before any tender does.
@@ -391,7 +512,9 @@ class SupershopService {
     if (creditMinor > totalMinor) {
       // The caller checks this first; this is the backstop that keeps a credit
       // from ever turning into cash out of the drawer.
-      throw ApiError.validation('The exchange credit is worth more than the replacement basket.', { reason: 'EXCHANGE_CREDIT_EXCEEDS_TOTAL' });
+      throw ApiError.validation('The exchange credit is worth more than the replacement basket.', {
+        reason: 'EXCHANGE_CREDIT_EXCEEDS_TOTAL',
+      });
     }
     const payableMinor = totalMinor - creditMinor;
 
@@ -406,9 +529,13 @@ class SupershopService {
     // Each row keeps the name the workspace uses for that method today.
     const paidWith = stampTenderLabels(input.payments, await tenderLabels(ctx.tenantId));
 
-    // VAT in what was actually charged: a sale discount reduces it proportionally.
+    // A sale discount reduces VAT proportionally. Cash rounding is recorded
+    // separately and does not create or remove tax.
     const lineVatMinor = priced.reduce((sum, line) => sum + line.vatMinor, 0);
-    const vatMinor = subtotalMinor === 0 ? 0 : Math.floor((lineVatMinor * totalMinor + Math.floor(subtotalMinor / 2)) / subtotalMinor);
+    const vatMinor =
+      subtotalMinor === 0
+        ? 0
+        : Math.floor((lineVatMinor * unroundedTotalMinor + Math.floor(subtotalMinor / 2)) / subtotalMinor);
 
     // Optional, and resolved the same way in every vertical: an existing
     // customer, or one created at the till from a name and phone.
@@ -422,14 +549,14 @@ class SupershopService {
       redeemed = await loyaltyService.redeemForSale(ctx, loyalty.membership._id, input.redeemPoints, checkoutRef);
     }
     const undoRedemption = async () => {
-      if (loyalty && redeemed) await loyaltyService.reverseRedemption(ctx, loyalty.membership._id, input.redeemPoints, checkoutRef);
+      if (loyalty && redeemed)
+        await loyaltyService.reverseRedemption(ctx, loyalty.membership._id, input.redeemPoints, checkoutRef);
     };
 
     // ---- take stock ----------------------------------------------------------
-    // Through the adapter, so shared code can do this without knowing that a
-    // Super Shop keeps one stock row per product per branch.
-    // From the permissions resolved for THIS request, never from the client.
-    const allowOutOfStock = ctx.can(PERMISSIONS.SALES_SELL_OUT_OF_STOCK);
+    // Super Shop may sell a product only when it is completely out of stock;
+    // the inventory adapter still refuses "some stock, but not enough". This is
+    // available to every cashier, but an explanatory sale note is mandatory.
     const taken: ShopReservation[] = [];
     try {
       for (const line of priced) {
@@ -437,10 +564,16 @@ class SupershopService {
           itemId: line.product._id,
           quantity: line.quantity,
           label: line.product.name,
-          allowOutOfStock,
+          allowOutOfStock: true,
         });
         reservation.detail.unitType = line.product.unitType;
         taken.push(reservation);
+      }
+      if (taken.some((entry) => entry.detail.outOfStockOverride) && input.note.trim().length < 3) {
+        throw ApiError.validation('Add a note explaining why this out-of-stock sale is being completed.', {
+          reason: 'OUT_OF_STOCK_NOTE_REQUIRED',
+          field: 'note',
+        });
       }
     } catch (error) {
       await supershopInventoryAdapter.release(ctx, taken);
@@ -484,6 +617,7 @@ class SupershopService {
         subtotalMinor,
         // Includes the loyalty discount, so every report that subtracts discounts stays right.
         discountMinor: input.discountMinor + loyaltyDiscountMinor,
+        roundingMinor,
         totalMinor,
         vatMinor,
         costMinor: items.reduce((sum, line) => sum + line.costMinor, 0),
@@ -501,7 +635,7 @@ class SupershopService {
               pointsRedeemed: input.redeemPoints,
               discountMinor: loyaltyDiscountMinor,
               // VAT never earns points: it is collected for the government.
-              qualifyingMinor: Math.max(0, totalMinor - vatMinor),
+              qualifyingMinor: Math.max(0, unroundedTotalMinor - vatMinor),
               pointsEarned: 0,
               balanceAfter: redeemed?.balanceAfter ?? loyalty.membership.pointsBalance,
               pointsEarnedReversed: 0,
@@ -537,17 +671,28 @@ class SupershopService {
       });
       entitlementService.assertOrdinalWithinLimit(entitlement, 'maxMonthlySales', ordinal, 'sales per month');
 
-      await supershopInventoryAdapter.commit(ctx, taken, { referenceId: saleId, referenceNumber: saleNumber });
+      await supershopInventoryAdapter.commit(ctx, taken, {
+        referenceId: saleId,
+        referenceNumber: saleNumber,
+        ...(taken.some((entry) => entry.detail.outOfStockOverride) ? { reason: input.note } : {}),
+      });
       if (customer) {
-        await customerService.applySaleStats(ctx, customer._id, { amountMinor: totalMinor, orderDelta: 1, purchasedAt: soldAt });
+        await customerService.applySaleStats(ctx, customer._id, {
+          amountMinor: totalMinor,
+          orderDelta: 1,
+          purchasedAt: soldAt,
+        });
       }
 
       // ---- earning: only now the sale is complete, and only once ------------
       if (loyalty) {
         await loyaltyService.attachSale(ctx, checkoutRef, sale._id, saleNumber);
         try {
-          const points = pointsForSpend(Math.max(0, totalMinor - vatMinor), loyalty.settings.earnSpendMinor);
-          const earned = await loyaltyService.earnForSale(ctx, loyalty.membership._id, points, { _id: sale._id, saleNumber });
+          const points = pointsForSpend(Math.max(0, unroundedTotalMinor - vatMinor), loyalty.settings.earnSpendMinor);
+          const earned = await loyaltyService.earnForSale(ctx, loyalty.membership._id, points, {
+            _id: sale._id,
+            saleNumber,
+          });
           if (earned && sale.loyalty) {
             sale.loyalty.pointsEarned = points;
             sale.loyalty.balanceAfter = earned.balanceAfter;
@@ -588,7 +733,12 @@ class SupershopService {
     }
     if (input.search) {
       const rx = searchRegex(input.search);
-      filter.$or = [{ saleNumber: rx }, { 'items.nameSnapshot': rx }, { 'items.barcodeSnapshot': rx }, { customerNameSnapshot: rx }];
+      filter.$or = [
+        { saleNumber: rx },
+        { 'items.nameSnapshot': rx },
+        { 'items.barcodeSnapshot': rx },
+        { customerNameSnapshot: rx },
+      ];
     }
     const [items, total] = await Promise.all([
       ShopSaleModel.find(filter).sort({ soldAt: -1 }).skip(skip).limit(limit).lean(),
@@ -615,7 +765,15 @@ class SupershopService {
   async voidSale(ctx: TenantContext, id: Types.ObjectId, reason: string) {
     const sale = await ShopSaleModel.findOneAndUpdate(
       { _id: id, tenantId: ctx.tenantId, storeId: ctx.storeId, status: 'completed' },
-      { $set: { status: 'voided', voidedAt: new Date(), voidedBy: ctx.userId, voidedByNameSnapshot: ctx.userName, voidReason: reason } },
+      {
+        $set: {
+          status: 'voided',
+          voidedAt: new Date(),
+          voidedBy: ctx.userId,
+          voidedByNameSnapshot: ctx.userName,
+          voidReason: reason,
+        },
+      },
       { new: true },
     ).lean();
     if (!sale) {
@@ -671,7 +829,13 @@ class SupershopService {
     const completed = { tenantId: ctx.tenantId, storeId: ctx.storeId, status: 'completed' };
     const soldIn = (from: Date, to: Date) => ({ ...completed, soldAt: { $gte: from, $lte: to } });
     const totals = (from: Date, to: Date) =>
-      ShopSaleModel.aggregate<{ count: number; totalMinor: number; vatMinor: number; costMinor: number; discountMinor: number }>([
+      ShopSaleModel.aggregate<{
+        count: number;
+        totalMinor: number;
+        vatMinor: number;
+        costMinor: number;
+        discountMinor: number;
+      }>([
         { $match: soldIn(from, to) },
         {
           $group: {
@@ -690,14 +854,31 @@ class SupershopService {
       totals(previousFrom, previousTo),
       // What was charged is on the sales; what was kept is that less refunds.
       returnFiguresFor(ctx, 'supershop', { from: range.from, to: range.to }),
-      ShopSaleModel.aggregate<{ _id: Types.ObjectId; name: string; unitType: ShopUnitType; quantity: number; totalMinor: number }>([
+      ShopSaleModel.aggregate<{
+        _id: Types.ObjectId;
+        name: string;
+        unitType: ShopUnitType;
+        quantity: number;
+        totalMinor: number;
+      }>([
         { $match: soldIn(range.from, range.to) },
         { $unwind: '$items' },
-        { $group: { _id: '$items.productId', name: { $last: '$items.nameSnapshot' }, unitType: { $last: '$items.unitType' }, quantity: { $sum: '$items.quantity' }, totalMinor: { $sum: '$items.lineTotalMinor' } } },
+        {
+          $group: {
+            _id: '$items.productId',
+            name: { $last: '$items.nameSnapshot' },
+            unitType: { $last: '$items.unitType' },
+            quantity: { $sum: '$items.quantity' },
+            totalMinor: { $sum: '$items.lineTotalMinor' },
+          },
+        },
         { $sort: { totalMinor: -1 } },
         { $limit: 5 },
       ]),
-      ShopProductModel.find({ tenantId: ctx.tenantId, deletedAt: null, isActive: true, reorderLevel: { $gt: 0 } }).select('name unitType reorderLevel').limit(1000).lean<ProductRecord[]>(),
+      ShopProductModel.find({ tenantId: ctx.tenantId, deletedAt: null, isActive: true, reorderLevel: { $gt: 0 } })
+        .select('name unitType reorderLevel')
+        .limit(1000)
+        .lean<ProductRecord[]>(),
       ShopStockModel.find({ tenantId: ctx.tenantId, storeId: ctx.storeId }).select('productId quantityOnHand').lean(),
     ]);
 
@@ -713,7 +894,9 @@ class SupershopService {
       .filter((row) => row.quantityOnHand <= row.reorderLevel)
       .sort((a, b) => a.quantityOnHand / a.reorderLevel - b.quantityOnHand / b.reorderLevel);
 
-    const summarise = (rows: { count: number; totalMinor: number; vatMinor: number; costMinor: number; discountMinor: number }[]) => {
+    const summarise = (
+      rows: { count: number; totalMinor: number; vatMinor: number; costMinor: number; discountMinor: number }[],
+    ) => {
       const row = rows[0];
       const salesCount = row?.count ?? 0;
       const totalMinor = row?.totalMinor ?? 0;
@@ -741,7 +924,13 @@ class SupershopService {
         grossProfitMinor: current.grossProfitMinor - refunds.totalMinor + refunds.costMinor,
       },
       previous: summarise(previousRows),
-      topProducts: topProducts.map((row) => ({ productId: row._id, name: row.name, unitType: row.unitType, quantity: row.quantity, totalMinor: row.totalMinor })),
+      topProducts: topProducts.map((row) => ({
+        productId: row._id,
+        name: row.name,
+        unitType: row.unitType,
+        quantity: row.quantity,
+        totalMinor: row.totalMinor,
+      })),
       lowStock: lowStock.slice(0, 10),
       lowStockCount: lowStock.length,
     };
@@ -751,8 +940,19 @@ class SupershopService {
 
   private async stockFor(ctx: TenantContext, productIds: Types.ObjectId[]) {
     if (productIds.length === 0) return new Map<string, { quantityOnHand: number; costPriceMinor: number }>();
-    const rows = await ShopStockModel.find({ tenantId: ctx.tenantId, storeId: ctx.storeId, productId: { $in: productIds } }).select('productId quantityOnHand costPriceMinor').lean();
-    return new Map(rows.map((row) => [String(row.productId), { quantityOnHand: row.quantityOnHand, costPriceMinor: row.costPriceMinor }]));
+    const rows = await ShopStockModel.find({
+      tenantId: ctx.tenantId,
+      storeId: ctx.storeId,
+      productId: { $in: productIds },
+    })
+      .select('productId quantityOnHand costPriceMinor')
+      .lean();
+    return new Map(
+      rows.map((row) => [
+        String(row.productId),
+        { quantityOnHand: row.quantityOnHand, costPriceMinor: row.costPriceMinor },
+      ]),
+    );
   }
 
   private withStock(product: ProductRecord, stock: Map<string, { quantityOnHand: number; costPriceMinor: number }>) {
@@ -777,23 +977,40 @@ class SupershopService {
   }
 
   private async findProduct(ctx: TenantContext, id: Types.ObjectId) {
-    const product = await ShopProductModel.findOne({ _id: id, tenantId: ctx.tenantId, deletedAt: null }).lean<ProductRecord>();
+    const product = await ShopProductModel.findOne({
+      _id: id,
+      tenantId: ctx.tenantId,
+      deletedAt: null,
+    }).lean<ProductRecord>();
     if (!product) throw ApiError.notFound('Product not found');
     return product;
   }
 
   /** The same name and brand is one product; a barcode belongs to one product. */
-  private async assertUnique(ctx: TenantContext, identity: { name: string; brand: string; barcode: string }, exceptId?: Types.ObjectId) {
+  private async assertUnique(
+    ctx: TenantContext,
+    identity: { name: string; brand: string; barcode: string },
+    exceptId?: Types.ObjectId,
+  ) {
     const except = exceptId ? { _id: { $ne: exceptId } } : {};
-    if (await ShopProductModel.exists({ tenantId: ctx.tenantId, deletedAt: null, name: exact(identity.name), brand: exact(identity.brand), ...except })) {
+    if (
+      await ShopProductModel.exists({
+        tenantId: ctx.tenantId,
+        deletedAt: null,
+        name: exact(identity.name),
+        brand: exact(identity.brand),
+        ...except,
+      })
+    ) {
       throw ApiError.conflict('A product with this name and brand already exists');
     }
-    if (identity.barcode && (await ShopProductModel.exists({ tenantId: ctx.tenantId, deletedAt: null, barcode: identity.barcode, ...except }))) {
+    if (
+      identity.barcode &&
+      (await ShopProductModel.exists({ tenantId: ctx.tenantId, deletedAt: null, barcode: identity.barcode, ...except }))
+    ) {
       throw ApiError.conflict('Another product already uses this barcode');
     }
   }
-
-
 }
 
 export const supershopService = new SupershopService();

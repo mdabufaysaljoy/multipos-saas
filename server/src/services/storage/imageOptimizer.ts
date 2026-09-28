@@ -2,7 +2,7 @@ import sharp from 'sharp';
 import { logger } from '../../utils/logger';
 
 /**
- * Automatic Image Optimization & WebP Conversion — a Brand-plan feature.
+ * Automatic image optimization and WebP conversion for every subscribed workspace.
  *
  * Large photographs are resized and re-encoded as WebP before anything is
  * stored, so a 9 MB camera image becomes a few hundred kilobytes and the

@@ -14,7 +14,7 @@ const DAY_MS = 86_400_000;
 /** A statement lists at most this many movements; a longer period is flagged as truncated. */
 export const STATEMENT_MAX_ENTRIES = 2000;
 
-export type StatementCategory = 'topup' | 'subscription' | 'sms' | 'email' | 'ai' | 'storage' | 'adjustment' | 'refund' | 'other';
+export type StatementCategory = 'topup' | 'subscription' | 'sms' | 'email' | 'ai' | 'adjustment' | 'refund' | 'other';
 
 /** The movement's effect on the balance. Adjustments carry their direction in the balances. */
 export const signedAmount = (row: Pick<LedgerRow, 'type' | 'amountMinor' | 'balanceBeforeMinor' | 'balanceAfterMinor'>) => {
@@ -33,7 +33,7 @@ export const signedAmount = (row: Pick<LedgerRow, 'type' | 'amountMinor' | 'bala
   }
 };
 
-const CATEGORIES: StatementCategory[] = ['topup', 'subscription', 'sms', 'email', 'ai', 'storage', 'adjustment', 'refund'];
+const CATEGORIES: StatementCategory[] = ['topup', 'subscription', 'sms', 'email', 'ai', 'adjustment', 'refund'];
 const categoryOf = (row: LedgerRow): StatementCategory => {
   const reference = row.referenceType ?? '';
   return (CATEGORIES as string[]).includes(reference) ? (reference as StatementCategory) : 'other';

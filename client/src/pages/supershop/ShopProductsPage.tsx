@@ -6,7 +6,15 @@ import { Barcode, PackagePlus, Pencil, Plus, ShoppingBasket, SlidersHorizontal, 
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
+import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Switch } from '@/components/ui/switch';
@@ -19,6 +27,8 @@ import { PermissionGate } from '@/components/PermissionGate';
 import { SearchInput, useDebounced } from '@/components/SearchInput';
 import { LoadingState } from '@/components/states';
 import { BarcodePrintDialog } from '@/features/barcode/BarcodePrintDialog';
+import { useBarcodeScanner } from '@/features/pos/useBarcodeScanner';
+import { ApiError } from '@/api/client';
 import { supershopApi } from '@/api/supershop';
 import { shopCategoriesApi } from '@/api/posCategories';
 import { shopBrandsApi } from '@/api/shopBrands';
@@ -36,10 +46,9 @@ import {
 } from '@/features/supershop/stockDialogs';
 import type { ShopProduct, ShopUnitType } from '@/types/supershop';
 
-
 /** The supershop catalogue with this branch's stock: add, price, receive and count. */
 export function ShopProductsPage() {
-  const { activeStore } = useAuth();
+  const { activeStore, can } = useAuth();
   const currency = activeStore?.currency ?? 'BDT';
   const queryClient = useQueryClient();
   const [term, setTerm] = React.useState('');
@@ -53,9 +62,13 @@ export function ShopProductsPage() {
   const [viewing, setViewing] = React.useState<ShopProduct | null>(null);
   const [deleting, setDeleting] = React.useState<ShopProduct | null>(null);
   const [labelling, setLabelling] = React.useState<ShopProduct | null>(null);
+  const [newBarcode, setNewBarcode] = React.useState('');
 
   // The department list is managed on its own screen; hidden ones are not offered.
-  const { data: categories } = useQuery({ queryKey: ['supershop', 'categories'], queryFn: () => shopCategoriesApi.list() });
+  const { data: categories } = useQuery({
+    queryKey: ['supershop', 'categories'],
+    queryFn: () => shopCategoriesApi.list(),
+  });
   const { data, isLoading, error, refetch } = useQuery({
     queryKey: ['supershop', 'products', search, category, lowOnly, page],
     queryFn: () =>
@@ -69,6 +82,25 @@ export function ShopProductsPage() {
   });
   const refresh = () => void queryClient.invalidateQueries({ queryKey: ['supershop'] });
 
+  const scan = useMutation({
+    mutationFn: (barcode: string) => supershopApi.lookup(barcode),
+    onSuccess: (product) => {
+      // An existing code opens that exact product rather than leaving a cashier
+      // to find it in a filtered or paged table.
+      setTerm(product.barcode);
+      setPage(1);
+      setViewing(product);
+    },
+    onError: (error, barcode) => {
+      if (error instanceof ApiError && error.status === 404 && can('products.create')) {
+        setNewBarcode(barcode);
+        setEditing('new');
+        return;
+      }
+      toast.error(error instanceof ApiError && error.status !== 404 ? error.message : 'No product has that barcode');
+    },
+  });
+
   const remove = useMutation({
     mutationFn: (id: string) => supershopApi.removeProduct(id),
     onSuccess: () => {
@@ -77,6 +109,21 @@ export function ShopProductsPage() {
       refresh();
     },
     onError: (err) => toast.error(errorMessage(err, 'Could not remove the product')),
+  });
+
+  // Product creation by scan belongs here, not at checkout. The listener is
+  // page-wide; the search field is explicitly a scan target as well.
+  useBarcodeScanner({
+    onScan: (barcode) => scan.mutate(barcode),
+    minLength: 3,
+    enabled:
+      editing === null &&
+      receiving === null &&
+      adjusting === null &&
+      viewing === null &&
+      deleting === null &&
+      labelling === null &&
+      !scan.isPending,
   });
 
   const columns: Column<ShopProduct>[] = [
@@ -104,7 +151,9 @@ export function ShopProductsPage() {
             {formatMoney(row.priceMinor, currency)}
             {row.unitType === 'weight' ? '/kg' : ''}
           </p>
-          {row.vatRateBps > 0 && <p className="text-xs text-muted-foreground">incl. {formatVatRate(row.vatRateBps)} VAT</p>}
+          {row.vatRateBps > 0 && (
+            <p className="text-xs text-muted-foreground">incl. {formatVatRate(row.vatRateBps)} VAT</p>
+          )}
         </div>
       ),
     },
@@ -116,7 +165,9 @@ export function ShopProductsPage() {
         const low = row.reorderLevel > 0 && onHand <= row.reorderLevel;
         return (
           <div className="flex flex-wrap items-center gap-1">
-            <span className={low ? 'tabular font-medium text-destructive' : 'tabular'}>{formatQuantity(onHand, row.unitType)}</span>
+            <span className={low ? 'tabular font-medium text-destructive' : 'tabular'}>
+              {formatQuantity(onHand, row.unitType)}
+            </span>
             {!row.isActive && <Badge variant="secondary">Not for sale</Badge>}
           </div>
         );
@@ -130,15 +181,30 @@ export function ShopProductsPage() {
       cell: (row) => (
         <div className="flex justify-end gap-1" onClick={(event) => event.stopPropagation()}>
           <PermissionGate anyOf={['inventory.adjust']}>
-            <Button variant="ghost" size="icon-sm" onClick={() => setReceiving(row)} aria-label={`Receive stock of ${row.name}`}>
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              onClick={() => setReceiving(row)}
+              aria-label={`Receive stock of ${row.name}`}
+            >
               <PackagePlus />
             </Button>
-            <Button variant="ghost" size="icon-sm" onClick={() => setAdjusting(row)} aria-label={`Adjust stock of ${row.name}`}>
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              onClick={() => setAdjusting(row)}
+              aria-label={`Adjust stock of ${row.name}`}
+            >
               <SlidersHorizontal />
             </Button>
           </PermissionGate>
           {row.barcode && (
-            <Button variant="ghost" size="icon-sm" onClick={() => setLabelling(row)} aria-label={`Print a label for ${row.name}`}>
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              onClick={() => setLabelling(row)}
+              aria-label={`Print a label for ${row.name}`}
+            >
               <Barcode />
             </Button>
           )}
@@ -164,7 +230,12 @@ export function ShopProductsPage() {
         description="Prices include VAT. Weighed goods are priced per kilogram."
         actions={
           <PermissionGate anyOf={['products.create']}>
-            <Button onClick={() => setEditing('new')}>
+            <Button
+              onClick={() => {
+                setNewBarcode('');
+                setEditing('new');
+              }}
+            >
               <Plus />
               Add product
             </Button>
@@ -183,6 +254,7 @@ export function ShopProductsPage() {
             }}
             placeholder="Name, brand or barcode…"
             className="w-full sm:max-w-xs"
+            barcodeTarget
           />
           <Select
             value={category}
@@ -233,6 +305,7 @@ export function ShopProductsPage() {
         <ProductDialog
           key={editing === 'new' ? 'new' : editing._id}
           product={editing === 'new' ? null : editing}
+          initialBarcode={editing === 'new' ? newBarcode : ''}
           currency={currency}
           onClose={() => setEditing(null)}
           onSaved={() => {
@@ -270,11 +343,18 @@ export function ShopProductsPage() {
       <BarcodePrintDialog
         label={
           labelling
-            ? { barcode: labelling.barcode, productName: labelling.name, variantName: labelling.brand, sku: labelling.category, priceMinor: labelling.priceMinor }
+            ? {
+                barcode: labelling.barcode,
+                productName: labelling.name,
+                variantName: labelling.brand,
+                sku: labelling.category,
+                priceMinor: labelling.priceMinor,
+              }
             : null
         }
         currency={currency}
         storeName={activeStore?.name}
+        validateEan13
         onClose={() => setLabelling(null)}
       />
 
@@ -296,11 +376,13 @@ export function ShopProductsPage() {
 
 function ProductDialog({
   product,
+  initialBarcode,
   currency,
   onClose,
   onSaved,
 }: {
   product: ShopProduct | null;
+  initialBarcode: string;
   currency: string;
   onClose: () => void;
   onSaved: () => void;
@@ -308,17 +390,27 @@ function ProductDialog({
   const [name, setName] = React.useState(product?.name ?? '');
   const [brand, setBrand] = React.useState(product?.brand ?? '');
   const [category, setCategory] = React.useState(product?.category ?? 'General');
-  const [barcode, setBarcode] = React.useState(product?.barcode ?? '');
+  const [barcode, setBarcode] = React.useState(product?.barcode ?? initialBarcode);
   const [unitType, setUnitType] = React.useState<ShopUnitType>(product?.unitType ?? 'each');
   const [price, setPrice] = React.useState<number | null>(product ? product.priceMinor : null);
   const [vat, setVat] = React.useState(product ? vatPercentText(product.vatRateBps) : '0');
   const [reorder, setReorder] = React.useState(
-    product ? (product.unitType === 'weight' ? gramsToKgText(product.reorderLevel) : String(product.reorderLevel)) : '0',
+    product
+      ? product.unitType === 'weight'
+        ? gramsToKgText(product.reorderLevel)
+        : String(product.reorderLevel)
+      : '0',
   );
   const [isActive, setIsActive] = React.useState(product?.isActive ?? true);
 
   const vatBps = parseVatPercent(vat);
   const reorderLevel = reorder.trim() === '0' || reorder.trim() === '' ? 0 : parseQuantity(reorder, unitType);
+
+  const generateBarcode = useMutation({
+    mutationFn: supershopApi.generateBarcode,
+    onSuccess: ({ barcode: generated }) => setBarcode(generated),
+    onError: (err) => toast.error(errorMessage(err, 'Could not generate a barcode')),
+  });
 
   const save = useMutation({
     mutationFn: () => {
@@ -332,7 +424,9 @@ function ProductDialog({
         reorderLevel: reorderLevel ?? 0,
         isActive,
       };
-      return product ? supershopApi.updateProduct(product._id, common) : supershopApi.createProduct({ ...common, unitType });
+      return product
+        ? supershopApi.updateProduct(product._id, common)
+        : supershopApi.createProduct({ ...common, unitType });
     },
     onSuccess: () => {
       toast.success(product ? 'Product updated' : 'Product added');
@@ -341,7 +435,12 @@ function ProductDialog({
     onError: (err) => toast.error(errorMessage(err, 'Could not save the product')),
   });
 
-  const valid = name.trim().length > 0 && price !== null && vatBps !== null && reorderLevel !== null && /^[A-Za-z0-9-]*$/.test(barcode.trim());
+  const valid =
+    name.trim().length > 0 &&
+    price !== null &&
+    vatBps !== null &&
+    reorderLevel !== null &&
+    /^[A-Za-z0-9-]*$/.test(barcode.trim());
 
   return (
     <Dialog open onOpenChange={(open) => !open && onClose()}>
@@ -369,11 +468,45 @@ function ProductDialog({
             maxLength={80}
             placeholder="Optional"
           />
-          <CategoryInput id="shop-category" label="Department" value={category} onChange={setCategory} api={shopCategoriesApi} queryKey="supershop" />
-          <TextField id="shop-barcode" label="Barcode" value={barcode} max={64} onChange={setBarcode} placeholder="Scan or type" />
+          <CategoryInput
+            id="shop-category"
+            label="Department"
+            value={category}
+            onChange={setCategory}
+            api={shopCategoriesApi}
+            queryKey="supershop"
+          />
+          <div className="space-y-1.5">
+            <Label htmlFor="shop-barcode">Barcode</Label>
+            <div className="flex gap-2">
+              <Input
+                id="shop-barcode"
+                value={barcode}
+                maxLength={64}
+                onChange={(event) => setBarcode(event.target.value)}
+                placeholder="Scan or type"
+              />
+              {!barcode.trim() && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="shrink-0"
+                  loading={generateBarcode.isPending}
+                  onClick={() => generateBarcode.mutate()}
+                >
+                  <Barcode />
+                  Generate
+                </Button>
+              )}
+            </div>
+          </div>
           <div className="space-y-1.5">
             <Label>Sold</Label>
-            <Select value={unitType} onValueChange={(value) => setUnitType(value as ShopUnitType)} disabled={Boolean(product)}>
+            <Select
+              value={unitType}
+              onValueChange={(value) => setUnitType(value as ShopUnitType)}
+              disabled={Boolean(product)}
+            >
               <SelectTrigger>
                 <SelectValue />
               </SelectTrigger>
@@ -382,14 +515,22 @@ function ProductDialog({
                 <SelectItem value="weight">By weight (per kg)</SelectItem>
               </SelectContent>
             </Select>
-            {product && <p className="text-xs text-muted-foreground">Fixed once created: stock and sales are counted in it.</p>}
+            {product && (
+              <p className="text-xs text-muted-foreground">Fixed once created: stock and sales are counted in it.</p>
+            )}
           </div>
           <div className="space-y-1.5">
             <Label>Price {unitType === 'weight' ? 'per kg' : 'per piece'} (incl. VAT)</Label>
             <MoneyInput value={price} onChange={setPrice} ariaLabel="Price" />
           </div>
           <TextField id="shop-vat" label="VAT rate (%)" value={vat} max={6} onChange={setVat} />
-          <TextField id="shop-reorder" label={`Reorder level${unitType === 'weight' ? ' (kg)' : ''}`} value={reorder} max={10} onChange={setReorder} />
+          <TextField
+            id="shop-reorder"
+            label={`Reorder level${unitType === 'weight' ? ' (kg)' : ''}`}
+            value={reorder}
+            max={10}
+            onChange={setReorder}
+          />
         </div>
         <label className="flex items-center justify-between gap-3 rounded-md border p-3 text-sm">
           <span>
@@ -414,7 +555,15 @@ function ProductDialog({
   );
 }
 
-function ProductHistoryDialog({ product, currency, onClose }: { product: ShopProduct | null; currency: string; onClose: () => void }) {
+function ProductHistoryDialog({
+  product,
+  currency,
+  onClose,
+}: {
+  product: ShopProduct | null;
+  currency: string;
+  onClose: () => void;
+}) {
   const { data, isLoading } = useQuery({
     queryKey: ['supershop', 'product', product?._id],
     queryFn: () => supershopApi.product(product!._id),
@@ -454,7 +603,9 @@ function ProductHistoryDialog({ product, currency, onClose }: { product: ShopPro
                     {movement.quantity > 0 ? '+' : '-'}
                     {formatQuantity(Math.abs(movement.quantity), movement.unitType)}
                   </p>
-                  <p className="text-xs text-muted-foreground">left {formatQuantity(movement.balanceAfter, movement.unitType)}</p>
+                  <p className="text-xs text-muted-foreground">
+                    left {formatQuantity(movement.balanceAfter, movement.unitType)}
+                  </p>
                 </div>
               </li>
             ))}

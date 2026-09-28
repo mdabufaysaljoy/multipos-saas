@@ -66,6 +66,13 @@ export function DataExportPage() {
   const dataset = catalog?.datasets.find((item) => item.key === type);
   const locked = !entitled || (catalogError instanceof ApiError && ['ENTITLEMENT_REQUIRED', 'FORBIDDEN'].includes(catalogError.code));
 
+  // A custom role may be allowed to export but not to read sales. In that
+  // case select the first dataset the server actually authorised instead of
+  // leaving the form pointed at a hidden default.
+  React.useEffect(() => {
+    if (catalog && !catalog.datasets.some((item) => item.key === type)) setType(catalog.datasets[0]?.key ?? '');
+  }, [catalog, type]);
+
   const run = useMutation({
     mutationFn: async () => {
       const { blob, filename } = await exportApi.run({
@@ -113,7 +120,7 @@ export function DataExportPage() {
             <div className="space-y-1">
               <h2 className="text-lg font-semibold">Data Export</h2>
               <p className="text-sm text-muted-foreground">
-                Download your customers, products, sales, inventory, returns and loyalty data as CSV, Excel, JSON or PDF. Available on the
+                Download your operational business data as CSV, Excel, JSON or PDF. Available on the
                 Professional and Enterprise plans.
               </p>
             </div>

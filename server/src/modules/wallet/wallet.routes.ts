@@ -18,7 +18,7 @@ router.get('/', requirePermission(PERMISSIONS.WALLET_VIEW), controller.balance);
 router.get('/breakdown', requirePermission(PERMISSIONS.WALLET_VIEW), validate({ query: walletBreakdownSchema }), controller.breakdown);
 router.get('/transactions', requirePermission(PERMISSIONS.WALLET_VIEW), validate({ query: walletHistorySchema }), controller.history);
 
-// Usage charges for paid services (SMS, email, AI, storage) and their prices.
+// Usage charges for paid services (SMS, email and AI) and their prices.
 router.get('/usage', requirePermission(PERMISSIONS.WALLET_VIEW), validate({ query: usageListSchema }), controller.usage);
 router.get('/usage/prices', requirePermission(PERMISSIONS.SUBSCRIPTION_VIEW), controller.usagePrices);
 

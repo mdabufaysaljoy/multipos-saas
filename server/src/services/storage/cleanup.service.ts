@@ -12,8 +12,8 @@ import { storage } from './index';
  * delete another's files simply by naming them in its own product and then
  * removing it.
  *
- * Deleting bytes is best-effort: the ledger row is closed either way, because a
- * file the provider has already lost must not keep consuming quota forever.
+ * Deleting bytes is best-effort: the registry row is closed either way because
+ * a file the provider has already lost is no longer a live owned object.
  */
 export async function releaseStorageKeys(tenantId: Types.ObjectId, keys: (string | null | undefined)[]): Promise<number> {
   const wanted = [...new Set(keys.filter((key): key is string => typeof key === 'string' && key.length > 0))];
@@ -40,8 +40,8 @@ export async function releaseStorageKeys(tenantId: Types.ObjectId, keys: (string
     try {
       await storage.delete(row.key);
     } catch (error) {
-      // The quota is already freed. Losing the bytes is a janitorial problem,
-      // not a correctness one, so it is logged rather than thrown.
+      // The ownership row is already closed. Losing the bytes is a janitorial
+      // problem, not a request correctness problem, so it is logged.
       logger.warn('Could not delete stored file; ledger row was still closed', {
         key: row.key,
         error: String(error),

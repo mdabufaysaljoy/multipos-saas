@@ -9,6 +9,7 @@ import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
 import { ApiError } from '@/api/client';
 import { formatMoney } from '@/lib/money';
+import { formatQuantity, lineAmount, parseKgToGrams } from '@/lib/supershop';
 import { tendersFromConfig, type TenderOption } from '@/types/domain';
 
 /** One line of the sale, as this dialog needs it - whatever the vertical calls it. */
@@ -19,6 +20,8 @@ export interface ReturnableSaleLine {
   quantity: number;
   returnedQuantity?: number;
   unitPriceMinor: number;
+  /** Super Shop stores weighed quantities as grams and prices them per kg. */
+  unitType?: 'each' | 'weight';
 }
 
 interface PosReturnDialogProps {
@@ -48,17 +51,30 @@ interface PosReturnDialogProps {
  */
 export function PosReturnDialog({ saleNumber, lines, currency, posConfig, onSubmit, onClose, invalidate, restockable = true }: PosReturnDialogProps) {
   const queryClient = useQueryClient();
-  const [quantities, setQuantities] = React.useState<Record<string, number>>({});
+  // Weighed quantities are typed in kilograms and converted to integer grams
+  // only for calculation/submission, so 0.5 kg is exactly 500 g.
+  const [quantities, setQuantities] = React.useState<Record<string, string>>({});
   const [restock, setRestock] = React.useState(restockable);
   const [reason, setReason] = React.useState('');
   const tenders = tendersFromConfig(posConfig);
   const [refundMethod, setRefundMethod] = React.useState(tenders[0]?.key ?? 'cash');
 
   const remainingOf = (line: ReturnableSaleLine) => line.quantity - (line.returnedQuantity ?? 0);
-  const chosen = lines
-    .map((line) => ({ line, quantity: quantities[line._id] ?? 0 }))
-    .filter((entry) => entry.quantity > 0);
-  const estimateMinor = chosen.reduce((sum, entry) => sum + entry.line.unitPriceMinor * entry.quantity, 0);
+  const parseQuantity = (line: ReturnableSaleLine, raw: string): number => {
+    const value = raw.trim();
+    if (value === '' || /^0+(?:\.0*)?$/.test(value)) return 0;
+    if (line.unitType === 'weight') return parseKgToGrams(value) ?? -1;
+    if (!/^\d+$/.test(value)) return -1;
+    const quantity = Number(value);
+    return Number.isSafeInteger(quantity) && quantity > 0 ? quantity : -1;
+  };
+  const entered = lines.map((line) => ({ line, quantity: parseQuantity(line, quantities[line._id] ?? '') }));
+  const hasInvalidQuantity = entered.some(({ line, quantity }) => quantity < 0 || quantity > remainingOf(line));
+  const chosen = entered.filter((entry) => entry.quantity > 0 && entry.quantity <= remainingOf(entry.line));
+  const estimateMinor = chosen.reduce(
+    (sum, entry) => sum + lineAmount(entry.line.unitPriceMinor, entry.quantity, entry.line.unitType ?? 'each'),
+    0,
+  );
 
   const submit = useMutation({
     mutationFn: () =>
@@ -77,7 +93,7 @@ export function PosReturnDialog({ saleNumber, lines, currency, posConfig, onSubm
     onError: (err) => toast.error(err instanceof ApiError ? err.message : 'Could not record the return'),
   });
 
-  const ready = chosen.length > 0 && reason.trim().length >= 3;
+  const ready = chosen.length > 0 && !hasInvalidQuantity && reason.trim().length >= 3;
 
   return (
     <Dialog open onOpenChange={(open) => !open && onClose()}>
@@ -90,30 +106,41 @@ export function PosReturnDialog({ saleNumber, lines, currency, posConfig, onSubm
         <ul className="divide-y text-sm">
           {lines.map((line) => {
             const remaining = remainingOf(line);
+            const unitType = line.unitType ?? 'each';
+            const enteredQuantity = parseQuantity(line, quantities[line._id] ?? '');
+            const invalid = enteredQuantity < 0 || enteredQuantity > remaining;
             return (
               <li key={line._id} className="flex items-center gap-3 py-2">
                 <div className="min-w-0 flex-1">
                   <p className="truncate font-medium">{line.label}</p>
                   <p className="truncate text-xs text-muted-foreground">
                     {line.detail ? `${line.detail} · ` : ''}
-                    {formatMoney(line.unitPriceMinor, currency)} each ·{' '}
-                    {remaining > 0 ? `${remaining} of ${line.quantity} left to return` : 'fully returned'}
+                    {formatMoney(line.unitPriceMinor, currency)} {unitType === 'weight' ? '/kg' : 'each'} ·{' '}
+                    {remaining > 0
+                      ? `${formatQuantity(remaining, unitType)} of ${formatQuantity(line.quantity, unitType)} left to return`
+                      : 'fully returned'}
                   </p>
+                  {invalid && <p className="text-xs text-destructive">Enter no more than {formatQuantity(remaining, unitType)}.</p>}
                 </div>
-                <Input
-                  type="number"
-                  min={0}
-                  max={remaining}
-                  disabled={remaining <= 0}
-                  value={quantities[line._id] ?? ''}
-                  placeholder="0"
-                  aria-label={`Quantity of ${line.label} to return`}
-                  className="w-20"
-                  onChange={(event) => {
-                    const value = Math.max(0, Math.min(remaining, Number(event.target.value) || 0));
-                    setQuantities((current) => ({ ...current, [line._id]: value }));
-                  }}
-                />
+                <div className="relative w-24 shrink-0">
+                  <Input
+                    type="number"
+                    inputMode={unitType === 'weight' ? 'decimal' : 'numeric'}
+                    min={0}
+                    max={unitType === 'weight' ? remaining / 1000 : remaining}
+                    step={unitType === 'weight' ? 0.001 : 1}
+                    disabled={remaining <= 0}
+                    value={quantities[line._id] ?? ''}
+                    placeholder="0"
+                    aria-label={`${unitType === 'weight' ? 'Kilograms' : 'Quantity'} of ${line.label} to return`}
+                    aria-invalid={invalid}
+                    className={unitType === 'weight' ? 'pr-8' : undefined}
+                    onChange={(event) => setQuantities((current) => ({ ...current, [line._id]: event.target.value }))}
+                  />
+                  {unitType === 'weight' && (
+                    <span className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-xs text-muted-foreground">kg</span>
+                  )}
+                </div>
               </li>
             );
           })}

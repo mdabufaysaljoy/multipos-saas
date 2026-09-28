@@ -78,8 +78,7 @@ async function clearAll() {
     withLedgerMaintenance('development seed reset', () => WalletTransactionModel.deleteMany({}).exec()),
     CouponModel.deleteMany({}),
     CouponRedemptionModel.deleteMany({}),
-    // Without this a reseeded database reports phantom storage usage: the
-    // tenants are gone but their ledger rows are not.
+    // The development reset removes file-ownership rows with their tenants.
     StorageObjectModel.deleteMany({}),
     UserModel.deleteMany({}),
   ]);

@@ -2,7 +2,6 @@ import { useQuery } from '@tanstack/react-query';
 import { billingApi } from '@/api/endpoints';
 import { evaluateUsage, usageLimitsFor, type UsageStatus } from '@/lib/usageLimits';
 import { useAuth } from '@/hooks/useAuth';
-import { formatBytes } from '@/lib/planCatalog';
 
 /**
  * Live usage against plan limits.
@@ -63,12 +62,7 @@ export function useUsageLimits() {
 
     return {
       name: better.name.replace(/ Annual$/, ''),
-      allowance:
-        value === -1
-          ? 'unlimited'
-          : status.format === 'bytes'
-            ? formatBytes(value)
-            : value.toLocaleString(),
+      allowance: value === -1 ? 'unlimited' : value.toLocaleString(),
     };
   };
 

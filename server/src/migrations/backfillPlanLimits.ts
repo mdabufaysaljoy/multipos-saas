@@ -1,7 +1,6 @@
 /**
  * Backfills the plan limits and feature flags introduced with the MVP package
- * structure: maxMonthlySales, maxCustomers, maxStorageBytes, smsMarketing,
- * emailMarketing and imageOptimization.
+ * structure: maxMonthlySales, maxCustomers, smsMarketing and emailMarketing.
  *
  * Only keys that are MISSING are written. Changing the VALUE of a limit an
  * existing customer already bought is a commercial decision, not a migration:
@@ -39,8 +38,8 @@ const byFamily = new Map(
 
 const family = (code: string) => code.replace(/-(monthly|annual)$/, '');
 
-const NEW_LIMIT_KEYS = ['maxMonthlySales', 'maxCustomers', 'maxStorageBytes'] as const;
-const NEW_FEATURE_KEYS = ['smsMarketing', 'emailMarketing', 'imageOptimization'] as const;
+const NEW_LIMIT_KEYS = ['maxMonthlySales', 'maxCustomers'] as const;
+const NEW_FEATURE_KEYS = ['smsMarketing', 'emailMarketing'] as const;
 
 export async function backfillPlanLimits(): Promise<{ plans: number; subscriptions: number; skipped: string[] }> {
   const skipped: string[] = [];

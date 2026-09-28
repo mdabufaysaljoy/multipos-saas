@@ -46,7 +46,6 @@ class PlanChangeService {
         staff: rawUsage.staff,
         products: rawUsage.products,
         customers: rawUsage.customers,
-        storageBytes: rawUsage.storageBytes,
       },
     );
 

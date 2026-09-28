@@ -169,7 +169,6 @@ export const planOptions = asyncHandler(async (req: Request, res: Response) => {
         staff: usage.staff,
         products: usage.products,
         customers: usage.customers,
-        storageBytes: usage.storageBytes,
       });
 
       // Re-buying the plan you are on is a no-op while it runs, but it is the

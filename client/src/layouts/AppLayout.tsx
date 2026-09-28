@@ -97,7 +97,14 @@ const NAV_SECTIONS: { heading: string; items: NavItem[] }[] = [
     heading: 'Catalogue',
     items: [
       { to: '/catalogue', label: 'Products', icon: Tags, anyOf: ['products.view'], verticals: ['clothing'] },
-      { to: '/suppliers', label: 'Suppliers', icon: Factory, anyOf: ['suppliers.view'], verticals: ['clothing'] },
+      {
+        to: '/suppliers',
+        label: 'Suppliers',
+        icon: Factory,
+        anyOf: ['suppliers.view'],
+        feature: 'supplierManagement',
+        verticals: ['clothing', 'supershop'],
+      },
       { to: '/categories', label: 'Categories', icon: FolderTree, anyOf: ['categories.view'], verticals: ['clothing'] },
       { to: '/inventory', label: 'Inventory', icon: Boxes, anyOf: ['inventory.view'], verticals: ['clothing'] },
       { to: '/menu', label: 'Menu', icon: UtensilsCrossed, anyOf: ['products.view'], verticals: ['restaurant'] },
@@ -130,7 +137,7 @@ const NAV_SECTIONS: { heading: string; items: NavItem[] }[] = [
     items: [
       { to: '/dashboard', label: 'Dashboard', icon: LayoutDashboard, anyOf: ['reports.view'] },
       { to: '/analytics', label: 'Advanced Analytics', icon: BarChart3, anyOf: ['reports.view'], feature: 'advancedReports' },
-      { to: '/data-export', label: 'Data export', icon: FileDown, anyOf: ['reports.export'], feature: 'exportData', verticals: ['clothing'] },
+      { to: '/data-export', label: 'Data export', icon: FileDown, anyOf: ['reports.export'], feature: 'exportData' },
       { to: '/account', label: 'My POS', icon: LayoutGrid, ownerOnly: true },
       { to: '/billing', label: 'Billing', icon: Layers, ownerOnly: true },
       { to: '/subscription', label: 'Subscription', icon: CreditCard, anyOf: ['subscription.view'] },

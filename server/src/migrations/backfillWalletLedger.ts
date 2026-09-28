@@ -23,7 +23,7 @@ const sourceExpression = {
     branches: [
       { case: { $and: [{ $eq: ['$referenceType', 'topup'] }, { $in: ['$metadata.method', ['bkash', 'nagad', 'bank']] }] }, then: '$metadata.method' },
       { case: { $eq: ['$referenceType', 'topup'] }, then: 'manual_topup' },
-      { case: { $in: ['$referenceType', ['subscription', 'sms', 'email', 'ai', 'storage', 'refund', 'transfer']] }, then: '$referenceType' },
+      { case: { $in: ['$referenceType', ['subscription', 'sms', 'email', 'ai', 'refund', 'transfer']] }, then: '$referenceType' },
       { case: { $eq: ['$referenceType', 'adjustment'] }, then: 'admin_adjustment' },
     ],
     default: 'system',

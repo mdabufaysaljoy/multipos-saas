@@ -22,6 +22,8 @@ export interface ReturnItemDoc {
   categoryId: Types.ObjectId | null;
   categoryNameSnapshot: string;
   quantity: number;
+  /** Super Shop uses grams for weighed goods; absent elsewhere and on historical rows. */
+  unitType?: 'each' | 'weight';
   /** Always the price from the original sale, never the current price. */
   unitPriceMinor: number;
   /**
@@ -123,6 +125,7 @@ const returnItemSchema = new Schema<ReturnItemDoc>(
       min: [1, 'Return quantity must be positive'],
       validate: { validator: Number.isSafeInteger, message: 'quantity must be a whole number' },
     },
+    unitType: { type: String, enum: ['each', 'weight'], default: undefined },
     unitPriceMinor: { type: Number, required: true, min: 0 },
     // Defaults to 0 so returns created before this field existed still load.
     costPriceMinorSnapshot: { type: Number, default: 0, min: 0 },

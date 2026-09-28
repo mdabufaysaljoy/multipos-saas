@@ -1,7 +1,7 @@
-# Supplier management (Clothing POS)
+# Supplier management (Clothing and Super Shop POS)
 
-Scope: **Clothing POS only.** Restaurant, Pharmacy and Super Shop are untouched — a Restaurant
-workspace has no supplier module at all, whatever plan it is on.
+Scope: **Clothing and Super Shop POS.** Restaurant and Pharmacy are untouched — those workspaces have
+no supplier module, whatever plan they are on.
 
 Availability: **Professional and Enterprise.** Starter cannot reach the feature, its data or its API.
 
@@ -19,7 +19,7 @@ model is shaped so they can be added without rebuilding anything (see §11).
 
 ## 1. Ownership: workspace-level
 
-A supplier belongs to the **workspace**, not a branch. A clothing business buys from the same
+A supplier belongs to the **workspace**, not a branch. A retail business buys from the same
 wholesalers for every shop it runs, so duplicating a supplier per branch would be busywork and would
 make future purchase reporting lie.
 
@@ -62,7 +62,8 @@ Indexes: `{tenantId, code}` unique among live rows; `{tenantId, deletedAt, isAct
 
 ## 3. Entitlement and limit
 
-- Feature: plan flag `supplierManagement` → entitlement key **`supplierManagement`** (Clothing only),
+- Feature: plan flag `supplierManagement` → entitlement key **`supplierManagement`** (Clothing and
+  Super Shop),
   enforced by `requireAccess({ entitlement: 'supplierManagement' })` on the router — so every route,
   including reads, is refused for Starter with `ENTITLEMENT_REQUIRED`.
 - Limit: plan limit `maxSuppliers` → entitlement limit key **`suppliers`** (Starter 0, Professional
@@ -104,7 +105,7 @@ a Store Manager on Starter is still refused.
 | POST | `/:id/status` | `suppliers.edit` | Activate / deactivate |
 | DELETE | `/:id` | `suppliers.delete` | Soft delete |
 
-Chain on every route: authenticated → workspace + branch → Clothing → usable subscription →
+Chain on every route: authenticated → workspace + branch → Clothing or Super Shop → usable subscription →
 `supplierManagement` entitlement → permission.
 
 Search covers name, code, business phone, business email, contact name and contact phone, in the
@@ -164,8 +165,10 @@ are never copied into the log.
 
 ## 10. Exporting the supplier list
 
-The **Export** button on the Suppliers page (Excel, CSV or PDF) goes through the ordinary Data export
-API — the same registry, limits, history and audit trail as every other export (`docs/DATA_EXPORT.md`).
+In Clothing and Super Shop, the **Export** button on the Suppliers page (Excel, CSV or PDF) goes through the ordinary
+Data export API — the same registry, limits, history and audit trail as every other export
+(`docs/DATA_EXPORT.md`). The button appears when the workspace also has the Professional/Enterprise
+Data Export feature and the acting user has `reports.export`.
 
 - The dataset is `suppliers`, and it is a **snapshot**: every supplier is included, active and inactive,
   with no date range to trim the older ones.
@@ -184,7 +187,7 @@ Supplier **import** is still not built (§13).
 ## 11. Built for what comes next
 
 - A supplier is referenced by its `_id`; the code is for humans.
-- **No product relationship is baked in.** A garment may be bought from several suppliers over time, so
+- **No product relationship is baked in.** A product may be bought from several suppliers over time, so
   that link belongs on a purchase record, not on the product and not on the supplier. Product import
   and product creation are unchanged and still need no supplier.
 - Purchase orders, stock receiving, purchase history and payables can be added as their own modules

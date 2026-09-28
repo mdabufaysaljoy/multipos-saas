@@ -27,8 +27,6 @@ export interface PlatformSettingsDoc extends BaseDoc {
   emailCostMinor: number;
   /** Cost per AI request, in minor units. For AI services billed per use. */
   aiRequestCostMinor: number;
-  /** Cost per GB-month of billed storage, in minor units. */
-  storageGbMonthCostMinor: number;
   /**
    * SMTP credentials. `select: false` on the password keeps it out of every
    * ordinary query, and the tenant-facing API never returns this block at all.
@@ -88,7 +86,6 @@ const platformSettingsSchema = new Schema<PlatformSettingsDoc>(
     smsCostMinor: { type: Number, default: 50, min: 0 },
     emailCostMinor: { type: Number, default: 0, min: 0 },
     aiRequestCostMinor: { type: Number, default: 0, min: 0 },
-    storageGbMonthCostMinor: { type: Number, default: 0, min: 0 },
     sms: {
       provider: { type: String, default: 'alpha' },
       apiKey: { type: String, default: '', select: false },

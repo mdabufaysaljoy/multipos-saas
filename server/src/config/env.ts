@@ -49,7 +49,10 @@ const schema = z.object({
   /** Brand shown in transactional emails. Not secrets. */
   BRAND_NAME: z.string().trim().min(1).max(60).default('RetailSuite'),
   BRAND_WEBSITE_URL: z.string().trim().url().default('https://retailersuites.com'),
-  BRAND_PRIMARY_COLOR: z.string().regex(/^#[0-9a-fA-F]{6}$/).default('#2056d5'),
+  BRAND_PRIMARY_COLOR: z.preprocess(
+    (value) => (value === '' ? undefined : value),
+    z.string().regex(/^#[0-9a-fA-F]{6}$/).default('#2056d5'),
+  ),
   /** Timezone dates are shown in to customers (subscription periods are stored as exact instants). */
   BUSINESS_TIMEZONE: z.string().trim().default('Asia/Dhaka'),
   /** Self-serve ceiling on POS workspaces per platform account. */

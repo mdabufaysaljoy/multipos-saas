@@ -32,7 +32,6 @@ export const FEATURE_KEYS = [
   'prioritySupport',
   'smsMarketing',
   'emailMarketing',
-  'imageOptimization',
   'loyaltyProgram',
   'productImport',
   'supplierManagement',
@@ -44,7 +43,6 @@ export const LIMIT_KEYS = [
   'maxStores',
   'maxMonthlySales',
   'maxCustomers',
-  'maxStorageBytes',
   'maxSuppliers',
 ] as const satisfies readonly (keyof PlanLimits)[];
 

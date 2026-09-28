@@ -16,7 +16,7 @@ export const PERMISSIONS = {
   CATEGORIES_EDIT: 'categories.edit',
   CATEGORIES_DELETE: 'categories.delete',
 
-  /** Supplier management (Clothing POS, plans with the supplier entitlement). */
+  /** Supplier management (Clothing and Super Shop, plans with the supplier entitlement). */
   SUPPLIERS_VIEW: 'suppliers.view',
   SUPPLIERS_CREATE: 'suppliers.create',
   SUPPLIERS_EDIT: 'suppliers.edit',

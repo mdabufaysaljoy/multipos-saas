@@ -12,7 +12,7 @@ import { EXPORTS_PER_MINUTE } from './export.limits';
 import { createExportSchema, listExportsSchema } from './export.validators';
 
 /**
- * Data export (Clothing POS).
+ * Data export for every shipped POS type.
  *
  * Every route: signed in -> workspace + branch -> usable subscription ->
  * `dataExport` entitlement (Professional / Enterprise) -> `reports.export`

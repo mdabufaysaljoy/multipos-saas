@@ -1,5 +1,4 @@
 import type { Response } from 'express';
-import { DEFAULT_POS_VERTICAL } from '../../config/verticals';
 import { ExportJobModel } from '../../models/ExportJob';
 import { StoreModel } from '../../models/Store';
 import { TenantModel } from '../../models/Tenant';
@@ -25,7 +24,7 @@ import {
 import type { CreateExportInput } from './export.validators';
 
 /**
- * Data export (Clothing POS).
+ * Data export for every shipped POS vertical.
  *
  * The request names a dataset from the registry and a format; everything else -
  * workspace, branch, query, columns - comes from the authenticated session and
@@ -33,16 +32,6 @@ import type { CreateExportInput } from './export.validators';
  * stored, so there is no file at rest to protect or expire.
  */
 class ExportService {
-  /** Clothing only: the registry is built from Clothing collections. */
-  private async assertClothing(ctx: TenantContext) {
-    const tenant = await TenantModel.findById(ctx.tenantId).select('vertical name').lean();
-    const vertical = tenant?.vertical ?? DEFAULT_POS_VERTICAL;
-    if (vertical !== 'clothing') {
-      throw ApiError.forbidden('Data export is available for the Clothing POS.');
-    }
-    return tenant;
-  }
-
   /**
    * Branch scope, mirroring the reports rule: "all" is honoured for tenant
    * admins only; everyone else always gets their own branch, whatever the
@@ -60,6 +49,7 @@ class ExportService {
    * dataset the user could not read anywhere else in the app.
    */
   private async allows(ctx: TenantContext, dataset: ExportDataset): Promise<boolean> {
+    if (dataset.verticals && !dataset.verticals.includes(ctx.vertical)) return false;
     const required = dataset.requires;
     if (!required) return true;
     if (required.permission && !ctx.isAdmin && !ctx.permissions.includes(required.permission)) return false;
@@ -93,8 +83,8 @@ class ExportService {
    * caller can log it; the history row is written here either way.
    */
   async stream(ctx: TenantContext, input: CreateExportInput, res: Response) {
-    const tenant = await this.assertClothing(ctx);
-    const dataset = findDataset(input.type);
+    const tenant = await TenantModel.findById(ctx.tenantId).select('name').lean();
+    const dataset = findDataset(input.type, ctx.vertical);
     if (!dataset) throw ApiError.validation('Unknown export type');
     if (!(await this.allows(ctx, dataset))) {
       throw ApiError.forbidden(`You do not have access to the ${dataset.label.toLowerCase()} data.`);

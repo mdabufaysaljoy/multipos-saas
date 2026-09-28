@@ -4,7 +4,8 @@
  *
  * Run against a freshly seeded database:  npm run seed -w server && node scripts/smoke-test.mjs
  */
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 
 const BASE = process.env.API_BASE ?? 'http://localhost:4100/api';
 
@@ -93,7 +94,7 @@ async function download(path, { token, storeId, body } = {}) {
   };
 }
 
-/** Uploads an in-memory file. Used to prove the storage quota actually counts. */
+/** Uploads an in-memory image through the same multipart path as the client. */
 async function upload(path, { token, storeId, bytes, filename = 'pixel.png' } = {}) {
   const form = new FormData();
   form.append('file', new Blob([bytes], { type: 'image/png' }), filename);
@@ -2197,7 +2198,7 @@ async function main() {
   check(
     'Usage reports every countable resource',
     usageBefore &&
-      ['products', 'staff', 'stores', 'customers', 'monthlySales', 'storageBytes'].every(
+      ['products', 'staff', 'stores', 'customers', 'monthlySales'].every(
         (key) => typeof usageBefore[key] === 'number',
       ),
     usageBefore,
@@ -2230,9 +2231,8 @@ async function main() {
     { expected: usageBefore?.customers, actual: afterCustomerDelete?.customers },
   );
 
-  // --- storage -------------------------------------------------------------
+  // --- uploads -------------------------------------------------------------
   const STORAGE_TEST_BYTES = 5_000;
-  const storageBefore = afterCustomerDelete?.storageBytes ?? 0;
 
   const uploaded = await upload('/uploads/image', {
     token: admin.token,
@@ -2241,31 +2241,13 @@ async function main() {
   check('Image upload succeeds', uploaded.status === 201, uploaded.error);
   check('Upload reports a byte size', typeof uploaded.data?.size === 'number' && uploaded.data.size > 0, uploaded.data?.size);
 
-  // On a plan with image optimisation the stored file is SMALLER than what was
-  // sent, so the server's reported size is the only correct thing to compare.
-  const firstStored = uploaded.data.size;
-  const afterUpload = (await api('/subscriptions/current', { token: admin.token })).data?.usage;
-  check(
-    'Uploading counts the stored byte size against the quota',
-    afterUpload?.storageBytes === storageBefore + firstStored,
-    { before: storageBefore, after: afterUpload?.storageBytes, stored: firstStored },
-  );
-
   const secondUpload = await upload('/uploads/image', { token: admin.token, bytes: makePng(3_000) });
   check('Second upload succeeds', secondUpload.status === 201, secondUpload.error);
   const afterSecond = (await api('/subscriptions/current', { token: admin.token })).data?.usage;
   check(
-    'Storage accumulates across uploads',
-    afterSecond?.storageBytes === storageBefore + firstStored + secondUpload.data.size,
-    { expected: storageBefore + firstStored + secondUpload.data.size, actual: afterSecond?.storageBytes },
-  );
-
-  // Storage is per tenant: one workspace's files must not show up in another's.
-  const isolationUsage = (await api('/subscriptions/current', { token: cashier.token })).data?.usage;
-  check(
-    'Staff in the same tenant see the same storage figure',
-    isolationUsage === undefined || isolationUsage.storageBytes === afterSecond?.storageBytes,
-    { staff: isolationUsage?.storageBytes, admin: afterSecond?.storageBytes },
+    'Subscription usage does not expose an upload-storage allowance',
+    afterSecond && !Object.hasOwn(afterSecond, 'storageBytes'),
+    afterSecond,
   );
 
   // --- monthly sales -------------------------------------------------------
@@ -2543,7 +2525,7 @@ async function main() {
     interval: 'monthly',
     priceMinor: 1000,
     tier: 1,
-    limits: { maxProducts: 3, maxStaff: 1, maxStores: 1, maxCustomers: 2, maxMonthlySales: 2, maxStorageBytes: -1 },
+    limits: { maxProducts: 3, maxStaff: 1, maxStores: 1, maxCustomers: 2, maxMonthlySales: 2 },
     features: { salesReports: true, customerManagement: true, inventoryLedger: true },
     isPublic: false,
   };
@@ -2602,7 +2584,7 @@ async function main() {
 
   // Every other count-based limit gets the same treatment, on its own fresh
   // workspace so each race starts from zero.
-  const raceLimits = { maxProducts: 2, maxStaff: 1, maxStores: 2, maxCustomers: 2, maxMonthlySales: 2, maxStorageBytes: 10_000 };
+  const raceLimits = { maxProducts: 2, maxStaff: 1, maxStores: 2, maxCustomers: 2, maxMonthlySales: 2 };
   const racer2 = await api('/auth/register', {
     method: 'POST',
     body: {
@@ -2681,10 +2663,6 @@ async function main() {
       token: race2Token,
       body: { name: `RB${i}`, code: `RB${i}`, currency: 'BDT' },
     }), 5, (u) => u?.stores);
-
-  // Storage is cumulative rather than countable: 3 x 3,000 fits in 10,000.
-  await raceCase('uploads', 'maxStorageBytes', 9_000, () =>
-    upload('/uploads/image', { token: race2Token, bytes: makePng(3_000) }), 6, (u) => u?.storageBytes);
 
   const race2Search = await api('/products/pos-search?q=&limit=50', { token: race2Token });
   const race2Variant = (race2Search.data ?? []).find((v) => v.stock >= 5);
@@ -2912,14 +2890,14 @@ async function main() {
   );
   check(
     'Every countable limit escalates from Starter to Showroom',
-    ['maxProducts', 'maxCustomers', 'maxMonthlySales', 'maxStorageBytes'].every(
+    ['maxProducts', 'maxCustomers', 'maxMonthlySales'].every(
       (k) => showroomLimits[k] === -1 || showroomLimits[k] > starterLimits[k],
     ),
     { starter: starterLimits, showroom: showroomLimits },
   );
 
   // ==================================================================
-  //  BRAND IMAGE OPTIMIZATION  (Brand-only, enforced server-side)
+  //  IMAGE OPTIMIZATION  (upload infrastructure on every subscription)
   // ==================================================================
   section('Image optimization');
 
@@ -2946,59 +2924,36 @@ async function main() {
     return token;
   };
 
-  const brandToken = await optTenant('OptBrand', 'brand-monthly');
-  const showroomToken = await optTenant('OptShowroom', 'showroom-monthly');
+  const optimizationTiers = [
+    { name: 'Starter', token: await optTenant('OptStarter', 'starter-store-monthly') },
+    { name: 'Professional', token: await optTenant('OptProfessional', 'showroom-monthly') },
+    { name: 'Enterprise', token: await optTenant('OptEnterprise', 'brand-monthly') },
+  ];
 
-  // A 2400x2400 JPEG: larger than the 4 MB unoptimised cap and beyond the
-  // 2000px resize ceiling, so both behaviours are exercised.
+  // A 2400x2400 JPEG: larger than the retired 4 MB plan cap and beyond the
+  // 2000px resize ceiling, proving every tier receives the same pipeline.
   const bigJpeg = await makeJpeg(2400, 2400);
-  check('Test image is over the unoptimised limit', bigJpeg.byteLength > 4 * 1024 * 1024, bigJpeg.byteLength);
+  check('Test image is over the retired plan-specific limit', bigJpeg.byteLength > 4 * 1024 * 1024, bigJpeg.byteLength);
 
-  const brandUpload = await upload('/uploads/image', { token: brandToken, bytes: bigJpeg, filename: 'big.jpg' });
-  check('Brand accepts a large image', brandUpload.status === 201, brandUpload.error);
-  check('Brand upload is stored as WebP', brandUpload.data?.mimeType === 'image/webp', brandUpload.data?.mimeType);
-  check(
-    'Brand upload is smaller than the original',
-    brandUpload.data?.size < bigJpeg.byteLength,
-    { original: bigJpeg.byteLength, stored: brandUpload.data?.size },
-  );
-  check(
-    'Brand upload is resized to the 2000px ceiling',
-    brandUpload.data?.optimisation?.width <= 2000 && brandUpload.data?.optimisation?.height <= 2000,
-    brandUpload.data?.optimisation,
-  );
-
-  // Only the OPTIMISED bytes count against the quota, not what was sent.
-  const brandUsage = (await api('/subscriptions/current', { token: brandToken })).data?.usage;
-  check(
-    'Only the optimised size counts toward the quota',
-    brandUsage?.storageBytes === brandUpload.data?.size,
-    { quota: brandUsage?.storageBytes, stored: brandUpload.data?.size, sent: bigJpeg.byteLength },
-  );
-
-  // Showroom has no optimisation, so the same file must be refused outright
-  // rather than silently stored at full size.
-  const showroomBig = await upload('/uploads/image', { token: showroomToken, bytes: bigJpeg, filename: 'big.jpg' });
-  check('Showroom cannot upload an oversized image', showroomBig.status >= 400, showroomBig.status);
-  check(
-    'The refusal explains the plan difference',
-    /enterprise/i.test(String(showroomBig.error?.message ?? '')),
-    showroomBig.error?.message,
-  );
-
-  const smallJpeg = await makeJpeg(400, 400);
-  const showroomSmall = await upload('/uploads/image', { token: showroomToken, bytes: smallJpeg, filename: 'small.jpg' });
-  check('Showroom can still upload a normal image', showroomSmall.status === 201, showroomSmall.error);
-  check(
-    'Showroom uploads are NOT converted to WebP',
-    showroomSmall.data?.mimeType !== 'image/webp',
-    showroomSmall.data?.mimeType,
-  );
-  check('Showroom does not report an optimisation', !showroomSmall.data?.optimisation, showroomSmall.data?.optimisation);
+  for (const tier of optimizationTiers) {
+    const tierUpload = await upload('/uploads/image', { token: tier.token, bytes: bigJpeg, filename: 'big.jpg' });
+    check(`${tier.name} accepts a large image`, tierUpload.status === 201, tierUpload.error);
+    check(`${tier.name} stores uploads as WebP`, tierUpload.data?.mimeType === 'image/webp', tierUpload.data?.mimeType);
+    check(
+      `${tier.name} upload is smaller than the original`,
+      tierUpload.data?.size < bigJpeg.byteLength,
+      { original: bigJpeg.byteLength, stored: tierUpload.data?.size },
+    );
+    check(
+      `${tier.name} upload is resized to the 2000px ceiling`,
+      tierUpload.data?.optimisation?.width <= 2000 && tierUpload.data?.optimisation?.height <= 2000,
+      tierUpload.data?.optimisation,
+    );
+  }
 
   // --- corrupt and disguised files -----------------------------------------
   const optNotAnImage = await upload('/uploads/image', {
-    token: brandToken,
+    token: optimizationTiers[2].token,
     bytes: Buffer.from('#!/bin/sh\necho pwned\n'),
     filename: 'payload.png',
   });
@@ -3008,7 +2963,7 @@ async function main() {
   });
 
   const optTruncated = await upload('/uploads/image', {
-    token: brandToken,
+    token: optimizationTiers[2].token,
     bytes: bigJpeg.subarray(0, 200),
     filename: 'optTruncated.jpg',
   });
@@ -3019,7 +2974,7 @@ async function main() {
   // ==================================================================
   section('Payment request validation');
 
-  const payToken = brandToken;
+  const payToken = optimizationTiers[2].token;
 
   const topUpCases = [
     ['no sender number', { amountMinor: 100000, paymentMethod: 'bkash', transactionId: `TX${optStamp}A` }],
@@ -4027,6 +3982,7 @@ async function main() {
   check('Restaurant screens stay locked until a plan is bought', rv.locked.status === 402, rv.locked.status);
   check('It buys Starter from the account wallet', rv.bought.status < 300, rv.bought.error);
   check('Its entitlement is resolved for Restaurant', (await api('/subscriptions/current', { token: rvToken })).data?.entitlement?.vertical === 'restaurant');
+  check('Restaurant data export is blocked on Starter', (await api('/exports/datasets', { token: rvToken })).status === 403);
 
   // --- isolation between verticals -------------------------------------------
   for (const path of ['/products', '/categories', '/inventory', '/sales', '/returns', '/reports/overview']) {
@@ -4437,6 +4393,15 @@ async function main() {
     const rep = await pApi('/restaurant/reports?preset=today');
     const r = rep.data;
     check('Professional unlocks Restaurant analytics', rep.status === 200, rep.error);
+    const rvExports = await pApi('/exports/datasets');
+    const rvExportKeys = (rvExports.data?.datasets ?? []).map((dataset) => dataset.key);
+    check(
+      'Professional Restaurant exports cover menu, orders, payments, kitchen and shifts',
+      ['products', 'categories', 'tables', 'sales', 'sale-items', 'sale-payments', 'kitchen-tickets', 'shifts', 'cash-movements'].every((key) => rvExportKeys.includes(key)),
+      rvExportKeys,
+    );
+    const rvExport = await download('/exports', { token: pt, body: { type: 'sales', format: 'json', preset: 'today', branch: 'current' } });
+    check('Restaurant orders export as a real JSON download', rvExport.status === 200 && rvExport.contentType.includes('application/json') && JSON.parse(rvExport.buffer.toString('utf8')).sections?.[0]?.records?.length >= 1, rvExport.error);
     check('Totals come from paid orders', r?.totals?.paidOrders === 1 && r.totals.netSalesMinor === 38000 && r.totals.discountsMinor === 2000, r?.totals);
     check('Menu performance lists only what was sold', r?.menu?.length === 1 && r.menu[0].name === 'Tehari' && r.menu[0].quantity === 2 && r.menu[0].revenueMinor === 40000, r?.menu);
     check('Categories are grouped', r?.categories?.[0]?.category === 'Mains', r?.categories);
@@ -5115,7 +5080,7 @@ async function main() {
   section('Usage charges');
 
   const ucPrices = await api('/wallet/usage/prices', { token: admin.token });
-  check('The usage price list loads', ucPrices.status === 200 && ucPrices.data?.length === 4, ucPrices.data);
+  check('The usage price list loads without storage billing', ucPrices.status === 200 && ucPrices.data?.length === 3, ucPrices.data);
   const ucSettings = await api('/platform/settings', { token: platform2.token });
   check(
     'SMS is priced from platform settings',
@@ -5131,20 +5096,20 @@ async function main() {
   const ucSet = await api('/platform/settings', {
     method: 'PATCH',
     token: platform2.token,
-    body: { aiRequestCostMinor: 25, storageGbMonthCostMinor: 1500 },
+    body: { aiRequestCostMinor: 25 },
   });
-  check('Platform admin sets AI and storage prices', ucSet.status === 200, ucSet.error);
+  check('Platform admin sets the AI usage price', ucSet.status === 200, ucSet.error);
   const ucPrices2 = await api('/wallet/usage/prices', { token: admin.token });
   check(
     'New prices apply immediately',
-    ucPrices2.data?.find((p) => p.service === 'ai')?.unitPriceMinor === 25 && ucPrices2.data?.find((p) => p.service === 'storage')?.unitPriceMinor === 1500,
+    ucPrices2.data?.find((p) => p.service === 'ai')?.unitPriceMinor === 25,
     ucPrices2.data,
   );
   check('A negative price is rejected', (await api('/platform/settings', { method: 'PATCH', token: platform2.token, body: { aiRequestCostMinor: -1 } })).status === 422);
-  check('A fractional price is rejected', (await api('/platform/settings', { method: 'PATCH', token: platform2.token, body: { storageGbMonthCostMinor: 2.5 } })).status === 422);
+  check('A fractional price is rejected', (await api('/platform/settings', { method: 'PATCH', token: platform2.token, body: { aiRequestCostMinor: 2.5 } })).status === 422);
   check('A tenant cannot change prices', (await api('/platform/settings', { method: 'PATCH', token: admin.token, body: { smsCostMinor: 0 } })).status === 403);
-  await api('/platform/settings', { method: 'PATCH', token: platform2.token, body: { aiRequestCostMinor: 0, storageGbMonthCostMinor: 0 } });
-  check('The usage summary always covers all four services', (await api('/wallet/usage', { token: admin.token })).data?.summary?.length === 4);
+  await api('/platform/settings', { method: 'PATCH', token: platform2.token, body: { aiRequestCostMinor: 0 } });
+  check('The usage summary covers SMS, email and AI only', (await api('/wallet/usage', { token: admin.token })).data?.summary?.length === 3);
 
   // ------------------------------------------------- workspace creation
   section('Workspace creation');
@@ -5410,6 +5375,7 @@ async function main() {
   const phBought = await api('/subscriptions/upgrade-request', { method: 'POST', token: phToken, body: { planId: phPlan._id, paymentMethod: 'wallet', amountMinor: phPlan.priceMinor } });
   check('It buys Starter from the account wallet', phBought.status < 300, phBought.error);
   check('Its entitlement is resolved for Pharmacy', (await api('/subscriptions/current', { token: phToken })).data?.entitlement?.vertical === 'pharmacy');
+  check('Pharmacy data export is blocked on Starter', (await api('/exports/datasets', { token: phToken })).status === 403);
 
   for (const path of ['/products', '/sales', '/inventory', '/restaurant/menu']) {
     const res = await api(path, { token: phToken });
@@ -5584,6 +5550,15 @@ async function main() {
   const phPro = ((await api('/plans?vertical=pharmacy')).data ?? []).find((p) => p.code === 'showroom-monthly');
   const phUpgrade = await api('/platform/subscriptions', { method: 'POST', token: platform2.token, body: { tenantId: phCreated.data?.workspace?.id, planId: phPro?._id, periods: 1, status: 'active' } });
   check('The Pharmacy workspace moves to Professional', phUpgrade.status < 300, phUpgrade.error);
+  const phExports = await api('/exports/datasets', { token: phToken });
+  const phExportKeys = (phExports.data?.datasets ?? []).map((dataset) => dataset.key);
+  check(
+    'Professional Pharmacy exports cover medicines, batches, sales, prescriptions and stock history',
+    ['products', 'categories', 'inventory', 'stock-movements', 'sales', 'sale-items', 'sale-payments', 'prescriptions'].every((key) => phExportKeys.includes(key)),
+    phExportKeys,
+  );
+  const phExport = await download('/exports', { token: phToken, body: { type: 'inventory', format: 'json', preset: 'last30', branch: 'current' } });
+  check('Pharmacy batch inventory exports as a real JSON download', phExport.status === 200 && JSON.parse(phExport.buffer.toString('utf8')).sections?.[0]?.records?.length >= 1, phExport.error);
   const phRep = await phApi('/reports?preset=today');
   const phR = phRep.data;
   check('Professional unlocks Pharmacy analytics', phRep.status === 200, phRep.error);
@@ -5628,6 +5603,7 @@ async function main() {
   await api(`/platform/tenants/${ssHomeId}/wallet/adjust`, { method: 'POST', token: platform2.token, body: { direction: 'credit', amountMinor: ssPlan.priceMinor, reason: 'Smoke test: supershop plan' } });
   const ssBought = await api('/subscriptions/upgrade-request', { method: 'POST', token: ssToken, body: { planId: ssPlan._id, paymentMethod: 'wallet', amountMinor: ssPlan.priceMinor } });
   check('It buys Starter from the account wallet', ssBought.status < 300, ssBought.error);
+  check('Super Shop data export is blocked on Starter', (await api('/exports/datasets', { token: ssToken })).status === 403);
 
   for (const path of ['/products', '/sales', '/pharmacy/medicines', '/restaurant/menu']) {
     const res = await api(path, { token: ssToken });
@@ -5834,7 +5810,7 @@ async function main() {
   const basket = await ssSale({ items: [{ productId: soap.data._id, quantity: 3 }, { productId: rice.data._id, quantity: 1500 }], payments: [{ method: 'cash', amountMinor: 30_000 }] });
   check(
     'A mixed basket is priced by piece and by weight',
-    basket.status === 201 && basket.data?.items?.[1]?.lineTotalMinor === 14_250 && basket.data?.subtotalMinor === 27_750 && basket.data?.changeMinor === 2250,
+    basket.status === 201 && basket.data?.items?.[1]?.lineTotalMinor === 14_250 && basket.data?.subtotalMinor === 27_750 && basket.data?.roundingMinor === 50 && basket.data?.totalMinor === 27_800 && basket.data?.changeMinor === 2200,
     basket.data ?? basket.error,
   );
   check('VAT included in the price is worked out per line', basket.data?.items?.[0]?.vatMinor === 1761 && basket.data?.vatMinor === 1761, basket.data?.items);
@@ -5928,6 +5904,15 @@ async function main() {
   const ssPro = ((await api('/plans?vertical=supershop')).data ?? []).find((p) => p.code === 'showroom-monthly');
   const ssUpgrade = await api('/platform/subscriptions', { method: 'POST', token: platform2.token, body: { tenantId: ssCreated.data?.workspace?.id, planId: ssPro?._id, periods: 1, status: 'active' } });
   check('The Supershop workspace moves to Professional', ssUpgrade.status < 300, ssUpgrade.error);
+  const ssExports = await api('/exports/datasets', { token: ssToken });
+  const ssExportKeys = (ssExports.data?.datasets ?? []).map((dataset) => dataset.key);
+  check(
+    'Professional Super Shop exports cover products, departments, brands, stock and sales',
+    ['products', 'categories', 'brands', 'inventory', 'stock-movements', 'sales', 'sale-items', 'sale-payments'].every((key) => ssExportKeys.includes(key)),
+    ssExportKeys,
+  );
+  const ssExport = await download('/exports', { token: ssToken, body: { type: 'sale-items', format: 'json', preset: 'today', branch: 'current' } });
+  check('Super Shop sale lines export as a real JSON download', ssExport.status === 200 && JSON.parse(ssExport.buffer.toString('utf8')).sections?.[0]?.records?.length >= 1, ssExport.error);
   const ssRep = await ssApi('/reports?preset=today');
   const ssR = ssRep.data;
   check('Professional unlocks Supershop analytics', ssRep.status === 200, ssRep.error);
@@ -5939,7 +5924,7 @@ async function main() {
   check('Best sellers and departments are ranked', ssR?.products?.[0]?.name === 'Candle' && ssR.products[0].quantity === 4 && ssR?.departments?.[0]?.department === 'Household', { products: ssR?.products, departments: ssR?.departments });
   check('VAT is broken down by rate', JSON.stringify(ssR?.vatRates?.map((r) => [r.vatRateBps, r.grossMinor, r.vatMinor])) === JSON.stringify([[0, 8000, 0]]), ssR?.vatRates);
   check('Busy hours are grouped by hour of day', ssR?.hours?.length === 1 && ssR.hours[0].salesCount === 2, ssR?.hours);
-  check('The voided basket is reported, not counted in sales', ssR?.voids?.count === 1 && ssR.voids.valueMinor === 27_750, ssR?.voids);
+  check('The voided basket is reported, not counted in sales', ssR?.voids?.count === 1 && ssR.voids.valueMinor === 27_800, ssR?.voids);
   check('Write-offs are valued at average cost', ssR?.writeOffs?.costMinor === 2 * 3150, ssR?.writeOffs);
   check(
     'Dead stock lists what did not sell, by stock value',
@@ -6319,7 +6304,7 @@ async function main() {
   check('...and "no brand" never becomes a brand in the list', !((await brApi('?includeInactive=true')).data ?? []).some((row) => !row.name || !row.name.trim()));
 
   // ---- renaming moves the products, but never the sales ----------------------
-  const brSale = await ssSale({ items: [{ productId: brProduct.data._id, quantity: 1 }], payments: [{ method: 'cash', amountMinor: 5000 }] });
+  const brSale = await ssSale({ items: [{ productId: brProduct.data._id, quantity: 1 }], payments: [{ method: 'cash', amountMinor: 5000 }], note: 'Brand snapshot fixture sold before stock entry' });
   check('A sale under the brand records it', brSale.status === 201 && brSale.data?.items?.[0]?.brandSnapshot === brName, brSale.data?.items?.[0]);
   const brRenamed = `Pusti Foods ${brStamp}`;
   const brUpdate = await brApi(`/${brCreated.data._id}`, { method: 'PATCH', body: { name: brRenamed } });
@@ -6447,6 +6432,7 @@ async function main() {
     body: { items: [{ saleItemId: wcSale.data.items[0]._id, quantity: wcG(1), restock: true }], reason: 'Half of it came back', refundMethod: 'cash' },
   });
   check('A weighed return is accepted', wcReturn.status === 201, wcReturn.error);
+  check('A weighed return keeps its unit so the return screen displays kilograms', wcReturn.data?.items?.[0]?.unitType === 'weight', wcReturn.data?.items?.[0]);
   // 1 kg of a 2 kg sale at 200/kg is 200 back - NOT 200,000, which is what
   // `unitPrice x grams` gives and what this used to refund.
   check('A weighed return gives back what was charged, not a thousand times it', wcReturn.data?.totalMinor === wcKg(200), {
@@ -6579,10 +6565,33 @@ async function main() {
   const hdList = (await hdApi('')).data ?? [];
   const hdRow = hdList.find((row) => row._id === hdHold.data._id);
   check('It appears on this branch list with what it is worth', hdRow?.itemCount === 1 && hdRow?.estimatedTotalMinor === 3 * 12_500 - 500, hdRow);
+  check('...and names an inline customer in the held queue', hdRow?.customerName === 'Held Customer', hdRow);
   check('...naming the cashier who held it, and when', Boolean(hdRow?.heldByNameSnapshot) && Boolean(hdRow?.createdAt), hdRow);
   check('...and saying when it will expire on its own', new Date(hdRow.expiresAt) > new Date(hdRow.createdAt), { created: hdRow?.createdAt, expires: hdRow?.expiresAt });
   const hdAgeDays = (new Date(hdRow.expiresAt) - new Date(hdRow.createdAt)) / 86_400_000;
   check('...seven days after it was held', Math.round(hdAgeDays) === 7, hdAgeDays);
+
+  const hdSavedCustomer = await api('/customers', {
+    method: 'POST',
+    token: ssToken,
+    body: { name: 'Saved Hold Customer', phone: `018${hdStamp}0` },
+  });
+  const hdSavedHold = await hdApi('', {
+    method: 'POST',
+    body: { items: [{ productId: hdProduct.data._id, quantity: 1 }], customerId: hdSavedCustomer.data?._id },
+  });
+  const hdSavedRow = ((await hdApi('')).data ?? []).find((row) => row._id === hdSavedHold.data?._id);
+  check(
+    'A saved customer is also named in the held queue',
+    hdSavedRow?.customerName === 'Saved Hold Customer',
+    hdSavedRow,
+  );
+  const hdSavedResume = await hdApi(`/${hdSavedHold.data._id}/resume`, { method: 'POST', body: {} });
+  check(
+    'Resuming keeps the saved customer identity',
+    hdSavedResume.data?.customer?.id === hdSavedCustomer.data?._id,
+    hdSavedResume.data?.customer,
+  );
 
   // ---- resuming -----------------------------------------------------------------
   const hdResume = await hdApi(`/${hdHold.data._id}/resume`, { method: 'POST', body: {} });
@@ -6687,17 +6696,20 @@ async function main() {
   if (hdLeft !== 0) await ssApi(`/products/${hdProduct.data._id}/adjust`, { method: 'POST', body: { type: 'adjust', quantityDelta: -hdLeft, reason: 'Hold fixture' } });
   await ssApi(`/products/${hdProduct.data._id}`, { method: 'DELETE' });
 
-  // --- Quick product creation from the till -------------------------------------
-  // A barcode nothing answers to becomes a product without leaving the till.
-  // It goes through the ORDINARY product endpoint, so everything the Products
-  // screen enforces is enforced here: the same validation, the same uniqueness,
-  // the same plan limit, the same permission.
+  // --- Product creation by barcode -----------------------------------------------
+  // Unknown scans open the Products form. It uses the ordinary product endpoint,
+  // so validation, uniqueness, limits and permissions remain in one place.
   section('Supershop quick product creation');
 
   const qcStamp = String(Date.now()).slice(-6);
   const qcBarcode = `QC${qcStamp}`;
 
   check('A barcode nothing carries is a 404, which is what opens the form', (await ssApi(`/products/lookup?barcode=${qcBarcode}`)).status === 404);
+
+  const qcGeneratedA = await ssApi('/products/barcode/generate', { method: 'POST', body: {} });
+  const qcGeneratedB = await ssApi('/products/barcode/generate', { method: 'POST', body: {} });
+  check('The Super Shop product form can generate an EAN-13 barcode', qcGeneratedA.status === 200 && validEan(qcGeneratedA.data?.barcode ?? ''), qcGeneratedA.error);
+  check('Generated Super Shop barcodes are unique', qcGeneratedA.data?.barcode !== qcGeneratedB.data?.barcode);
 
   const qcMade = await ssProduct({ name: `Quick Item ${qcStamp}`, barcode: qcBarcode, unitType: 'each', priceMinor: 7500, category: 'Household' });
   check('The scanned barcode becomes a product', qcMade.status === 201 && qcMade.data?.barcode === qcBarcode, qcMade.error);
@@ -6759,6 +6771,7 @@ async function main() {
 
   // ---- isolation -------------------------------------------------------------------
   check('Creating a product needs a session', (await api('/supershop/products', { method: 'POST', body: { name: 'X', priceMinor: 1 } })).status === 401);
+  check('Generating a Super Shop barcode needs a session', (await api('/supershop/products/barcode/generate', { method: 'POST', body: {} })).status === 401);
   check('Another workspace cannot create a product here', (await api('/supershop/products', { method: 'POST', token: phToken, body: { name: 'X', barcode: `QCZ${qcStamp}`, priceMinor: 1 } })).status === 403);
   check("...and cannot see this one's new product by its barcode", (await api(`/supershop/products/lookup?barcode=${qcBarcode}`, { token: phToken })).status === 403);
 
@@ -6770,6 +6783,7 @@ async function main() {
   });
   const qcTill = { id: qcTillCreated.data?.id, token: (await login(`ssqc${qcStamp}@example.com`, 'Password@123')).token };
   check('A till without products.create cannot add one', (await api('/supershop/products', { method: 'POST', token: qcTill.token, body: { name: `Quick Denied ${qcStamp}`, barcode: `QCY${qcStamp}`, unitType: 'each', priceMinor: 100 } })).status === 403);
+  check('...and cannot generate a product barcode', (await api('/supershop/products/barcode/generate', { method: 'POST', token: qcTill.token, body: {} })).status === 403);
   check('...though it can still scan for one', (await api(`/supershop/products/lookup?barcode=${qcBarcode}`, { token: qcTill.token })).status === 200);
   await api(`/staff/${qcTill.id}`, { method: 'PATCH', token: ssToken, body: { extraPermissions: ['sales.create', 'sales.view', 'products.view', 'products.create'] } });
   const qcAllowed = await api('/supershop/products', { method: 'POST', token: qcTill.token, body: { name: `Quick Allowed ${qcStamp}`, barcode: `QCA${qcStamp}`, unitType: 'each', priceMinor: 100 } });
@@ -9335,21 +9349,13 @@ async function main() {
     });
   }
 
-  // Rule 3, where the four still differ. An over-tendered card cannot be handed
-  // back out of the drawer, so the three newer verticals refuse it. Clothing
-  // takes it, and has since before this service existed: its till sends the cash
-  // handed over separately (`cashTenderedMinor`), and that path already refuses
-  // change that did not come from cash. Task 03 is where the two converge.
-  for (const v of tenderVerticals.filter((entry) => entry.name !== 'Clothing')) {
+  // Rule 3: an over-tendered card cannot be handed back out of the drawer, so
+  // every vertical refuses it. Clothing historically missed this check on its
+  // legacy payments path; keep it in this shared matrix so it cannot drift.
+  for (const v of tenderVerticals) {
     const overCard = await v.sell([{ method: 'card', amountMinor: v.totalMinor + 5000 }]);
     check(`${v.name}: a card over the total is refused - only cash can exceed it`, overCard.status === v.refusalAmount, { status: overCard.status, error: overCard.error?.message });
   }
-  const clothingOverCard = await tenderVerticals[0].sell([{ method: 'card', amountMinor: 105_000 }]);
-  check(
-    'Clothing: an over-tendered card is still accepted (the one rule it does not share yet)',
-    clothingOverCard.status === 201 && clothingOverCard.data?.changeMinor === 5000,
-    { status: clothingOverCard.status, change: clothingOverCard.data?.changeMinor },
-  );
   const ctnCashPath = await api('/sales', {
     method: 'POST',
     token: ptnToken,
@@ -9477,9 +9483,9 @@ async function main() {
 
 
   // --- Selling what the system says is gone, in every vertical -----------------
-  // The same permission, the same narrow rule as Clothing: it covers "there is
-  // none of this", never "there is not enough". A pharmacy adds one of its own -
-  // units must still be attributable to a real, unexpired batch.
+  // Super Shop allows any cashier to sell when there is none, but requires an
+  // explanation. Its narrow rule never covers "there is some, but not enough".
+  // Pharmacy keeps its permission and valid-batch requirements.
   section('Out-of-stock override (Super Shop and Pharmacy)');
 
   const oosStaff = async (token, storeId, email, permissions) => {
@@ -9496,34 +9502,35 @@ async function main() {
   // --- Super Shop --------------------------------------------------------------
   const ssStoreId = (await api('/stores', { token: ssToken })).data?.[0]?._id;
   const ssTill = await oosStaff(ssToken, ssStoreId, `ssoos${oosStamp}@example.com`, TILL_PERMISSIONS);
-  check('Super Shop: a till can be created without the override', ssTill.created.status === 201, ssTill.created.error);
-  check('Super Shop: and does not hold it', !ssTill.session.session.user.permissions.includes('sales.sellOutOfStock'));
+  check('Super Shop: a till can be created without the old override permission', ssTill.created.status === 201, ssTill.created.error);
+  check('Super Shop: and does not need that permission', !ssTill.session.session.user.permissions.includes('sales.sellOutOfStock'));
 
   // Empty one product completely, and leave another with some but not enough.
   const oosSoapOnHand = (await ssApi(`/products/${soap.data._id}`)).data?.product?.stock?.quantityOnHand ?? 0;
   await ssApi(`/products/${soap.data._id}/adjust`, { method: 'POST', body: { type: 'adjust', quantityDelta: -oosSoapOnHand, reason: 'Emptied for the override test' } });
   check('Super Shop: the product is now at zero', (await ssApi(`/products/${soap.data._id}`)).data?.product?.stock?.quantityOnHand === 0);
 
-  const ssSellAs = (token, quantity = 1) =>
-    api('/supershop/sales', { method: 'POST', token, body: { items: [{ productId: soap.data._id, quantity }], payments: [{ method: 'cash', amountMinor: 50_000 }] } });
+  const ssSellAs = (token, quantity = 1, note) =>
+    api('/supershop/sales', { method: 'POST', token, body: { items: [{ productId: soap.data._id, quantity }], payments: [{ method: 'cash', amountMinor: 50_000 }], ...(note ? { note } : {}) } });
 
   const ssRefused = await ssSellAs(ssTill.session.token);
-  check('Super Shop: a till without the permission cannot sell what is not there', ssRefused.status === 400, ssRefused.error?.message);
+  check('Super Shop: an out-of-stock sale without a note is refused', ssRefused.status === 422 && ssRefused.error?.details?.reason === 'OUT_OF_STOCK_NOTE_REQUIRED', ssRefused.error);
   check('Super Shop: and nothing moved', (await ssApi(`/products/${soap.data._id}`)).data?.product?.stock?.quantityOnHand === 0);
 
-  await api(`/staff/${ssTill.id}`, { method: 'PATCH', token: ssToken, body: { extraPermissions: [...TILL_PERMISSIONS, 'sales.sellOutOfStock'] } });
-  const ssOverride = await ssSellAs(ssTill.session.token, 2);
-  check('Super Shop: with the permission the sale goes through', ssOverride.status === 201, ssOverride.error);
+  const ssOosNote = 'Customer sale approved before the stock count correction';
+  const ssOverride = await ssSellAs(ssTill.session.token, 2, ssOosNote);
+  check('Super Shop: any cashier can sell out of stock after adding a note', ssOverride.status === 201, ssOverride.error);
+  check('Super Shop: the explanation is saved on the sale', ssOverride.data?.note === ssOosNote, ssOverride.data);
   check('Super Shop: the line says it was sold out of stock', ssOverride.data?.items?.[0]?.outOfStockOverride === true, ssOverride.data?.items?.[0]);
   check('Super Shop: stock is now negative by what was sold', (await ssApi(`/products/${soap.data._id}`)).data?.product?.stock?.quantityOnHand === -2);
   const ssOosLedger = (await api(`/supershop/stock-ledger?itemId=${soap.data._id}&limit=5`, { token: ssToken })).data ?? [];
-  check('Super Shop: the ledger row is flagged and shows the negative balance', ssOosLedger[0]?.balanceAfter === -2 && ssOosLedger[0]?.quantityChange === -2, ssOosLedger[0]);
+  check('Super Shop: the ledger row is flagged, shows the negative balance and carries the note', ssOosLedger[0]?.balanceAfter === -2 && ssOosLedger[0]?.quantityChange === -2 && ssOosLedger[0]?.reason?.includes(ssOosNote), ssOosLedger[0]);
 
   // The narrow rule: "some but not enough" is refused for everyone.
   await ssApi(`/products/${soap.data._id}/stock`, { method: 'POST', body: { quantity: 5, costPriceMinor: 3000 } });
   check('Super Shop: receiving pays off the negative first', (await ssApi(`/products/${soap.data._id}`)).data?.product?.stock?.quantityOnHand === 3);
-  const ssNotEnough = await ssSellAs(ssTill.session.token, 4);
-  check('Super Shop: the override does not cover "not enough", even with the permission', ssNotEnough.status === 400, ssNotEnough.error?.message);
+  const ssNotEnough = await ssSellAs(ssTill.session.token, 4, 'Requested quantity exceeds the counted stock');
+  check('Super Shop: a note does not permit selling more than a positive balance', ssNotEnough.status === 400, ssNotEnough.error?.message);
 
   // A product NEVER RECEIVED into this branch has no stock row at all, which is
   // a different state from a row that has run down to zero. The override used to
@@ -9532,24 +9539,22 @@ async function main() {
   // opening-stock column leaves behind, and equally a product added by hand and
   // not yet delivered. It now behaves like any other out-of-stock product.
   const ssNever = await ssProduct({ name: `Never Received ${oosStamp}`, priceMinor: 1000 });
-  const ssNeverSell = (token, quantity = 1) =>
+  const ssNeverSell = (token, quantity = 1, note) =>
     api('/supershop/sales', {
       method: 'POST',
       token,
-      body: { items: [{ productId: ssNever.data._id, quantity }], payments: [{ method: 'cash', amountMinor: 10_000 }] },
+      body: { items: [{ productId: ssNever.data._id, quantity }], payments: [{ method: 'cash', amountMinor: 10_000 }], ...(note ? { note } : {}) },
     });
   const ssNeverStock = async () => (await ssApi(`/products/${ssNever.data._id}`)).data?.product?.stock;
 
-  // Without the permission it is refused, and no stock row is conjured up.
-  await api(`/staff/${ssTill.id}`, { method: 'PATCH', token: ssToken, body: { extraPermissions: TILL_PERMISSIONS } });
+  // Without a note it is refused, and no stock row is conjured up.
   const ssNeverRefused = await ssNeverSell(ssTill.session.token);
-  check('Super Shop: a never-received product is refused without the permission', ssNeverRefused.status === 400, ssNeverRefused.error?.message);
+  check('Super Shop: a never-received product is refused without a note', ssNeverRefused.status === 422 && ssNeverRefused.error?.details?.reason === 'OUT_OF_STOCK_NOTE_REQUIRED', ssNeverRefused.error);
   check('Super Shop: and a refused sale creates no stock row', ((await ssNeverStock())?.quantityOnHand ?? 0) === 0, await ssNeverStock());
 
-  // With it, the sale goes through and the branch is left owing the goods.
-  await api(`/staff/${ssTill.id}`, { method: 'PATCH', token: ssToken, body: { extraPermissions: [...TILL_PERMISSIONS, 'sales.sellOutOfStock'] } });
-  const ssNeverSold = await ssNeverSell(ssTill.session.token, 3);
-  check('Super Shop: with the permission a never-received product CAN be sold', ssNeverSold.status === 201, ssNeverSold.error);
+  // With an explanation, the sale goes through and the branch is left owing the goods.
+  const ssNeverSold = await ssNeverSell(ssTill.session.token, 3, 'Product received physically before entry was recorded');
+  check('Super Shop: any cashier can sell a never-received product with a note', ssNeverSold.status === 201, ssNeverSold.error);
   check('Super Shop: the line is flagged as an out-of-stock sale', ssNeverSold.data?.items?.[0]?.outOfStockOverride === true, ssNeverSold.data?.items?.[0]);
   check('Super Shop: the stock row is created at the negative balance', (await ssNeverStock())?.quantityOnHand === -3, await ssNeverStock());
   check('Super Shop: a branch that never bought the goods has no cost basis for them', ssNeverSold.data?.costMinor === 0, ssNeverSold.data?.costMinor);
@@ -10992,7 +10997,10 @@ async function main() {
     cache: ssPrint.cacheControl,
   });
   const ssPrintAgain = await fetchFile('/supershop/reports/print?preset=last30', { token: ssToken });
-  check('Super Shop: printing the same report twice gives the same document', ssPrintAgain.buffer.length === ssPrint.buffer.length, {
+  // PDFKit embeds the generation timestamp in the document metadata and in the
+  // visible heading. Repeating a print is therefore expected to differ by a few
+  // compressed bytes even when the report data and layout are identical.
+  check('Super Shop: printing the same report twice gives another complete document', isPdf(ssPrintAgain) && Math.abs(ssPrintAgain.buffer.length - ssPrint.buffer.length) <= 32, {
     first: ssPrint.buffer.length,
     second: ssPrintAgain.buffer.length,
   });
@@ -11067,22 +11075,20 @@ async function main() {
   // catalogue and then not be able to sell any of it.
   const ssImpDal = ((await ssApi(`/products?search=Imported Dal ${impStamp}`)).data ?? [])[0];
   check('Super Shop: a row with no opening stock has no stock in this branch', (ssImpDal?.stock?.quantityOnHand ?? 0) === 0, ssImpDal?.stock);
-  const ssImpSell = (token, quantity) =>
+  const ssImpSell = (token, quantity, note) =>
     api('/supershop/sales', {
       method: 'POST',
       token,
-      body: { items: [{ productId: ssImpDal?._id, quantity }], payments: [{ method: 'cash', amountMinor: 50_000 }] },
+      body: { items: [{ productId: ssImpDal?._id, quantity }], payments: [{ method: 'cash', amountMinor: 50_000 }], ...(note ? { note } : {}) },
     });
 
-  await api(`/staff/${ssTill.id}`, { method: 'PATCH', token: ssToken, body: { extraPermissions: TILL_PERMISSIONS } });
   const ssImpBlocked = await ssImpSell(ssTill.session.token, 500);
-  check('Super Shop: an imported product out of stock is blocked without the permission', ssImpBlocked.status === 400, ssImpBlocked.error?.message);
+  check('Super Shop: an imported product out of stock is blocked without a note', ssImpBlocked.status === 422 && ssImpBlocked.error?.details?.reason === 'OUT_OF_STOCK_NOTE_REQUIRED', ssImpBlocked.error);
 
-  await api(`/staff/${ssTill.id}`, { method: 'PATCH', token: ssToken, body: { extraPermissions: [...TILL_PERMISSIONS, 'sales.sellOutOfStock'] } });
-  const ssImpAllowed = await ssImpSell(ssTill.session.token, 500);
-  check('Super Shop: an authorised till CAN sell an imported product that is out of stock', ssImpAllowed.status === 201, ssImpAllowed.error);
+  const ssImpAllowed = await ssImpSell(ssTill.session.token, 500, 'Imported stock delivery is waiting to be entered');
+  check('Super Shop: any cashier CAN sell an imported stock-out product with a note', ssImpAllowed.status === 201, ssImpAllowed.error);
   check('Super Shop: the imported line is flagged as an out-of-stock sale', ssImpAllowed.data?.items?.[0]?.outOfStockOverride === true, ssImpAllowed.data?.items?.[0]);
-  check('Super Shop: and an admin can too', (await ssImpSell(ssToken, 250)).status === 201);
+  check('Super Shop: and an admin can too with a note', (await ssImpSell(ssToken, 250, 'Additional stock is pending entry')).status === 201);
   const ssImpStock = (await ssApi(`/products/${ssImpDal?._id}`)).data?.product?.stock;
   check('Super Shop: the branch now owes the goods it sold (750 g)', ssImpStock?.quantityOnHand === -750, ssImpStock);
   check('Super Shop: the imported sale is in the stock ledger', ((await api(`/supershop/stock-ledger?itemId=${ssImpDal?._id}&limit=5`, { token: ssToken })).data ?? []).some((row) => row.quantityChange === -500));
@@ -11424,8 +11430,8 @@ async function main() {
     );
   }
 
-  // --- Clothing POS supplier management ---------------------------------------
-  section('Clothing POS: supplier management (Professional and Enterprise)');
+  // --- Retail supplier management ---------------------------------------------
+  section('Clothing and Super Shop: supplier management (Professional and Enterprise)');
   {
     const spStamp = String(Date.now()).slice(-7);
     const spPlatform = await login('platform@pos.dev', 'Platform@123');
@@ -11629,7 +11635,7 @@ async function main() {
     check('...and the export history records it', ((await api('/exports?limit=5', { token: spOwner, ...A })).data ?? []).some((row) => row.type === 'suppliers'));
 
     // Exporting must not become a side door into data the user cannot open.
-    await api('/staff', { method: 'POST', token: spOwner, ...A, body: { name: 'Report Only', email: `supr2${spStamp}@example.com`, password: 'Password@123', storeId: spStoreA._id, extraPermissions: ['reports.view', 'reports.export'] } });
+    await api('/staff', { method: 'POST', token: spOwner, ...A, body: { name: 'Report Only', email: `supr2${spStamp}@example.com`, password: 'Password@123', storeId: spStoreA._id, extraPermissions: ['reports.view', 'reports.export', 'customers.view'] } });
     const spReporter = (await login(`supr2${spStamp}@example.com`, 'Password@123')).token;
     const spReporterCatalogue = await api('/exports/datasets', { token: spReporter, ...A });
     check('Someone who may export but not see suppliers is not offered the dataset', spReporterCatalogue.status === 200 && !(spReporterCatalogue.data?.datasets ?? []).some((d) => d.key === 'suppliers') && (spReporterCatalogue.data?.datasets ?? []).some((d) => d.key === 'customers'), (spReporterCatalogue.data?.datasets ?? []).map((d) => d.key));
@@ -11642,12 +11648,32 @@ async function main() {
     check('Supplier creation is written to the audit log, without the banking or tax values', spAudit.status === 200 && (spAudit.data ?? []).length > 0 && !JSON.stringify(spAudit.data ?? []).includes('1234 5678 9012') && !JSON.stringify(spAudit.data ?? []).includes('VAT-123456'), spAudit.error);
     check('Deactivation is audited too', ((await api('/platform/audit-log?action=supplier.deactivated&limit=5', { token: spPlatform.token })).data ?? []).length > 0);
 
+    // ---- Super Shop gets the same plan-gated contact manager ----
+    const spShop = await api('/auth/register', { method: 'POST', body: { businessName: `Market Supply ${spStamp}`, name: 'Market Owner', email: `supm${spStamp}@example.com`, password: 'Password@123', vertical: 'supershop' } });
+    const spShopToken = spShop.data?.tokens?.accessToken;
+    const spShopTenant = spShop.data?.tenant?.id ?? spShop.data?.tenant?._id;
+    const spShopStore = (await api('/stores', { method: 'POST', token: spShopToken, body: { name: 'Market Main', code: `SM${spStamp}`, currency: 'BDT' } })).data;
+    const M = { storeId: spShopStore?._id };
+    check('A fresh Super Shop workspace is ready for supplier checks', Boolean(spShopToken && spShopTenant && spShopStore?._id), spShop.error);
+    await spSetPlan(spShopTenant, 'starter-store-monthly');
+    const spShopStarter = await api('/suppliers', { token: spShopToken, ...M });
+    check('Super Shop Starter cannot open supplier management', spShopStarter.status === 403 && spShopStarter.error?.code === 'ENTITLEMENT_REQUIRED', spShopStarter.error);
+    await spSetPlan(spShopTenant, 'showroom-monthly');
+    const spShopProfessional = await api('/suppliers/summary', { token: spShopToken, ...M });
+    check('Super Shop Professional unlocks suppliers with the 100-contact limit', spShopProfessional.status === 200 && spShopProfessional.data?.max === 100 && spShopProfessional.data?.unlimited === false, spShopProfessional.error ?? spShopProfessional.data);
+    const spShopSupplier = await api('/suppliers', { method: 'POST', token: spShopToken, ...M, body: { name: `Market Distributor ${spStamp}`, type: 'distributor', phone: '01733333333' } });
+    check('A Super Shop can create and list its own supplier', spShopSupplier.status === 201 && ((await api('/suppliers', { token: spShopToken, ...M })).data ?? []).some((row) => row._id === spShopSupplier.data?._id), spShopSupplier.error);
+    await spSetPlan(spShopTenant, 'brand-monthly');
+    const spShopEnterprise = await api('/suppliers/summary', { token: spShopToken, ...M });
+    check('Super Shop Enterprise makes the supplier limit unlimited', spShopEnterprise.status === 200 && spShopEnterprise.data?.unlimited === true && spShopEnterprise.data?.max === null, spShopEnterprise.error ?? spShopEnterprise.data);
+
     // ---- other verticals are untouched ----
     const spRest = await api('/auth/register', { method: 'POST', body: { businessName: `Resto Supply ${spStamp}`, name: 'Resto Owner', email: `supr${spStamp}@example.com`, password: 'Password@123', vertical: 'restaurant' } });
     const spRestToken = spRest.data?.tokens?.accessToken;
     const spRestStore = (await api('/stores', { method: 'POST', token: spRestToken, body: { name: 'Resto Main', code: `SR${spStamp}`, currency: 'BDT' } })).data;
     await spSetPlan(spRest.data?.tenant?.id ?? spRest.data?.tenant?._id, 'brand-monthly');
     check('A Restaurant workspace has no supplier module at all', (await api('/suppliers', { token: spRestToken, storeId: spRestStore?._id })).status === 403);
+    check('A Pharmacy workspace still has no supplier module', (await api('/suppliers', { token: phToken })).status === 403);
   }
 
   // --- contact verification ---------------------------------------------------
@@ -12161,12 +12187,9 @@ async function main() {
     .map((file) => readFileSync(new URL(`../${file}`, import.meta.url), 'utf8'))
     .join('\n');
 
-  // Three enforcement shapes count: the `requireFeature` middleware; the
+  // Two enforcement shapes count: the `requireFeature` middleware and the
   // entitlement engine's `requireEntitlement`/`requireAccess`, whose canonical
-  // keys are mapped to plan flags by reading the entitlement catalogue itself;
-  // and a handler branching on the flag directly (which is how image
-  // optimisation works, because it changes what the handler DOES rather than
-  // whether it runs).
+  // keys are mapped to plan flags by reading the entitlement catalogue itself.
   const entitlementCatalog = readFileSync(new URL('../server/src/config/entitlements.ts', import.meta.url), 'utf8');
   const planFlagOf = Object.fromEntries([...entitlementCatalog.matchAll(/(\w+): \{ label: '[^']*', planFeature: '(\w+)'/g)].map((m) => [m[1], m[2]]));
   const entitlementKeysUsed = [
@@ -12177,7 +12200,6 @@ async function main() {
     ...new Set([
       ...[...routeSources.matchAll(/requireFeature\('([^']+)'/g)].map((m) => m[1]),
       ...entitlementKeysUsed.map((key) => planFlagOf[key]).filter(Boolean),
-      ...[...routeSources.matchAll(/entitlement\.features\.(\w+)/g)].map((m) => m[1]),
     ]),
   ];
 
@@ -12284,62 +12306,23 @@ async function main() {
   });
   check('Starter cannot create a second store', secondStore.status >= 400, secondStore.status);
 
-  // --- storage quota -------------------------------------------------------
-  // Rather than uploading 2 GB, move the plan's ceiling down to something a
-  // test can reach. The enforcement path is identical.
-  const originalStarterStorage = limitPlan.limits.maxStorageBytes;
-  const tinyQuota = await api(`/plans/${limitPlan._id}`, {
-    method: 'PATCH',
-    token: platform2.token,
-    body: { limits: { maxStorageBytes: 6_000 } },
+  // --- uploads are not a subscription allowance ---------------------------
+  const firstStarterUpload = await upload('/uploads/image', { token: limitTenantToken, bytes: makePng(4_000) });
+  const secondStarterUpload = await upload('/uploads/image', { token: limitTenantToken, bytes: makePng(4_000) });
+  check('Starter can upload images without a subscription storage quota', firstStarterUpload.status === 201 && secondStarterUpload.status === 201, {
+    first: firstStarterUpload.error,
+    second: secondStarterUpload.error,
   });
-  check('Platform admin can set a storage limit', tinyQuota.status === 200, tinyQuota.error);
+  const starterUsage = (await api('/subscriptions/current', { token: limitTenantToken })).data?.usage;
+  check('Starter usage contains no storage meter', starterUsage && !Object.hasOwn(starterUsage, 'storageBytes'), starterUsage);
+  check('Starter plan contains no storage allowance', !Object.hasOwn(limitPlan.limits ?? {}, 'maxStorageBytes'), limitPlan.limits);
 
-  // The plan changed, but the workspace holds a SNAPSHOT taken at purchase, so
-  // re-assign to pick the new ceiling up. This is the snapshot design working.
-  await api('/platform/subscriptions', {
-    method: 'POST',
-    token: platform2.token,
-    body: { tenantId: limitTenantTenantId, planId: limitPlan._id, periods: 1 },
-  });
-
-  const fitsUpload = await upload('/uploads/image', { token: limitTenantToken, bytes: makePng(4_000) });
-  check('Upload within the quota succeeds', fitsUpload.status === 201, fitsUpload.error);
-
-  const overflowUpload = await upload('/uploads/image', { token: limitTenantToken, bytes: makePng(4_000) });
-  check('Upload that would exceed the quota is refused', overflowUpload.status >= 400, {
-    status: overflowUpload.status,
-    error: overflowUpload.error,
-  });
-  check(
-    'Storage refusal names the limit',
-    String(overflowUpload.error?.message ?? '').toLowerCase().includes('storage'),
-    overflowUpload.error,
-  );
-
-  const quotaUsage = (await api('/subscriptions/current', { token: limitTenantToken })).data?.usage;
-  check(
-    'A refused upload consumes no quota',
-    quotaUsage?.storageBytes === 4_000,
-    { storageBytes: quotaUsage?.storageBytes },
-  );
-
-  // Restore the ORIGINAL value, captured above. Restoring a hardcoded number
-  // here silently poisoned the next run when the plan's real limit changed.
-  await api(`/plans/${limitPlan._id}`, {
-    method: 'PATCH',
-    token: platform2.token,
-    body: { limits: { maxStorageBytes: originalStarterStorage } },
-  });
-
-  // --- image replacement frees storage ------------------------------------
-  section('Storage reclaim');
+  // --- image ownership and cleanup ----------------------------------------
+  section('Upload ownership and cleanup');
 
   const reclaimStore = admin.session.stores[0].id;
   const imgA = await upload('/uploads/image', { token: admin.token, storeId: reclaimStore, bytes: makePng(9_000) });
-  check('Reclaim: first image uploaded', imgA.status === 201, imgA.error);
-
-  const reclaimBase = (await api('/subscriptions/current', { token: admin.token })).data?.usage?.storageBytes ?? 0;
+  check('Cleanup: first image uploaded', imgA.status === 201, imgA.error);
 
   const reclaimProduct = await api('/products', {
     method: 'POST',
@@ -12351,37 +12334,26 @@ async function main() {
       variants: [{ attributes: [], sellingPriceMinor: 10000, costPriceMinor: 5000, stock: 1 }],
     },
   });
-  check('Reclaim: product created with an image', reclaimProduct.status === 201, reclaimProduct.error);
+  check('Cleanup: product created with an image', reclaimProduct.status === 201, reclaimProduct.error);
 
   const imgB = await upload('/uploads/image', { token: admin.token, storeId: reclaimStore, bytes: makePng(2_000) });
-  check('Reclaim: replacement image uploaded', imgB.status === 201, imgB.error);
-
-  const afterBothUploads = (await api('/subscriptions/current', { token: admin.token })).data?.usage?.storageBytes;
-  check(
-    'Reclaim: both images counted',
-    afterBothUploads === reclaimBase + imgB.data.size,
-    { expected: reclaimBase + imgB.data.size, actual: afterBothUploads },
-  );
+  check('Cleanup: replacement image uploaded', imgB.status === 201, imgB.error);
 
   const swapped = await api(`/products/${reclaimProduct.data._id}`, {
     method: 'PATCH',
     token: admin.token,
     body: { images: [{ url: imgB.data.url, key: imgB.data.key, isPrimary: true }] },
   });
-  check('Reclaim: product image replaced', swapped.status === 200, swapped.error);
+  check('Cleanup: product image replaced', swapped.status === 200, swapped.error);
 
-  const afterSwap = (await api('/subscriptions/current', { token: admin.token })).data?.usage?.storageBytes;
-  check(
-    'Replacing an image releases the old one',
-    afterSwap === reclaimBase + imgB.data.size - imgA.data.size,
-    { expected: reclaimBase + imgB.data.size - imgA.data.size, actual: afterSwap },
-  );
+  const storedFileExists = (key) => existsSync(resolve(process.env.STORAGE_LOCAL_DIR ?? 'uploads', key));
+  check('Replacing an image deletes the old owned file', !storedFileExists(imgA.data.key), imgA.data.key);
+  check('Replacing an image keeps the replacement file', storedFileExists(imgB.data.key), imgB.data.key);
 
   // The security property: a storage key is untrusted client input, so naming
   // ANOTHER tenant's file must not delete it.
   const victimImage = await upload('/uploads/image', { token: admin.token, storeId: reclaimStore, bytes: makePng(1_500) });
-  check('Reclaim: victim file uploaded', victimImage.status === 201, victimImage.error);
-  const victimUsageBefore = (await api('/subscriptions/current', { token: admin.token })).data?.usage?.storageBytes;
+  check('Cleanup: victim file uploaded', victimImage.status === 201, victimImage.error);
 
   const attackerProduct = await api('/products', {
     method: 'POST',
@@ -12402,38 +12374,35 @@ async function main() {
     });
   }
 
-  const victimUsageAfter = (await api('/subscriptions/current', { token: admin.token })).data?.usage?.storageBytes;
   check(
     "A tenant cannot delete another tenant's file by naming its key",
-    victimUsageAfter === victimUsageBefore,
-    { before: victimUsageBefore, after: victimUsageAfter },
+    storedFileExists(victimImage.data.key),
+    victimImage.data.key,
   );
 
   // ------------------------------------------------- MVP package structure
   section('Plan package structure');
 
-  const MB = 1024 ** 2;
-  const GB = 1024 ** 3;
   const EXPECTED_PLANS = {
     'starter-store': {
       name: 'Starter',
       monthlyPriceMinor: 99_000,
-      limits: { maxStores: 1, maxStaff: 2, maxProducts: 300, maxMonthlySales: 2500, maxCustomers: 500, maxStorageBytes: MB * 500 },
-      features: { smsMarketing: false, emailMarketing: false, multiStore: false, advancedReports: false, imageOptimization: false },
+      limits: { maxStores: 1, maxStaff: 2, maxProducts: 300, maxMonthlySales: 2500, maxCustomers: 500 },
+      features: { smsMarketing: false, emailMarketing: false, multiStore: false, advancedReports: false },
     },
     // Internal code `showroom`, sold as Professional.
     showroom: {
       name: 'Professional',
       monthlyPriceMinor: 199_000,
-      limits: { maxStores: 2, maxStaff: 6, maxProducts: 3000, maxMonthlySales: 30000, maxCustomers: 10000, maxStorageBytes: GB * 1 },
-      features: { smsMarketing: true, emailMarketing: true, multiStore: true, advancedReports: true, imageOptimization: false },
+      limits: { maxStores: 2, maxStaff: 6, maxProducts: 3000, maxMonthlySales: 30000, maxCustomers: 10000 },
+      features: { smsMarketing: true, emailMarketing: true, multiStore: true, advancedReports: true },
     },
     // Internal code `brand`, sold as Enterprise.
     brand: {
       name: 'Enterprise',
       monthlyPriceMinor: 299_000,
-      limits: { maxStores: 10, maxStaff: -1, maxProducts: -1, maxMonthlySales: -1, maxCustomers: -1, maxStorageBytes: GB * 2 },
-      features: { smsMarketing: true, emailMarketing: true, multiStore: true, advancedReports: true, imageOptimization: true },
+      limits: { maxStores: 10, maxStaff: -1, maxProducts: -1, maxMonthlySales: -1, maxCustomers: -1 },
+      features: { smsMarketing: true, emailMarketing: true, multiStore: true, advancedReports: true },
     },
   };
 
@@ -12500,11 +12469,12 @@ async function main() {
   check(
     'Entitlement exposes every new limit',
     entLimits &&
-      ['maxStores', 'maxStaff', 'maxProducts', 'maxMonthlySales', 'maxCustomers', 'maxStorageBytes'].every(
+      ['maxStores', 'maxStaff', 'maxProducts', 'maxMonthlySales', 'maxCustomers'].every(
         (key) => typeof entLimits[key] === 'number',
       ),
     entLimits,
   );
+  check('Entitlement exposes no storage allowance', entLimits && !Object.hasOwn(entLimits, 'maxStorageBytes'), entLimits);
 
   // --------------------------------------------------------------- trial
   section('Trial period');

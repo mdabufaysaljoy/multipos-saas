@@ -23,6 +23,7 @@ interface BarcodePrintDialogProps {
   label: BarcodeLabelData | null;
   currency: string;
   storeName?: string;
+  validateEan13?: boolean;
   onClose: () => void;
 }
 
@@ -31,7 +32,7 @@ interface BarcodePrintDialogProps {
  * a dedicated print area, isolated by CSS. That keeps one printing mechanism in
  * the app rather than a second, parallel one.
  */
-export function BarcodePrintDialog({ label, currency, storeName, onClose }: BarcodePrintDialogProps) {
+export function BarcodePrintDialog({ label, currency, storeName, validateEan13 = false, onClose }: BarcodePrintDialogProps) {
   const [copies, setCopies] = React.useState<number | null>(1);
   const [showPrice, setShowPrice] = React.useState(true);
   const [showStore, setShowStore] = React.useState(true);
@@ -110,6 +111,7 @@ export function BarcodePrintDialog({ label, currency, storeName, onClose }: Barc
                 showPrice={showPrice}
                 widthMm={labels.productWidthMm}
                 showQr={showQr}
+                validateEan13={validateEan13}
                 vatEnabled={config?.tax?.enabled === true}
               />
             ))}

@@ -1,11 +1,9 @@
 # Universal POS features — audit, architecture and migration plan
 
 **Audit and plan.** It records what the four verticals do today, what "universal" should mean for each
-capability, and the order the work should be done in. Tasks are marked ✅ as they land - **tasks 01,
-02, 03, 04, 05, 06, 07, 08, 12 and 13 are done** (printing, payment-method service, custom payment
-methods, split payment UI, customer selection, inventory adapter + ledger read, out-of-stock
-override, returns/refunds, dashboard ranges, analytics parity); tasks 09, 10, 11 and 14 are still a
-plan.
+capability, and the order the work should be done in. All fourteen tasks are now implemented. The
+task table is retained as implementation history; the current architecture is described in the
+feature matrix and the linked domain documents.
 
 Date: 2026-09-24 · Commit audited: `18bc974` (main, with the Clothing work merged in)
 Method: reading the code and the models, plus the checks the end-to-end suite already makes.
@@ -39,8 +37,9 @@ client: VerticalPos / VerticalDashboard / VerticalAnalytics  ← per-vertical pa
 billing, roles and permissions, audit log, storage, messaging, **customers** (`/api/customers` has no
 vertical gate), platform admin, and the report range helper `resolveRange`.
 
-**Clothing-only modules:** `products`, `categories`, `inventory`, `sales`, `returns`, `reports`,
-`productImports`, `exports`, `suppliers`, `loyalty` (via entitlement `verticals: ['clothing']`).
+**Clothing-only modules:** `products`, `categories`, `inventory`, `sales`, `returns`, `reports`, and
+`exports`. Supplier management is shared by Clothing and Super Shop; the other universalized modules
+are documented in the feature matrix below.
 
 ---
 
@@ -203,7 +202,7 @@ Each is independently executable, independently testable, and leaves the tree gr
 | **13** Analytics parity ✅ **done** | `services/reports/posMetrics.ts` contract (gross/returns/net/cost/profit); all three newer verticals report net of refunds on dashboard AND analytics, with a returns card; Restaurant gained the payment breakdown it never had. Left: staff performance in Super Shop and Pharmacy | 12 | M | Medium |
 | **14** PDF/print of reports ✅ **done** | `services/reports/reportPrint.ts` + a view per vertical, streamed through the export module's own `writePdf`; `GET /<vertical>/reports/print` gated by the report's own permission and plan feature, not by Data export | 13 | M | Medium |
 
-Recommended sequencing: **01 ✅ → 12 ✅ → 05 ✅ → 02 ✅ → 04 ✅ → 06 ✅ → 07 ✅ → 03 ✅ → 08 ✅ → 13 ✅ → 09 → 10 → 11 → 14.**
+Delivered sequence: **01 ✅ → 12 ✅ → 05 ✅ → 02 ✅ → 04 ✅ → 06 ✅ → 07 ✅ → 03 ✅ → 08 ✅ → 13 ✅ → 09 ✅ → 10 ✅ → 11 ✅ → 14 ✅.**
 That front-loads the visible wins that carry almost no risk, and defers the two schema-wide changes
 (payment methods, returns) until the adapter seam exists to absorb them.
 
@@ -293,6 +292,7 @@ What is deliberately left, each noted where it was decided:
 - folding Clothing's exchange/loyalty engine into the shared returns engine (task 08);
 - staff performance in Super Shop and Pharmacy analytics (task 13);
 - Clothing's refunds do not apportion a sale discount the way the shared engine does (task 08);
-- Data export is still Clothing-only: its dataset registry is built from Clothing collections.
+- Business data export is now universal and vertical-aware, with Professional/Enterprise gating and
+  per-dataset read permissions.
 
 Waiting for an explicit instruction before starting any of them.

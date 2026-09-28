@@ -2,11 +2,18 @@ import * as React from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { format } from 'date-fns';
 import { toast } from 'sonner';
-import { Printer, Repeat2, Undo2 } from 'lucide-react';
+import { Printer, Undo2 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -16,7 +23,6 @@ import { PermissionGate } from '@/components/PermissionGate';
 import { SearchInput, useDebounced } from '@/components/SearchInput';
 import { ShopReceiptDialog } from '@/features/supershop/ShopReceiptDialog';
 import { PosReturnDialog } from '@/features/returns/PosReturnDialog';
-import { ShopExchangeDialog } from '@/features/supershop/ShopExchangeDialog';
 import { storeApi } from '@/api/endpoints';
 import { ApiError } from '@/api/client';
 import { supershopApi } from '@/api/supershop';
@@ -38,7 +44,8 @@ export function ShopSalesPage() {
 
   const { data, isLoading, error, refetch } = useQuery({
     queryKey: ['supershop', 'sales', search, status, page],
-    queryFn: () => supershopApi.sales({ page, limit: 25, ...(search ? { search } : {}), ...(status !== 'all' ? { status } : {}) }),
+    queryFn: () =>
+      supershopApi.sales({ page, limit: 25, ...(search ? { search } : {}), ...(status !== 'all' ? { status } : {}) }),
   });
 
   const columns: Column<ShopSale>[] = [
@@ -53,9 +60,19 @@ export function ShopSalesPage() {
         </div>
       ),
     },
-    { key: 'items', header: 'Lines', mobile: 'hide', cell: (row) => <span className="tabular">{row.items.length}</span> },
+    {
+      key: 'items',
+      header: 'Lines',
+      mobile: 'hide',
+      cell: (row) => <span className="tabular">{row.items.length}</span>,
+    },
     { key: 'cashier', header: 'Cashier', mobile: 'hide', cell: (row) => row.cashierNameSnapshot },
-    { key: 'status', header: '', mobile: 'meta', cell: (row) => row.status === 'voided' && <Badge variant="destructive">Voided</Badge> },
+    {
+      key: 'status',
+      header: '',
+      mobile: 'meta',
+      cell: (row) => row.status === 'voided' && <Badge variant="destructive">Voided</Badge>,
+    },
     {
       key: 'total',
       header: 'Total',
@@ -122,7 +139,6 @@ export function ShopSalesPage() {
           currency={currency}
           onClose={() => setOpen(null)}
           onPrint={() => setReceiptFor(open._id)}
-          onPrintSale={(id) => setReceiptFor(id)}
         />
       )}
       <ShopReceiptDialog saleId={receiptFor} onClose={() => setReceiptFor(null)} />
@@ -135,19 +151,15 @@ function SaleDialog({
   currency,
   onClose,
   onPrint,
-  onPrintSale,
 }: {
   sale: ShopSale;
   currency: string;
   onClose: () => void;
   onPrint: () => void;
-  /** Prints a different sale's receipt - the replacement an exchange created. */
-  onPrintSale?: (saleId: string) => void;
 }) {
   const queryClient = useQueryClient();
   const [voiding, setVoiding] = React.useState(false);
   const [returning, setReturning] = React.useState(false);
-  const [exchanging, setExchanging] = React.useState(false);
   const [reason, setReason] = React.useState('');
   const { data: posConfig } = useQuery({ queryKey: ['store', 'pos-config'], queryFn: storeApi.posConfig });
 
@@ -194,6 +206,15 @@ function SaleDialog({
               <dd className="tabular">-{formatMoney(sale.discountMinor, currency)}</dd>
             </div>
           )}
+          {(sale.roundingMinor ?? 0) !== 0 && (
+            <div className="flex justify-between text-muted-foreground">
+              <dt>Rounding</dt>
+              <dd className="tabular">
+                {(sale.roundingMinor ?? 0) > 0 ? '+' : ''}
+                {formatMoney(sale.roundingMinor ?? 0, currency)}
+              </dd>
+            </div>
+          )}
           <div className="flex justify-between font-semibold">
             <dt>Total</dt>
             <dd className="tabular">{formatMoney(sale.totalMinor, currency)}</dd>
@@ -207,6 +228,12 @@ function SaleDialog({
             <dd className="tabular">{formatMoney(sale.paidMinor, currency)}</dd>
           </div>
         </dl>
+        {sale.note && (
+          <div className="rounded-md border bg-muted/30 p-3">
+            <p className="text-xs font-medium text-muted-foreground">Sale note</p>
+            <p className="mt-1 whitespace-pre-wrap text-sm">{sale.note}</p>
+          </div>
+        )}
         {sale.status === 'voided' && (
           <p className="text-sm text-muted-foreground">
             Voided by {sale.voidedByNameSnapshot}
@@ -216,7 +243,13 @@ function SaleDialog({
         {voiding && (
           <div className="space-y-1.5">
             <Label htmlFor="void-reason">Why is this sale being voided?</Label>
-            <Input id="void-reason" autoFocus value={reason} maxLength={200} onChange={(event) => setReason(event.target.value)} />
+            <Input
+              id="void-reason"
+              autoFocus
+              value={reason}
+              maxLength={200}
+              onChange={(event) => setReason(event.target.value)}
+            />
           </div>
         )}
         <DialogFooter className="gap-2">
@@ -232,21 +265,15 @@ function SaleDialog({
               </Button>
             </PermissionGate>
           )}
-          {/* An exchange writes a sale as well as a return, so it needs both. */}
-          {sale.status === 'completed' && !sale.fullyReturned && (
-            <PermissionGate anyOf={['returns.create']}>
-              <PermissionGate anyOf={['sales.create']}>
-                <Button variant="outline" onClick={() => setExchanging(true)}>
-                  <Repeat2 />
-                  Exchange
-                </Button>
-              </PermissionGate>
-            </PermissionGate>
-          )}
           {sale.status === 'completed' && (
             <PermissionGate anyOf={['sales.cancel']}>
               {voiding ? (
-                <Button variant="destructive" disabled={reason.trim().length < 3} loading={voidSale.isPending} onClick={() => voidSale.mutate()}>
+                <Button
+                  variant="destructive"
+                  disabled={reason.trim().length < 3}
+                  loading={voidSale.isPending}
+                  onClick={() => voidSale.mutate()}
+                >
                   Confirm void
                 </Button>
               ) : (
@@ -258,21 +285,6 @@ function SaleDialog({
           )}
         </DialogFooter>
       </DialogContent>
-
-      {exchanging && (
-        <ShopExchangeDialog
-          sale={sale}
-          currency={currency}
-          posConfig={posConfig}
-          onClose={() => setExchanging(false)}
-          onDone={(replacementSaleId) => {
-            setExchanging(false);
-            onClose();
-            // The exchange receipt is the replacement sale's own.
-            onPrintSale?.(replacementSaleId);
-          }}
-        />
-      )}
 
       {returning && (
         <PosReturnDialog

@@ -15,7 +15,7 @@ import { resolvePage } from '../../utils/pagination';
 export interface MovementInput {
   amountMinor: number;
   reason: string;
-  referenceType?: 'topup' | 'subscription' | 'sms' | 'email' | 'ai' | 'storage' | 'refund' | 'adjustment' | null;
+  referenceType?: 'topup' | 'subscription' | 'sms' | 'email' | 'ai' | 'refund' | 'adjustment' | null;
   referenceId?: Types.ObjectId | null;
   performedBy?: Types.ObjectId | null;
   performedByName?: string;
@@ -57,7 +57,6 @@ const sourceFor = (input: MovementInput): WalletSource => {
     case 'sms':
     case 'email':
     case 'ai':
-    case 'storage':
       return input.referenceType;
     case 'adjustment':
       return 'admin_adjustment';

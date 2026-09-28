@@ -573,9 +573,14 @@ class LoyaltyService {
   }
 
   /** Undoes a claim when the return itself could not be completed. */
-  async releaseReturnClaim(ctx: TenantContext, saleId: Types.ObjectId, claim: { pointsEarnedReversed: number; pointsRedeemedRestored: number } | null) {
+  async releaseReturnClaim(
+    ctx: TenantContext,
+    saleId: Types.ObjectId,
+    claim: { pointsEarnedReversed: number; pointsRedeemedRestored: number } | null,
+    model: LoyaltySaleModel = SaleModel as unknown as LoyaltySaleModel,
+  ) {
     if (!claim || (claim.pointsEarnedReversed === 0 && claim.pointsRedeemedRestored === 0)) return;
-    await SaleModel.updateOne(
+    await model.updateOne(
       { _id: saleId, tenantId: ctx.tenantId },
       { $inc: { 'loyalty.pointsEarnedReversed': -claim.pointsEarnedReversed, 'loyalty.pointsRedeemedRestored': -claim.pointsRedeemedRestored } },
     );

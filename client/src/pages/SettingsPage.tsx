@@ -5,7 +5,6 @@ import { KeyRound, Save } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
-import { LimitAlert } from '@/components/LimitAlert';
 import { FieldError } from '@/components/FieldError';
 import { useValidatedForm } from '@/hooks/useValidatedForm';
 import { optionalEmailField, optionalPhoneField, requiredText, wholeNumberField } from '@/lib/validation';
@@ -190,8 +189,6 @@ export function SettingsPage() {
           </PermissionGate>
         }
       />
-      <LimitAlert resource="storageBytes" />
-
       <Tabs defaultValue={['loyalty', 'printer'].includes(searchParams.get('tab') ?? '') ? searchParams.get('tab')! : 'store'}>
         <TabsList className="h-auto flex-wrap">
           <TabsTrigger value="store">Store</TabsTrigger>

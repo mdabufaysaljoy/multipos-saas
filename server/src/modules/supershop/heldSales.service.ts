@@ -3,7 +3,8 @@ import { PERMISSIONS } from '../../config/permissions';
 import { ShopHeldSaleModel } from '../../models/ShopHeldSale';
 import { ShopProductModel } from '../../models/ShopProduct';
 import { ShopStockModel } from '../../models/ShopStock';
-import { lineAmount } from '../../models/shopUnits';
+import { CustomerModel } from '../../models/Customer';
+import { lineAmount, roundShopTotal } from '../../models/shopUnits';
 import { ApiError } from '../../utils/ApiError';
 import { formatDocumentNumber, nextSequence } from '../../utils/counters';
 import type { TenantContext } from '../../types/express';
@@ -51,10 +52,13 @@ class HeldSaleService {
 
     const held = await ShopHeldSaleModel.countDocuments(this.scope(ctx));
     if (held >= MAX_HOLDS_PER_BRANCH) {
-      throw ApiError.conflict(`This branch already has ${MAX_HOLDS_PER_BRANCH} held sales. Finish or delete one first.`, {
-        reason: 'TOO_MANY_HOLDS',
-        limit: MAX_HOLDS_PER_BRANCH,
-      });
+      throw ApiError.conflict(
+        `This branch already has ${MAX_HOLDS_PER_BRANCH} held sales. Finish or delete one first.`,
+        {
+          reason: 'TOO_MANY_HOLDS',
+          limit: MAX_HOLDS_PER_BRANCH,
+        },
+      );
     }
 
     const products = await ShopProductModel.find({
@@ -75,9 +79,12 @@ class HeldSaleService {
       };
     });
 
-    const estimatedTotalMinor = Math.max(
-      0,
-      lines.reduce((sum, line) => sum + lineAmount(line.unitPriceMinorSnapshot, line.quantity, line.unitType), 0) - input.discountMinor,
+    const estimatedTotalMinor = roundShopTotal(
+      Math.max(
+        0,
+        lines.reduce((sum, line) => sum + lineAmount(line.unitPriceMinorSnapshot, line.quantity, line.unitType), 0) -
+          input.discountMinor,
+      ),
     );
 
     const seq = await nextSequence(ctx.tenantId, ctx.storeId, 'supershop-hold');
@@ -104,7 +111,23 @@ class HeldSaleService {
     if (!ctx.can(PERMISSIONS.SALES_CREATE) && !ctx.can(PERMISSIONS.SALES_VIEW)) {
       throw ApiError.forbidden('You do not have permission to see held sales');
     }
-    const rows = await ShopHeldSaleModel.find(this.scope(ctx)).sort({ createdAt: -1 }).limit(MAX_HOLDS_PER_BRANCH).lean();
+    const rows = await ShopHeldSaleModel.find(this.scope(ctx))
+      .sort({ createdAt: -1 })
+      .limit(MAX_HOLDS_PER_BRANCH)
+      .lean();
+    const customerIds = rows.flatMap((row) => (row.customerId ? [row.customerId] : []));
+    const customerNames = new Map(
+      (
+        await CustomerModel.find({
+          _id: { $in: customerIds },
+          tenantId: ctx.tenantId,
+          storeId: ctx.storeId,
+          deletedAt: null,
+        })
+          .select('name')
+          .lean()
+      ).map((customer) => [String(customer._id), customer.name]),
+    );
     return rows.map((row) => ({
       _id: row._id,
       holdNumber: row.holdNumber,
@@ -112,7 +135,8 @@ class HeldSaleService {
       itemCount: row.items.length,
       /** What it came to when it was parked. The catalogue decides on resume. */
       estimatedTotalMinor: row.estimatedTotalMinor,
-      customerName: row.customerDraft?.name ?? '',
+      customerName:
+        row.customerDraft?.name ?? (row.customerId ? (customerNames.get(String(row.customerId)) ?? '') : ''),
       heldByNameSnapshot: row.heldByNameSnapshot,
       heldBy: row.heldBy,
       createdAt: row.createdAt,
@@ -132,20 +156,42 @@ class HeldSaleService {
 
     // Atomic: two tills cannot both resume the same basket.
     const held = await ShopHeldSaleModel.findOneAndDelete({ _id: id, ...this.scope(ctx) }).lean();
-    if (!held) throw ApiError.notFound('That held sale is no longer there. Someone else may have taken it, or it expired.');
+    if (!held)
+      throw ApiError.notFound('That held sale is no longer there. Someone else may have taken it, or it expired.');
 
-    const products = await ShopProductModel.find({
-      _id: { $in: held.items.map((item) => item.productId) },
-      tenantId: ctx.tenantId,
-      deletedAt: null,
-    }).lean();
+    const [products, savedCustomer] = await Promise.all([
+      ShopProductModel.find({
+        _id: { $in: held.items.map((item) => item.productId) },
+        tenantId: ctx.tenantId,
+        deletedAt: null,
+      }).lean(),
+      held.customerId
+        ? CustomerModel.findOne({
+            _id: held.customerId,
+            tenantId: ctx.tenantId,
+            storeId: ctx.storeId,
+            deletedAt: null,
+          })
+            .select('name phone email')
+            .lean()
+        : null,
+    ]);
 
     // This branch's stock for those products, so the till can put the basket
     // back on screen without a second round trip.
     const stock = new Map(
-      (await ShopStockModel.find({ tenantId: ctx.tenantId, storeId: ctx.storeId, productId: { $in: products.map((p) => p._id) } })
-        .select('productId quantityOnHand costPriceMinor')
-        .lean()).map((row) => [String(row.productId), { quantityOnHand: row.quantityOnHand, costPriceMinor: row.costPriceMinor }]),
+      (
+        await ShopStockModel.find({
+          tenantId: ctx.tenantId,
+          storeId: ctx.storeId,
+          productId: { $in: products.map((p) => p._id) },
+        })
+          .select('productId quantityOnHand costPriceMinor')
+          .lean()
+      ).map((row) => [
+        String(row.productId),
+        { quantityOnHand: row.quantityOnHand, costPriceMinor: row.costPriceMinor },
+      ]),
     );
 
     const items = [];
@@ -175,6 +221,16 @@ class HeldSaleService {
       dropped,
       customerId: held.customerId,
       customerDraft: held.customerDraft,
+      customer: savedCustomer
+        ? {
+            id: String(savedCustomer._id),
+            name: savedCustomer.name,
+            phone: savedCustomer.phone,
+            email: savedCustomer.email,
+          }
+        : held.customerDraft
+          ? { name: held.customerDraft.name, phone: held.customerDraft.phone }
+          : null,
       discountMinor: held.discountMinor,
       loyaltyCardNumber: held.loyaltyCardNumber,
       note: held.note,
@@ -191,12 +247,16 @@ class HeldSaleService {
    * voids a sale.
    */
   async remove(ctx: TenantContext, id: Types.ObjectId) {
-    const held = await ShopHeldSaleModel.findOne({ _id: id, ...this.scope(ctx) }).select('heldBy holdNumber').lean();
+    const held = await ShopHeldSaleModel.findOne({ _id: id, ...this.scope(ctx) })
+      .select('heldBy holdNumber')
+      .lean();
     if (!held) throw ApiError.notFound('Held sale not found');
 
     const mine = String(held.heldBy) === String(ctx.userId);
     if (!mine && !ctx.can(PERMISSIONS.SALES_CANCEL)) {
-      throw ApiError.forbidden("That held sale belongs to another cashier. You need permission to cancel a sale to discard it.");
+      throw ApiError.forbidden(
+        'That held sale belongs to another cashier. You need permission to cancel a sale to discard it.',
+      );
     }
     await ShopHeldSaleModel.deleteOne({ _id: id, ...this.scope(ctx) });
     return { id: String(id), holdNumber: held.holdNumber };

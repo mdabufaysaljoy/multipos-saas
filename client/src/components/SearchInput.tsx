@@ -10,9 +10,11 @@ interface SearchInputProps {
   className?: string;
   autoFocus?: boolean;
   inputRef?: React.Ref<HTMLInputElement>;
+  /** Lets the global scanner read this field without enabling that behavior elsewhere. */
+  barcodeTarget?: boolean;
 }
 
-export function SearchInput({ value, onChange, placeholder = 'Search…', className, autoFocus, inputRef }: SearchInputProps) {
+export function SearchInput({ value, onChange, placeholder = 'Search…', className, autoFocus, inputRef, barcodeTarget }: SearchInputProps) {
   return (
     <div className={cn('relative', className)}>
       <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
@@ -22,6 +24,7 @@ export function SearchInput({ value, onChange, placeholder = 'Search…', classN
         onChange={(e) => onChange(e.target.value)}
         placeholder={placeholder}
         autoFocus={autoFocus}
+        data-barcode-target={barcodeTarget ? 'true' : undefined}
         className="pl-9 pr-9"
       />
       {value && (

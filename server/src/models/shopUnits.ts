@@ -10,6 +10,12 @@ export const lineAmount = (unitPriceMinor: number, quantity: number, unitType: S
 export const includedVat = (grossMinor: number, rateBps: number): number =>
   rateBps <= 0 ? 0 : Math.floor((grossMinor * rateBps + Math.floor((10_000 + rateBps) / 2)) / (10_000 + rateBps));
 
+/**
+ * Super Shop settles whole currency units: 49 minor units round down and 50
+ * round up. Keeping this in minor units avoids floating-point checkout maths.
+ */
+export const roundShopTotal = (minor: number): number => Math.floor((minor + 50) / 100) * 100;
+
 /** "3" or "1.25 kg" - for messages. */
 export const describeQuantity = (quantity: number, unitType: ShopUnitType) =>
   unitType === 'weight' ? `${(quantity / 1000).toFixed(3).replace(/\.?0+$/, '')} kg` : String(quantity);

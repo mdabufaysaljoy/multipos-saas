@@ -34,6 +34,8 @@ export interface ReturnableSale {
   subtotalMinor: number;
   /** A discount taken off the whole sale, which a refund has to share out. */
   discountMinor: number;
+  /** Actual amount charged, when it differs because this vertical rounds totals. */
+  chargedMinor?: number;
   customerId: Types.ObjectId | null;
   customerName: string;
   customerPhone: string;
@@ -64,9 +66,17 @@ export interface SaleReturnAdapter {
    * guarded update per line, exactly as Clothing does it: two clerks returning
    * the last unit at the same instant cannot both succeed.
    */
-  reserve(ctx: TenantContext, saleId: Types.ObjectId, line: { saleItemId: Types.ObjectId; quantity: number; sold: number }): Promise<boolean>;
+  reserve(
+    ctx: TenantContext,
+    saleId: Types.ObjectId,
+    line: { saleItemId: Types.ObjectId; quantity: number; sold: number },
+  ): Promise<boolean>;
   /** Gives a held quantity back when the return could not be completed. */
-  release(ctx: TenantContext, saleId: Types.ObjectId, lines: { saleItemId: Types.ObjectId; quantity: number }[]): Promise<void>;
+  release(
+    ctx: TenantContext,
+    saleId: Types.ObjectId,
+    lines: { saleItemId: Types.ObjectId; quantity: number }[],
+  ): Promise<void>;
   /** Records the money that went back, and whether anything is left to return. */
   applyReturnTotals(ctx: TenantContext, saleId: Types.ObjectId, refundedMinor: number): Promise<void>;
   /**
@@ -102,7 +112,14 @@ export interface ExchangeQuote {
   subtotalMinor: number;
   /** What the replacement sale will come to once the vertical's rules apply. */
   totalMinor: number;
-  lines: { itemId: Types.ObjectId; label: string; detail: string; quantity: number; unitPriceMinor: number; lineTotalMinor: number }[];
+  lines: {
+    itemId: Types.ObjectId;
+    label: string;
+    detail: string;
+    quantity: number;
+    unitPriceMinor: number;
+    lineTotalMinor: number;
+  }[];
 }
 
 /** The replacement sale, as the engine needs to report and unwind it. */
@@ -137,7 +154,13 @@ export interface SaleExchangeAdapter {
       creditMinor: number;
       originalSaleId: Types.ObjectId;
       originalSaleNumber: string;
-      returnedItems: { nameSnapshot: string; detailSnapshot: string; quantity: number; unitType: string; lineTotalMinor: number }[];
+      returnedItems: {
+        nameSnapshot: string;
+        detailSnapshot: string;
+        quantity: number;
+        unitType: string;
+        lineTotalMinor: number;
+      }[];
       note: string;
     },
   ): Promise<ReplacementSale>;

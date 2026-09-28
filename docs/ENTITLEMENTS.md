@@ -22,18 +22,20 @@ request from the database (`config/entitlements.ts` → `services/entitlements/e
 | `customRoles` | `customRoles` | ❌ | ✅ | ✅ | `roles.routes.ts` |
 | `dataExport` | `exportData` | ❌ | ✅ | ✅ | `exports/export.routes.ts` |
 | `smsMarketing` / `emailMarketing` / `marketing` | same | ❌ | ✅ | ✅ | `messaging.routes.ts` |
-| `imageOptimization` | `imageOptimization` | ❌ | ❌ | ✅ | `uploads.routes.ts` |
 | `loyalty` (Clothing) | `loyaltyProgram` | ❌ | ✅ | ✅ | `loyalty.routes.ts`, sales |
 | `productImport` (Clothing) | `productImport` | ✅ | ✅ | ✅ | `productImports/import.routes.ts` |
-| `supplierManagement` (Clothing) | `supplierManagement` | ❌ | ✅ | ✅ | `suppliers/suppliers.routes.ts` |
+| `supplierManagement` (Clothing + Super Shop) | `supplierManagement` | ❌ | ✅ | ✅ | `suppliers/suppliers.routes.ts` |
 | `prioritySupport` | `prioritySupport` | ❌ | ❌ | ✅ | a support commitment, not a code gate |
 
 **Data export and product import are independent.** Export moves data out and is a paid tier feature;
 import brings a catalogue in and is part of every plan. Neither flag can turn the other on or off.
 
+Image optimization is upload infrastructure, not a subscription entitlement. Every subscribed
+workspace has uploaded images resized, compressed and converted to WebP before storage.
+
 ## Limit entitlements
 
-`products`, `staff`, `branches`, `customers`, `monthlySales`, `storage`, `suppliers` (Clothing: Starter 0,
+`products`, `staff`, `branches`, `customers`, `monthlySales`, `suppliers` (Clothing and Super Shop: Starter 0,
 Professional 100, Enterprise unlimited) — see `ENTITLEMENT_LIMITS`.
 `-1` means unlimited and is reported as `{ limit: null, unlimited: true }`.
 

@@ -1,16 +1,16 @@
 /**
- * Seeds the storage ledger from objects that already exist in storage.
+ * Seeds the storage ownership registry from objects that already exist.
  *
- * Uploads used to write bytes and forget them, so a workspace with existing
- * product images would start at zero usage and effectively get its quota twice.
+ * Uploads used to write files without a durable ownership row. Backfilling the
+ * registry lets tenant-scoped cleanup safely manage those older images.
  *
  * DRIVER-AGNOSTIC: this asks the configured storage provider to enumerate its
  * objects rather than reading the filesystem itself, so it works for any driver
  * that implements `list()`. Sizes come from the provider's metadata (a stat, or
  * a HEAD on an object store) - no object is ever downloaded to measure it.
  *
- * A driver that cannot enumerate is refused outright rather than producing a
- * usage figure that is quietly too low.
+ * A driver that cannot enumerate is refused rather than producing an incomplete
+ * ownership registry.
  *
  * Idempotent: a key already in the ledger is skipped, so a file is never
  * counted twice no matter how often this runs.
@@ -45,7 +45,7 @@ export interface LedgerBackfillResult {
 export async function backfillStorageLedger(): Promise<LedgerBackfillResult> {
   if (typeof storage.list !== 'function') {
     throw new Error(
-      `The "${storage.name}" storage driver cannot enumerate its objects, so usage cannot be rebuilt from it. ` +
+      `The "${storage.name}" storage driver cannot enumerate its objects, so ownership cannot be rebuilt from it. ` +
         'Implement `list()` on that provider, or rebuild the ledger from the provider\'s own inventory export.',
     );
   }
@@ -79,7 +79,7 @@ export async function backfillStorageLedger(): Promise<LedgerBackfillResult> {
     const parts = key.split('/');
     // Ownership comes from the key's own namespace. A file that does not sit
     // under a live tenant is never attributed to one - that would let deleted
-    // or foreign data count against somebody's quota.
+    // or foreign data be attributed to the wrong workspace.
     if (parts[0] !== 'tenants' || !tenantIds.has(parts[1] ?? '')) {
       unmatched.push(key);
       continue;

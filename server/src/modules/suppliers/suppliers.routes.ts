@@ -12,9 +12,9 @@ import * as controller from './suppliers.controller';
 import { createSupplierSchema, listSuppliersSchema, updateSupplierSchema } from './suppliers.validators';
 
 /**
- * Supplier management (Clothing POS).
+ * Supplier management (Clothing and Super Shop POS).
  *
- * Every route: signed in -> workspace + branch -> Clothing -> usable
+ * Every route: signed in -> workspace + branch -> supported retail POS -> usable
  * subscription -> the `supplierManagement` entitlement (Professional and
  * Enterprise) -> the matching `suppliers.*` permission. A Starter workspace is
  * refused here, before any handler runs; hiding the menu item is not the gate.
@@ -26,7 +26,7 @@ const router = Router();
 router.use(
   authenticate,
   resolveTenant,
-  requireVertical('clothing'),
+  requireVertical('clothing', 'supershop'),
   requireSubscribedAccess,
   requireAccess({ entitlement: 'supplierManagement' }),
 );

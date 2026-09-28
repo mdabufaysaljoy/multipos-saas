@@ -21,7 +21,7 @@ stays Professional and above (`docs/DATA_EXPORT.md`).
 | Brand | a string on the product — there is **no Brand collection**, so no cross-workspace brand reference is possible |
 | Categories | `Category` per branch, unique by slug; the manual product form picks an EXISTING category and never creates one |
 | VAT / unit / status | VAT is a **store** setting (`store.tax`), there is no per-product tax or unit field. Product state is `isActive` only |
-| Images | product images are uploaded files with storage quota accounting; the export does not include them |
+| Images | product images are uploaded files with tenant-scoped ownership tracking; the export does not include them |
 | Queue / worker | none in this stack (no Redis, no worker) |
 | Upload handling | `multer` memory storage with a size limit and a type allow-list (`uploads.routes.ts`) |
 

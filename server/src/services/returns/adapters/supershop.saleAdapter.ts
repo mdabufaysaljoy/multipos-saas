@@ -1,12 +1,18 @@
 import { Types } from 'mongoose';
 import { ShopProductModel } from '../../../models/ShopProduct';
 import { ShopSaleModel } from '../../../models/ShopSale';
-import { lineAmount } from '../../../models/shopUnits';
+import { lineAmount, roundShopTotal } from '../../../models/shopUnits';
 import { ApiError } from '../../../utils/ApiError';
 import type { TenantContext } from '../../../types/express';
 import { loyaltyService } from '../../../modules/loyalty/loyalty.service';
 import { supershopService } from '../../../modules/supershop/supershop.service';
-import type { ExchangeQuote, ReplacementSale, ReturnableSale, SaleExchangeAdapter, SaleReturnAdapter } from '../posReturns.types';
+import type {
+  ExchangeQuote,
+  ReplacementSale,
+  ReturnableSale,
+  SaleExchangeAdapter,
+  SaleReturnAdapter,
+} from '../posReturns.types';
 
 /**
  * What a Super Shop can do that a restaurant and a pharmacy cannot: swap goods.
@@ -41,10 +47,10 @@ class SupershopExchangeAdapter implements SaleExchangeAdapter {
       };
     });
 
-    // Super Shop prices include VAT and an exchange takes no discount, so the
-    // basket total is its subtotal.
+    // Super Shop prices include VAT and an exchange takes no discount. Its
+    // payable total still follows the same whole-unit rounding as checkout.
     const subtotalMinor = lines.reduce((sum, line) => sum + line.lineTotalMinor, 0);
-    return { subtotalMinor, totalMinor: subtotalMinor, lines };
+    return { subtotalMinor, totalMinor: roundShopTotal(subtotalMinor), lines };
   }
 
   async create(
@@ -56,7 +62,13 @@ class SupershopExchangeAdapter implements SaleExchangeAdapter {
       creditMinor: number;
       originalSaleId: Types.ObjectId;
       originalSaleNumber: string;
-      returnedItems: { nameSnapshot: string; detailSnapshot: string; quantity: number; unitType: string; lineTotalMinor: number }[];
+      returnedItems: {
+        nameSnapshot: string;
+        detailSnapshot: string;
+        quantity: number;
+        unitType: string;
+        lineTotalMinor: number;
+      }[];
       note: string;
     },
   ): Promise<ReplacementSale> {
@@ -94,7 +106,12 @@ class SupershopExchangeAdapter implements SaleExchangeAdapter {
     await supershopService.voidSale(ctx, saleId, reason);
   }
 
-  async link(ctx: TenantContext, saleId: Types.ObjectId, returnId: Types.ObjectId, returnNumber: string): Promise<void> {
+  async link(
+    ctx: TenantContext,
+    saleId: Types.ObjectId,
+    returnId: Types.ObjectId,
+    returnNumber: string,
+  ): Promise<void> {
     await ShopSaleModel.updateOne(
       { _id: saleId, tenantId: ctx.tenantId, storeId: ctx.storeId },
       { $set: { 'exchange.returnId': returnId, 'exchange.returnNumber': returnNumber } },
@@ -108,13 +125,19 @@ class SupershopSaleReturnAdapter implements SaleReturnAdapter {
   readonly exchange = new SupershopExchangeAdapter();
 
   async findSale(ctx: TenantContext, saleId: Types.ObjectId): Promise<ReturnableSale | null> {
-    const sale = await ShopSaleModel.findOne({ _id: saleId, tenantId: ctx.tenantId, storeId: ctx.storeId, status: 'completed' }).lean();
+    const sale = await ShopSaleModel.findOne({
+      _id: saleId,
+      tenantId: ctx.tenantId,
+      storeId: ctx.storeId,
+      status: 'completed',
+    }).lean();
     if (!sale) return null;
     return {
       saleId: sale._id,
       saleNumber: sale.saleNumber,
       subtotalMinor: sale.subtotalMinor,
       discountMinor: sale.discountMinor,
+      chargedMinor: sale.totalMinor,
       customerId: sale.customerId ?? null,
       customerName: sale.customerNameSnapshot ?? '',
       customerPhone: '',
@@ -128,12 +151,19 @@ class SupershopSaleReturnAdapter implements SaleReturnAdapter {
         returnedQuantity: line.returnedQuantity ?? 0,
         unitPriceMinor: line.unitPriceMinor,
         // Cost per piece or per kilogram, as the sale recorded it.
-        costPriceMinor: line.quantity > 0 ? Math.round((line.costMinor * (line.unitType === 'weight' ? 1000 : 1)) / line.quantity) : 0,
+        costPriceMinor:
+          line.quantity > 0
+            ? Math.round((line.costMinor * (line.unitType === 'weight' ? 1000 : 1)) / line.quantity)
+            : 0,
       })),
     };
   }
 
-  async reserve(ctx: TenantContext, saleId: Types.ObjectId, line: { saleItemId: Types.ObjectId; quantity: number; sold: number }): Promise<boolean> {
+  async reserve(
+    ctx: TenantContext,
+    saleId: Types.ObjectId,
+    line: { saleItemId: Types.ObjectId; quantity: number; sold: number },
+  ): Promise<boolean> {
     const result = await ShopSaleModel.updateOne(
       {
         _id: saleId,
@@ -146,7 +176,11 @@ class SupershopSaleReturnAdapter implements SaleReturnAdapter {
     return result.matchedCount > 0;
   }
 
-  async release(ctx: TenantContext, saleId: Types.ObjectId, lines: { saleItemId: Types.ObjectId; quantity: number }[]): Promise<void> {
+  async release(
+    ctx: TenantContext,
+    saleId: Types.ObjectId,
+    lines: { saleItemId: Types.ObjectId; quantity: number }[],
+  ): Promise<void> {
     for (const line of lines) {
       await ShopSaleModel.updateOne(
         { _id: saleId, tenantId: ctx.tenantId, storeId: ctx.storeId, 'items._id': line.saleItemId },
@@ -175,7 +209,9 @@ class SupershopSaleReturnAdapter implements SaleReturnAdapter {
   }
 
   async reverseLoyalty(ctx: TenantContext, saleId: Types.ObjectId, reason: string): Promise<void> {
-    const sale = await ShopSaleModel.findOne({ _id: saleId, tenantId: ctx.tenantId }).select('loyalty saleNumber').lean();
+    const sale = await ShopSaleModel.findOne({ _id: saleId, tenantId: ctx.tenantId })
+      .select('loyalty saleNumber')
+      .lean();
     if (!sale?.loyalty) return;
     const claim = await loyaltyService.claimReturn(ctx, saleId, ShopSaleModel as never);
     if (!claim) return;
@@ -188,7 +224,10 @@ class SupershopSaleReturnAdapter implements SaleReturnAdapter {
   }
 
   async applyReturnTotals(ctx: TenantContext, saleId: Types.ObjectId, refundedMinor: number): Promise<void> {
-    await ShopSaleModel.updateOne({ _id: saleId, tenantId: ctx.tenantId }, { $inc: { returnedTotalMinor: refundedMinor } });
+    await ShopSaleModel.updateOne(
+      { _id: saleId, tenantId: ctx.tenantId },
+      { $inc: { returnedTotalMinor: refundedMinor } },
+    );
     const sale = await ShopSaleModel.findOne({ _id: saleId, tenantId: ctx.tenantId }).select('items').lean();
     const fully = (sale?.items ?? []).every((line) => (line.returnedQuantity ?? 0) >= line.quantity);
     await ShopSaleModel.updateOne({ _id: saleId, tenantId: ctx.tenantId }, { $set: { fullyReturned: fully } });

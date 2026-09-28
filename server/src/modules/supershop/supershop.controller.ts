@@ -67,6 +67,10 @@ export const lookupBarcode = asyncHandler(async (req: Request, res: Response) =>
   ok(res, await supershopService.lookupBarcode(getContext(req), query<{ barcode: string }>(req).barcode));
 });
 
+export const generateBarcode = asyncHandler(async (req: Request, res: Response) => {
+  ok(res, { barcode: await supershopService.generateBarcode(getContext(req)) });
+});
+
 export const getProduct = asyncHandler(async (req: Request, res: Response) => {
   ok(res, await supershopService.getProduct(getContext(req), params<IdParams>(req).id));
 });
@@ -77,7 +81,11 @@ export const createProduct = asyncHandler(async (req: Request, res: Response) =>
 
 export const updateProduct = asyncHandler(async (req: Request, res: Response) => {
   const ctx = getContext(req);
-  const { before, after } = await supershopService.updateProduct(ctx, params<IdParams>(req).id, body<UpdateProductInput>(req));
+  const { before, after } = await supershopService.updateProduct(
+    ctx,
+    params<IdParams>(req).id,
+    body<UpdateProductInput>(req),
+  );
   if (before.priceMinor !== after.priceMinor || before.vatRateBps !== after.vatRateBps) {
     await recordAudit(req, {
       action: 'supershop.product_price_changed',
@@ -96,7 +104,10 @@ export const removeProduct = asyncHandler(async (req: Request, res: Response) =>
 
 // ----------------------------------------------------------------- stock
 export const receiveStock = asyncHandler(async (req: Request, res: Response) => {
-  created(res, await supershopService.receiveStock(getContext(req), params<IdParams>(req).id, body<ReceiveStockInput>(req)));
+  created(
+    res,
+    await supershopService.receiveStock(getContext(req), params<IdParams>(req).id, body<ReceiveStockInput>(req)),
+  );
 });
 
 export const adjustStock = asyncHandler(async (req: Request, res: Response) => {
@@ -109,7 +120,12 @@ export const adjustStock = asyncHandler(async (req: Request, res: Response) => {
     targetStoreId: ctx.storeId,
     targetLabel: result.product.name,
     oldValue: { quantityOnHand: result.previousOnHand },
-    newValue: { quantityOnHand: result.stock.quantityOnHand, type: input.type, quantityDelta: input.quantityDelta, reason: input.reason },
+    newValue: {
+      quantityOnHand: result.stock.quantityOnHand,
+      type: input.type,
+      quantityDelta: input.quantityDelta,
+      reason: input.reason,
+    },
   });
   ok(res, result);
 });
@@ -255,5 +271,9 @@ export const branchOverview = asyncHandler(async (req: Request, res: Response) =
 export const printReports = asyncHandler(async (req: Request, res: Response) => {
   const ctx = getContext(req);
   const data = await supershopReportsService.report(ctx, query<ShopAnalyticsInput>(req));
-  await streamReportPdf(ctx, res, supershopReportView(data as unknown as Record<string, unknown>, await storeCurrency(ctx)));
+  await streamReportPdf(
+    ctx,
+    res,
+    supershopReportView(data as unknown as Record<string, unknown>, await storeCurrency(ctx)),
+  );
 });

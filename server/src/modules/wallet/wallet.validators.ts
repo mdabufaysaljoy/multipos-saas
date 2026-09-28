@@ -18,7 +18,7 @@ export const topUpRequestSchema = z.object({
 
 export const walletHistorySchema = paginationSchema.extend({
   type: z.enum(WALLET_TX_TYPES).optional(),
-  service: z.enum(['topup', 'subscription', 'sms', 'email', 'ai', 'storage', 'refund', 'adjustment']).optional(),
+  service: z.enum(['topup', 'subscription', 'sms', 'email', 'ai', 'refund', 'adjustment']).optional(),
   direction: z.enum(['credit', 'debit']).optional(),
   from: calendarDate.optional(),
   to: calendarDate.optional(),

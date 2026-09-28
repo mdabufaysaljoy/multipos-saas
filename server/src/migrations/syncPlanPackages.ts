@@ -16,6 +16,14 @@
  *      the snapshot are preserved exactly - a customer's history keeps the
  *      amount they actually paid.
  *
+ * Obsolete subscription storage allowances are removed from plans, vertical
+ * overrides and frozen snapshots. Uploads remain available to every plan; only
+ * the retired quota field is deleted.
+ *
+ * The former image-optimization plan flag is removed from the same documents.
+ * Optimization itself remains active for every subscribed workspace; it is no
+ * longer configurable or exposed as something one package has over another.
+ *
  * Payments and wallet transactions are not modified at all.
  *
  * Codes that are not in the seed catalogue (bespoke plans) are left alone.
@@ -29,6 +37,7 @@ import { logger } from '../utils/logger';
 import { SubscriptionPlanModel } from '../models/SubscriptionPlan';
 import { SubscriptionModel } from '../models/Subscription';
 import { UpgradeRequestModel } from '../models/UpgradeRequest';
+import { PlatformSettingsModel } from '../models/PlatformSettings';
 import { ALL_PLAN_SEEDS } from '../seed/plans.seed';
 
 export interface PlanPackageSyncResult {
@@ -36,6 +45,8 @@ export interface PlanPackageSyncResult {
   plansMissing: string[];
   subscriptionsRelabelled: number;
   upgradeRequestsRelabelled: number;
+  obsoleteStorageFieldsRemoved: number;
+  obsoleteImageOptimizationFieldsRemoved: number;
 }
 
 export async function syncPlanPackages(): Promise<PlanPackageSyncResult> {
@@ -57,6 +68,64 @@ export async function syncPlanPackages(): Promise<PlanPackageSyncResult> {
     plansUpdated.push(seed.code);
   }
 
+  const obsoleteStorageFieldsRemoved =
+    (
+      await SubscriptionPlanModel.collection.updateMany(
+        {},
+        { $unset: { 'limits.maxStorageBytes': '' } },
+      )
+    ).modifiedCount +
+    (
+      await SubscriptionPlanModel.collection.updateMany(
+        { verticalOverrides: { $type: 'array' } },
+        { $unset: { 'verticalOverrides.$[].limits.maxStorageBytes': '' } },
+      )
+    ).modifiedCount +
+    (
+      await SubscriptionModel.collection.updateMany(
+        {},
+        { $unset: { 'planSnapshot.limits.maxStorageBytes': '' } },
+      )
+    ).modifiedCount +
+    (
+      await UpgradeRequestModel.collection.updateMany(
+        {},
+        { $unset: { 'planSnapshot.limits.maxStorageBytes': '' } },
+      )
+    ).modifiedCount +
+    (
+      await PlatformSettingsModel.collection.updateMany(
+        {},
+        { $unset: { storageGbMonthCostMinor: '' } },
+      )
+    ).modifiedCount;
+
+  const obsoleteImageOptimizationFieldsRemoved =
+    (
+      await SubscriptionPlanModel.collection.updateMany(
+        {},
+        { $unset: { 'features.imageOptimization': '' } },
+      )
+    ).modifiedCount +
+    (
+      await SubscriptionPlanModel.collection.updateMany(
+        { verticalOverrides: { $type: 'array' } },
+        { $unset: { 'verticalOverrides.$[].features.imageOptimization': '' } },
+      )
+    ).modifiedCount +
+    (
+      await SubscriptionModel.collection.updateMany(
+        {},
+        { $unset: { 'planSnapshot.features.imageOptimization': '' } },
+      )
+    ).modifiedCount +
+    (
+      await UpgradeRequestModel.collection.updateMany(
+        {},
+        { $unset: { 'planSnapshot.features.imageOptimization': '' } },
+      )
+    ).modifiedCount;
+
   // Dot-path updates, so nothing else in the snapshot is rewritten.
   let subscriptionsRelabelled = 0;
   let upgradeRequestsRelabelled = 0;
@@ -67,7 +136,14 @@ export async function syncPlanPackages(): Promise<PlanPackageSyncResult> {
     upgradeRequestsRelabelled += (await UpgradeRequestModel.updateMany(filter, update)).modifiedCount;
   }
 
-  return { plansUpdated, plansMissing, subscriptionsRelabelled, upgradeRequestsRelabelled };
+  return {
+    plansUpdated,
+    plansMissing,
+    subscriptionsRelabelled,
+    upgradeRequestsRelabelled,
+    obsoleteStorageFieldsRemoved,
+    obsoleteImageOptimizationFieldsRemoved,
+  };
 }
 
 async function main() {

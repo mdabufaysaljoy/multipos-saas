@@ -11,21 +11,18 @@ export const USAGE_UNITS: Record<UsageService, { unit: string; label: string }> 
   sms: { unit: 'segment', label: 'SMS' },
   email: { unit: 'email', label: 'Email' },
   ai: { unit: 'request', label: 'AI' },
-  storage: { unit: 'GB-month', label: 'Storage' },
 };
 
 type PriceFields = {
   smsCostMinor?: number;
   emailCostMinor?: number;
   aiRequestCostMinor?: number;
-  storageGbMonthCostMinor?: number;
 };
 
 const PRICE_FIELD: Record<UsageService, keyof PriceFields> = {
   sms: 'smsCostMinor',
   email: 'emailCostMinor',
   ai: 'aiRequestCostMinor',
-  storage: 'storageGbMonthCostMinor',
 };
 
 function readPrice(settings: PriceFields, service: UsageService): number {

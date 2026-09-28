@@ -11,9 +11,7 @@ export interface PlanLimits {
   /** Sales recorded in the current calendar month. */
   maxMonthlySales: number;
   maxCustomers: number;
-  /** Total bytes of uploaded files the workspace may hold. */
-  maxStorageBytes: number;
-  /** Supplier records (Clothing POS). -1 = unlimited. */
+  /** Supplier records (Clothing and Super Shop POS). -1 = unlimited. */
   maxSuppliers: number;
 }
 
@@ -32,13 +30,6 @@ export interface PlanFeatures {
    */
   smsMarketing: boolean;
   emailMarketing: boolean;
-  /**
-   * Automatic Image Optimization & WebP Conversion.
-   *
-   * Brand only. Uploads are resized, compressed and stored as WebP, so a
-   * high-resolution photo costs a fraction of the quota.
-   */
-  imageOptimization: boolean;
   /** Loyalty points and membership cards (Clothing POS). Professional and Enterprise. */
   loyaltyProgram: boolean;
   /**
@@ -48,7 +39,7 @@ export interface PlanFeatures {
    * `exportData`), never so a plan can be sold without it.
    */
   productImport: boolean;
-  /** Supplier management (Clothing POS). Professional and Enterprise. */
+  /** Supplier management (Clothing and Super Shop POS). Professional and Enterprise. */
   supplierManagement: boolean;
 }
 
@@ -129,7 +120,6 @@ const planSchema = new Schema<SubscriptionPlanDoc>(
       prioritySupport: { type: Boolean, default: false },
       smsMarketing: { type: Boolean, default: false },
       emailMarketing: { type: Boolean, default: false },
-      imageOptimization: { type: Boolean, default: false },
       loyaltyProgram: { type: Boolean, default: false },
       productImport: { type: Boolean, default: true },
       supplierManagement: { type: Boolean, default: false },
@@ -140,7 +130,6 @@ const planSchema = new Schema<SubscriptionPlanDoc>(
       maxStores: { type: Number, default: 1 },
       maxMonthlySales: { type: Number, default: -1 },
       maxCustomers: { type: Number, default: -1 },
-      maxStorageBytes: { type: Number, default: -1 },
       maxSuppliers: { type: Number, default: -1 },
     },
     verticalOverrides: { type: [verticalOverrideSchema], default: [] },

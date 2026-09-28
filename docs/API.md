@@ -382,7 +382,7 @@ are not.
 ## Suppliers — `/api/suppliers`
 
 Professional and Enterprise (`supplierManagement` entitlement) + the matching
-`suppliers.*` permission, Clothing only. Workspace-level: every branch sees the
+`suppliers.*` permission, Clothing and Super Shop only. Workspace-level: every branch sees the
 same list. See `docs/SUPPLIER_MANAGEMENT.md`.
 
 | Method | Path | Purpose |

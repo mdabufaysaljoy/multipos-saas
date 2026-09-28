@@ -7,7 +7,14 @@ import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { DataTable, type Column } from '@/components/DataTable';
 import { PageHeader } from '@/components/PageHeader';
@@ -43,13 +50,24 @@ interface PosCategoriesScreenProps {
  * name they were sold under. A name still in use cannot be removed - hiding it
  * is how a department is retired without touching what already sits in it.
  */
-export function PosCategoriesScreen({ title, description, noun, api, invalidate, entityLabel = 'category', maxNameLength = 60 }: PosCategoriesScreenProps) {
+export function PosCategoriesScreen({
+  title,
+  description,
+  noun,
+  api,
+  invalidate,
+  entityLabel = 'category',
+  maxNameLength = 60,
+}: PosCategoriesScreenProps) {
   const queryClient = useQueryClient();
   const [editing, setEditing] = React.useState<PosCategoryRow | 'new' | null>(null);
   const [deleting, setDeleting] = React.useState<PosCategoryRow | null>(null);
 
   const { data, isLoading, error, refetch } = useQuery({
-    queryKey: [...invalidate, 'categories', 'manage'],
+    // Departments and brands share this component, but not a cache entry.
+    // Including the entity kind prevents one screen from briefly rendering the
+    // other screen's rows when navigating between them.
+    queryKey: [...invalidate, entityLabel === 'brand' ? 'brands' : 'categories', 'manage'],
     queryFn: () => api.list(true),
   });
 
@@ -92,7 +110,12 @@ export function PosCategoriesScreen({ title, description, noun, api, invalidate,
       header: noun.many[0].toUpperCase() + noun.many.slice(1),
       cell: (row) => <span className="tabular">{row.itemCount}</span>,
     },
-    { key: 'order', header: 'Order', mobile: 'hide', cell: (row) => <span className="tabular text-muted-foreground">{row.sortOrder || '—'}</span> },
+    {
+      key: 'order',
+      header: 'Order',
+      mobile: 'hide',
+      cell: (row) => <span className="tabular text-muted-foreground">{row.sortOrder || '—'}</span>,
+    },
     {
       key: 'actions',
       header: '',
@@ -243,14 +266,28 @@ function CategoryDialog({
         <div className="grid gap-3 sm:grid-cols-[1fr_7rem]">
           <div className="space-y-1.5">
             <Label htmlFor="category-name">Name</Label>
-            <Input id="category-name" autoFocus value={name} maxLength={60} onChange={(event) => setName(event.target.value)} />
+            <Input
+              id="category-name"
+              autoFocus
+              value={name}
+              maxLength={60}
+              onChange={(event) => setName(event.target.value)}
+            />
           </div>
           <div className="space-y-1.5">
             <Label htmlFor="category-order">Order</Label>
-            <Input id="category-order" value={sortOrder} inputMode="numeric" maxLength={4} onChange={(event) => setSortOrder(event.target.value.replace(/\D/g, ''))} />
+            <Input
+              id="category-order"
+              value={sortOrder}
+              inputMode="numeric"
+              maxLength={4}
+              onChange={(event) => setSortOrder(event.target.value.replace(/\D/g, ''))}
+            />
           </div>
         </div>
-        <p className="text-xs text-muted-foreground">Lower numbers come first on the till; equal numbers sort by name.</p>
+        <p className="text-xs text-muted-foreground">
+          Lower numbers come first on the till; equal numbers sort by name.
+        </p>
         <DialogFooter>
           <Button variant="outline" onClick={onClose}>
             Cancel

@@ -2,7 +2,7 @@
 
 A working map of the platform, written for someone joining the project. It
 describes what is there now, not what is planned. The living change log is the
-root `IMPLIMENTATION_STATUS.md`; the universal-POS programme is
+`docs/IMPLEMENTATION_STATUS.md`; the universal-POS programme is
 `docs/UNIVERSAL_POS_PLAN.md`.
 
 ## Shape
@@ -90,7 +90,7 @@ transactions**. Correctness comes from ordering and compare-and-swap instead:
 ## Testing & CI
 
 `npm test` boots a throwaway API on its own port against a derived `*_test`
-database, runs `scripts/smoke-test.mjs` (**3231 assertions**, all over HTTP,
+database, runs `scripts/smoke-test.mjs` (**3,570 assertions**, all over HTTP,
 including cross-tenant IDOR, auth bypass and payload abuse), then drops the
 database. `.github/workflows/ci.yml` runs lint → typecheck → build → test on
 Node 22 with a `mongo:7` service.

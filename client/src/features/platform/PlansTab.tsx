@@ -23,7 +23,6 @@ import { FEATURE_LABELS } from '@/lib/planCatalog';
 
 const errorMessage = (err: unknown, fallback: string) => (err instanceof ApiError ? err.message : fallback);
 const per = (interval: string) => (interval === 'yearly' ? 'year' : 'month');
-const MB = 1024 * 1024;
 
 /** New plans start from the same defaults the server applies. */
 const DEFAULT_FEATURES: Record<string, boolean> = {
@@ -37,7 +36,6 @@ const DEFAULT_FEATURES: Record<string, boolean> = {
   prioritySupport: false,
   smsMarketing: false,
   emailMarketing: false,
-  imageOptimization: false,
   loyaltyProgram: false,
 };
 
@@ -47,16 +45,14 @@ const DEFAULT_LIMITS: Record<string, number> = {
   maxProducts: 200,
   maxMonthlySales: -1,
   maxCustomers: -1,
-  maxStorageBytes: -1,
 };
 
-const LIMIT_FIELDS: { key: string; label: string; bytes?: boolean }[] = [
+const LIMIT_FIELDS: { key: string; label: string }[] = [
   { key: 'maxStores', label: 'Branches' },
   { key: 'maxStaff', label: 'Staff accounts' },
   { key: 'maxProducts', label: 'Products' },
   { key: 'maxMonthlySales', label: 'Sales per month' },
   { key: 'maxCustomers', label: 'Customer profiles' },
-  { key: 'maxStorageBytes', label: 'Storage', bytes: true },
 ];
 
 const STATUS_LABELS: Record<string, string> = {
@@ -480,7 +476,6 @@ function PlanEditorDialog({
                 <LimitField
                   key={field.key}
                   label={field.label}
-                  bytes={field.bytes}
                   value={form.limits[field.key] ?? -1}
                   onChange={(value) => set('limits', { ...form.limits, [field.key]: value })}
                 />
@@ -526,22 +521,19 @@ function ToggleRow({ label, hint, checked, onChange }: { label: string; hint?: s
   );
 }
 
-/** A limit: a whole number, or unlimited (stored as -1). Storage is edited in MB and stored in bytes. */
-function LimitField({ label, bytes, value, onChange }: { label: string; bytes?: boolean; value: number; onChange: (value: number) => void }) {
+/** A limit: a whole number, or unlimited (stored as -1). */
+function LimitField({ label, value, onChange }: { label: string; value: number; onChange: (value: number) => void }) {
   const unlimited = value === -1;
-  const shown = unlimited ? '' : String(bytes ? Math.round(value / MB) : value);
+  const shown = unlimited ? '' : String(value);
   return (
     <div className="space-y-1.5 rounded-md border p-3">
       <div className="flex items-center justify-between gap-2">
-        <Label>
-          {label}
-          {bytes ? ' (MB)' : ''}
-        </Label>
+        <Label>{label}</Label>
         <span className="flex items-center gap-2 text-xs text-muted-foreground">
           Unlimited
           <Switch
             checked={unlimited}
-            onCheckedChange={(checked) => onChange(checked ? -1 : bytes ? 1024 * MB : 0)}
+            onCheckedChange={(checked) => onChange(checked ? -1 : 0)}
             aria-label={`${label}: unlimited`}
           />
         </span>
@@ -554,7 +546,7 @@ function LimitField({ label, bytes, value, onChange }: { label: string; bytes?: 
         onChange={(event) => {
           const digits = event.target.value.replace(/\D/g, '').slice(0, 9);
           const number = digits === '' ? 0 : Number(digits);
-          onChange(bytes ? number * MB : number);
+          onChange(number);
         }}
       />
     </div>

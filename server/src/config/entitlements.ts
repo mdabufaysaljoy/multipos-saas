@@ -36,7 +36,7 @@ interface LimitDefinition {
   /** Plural noun for messages: "up to 300 products". */
   noun: string;
   planLimit: keyof PlanLimits;
-  unit: 'count' | 'bytes';
+  unit: 'count';
   verticals?: readonly PosVertical[];
 }
 
@@ -53,13 +53,12 @@ export const ENTITLEMENT_FEATURES = {
   smsMarketing: { label: 'SMS marketing', planFeature: 'smsMarketing' },
   emailMarketing: { label: 'Email marketing', planFeature: 'emailMarketing' },
   marketing: { label: 'Marketing', anyOf: ['smsMarketing', 'emailMarketing'] },
-  imageOptimization: { label: 'Image optimisation', planFeature: 'imageOptimization' },
   // The tills that run a card program; a POS type not listed here never receives it.
   loyalty: { label: 'Loyalty program', planFeature: 'loyaltyProgram', verticals: ['clothing', 'supershop', 'pharmacy', 'restaurant'] },
   // Separate from `dataExport` on purpose: import is on every plan, export is not.
   // Import is how a catalogue gets in, so every POS type has it on every plan.
   productImport: { label: 'Bulk product import', planFeature: 'productImport' },
-  supplierManagement: { label: 'Supplier management', planFeature: 'supplierManagement', verticals: ['clothing'] },
+  supplierManagement: { label: 'Supplier management', planFeature: 'supplierManagement', verticals: ['clothing', 'supershop'] },
 } as const satisfies Record<string, FeatureDefinition>;
 
 export const ENTITLEMENT_LIMITS = {
@@ -68,8 +67,13 @@ export const ENTITLEMENT_LIMITS = {
   branches: { label: 'Branches', noun: 'branches', planLimit: 'maxStores', unit: 'count' },
   customers: { label: 'Customer profiles', noun: 'customer profiles', planLimit: 'maxCustomers', unit: 'count' },
   monthlySales: { label: 'Sales this month', noun: 'sales per month', planLimit: 'maxMonthlySales', unit: 'count' },
-  storage: { label: 'File storage', noun: 'bytes of storage', planLimit: 'maxStorageBytes', unit: 'bytes' },
-  suppliers: { label: 'Suppliers', noun: 'suppliers', planLimit: 'maxSuppliers', unit: 'count', verticals: ['clothing'] },
+  suppliers: {
+    label: 'Suppliers',
+    noun: 'suppliers',
+    planLimit: 'maxSuppliers',
+    unit: 'count',
+    verticals: ['clothing', 'supershop'],
+  },
 } as const satisfies Record<string, LimitDefinition>;
 
 export type FeatureEntitlementKey = keyof typeof ENTITLEMENT_FEATURES;

@@ -124,8 +124,21 @@ export const passwordCheck = z.string().min(1, 'Password is required').max(128, 
  * `z.coerce.date()` alone turns "0" into the year 2000 and accepts the year
  * 99999, which makes report ranges meaningless and forces needless index scans.
  */
-export const calendarDate = z.coerce
-  .date()
+export const calendarDate = z
+  .preprocess((input) => {
+    if (input instanceof Date) return input;
+    if (typeof input !== 'string' || !/^\d{4}-\d{2}-\d{2}(?:T.*)?$/.test(input)) {
+      return new Date(Number.NaN);
+    }
+
+    const parsed = new Date(input.length === 10 ? `${input}T00:00:00.000Z` : input);
+    // JavaScript normalises impossible date-only values such as 2026-02-30.
+    // Refuse those instead of silently turning them into a different day.
+    if (input.length === 10 && !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) !== input) {
+      return new Date(Number.NaN);
+    }
+    return parsed;
+  }, z.date())
   .refine((value) => {
     const year = value.getUTCFullYear();
     return year >= 2000 && year <= 2100;

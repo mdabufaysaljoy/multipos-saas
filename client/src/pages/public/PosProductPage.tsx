@@ -13,13 +13,12 @@ import { PlanComparisonTable } from '@/features/billing/PlanComparisonTable';
 import { cn } from '@/lib/utils';
 import { SAAS_PRODUCTS, SHARED_FEATURES, productBySlug } from './products.data';
 
-const HEADLINE_LIMITS: { key: string; label: string; format?: 'bytes' }[] = [
+const HEADLINE_LIMITS: { key: string; label: string }[] = [
   { key: 'maxStores', label: 'Branches' },
   { key: 'maxStaff', label: 'Staff' },
   { key: 'maxProducts', label: 'Products' },
   { key: 'maxMonthlySales', label: 'Sales / month' },
   { key: 'maxCustomers', label: 'Customers' },
-  { key: 'maxStorageBytes', label: 'Storage', format: 'bytes' },
 ];
 
 const tierName = (name: string) => name.replace(/ Annual$/, '');
@@ -168,7 +167,7 @@ export function PosProductPage() {
                       {HEADLINE_LIMITS.map((limit) => (
                         <div key={limit.key}>
                           <dt className="text-xs text-muted-foreground">{limit.label}</dt>
-                          <dd className="tabular font-semibold">{formatLimit(plan.limits[limit.key], limit.format)}</dd>
+                          <dd className="tabular font-semibold">{formatLimit(plan.limits[limit.key])}</dd>
                         </div>
                       ))}
                     </dl>

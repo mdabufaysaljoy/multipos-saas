@@ -1,7 +1,7 @@
-import { Types } from 'mongoose';
+import { Types, type HydratedDocument } from 'mongoose';
 import type { PosVertical } from '../../config/verticals';
 import { PERMISSIONS } from '../../config/permissions';
-import { ReturnModel } from '../../models/Return';
+import { ReturnModel, type ReturnDoc } from '../../models/Return';
 import { StoreModel } from '../../models/Store';
 import { ApiError } from '../../utils/ApiError';
 import { formatDocumentNumber, nextSequence } from '../../utils/counters';
@@ -46,11 +46,13 @@ export interface PosExchangeInput {
  *
  *   1. read the sale and work out what may come back
  *   2. HOLD each quantity on the sale line (atomic, guarded, releasable)
- *   3. put the stock back through the vertical's inventory adapter
- *   4. write the return, then update the sale's returned totals
+ *   3. write the return (the durable commit point)
+ *   4. put stock back and refresh the derived loyalty/customer/sale totals
  *
- * Anything that fails after step 2 releases the held quantities, so a sale can
- * never end up with goods marked returned that were never refunded.
+ * Anything that fails before step 3 releases the held quantities. Work after
+ * the commit point is best-effort and logged for reconciliation; it must never
+ * roll back the held quantities or invite the till to refund the same goods a
+ * second time.
  */
 class PosReturnService {
   async create(ctx: TenantContext, adapter: SaleReturnAdapter, input: PosReturnInput) {
@@ -59,7 +61,9 @@ class PosReturnService {
     const sale = await adapter.findSale(ctx, input.saleId);
     if (!sale) throw ApiError.notFound('That sale does not exist. A return must be made against a sale.');
 
-    const store = await StoreModel.findOne({ _id: ctx.storeId, tenantId: ctx.tenantId }).select('paymentMethods returnPrefix').lean();
+    const store = await StoreModel.findOne({ _id: ctx.storeId, tenantId: ctx.tenantId })
+      .select('paymentMethods returnPrefix')
+      .lean();
     if (!store) throw ApiError.notFound('Branch not found');
     // A refund goes back on a tender the branch actually takes.
     assertMethodsEnabled(store.paymentMethods ?? [], [input.refundMethod], POS_TENDER_DIALECT);
@@ -76,30 +80,22 @@ class PosReturnService {
       });
       if (!ok) {
         await adapter.release(ctx, sale.saleId, held);
-        throw ApiError.conflict(`"${entry.line.label}" was returned by someone else while you were working. Reload the sale and try again.`);
+        throw ApiError.conflict(
+          `"${entry.line.label}" was returned by someone else while you were working. Reload the sale and try again.`,
+        );
       }
       held.push({ saleItemId: entry.line.saleItemId, quantity: entry.quantity });
     }
 
+    let created: HydratedDocument<ReturnDoc>;
     try {
-      // ---- put the goods back ------------------------------------------------
-      const inventory = inventoryAdapterFor(adapter.vertical);
-      const restocking = prepared.filter((entry) => entry.restock);
-      if (inventory.tracksStock && restocking.length > 0) {
-        await inventory.restore(
-          ctx,
-          restocking.map((entry) => this.reservationFor(adapter.vertical, entry.line, entry.quantity)) as never[],
-          { reason: input.reason || 'Customer return', referenceId: sale.saleId, referenceNumber: sale.saleNumber },
-        );
-      }
-
-      // ---- write the return ---------------------------------------------------
+      // ---- write the return: the commit point ---------------------------------
       const seq = await nextSequence(ctx.tenantId, ctx.storeId, `${adapter.vertical}-return`);
       const returnNumber = formatDocumentNumber(store.returnPrefix || 'RET-', seq);
       const totalMinor = prepared.reduce((sum, entry) => sum + entry.lineTotalMinor, 0);
       const refundLabel = (await tenderLabels(ctx.tenantId)).get(input.refundMethod) ?? input.refundMethod;
 
-      const [created] = await ReturnModel.create([
+      [created] = await ReturnModel.create([
         {
           tenantId: ctx.tenantId,
           storeId: ctx.storeId,
@@ -117,13 +113,18 @@ class PosReturnService {
             variantNameSnapshot: entry.line.detail,
             skuSnapshot: entry.line.detail,
             quantity: entry.quantity,
+            ...(entry.line.unitType ? { unitType: entry.line.unitType } : {}),
             unitPriceMinor: entry.line.unitPriceMinor,
             costPriceMinorSnapshot: entry.line.costPriceMinor,
             costMinor: entry.costMinor,
             lineTotalMinor: entry.lineTotalMinor,
             restock: entry.restock,
             ...(entry.line.allocations
-              ? { allocations: this.allocationsFor(entry.line, entry.quantity).map(({ batchId, batchNumber, quantity }) => ({ batchId, batchNumber, quantity })) }
+              ? {
+                  allocations: this.allocationsFor(entry.line, entry.quantity).map(
+                    ({ batchId, batchNumber, quantity }) => ({ batchId, batchNumber, quantity }),
+                  ),
+                }
               : {}),
           })),
           totalMinor,
@@ -138,27 +139,72 @@ class PosReturnService {
           loyalty: null,
         },
       ]);
-
-      await adapter.applyReturnTotals(ctx, sale.saleId, totalMinor);
-
-      // Points follow the goods: what the returned items earned is taken back,
-      // and what was spent on them is given back as points rather than money.
-      await adapter.reverseLoyalty?.(ctx, sale.saleId, input.reason);
-
-      // A refund is not a purchase: take it back off the customer's lifetime value.
-      if (sale.customerId) {
-        await customerService.applySaleStats(ctx, sale.customerId, { amountMinor: -totalMinor, orderDelta: 0 });
-      }
-
-      return created.toObject();
     } catch (error) {
       await adapter.release(ctx, sale.saleId, held);
-      logger.error('A return failed after its quantities were held; they were released', {
+      logger.error('A return failed before its commit point; its held quantities were released', {
         tenantId: String(ctx.tenantId),
         saleId: String(sale.saleId),
         error,
       });
       throw error;
+    }
+
+    const totalMinor = created.totalMinor;
+    const inventory = inventoryAdapterFor(adapter.vertical);
+    const restocking = prepared.filter((entry) => entry.restock);
+
+    await this.afterReturnCommit(ctx, sale.saleId, created._id, 'restore returned stock', async () => {
+      if (!inventory.tracksStock || restocking.length === 0) return;
+      await inventory.restore(
+        ctx,
+        restocking.map((entry) => this.reservationFor(adapter.vertical, entry.line, entry.quantity)) as never[],
+        { reason: input.reason || 'Customer return', referenceId: created._id, referenceNumber: created.returnNumber },
+      );
+    });
+
+    await this.afterReturnCommit(ctx, sale.saleId, created._id, 'refresh sale return totals', () =>
+      adapter.applyReturnTotals(ctx, sale.saleId, totalMinor),
+    );
+
+    // Points follow the goods: what the returned items earned is taken back,
+    // and what was spent on them is given back as points rather than money.
+    if (adapter.reverseLoyalty) {
+      await this.afterReturnCommit(ctx, sale.saleId, created._id, 'reverse loyalty points', () =>
+        adapter.reverseLoyalty!(ctx, sale.saleId, input.reason),
+      );
+    }
+
+    // A refund is not a purchase: take it back off the customer's lifetime value.
+    if (sale.customerId) {
+      await this.afterReturnCommit(ctx, sale.saleId, created._id, 'refresh customer lifetime value', () =>
+        customerService.applySaleStats(ctx, sale.customerId!, { amountMinor: -totalMinor, orderDelta: 0 }),
+      );
+    }
+
+    return created.toObject();
+  }
+
+  /**
+   * Once a Return exists, its reserved sale quantities are authoritative. A
+   * derived write may need reconciliation, but throwing would make the till
+   * retry a refund that has already committed.
+   */
+  private async afterReturnCommit(
+    ctx: TenantContext,
+    saleId: Types.ObjectId,
+    returnId: Types.ObjectId,
+    operation: string,
+    task: () => Promise<unknown>,
+  ): Promise<void> {
+    try {
+      await task();
+    } catch (error) {
+      logger.error(`CRITICAL: failed to ${operation} after a return committed; reconciliation is required`, {
+        tenantId: String(ctx.tenantId),
+        saleId: String(saleId),
+        returnId: String(returnId),
+        error,
+      });
     }
   }
 
@@ -201,7 +247,9 @@ class PosReturnService {
     const sale = await adapter.findSale(ctx, input.saleId);
     if (!sale) throw ApiError.notFound('That sale does not exist. An exchange must be made against a sale.');
 
-    const store = await StoreModel.findOne({ _id: ctx.storeId, tenantId: ctx.tenantId }).select('paymentMethods returnPrefix').lean();
+    const store = await StoreModel.findOne({ _id: ctx.storeId, tenantId: ctx.tenantId })
+      .select('paymentMethods returnPrefix')
+      .lean();
     if (!store) throw ApiError.notFound('Branch not found');
 
     const prepared = this.prepareLines(adapter, sale, input.items);
@@ -210,20 +258,31 @@ class PosReturnService {
     // Priced from the catalogue, never from the request, so the rule below is
     // decided on numbers the till cannot choose.
     const quote = await exchange.quote(ctx, input.replacement.items);
-    if (quote.subtotalMinor < creditMinor) {
+    if (quote.totalMinor < creditMinor) {
       throw ApiError.validation(
-        "The replacement cannot be cheaper than the returned goods. Choose something of equal or higher value, or take a refund instead.",
-        { reason: 'EXCHANGE_CHEAPER_REPLACEMENT', creditMinor, replacementSubtotalMinor: quote.subtotalMinor },
+        'The replacement cannot be cheaper than the returned goods. Choose something of equal or higher value, or take a refund instead.',
+        {
+          reason: 'EXCHANGE_CHEAPER_REPLACEMENT',
+          creditMinor,
+          replacementSubtotalMinor: quote.subtotalMinor,
+          replacementTotalMinor: quote.totalMinor,
+        },
       );
     }
 
     // ---- hold the returned quantities ----------------------------------------
     const held: { saleItemId: Types.ObjectId; quantity: number }[] = [];
     for (const entry of prepared) {
-      const ok = await adapter.reserve(ctx, sale.saleId, { saleItemId: entry.line.saleItemId, quantity: entry.quantity, sold: entry.line.quantity });
+      const ok = await adapter.reserve(ctx, sale.saleId, {
+        saleItemId: entry.line.saleItemId,
+        quantity: entry.quantity,
+        sold: entry.line.quantity,
+      });
       if (!ok) {
         await adapter.release(ctx, sale.saleId, held);
-        throw ApiError.conflict(`"${entry.line.label}" was returned by someone else while you were working. Reload the sale and try again.`);
+        throw ApiError.conflict(
+          `"${entry.line.label}" was returned by someone else while you were working. Reload the sale and try again.`,
+        );
       }
       held.push({ saleItemId: entry.line.saleItemId, quantity: entry.quantity });
     }
@@ -344,10 +403,13 @@ class PosReturnService {
       // the restock, and the holds on the original sale's lines.
       await exchange.cancel(ctx, replacement.saleId, 'Exchange could not be completed').catch(() => undefined);
       if (restocked) {
-        logger.error('An exchange failed after the returned goods were put back; the stock is on the shelf and the return was not written', {
-          tenantId: String(ctx.tenantId),
-          saleId: String(sale.saleId),
-        });
+        logger.error(
+          'An exchange failed after the returned goods were put back; the stock is on the shelf and the return was not written',
+          {
+            tenantId: String(ctx.tenantId),
+            saleId: String(sale.saleId),
+          },
+        );
       }
       await adapter.release(ctx, sale.saleId, held);
       // Two tills running the same exchange: the loser reports the winner's.
@@ -361,7 +423,12 @@ class PosReturnService {
 
   /** The exchange a key has already produced, if any. */
   private async findExchangeByKey(ctx: TenantContext, vertical: PosVertical, idempotencyKey: string) {
-    const doc = await ReturnModel.findOne({ tenantId: ctx.tenantId, storeId: ctx.storeId, vertical, idempotencyKey }).lean();
+    const doc = await ReturnModel.findOne({
+      tenantId: ctx.tenantId,
+      storeId: ctx.storeId,
+      vertical,
+      idempotencyKey,
+    }).lean();
     return doc ? { ...doc, replayed: true } : null;
   }
 
@@ -374,11 +441,20 @@ class PosReturnService {
    */
   private prepareLines(adapter: SaleReturnAdapter, sale: ReturnableSale, items: RequestedReturnLine[]) {
     const byId = new Map(sale.lines.map((line) => [String(line.saleItemId), line]));
-    const prepared: { line: ReturnableLine; quantity: number; restock: boolean; lineTotalMinor: number; costMinor: number }[] = [];
+    const prepared: {
+      line: ReturnableLine;
+      quantity: number;
+      restock: boolean;
+      lineTotalMinor: number;
+      costMinor: number;
+    }[] = [];
 
     for (const requested of items) {
       const line = byId.get(String(requested.saleItemId));
-      if (!line) throw ApiError.badRequest('One of the selected lines does not belong to this sale', { saleItemId: requested.saleItemId });
+      if (!line)
+        throw ApiError.badRequest('One of the selected lines does not belong to this sale', {
+          saleItemId: requested.saleItemId,
+        });
 
       const returnable = line.quantity - line.returnedQuantity;
       if (returnable <= 0) {
@@ -391,7 +467,12 @@ class PosReturnService {
       if (requested.quantity > returnable) {
         throw ApiError.badRequest(
           `You can return at most ${returnable} of "${line.label}". Sold ${line.quantity}, already returned ${line.returnedQuantity}.`,
-          { saleItemId: requested.saleItemId, sold: line.quantity, alreadyReturned: line.returnedQuantity, maxReturnable: returnable },
+          {
+            saleItemId: requested.saleItemId,
+            sold: line.quantity,
+            alreadyReturned: line.returnedQuantity,
+            maxReturnable: returnable,
+          },
         );
       }
 
@@ -419,13 +500,20 @@ class PosReturnService {
    * line contributed. Integer arithmetic throughout, rounded down, so a refund
    * can never come to more than was taken.
    */
-  private refundFor(adapter: SaleReturnAdapter, sale: { subtotalMinor: number; discountMinor: number }, line: ReturnableLine, quantity: number): number {
+  private refundFor(
+    adapter: SaleReturnAdapter,
+    sale: { subtotalMinor: number; discountMinor: number; chargedMinor?: number },
+    line: ReturnableLine,
+    quantity: number,
+  ): number {
     // What these units were SOLD for. Not `unitPriceMinor * quantity`: a Super
     // Shop weighs in grams and prices per kilogram, so that product is a
     // thousand times the real figure and would refund a thousand times the
     // money. Where a quantity really is a count of things - Pharmacy,
     // Restaurant - the default is exactly that multiplication.
     const gross = adapter.amountOf ? adapter.amountOf(line, quantity) : line.unitPriceMinor * quantity;
+    if (sale.chargedMinor !== undefined && sale.subtotalMinor > 0)
+      return Math.floor((gross * sale.chargedMinor) / sale.subtotalMinor);
     if (sale.discountMinor <= 0 || sale.subtotalMinor <= 0) return gross;
     return Math.floor((gross * (sale.subtotalMinor - sale.discountMinor)) / sale.subtotalMinor);
   }
@@ -469,7 +557,11 @@ class PosReturnService {
       itemId: line.itemId,
       quantity,
       balanceAfter: 0,
-      detail: { productName: line.label, unitType: line.detail === 'by weight' ? 'weight' : 'each', costPriceMinor: line.costPriceMinor },
+      detail: {
+        productName: line.label,
+        unitType: line.detail === 'by weight' ? 'weight' : 'each',
+        costPriceMinor: line.costPriceMinor,
+      },
     };
   }
 }

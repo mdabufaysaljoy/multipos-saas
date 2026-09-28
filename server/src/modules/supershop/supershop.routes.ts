@@ -29,9 +29,22 @@ import {
 import { posLedgerQuerySchema } from '../../services/inventory/posLedger';
 import { stockLedger } from '../inventory/stockLedger.controller';
 import { posImportRouter } from '../posImports/posImports.routes';
-import { createCategory, listCategories, removeCategory, updateCategory } from '../posCategories/posCategories.controller';
-import { createPosCategorySchema, listPosCategoriesSchema, updatePosCategorySchema } from '../../services/catalogue/posCategories.service';
-import { createShopBrandSchema, listShopBrandsSchema, updateShopBrandSchema } from '../../services/catalogue/shopBrands.service';
+import {
+  createCategory,
+  listCategories,
+  removeCategory,
+  updateCategory,
+} from '../posCategories/posCategories.controller';
+import {
+  createPosCategorySchema,
+  listPosCategoriesSchema,
+  updatePosCategorySchema,
+} from '../../services/catalogue/posCategories.service';
+import {
+  createShopBrandSchema,
+  listShopBrandsSchema,
+  updateShopBrandSchema,
+} from '../../services/catalogue/shopBrands.service';
 
 const router = Router();
 
@@ -46,13 +59,34 @@ const router = Router();
 router.use(authenticate, resolveTenant, requireVertical('supershop'), requireSubscribedAccess);
 
 // -------------------------------------------------------------- products
-router.get('/products', requirePermission(PERMISSIONS.PRODUCTS_VIEW), validate({ query: listProductsSchema }), controller.listProducts);
+router.get(
+  '/products',
+  requirePermission(PERMISSIONS.PRODUCTS_VIEW),
+  validate({ query: listProductsSchema }),
+  controller.listProducts,
+);
 // Registered before `/products/:id` so "lookup" is never read as an id.
-router.get('/products/lookup', requirePermission(PERMISSIONS.PRODUCTS_VIEW), validate({ query: barcodeQuerySchema }), controller.lookupBarcode);
+router.get(
+  '/products/lookup',
+  requirePermission(PERMISSIONS.PRODUCTS_VIEW),
+  validate({ query: barcodeQuerySchema }),
+  controller.lookupBarcode,
+);
+router.post(
+  '/products/barcode/generate',
+  requireActiveSubscription,
+  requirePermission(PERMISSIONS.PRODUCTS_CREATE),
+  controller.generateBarcode,
+);
 // The brands the shop sells under. Independent of the department: a product
 // has both, either or neither. Managed with the same permissions a department
 // is, because it is the same kind of setting.
-router.get('/brands', requirePermission(PERMISSIONS.PRODUCTS_VIEW), validate({ query: listShopBrandsSchema }), controller.listBrands);
+router.get(
+  '/brands',
+  requirePermission(PERMISSIONS.PRODUCTS_VIEW),
+  validate({ query: listShopBrandsSchema }),
+  controller.listBrands,
+);
 router.post(
   '/brands',
   requireActiveSubscription,
@@ -76,7 +110,12 @@ router.delete(
 );
 // The departments this workspace sells under; the same four routes in every POS
 // type whose items carry the category as a name (see services/catalogue).
-router.get('/categories', requirePermission(PERMISSIONS.PRODUCTS_VIEW), validate({ query: listPosCategoriesSchema }), listCategories);
+router.get(
+  '/categories',
+  requirePermission(PERMISSIONS.PRODUCTS_VIEW),
+  validate({ query: listPosCategoriesSchema }),
+  listCategories,
+);
 router.post(
   '/categories',
   requireActiveSubscription,
@@ -98,25 +137,92 @@ router.delete(
   validate({ params: idParam }),
   removeCategory,
 );
-router.post('/products', requireActiveSubscription, requirePermission(PERMISSIONS.PRODUCTS_CREATE), validate({ body: createProductSchema }), controller.createProduct);
-router.get('/products/:id', requirePermission(PERMISSIONS.PRODUCTS_VIEW), validate({ params: idParam }), controller.getProduct);
-router.patch('/products/:id', requireActiveSubscription, requirePermission(PERMISSIONS.PRODUCTS_EDIT), validate({ params: idParam, body: updateProductSchema }), controller.updateProduct);
-router.delete('/products/:id', requireActiveSubscription, requirePermission(PERMISSIONS.PRODUCTS_DELETE), validate({ params: idParam }), controller.removeProduct);
+router.post(
+  '/products',
+  requireActiveSubscription,
+  requirePermission(PERMISSIONS.PRODUCTS_CREATE),
+  validate({ body: createProductSchema }),
+  controller.createProduct,
+);
+router.get(
+  '/products/:id',
+  requirePermission(PERMISSIONS.PRODUCTS_VIEW),
+  validate({ params: idParam }),
+  controller.getProduct,
+);
+router.patch(
+  '/products/:id',
+  requireActiveSubscription,
+  requirePermission(PERMISSIONS.PRODUCTS_EDIT),
+  validate({ params: idParam, body: updateProductSchema }),
+  controller.updateProduct,
+);
+router.delete(
+  '/products/:id',
+  requireActiveSubscription,
+  requirePermission(PERMISSIONS.PRODUCTS_DELETE),
+  validate({ params: idParam }),
+  controller.removeProduct,
+);
 
 // ----------------------------------------------------------------- stock
-router.post('/products/:id/stock', requireActiveSubscription, requirePermission(PERMISSIONS.INVENTORY_ADJUST), validate({ params: idParam, body: receiveStockSchema }), controller.receiveStock);
-router.post('/products/:id/adjust', requireActiveSubscription, requirePermission(PERMISSIONS.INVENTORY_ADJUST), validate({ params: idParam, body: adjustStockSchema }), controller.adjustStock);
-router.get('/movements', requirePermission(PERMISSIONS.INVENTORY_VIEW), validate({ query: listMovementsSchema }), controller.listMovements);
+router.post(
+  '/products/:id/stock',
+  requireActiveSubscription,
+  requirePermission(PERMISSIONS.INVENTORY_ADJUST),
+  validate({ params: idParam, body: receiveStockSchema }),
+  controller.receiveStock,
+);
+router.post(
+  '/products/:id/adjust',
+  requireActiveSubscription,
+  requirePermission(PERMISSIONS.INVENTORY_ADJUST),
+  validate({ params: idParam, body: adjustStockSchema }),
+  controller.adjustStock,
+);
+router.get(
+  '/movements',
+  requirePermission(PERMISSIONS.INVENTORY_VIEW),
+  validate({ query: listMovementsSchema }),
+  controller.listMovements,
+);
 router.get('/inventory-summary', requirePermission(PERMISSIONS.INVENTORY_VIEW), controller.inventorySummary);
 // The same ledger in the shape every vertical reports; see services/inventory/posLedger.
-router.get('/stock-ledger', requirePermission(PERMISSIONS.INVENTORY_VIEW), validate({ query: posLedgerQuerySchema }), stockLedger);
+router.get(
+  '/stock-ledger',
+  requirePermission(PERMISSIONS.INVENTORY_VIEW),
+  validate({ query: posLedgerQuerySchema }),
+  stockLedger,
+);
 
 // ----------------------------------------------------------------- sales
-router.post('/sales', requireActiveSubscription, requirePermission(PERMISSIONS.SALES_CREATE), validate({ body: createSaleSchema }), controller.createSale);
-router.get('/sales', requirePermission(PERMISSIONS.SALES_VIEW), validate({ query: listSalesSchema }), controller.listSales);
+router.post(
+  '/sales',
+  requireActiveSubscription,
+  requirePermission(PERMISSIONS.SALES_CREATE),
+  validate({ body: createSaleSchema }),
+  controller.createSale,
+);
+router.get(
+  '/sales',
+  requirePermission(PERMISSIONS.SALES_VIEW),
+  validate({ query: listSalesSchema }),
+  controller.listSales,
+);
 router.get('/sales/:id', requirePermission(PERMISSIONS.SALES_VIEW), validate({ params: idParam }), controller.getSale);
-router.get('/sales/:id/receipt', requirePermission(PERMISSIONS.SALES_VIEW), validate({ params: idParam }), controller.receipt);
-router.post('/sales/:id/void', requireActiveSubscription, requirePermission(PERMISSIONS.SALES_CANCEL), validate({ params: idParam, body: voidSaleSchema }), controller.voidSale);
+router.get(
+  '/sales/:id/receipt',
+  requirePermission(PERMISSIONS.SALES_VIEW),
+  validate({ params: idParam }),
+  controller.receipt,
+);
+router.post(
+  '/sales/:id/void',
+  requireActiveSubscription,
+  requirePermission(PERMISSIONS.SALES_CANCEL),
+  validate({ params: idParam, body: voidSaleSchema }),
+  controller.voidSale,
+);
 // A return against a completed sale: partial or whole, refunded on a tender
 // the branch takes, with the goods restocked unless the till says otherwise.
 router.post(
@@ -136,20 +242,48 @@ router.post(
   validate({ params: idParam, body: createExchangeSchema }),
   controller.createExchange,
 );
-router.get('/returns', requirePermission(PERMISSIONS.RETURNS_VIEW), validate({ query: listSalesSchema }), controller.listReturns);
+router.get(
+  '/returns',
+  requirePermission(PERMISSIONS.RETURNS_VIEW),
+  validate({ query: listSalesSchema }),
+  controller.listReturns,
+);
 
 // ----------------------------------------------------------- held sales
 // A basket put aside. Nothing here completes a sale, so nothing here needs an
 // active subscription beyond the one the module already requires - but holding
 // is part of taking a sale, so it follows `sales.create`.
-router.post('/held-sales', requireActiveSubscription, requirePermission(PERMISSIONS.SALES_CREATE), validate({ body: holdSaleSchema }), controller.holdSale);
+router.post(
+  '/held-sales',
+  requireActiveSubscription,
+  requirePermission(PERMISSIONS.SALES_CREATE),
+  validate({ body: holdSaleSchema }),
+  controller.holdSale,
+);
 router.get('/held-sales', requirePermission(PERMISSIONS.SALES_VIEW), controller.listHeldSales);
-router.post('/held-sales/:id/resume', requireActiveSubscription, requirePermission(PERMISSIONS.SALES_CREATE), validate({ params: idParam }), controller.resumeHeldSale);
+router.post(
+  '/held-sales/:id/resume',
+  requireActiveSubscription,
+  requirePermission(PERMISSIONS.SALES_CREATE),
+  validate({ params: idParam }),
+  controller.resumeHeldSale,
+);
 // Discarding your own needs only that; discarding someone else's needs
 // `sales.cancel`, which the service checks.
-router.delete('/held-sales/:id', requireActiveSubscription, requirePermission(PERMISSIONS.SALES_CREATE), validate({ params: idParam }), controller.removeHeldSale);
+router.delete(
+  '/held-sales/:id',
+  requireActiveSubscription,
+  requirePermission(PERMISSIONS.SALES_CREATE),
+  validate({ params: idParam }),
+  controller.removeHeldSale,
+);
 
-router.get('/dashboard', requirePermission(PERMISSIONS.REPORTS_VIEW), validate({ query: dashboardRangeSchema }), controller.dashboard);
+router.get(
+  '/dashboard',
+  requirePermission(PERMISSIONS.REPORTS_VIEW),
+  validate({ query: dashboardRangeSchema }),
+  controller.dashboard,
+);
 
 // Supershop Advanced Analytics: RBAC AND the plan feature, same gate as the other verticals.
 router.get(

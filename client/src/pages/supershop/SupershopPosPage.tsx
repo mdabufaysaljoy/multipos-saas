@@ -5,9 +5,17 @@ import { CreditCard, Minus, PauseCircle, Plus, ScanBarcode, Scale, Trash2 } from
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { EmptyState, LoadingState } from '@/components/states';
 import { MoneyInput } from '@/components/MoneyInput';
 import { LimitAlert } from '@/components/LimitAlert';
@@ -23,16 +31,29 @@ import type { LoyaltyLookup } from '@/types/domain';
 import { PaymentPanel } from '@/features/payments/PaymentPanel';
 import { tenderedRows } from '@/features/payments/paymentMath';
 import { usePayments } from '@/features/payments/usePayments';
+import { useBarcodeScanner } from '@/features/pos/useBarcodeScanner';
 import { ShopReceiptDialog } from '@/features/supershop/ShopReceiptDialog';
 import { HeldSalesDialog } from '@/features/supershop/HeldSalesDialog';
-import { QuickCreateDialog } from '@/features/supershop/QuickCreateDialog';
+import {
+  loadShopBasketDraft,
+  saveShopBasketDraft,
+  shopBasketDraftKey,
+  type ShopDiscountMode,
+} from '@/features/supershop/basketDraft';
 import { ApiError } from '@/api/client';
 import { storeApi } from '@/api/endpoints';
 import { supershopApi } from '@/api/supershop';
 import { shopCategoriesApi } from '@/api/posCategories';
 import { shopBrandsApi } from '@/api/shopBrands';
 import { formatMoney } from '@/lib/money';
-import { formatQuantity, gramsToKgText, lineAmount, parseKgToGrams } from '@/lib/supershop';
+import {
+  formatQuantity,
+  gramsToKgText,
+  lineAmount,
+  parseKgToGrams,
+  parseVatPercent,
+  roundShopTotal,
+} from '@/lib/supershop';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/hooks/useAuth';
 import type { ShopProduct, ShopResumedSale } from '@/types/supershop';
@@ -50,7 +71,7 @@ interface CartLine {
  * and works out VAT.
  */
 export function SupershopPosPage() {
-  const { activeStore, can } = useAuth();
+  const { activeStore, can, session } = useAuth();
   const currency = activeStore?.currency ?? 'BDT';
   const queryClient = useQueryClient();
   const scanRef = React.useRef<HTMLInputElement>(null);
@@ -59,26 +80,36 @@ export function SupershopPosPage() {
   const search = useDebounced(term);
   const [cart, setCart] = React.useState<CartLine[]>([]);
   const [weighing, setWeighing] = React.useState<CartLine | { product: ShopProduct; quantity: 0 } | null>(null);
-  const [discount, setDiscount] = React.useState<number | null>(0);
+  const [discountMode, setDiscountMode] = React.useState<ShopDiscountMode>('amount');
+  const [discountAmount, setDiscountAmount] = React.useState<number | null>(0);
+  const [discountPercent, setDiscountPercent] = React.useState('');
   const [customer, setCustomer] = React.useState<SelectedCustomer | null>(null);
+  const [note, setNote] = React.useState('');
   // Only a scanned CARD earns or redeems - never a customer or a phone number.
   const [loyaltyMember, setLoyaltyMember] = React.useState<LoyaltyLookup | null>(null);
   const [redeemPoints, setRedeemPoints] = React.useState<number | null>(null);
   const [cardDialogOpen, setCardDialogOpen] = React.useState(false);
   const loyaltyAccess = useLoyaltyAccess();
-  // A till with this permission may sell goods the system thinks are gone -
-  // the shelf is right and the record is wrong. The server checks it again.
-  const canSellOutOfStock = can('sales.sellOutOfStock');
   const [receiptFor, setReceiptFor] = React.useState<string | null>(null);
   const [heldOpen, setHeldOpen] = React.useState(false);
-  // The barcode a scan could not find, waiting to become a product.
-  const [unknownBarcode, setUnknownBarcode] = React.useState<string | null>(null);
+  const draftKey =
+    session?.tenant && activeStore ? shopBasketDraftKey(session.tenant.id, activeStore.id, session.user.id) : null;
+  const [loadedDraftKey, setLoadedDraftKey] = React.useState<string | null>(null);
+  const reconciledDraftKey = React.useRef<string | null>(null);
 
   // The departments this shop sells under, in the owner's order and without the
   // ones they hid, and the brands its products actually carry.
-  const { data: departments } = useQuery({ queryKey: ['supershop', 'categories', 'filter'], queryFn: () => shopCategoriesApi.list(), staleTime: 60_000 });
+  const { data: departments } = useQuery({
+    queryKey: ['supershop', 'categories', 'filter'],
+    queryFn: () => shopCategoriesApi.list(),
+    staleTime: 60_000,
+  });
   // The managed brand list, minus any the owner has hidden.
-  const { data: brandRows } = useQuery({ queryKey: ['supershop', 'brands', 'filter'], queryFn: () => shopBrandsApi.list(), staleTime: 60_000 });
+  const { data: brandRows } = useQuery({
+    queryKey: ['supershop', 'brands', 'filter'],
+    queryFn: () => shopBrandsApi.list(),
+    staleTime: 60_000,
+  });
   const brands = React.useMemo(() => (brandRows ?? []).map((row) => row.name), [brandRows]);
   const [department, setDepartment] = React.useState(ANY);
   const [brand, setBrand] = React.useState(ANY);
@@ -156,22 +187,49 @@ export function SupershopPosPage() {
     return () => observer.disconnect();
   }, [hasNextPage, isFetchingNextPage, fetchNextPage]);
 
-  const subtotal = cart.reduce((sum, line) => sum + lineAmount(line.product.priceMinor, line.quantity, line.product.unitType), 0);
-  const discountMinor = Math.min(discount ?? 0, subtotal);
+  const subtotal = cart.reduce(
+    (sum, line) => sum + lineAmount(line.product.priceMinor, line.quantity, line.product.unitType),
+    0,
+  );
+  // Percent is parsed into integer basis points and multiplied while still in
+  // minor units. No floating point value enters a checkout calculation.
+  const discountBps = discountPercent.trim() === '' ? 0 : parseVatPercent(discountPercent);
+  const requestedDiscountMinor =
+    discountMode === 'percent'
+      ? discountBps === null
+        ? 0
+        : Math.floor((subtotal * discountBps) / 10_000)
+      : (discountAmount ?? 0);
+  const discountExceedsSubtotal = discountMode === 'amount' && requestedDiscountMinor > subtotal;
+  const discountIsValid = discountMode === 'amount' ? !discountExceedsSubtotal : discountBps !== null;
+  const discountMinor = Math.min(requestedDiscountMinor, subtotal);
   const payableMinor = subtotal - discountMinor;
   // Points can pay for the goods after the discount, never more than that and
   // never more than the card holds. The server checks all of it again.
-  const maxRedeemable = loyaltyMember ? maxRedeemablePoints(payableMinor, loyaltyMember.pointValueMinor, loyaltyMember.pointsBalance) : 0;
+  const maxRedeemable = loyaltyMember
+    ? maxRedeemablePoints(payableMinor, loyaltyMember.pointValueMinor, loyaltyMember.pointsBalance)
+    : 0;
   const redeeming = Math.min(redeemPoints ?? 0, maxRedeemable);
   const loyaltyDiscountMinor = loyaltyMember ? redeeming * loyaltyMember.pointValueMinor : 0;
-  const total = payableMinor - loyaltyDiscountMinor;
+  const unroundedTotal = payableMinor - loyaltyDiscountMinor;
+  const total = roundShopTotal(unroundedTotal);
+  const roundingMinor = total - unroundedTotal;
   // VAT is collected for the government, so it never earns points. This is the
   // till's estimate of it; the server works out the real figure per line.
   const vatEstimateMinor = cart.reduce(
-    (sum, line) => sum + Math.floor((lineAmount(line.product.priceMinor, line.quantity, line.product.unitType) * line.product.vatRateBps) / (10_000 + line.product.vatRateBps)),
+    (sum, line) =>
+      sum +
+      Math.floor(
+        (lineAmount(line.product.priceMinor, line.quantity, line.product.unitType) * line.product.vatRateBps) /
+          (10_000 + line.product.vatRateBps),
+      ),
     0,
   );
-  const pointsToEarn = loyaltyMember ? pointsForSpend(Math.max(0, total - vatEstimateMinor), loyaltyMember.earnSpendMinor) : 0;
+  const pointsToEarn = loyaltyMember
+    ? pointsForSpend(Math.max(0, unroundedTotal - vatEstimateMinor), loyaltyMember.earnSpendMinor)
+    : 0;
+  const hasOutOfStockLine = cart.some((line) => (line.product.stock?.quantityOnHand ?? 0) <= 0);
+  const outOfStockNoteValid = !hasOutOfStockLine || note.trim().length >= 3;
 
   // The branch decides which tenders it takes; the till only offers those.
   const { data: posConfig } = useQuery({ queryKey: ['store', 'pos-config'], queryFn: storeApi.posConfig });
@@ -180,6 +238,76 @@ export function SupershopPosPage() {
   // The same payment maths as every other till: cash is what the customer
   // hands over, and change comes out of it.
   const payments = usePayments(cart.length > 0 ? total : 0);
+  const resetPayments = payments.reset;
+
+  // Restore this cashier's draft whenever the active branch changes. The key is
+  // deliberately tenant + branch + user scoped, so a shared browser never puts
+  // one cashier's basket in front of another one.
+  React.useEffect(() => {
+    if (!draftKey) return;
+    const draft = loadShopBasketDraft(draftKey);
+    setCart(draft.cart);
+    setDiscountMode(draft.discountMode);
+    setDiscountAmount(draft.discountAmountMinor);
+    setDiscountPercent(draft.discountPercent);
+    setCustomer(draft.customer);
+    setNote(draft.note);
+    setLoyaltyMember(null);
+    setRedeemPoints(null);
+    resetPayments();
+    reconciledDraftKey.current = null;
+    setLoadedDraftKey(draftKey);
+  }, [draftKey, resetPayments]);
+
+  // Save after every meaningful basket edit. Empty means intentionally cleared
+  // (sale, Hold, or Clear), so the persisted draft is removed.
+  React.useEffect(() => {
+    if (!draftKey || loadedDraftKey !== draftKey) return;
+    saveShopBasketDraft(draftKey, {
+      cart,
+      discountMode,
+      discountAmountMinor: discountAmount,
+      discountPercent,
+      customer,
+      note,
+    });
+  }, [cart, customer, discountAmount, discountMode, discountPercent, draftKey, loadedDraftKey, note]);
+
+  // Browser storage gives an immediate restore. Then refresh the catalogue
+  // snapshots once so prices, active state and branch stock are current. The
+  // API still revalidates all of this at checkout.
+  React.useEffect(() => {
+    if (!draftKey || loadedDraftKey !== draftKey || reconciledDraftKey.current === draftKey || cart.length === 0)
+      return;
+    reconciledDraftKey.current = draftKey;
+    let cancelled = false;
+    void Promise.all(
+      cart.map(async (line) => {
+        try {
+          const current = await supershopApi.product(line.product._id);
+          return { line: { product: current.product, quantity: line.quantity }, missing: false };
+        } catch (error) {
+          // Neither a confirmed deletion nor a temporary failure silently
+          // clears a cashier's saved basket. Checkout will still reject an
+          // unavailable product until the cashier removes it explicitly.
+          return { line, missing: error instanceof ApiError && error.status === 404 };
+        }
+      }),
+    ).then((results) => {
+      if (cancelled) return;
+      const available = results.map((result) => result.line);
+      const missing = results.filter((result) => result.missing).length;
+      setCart(available);
+      if (missing > 0) {
+        toast.warning(`${missing} saved basket line${missing === 1 ? '' : 's'} is no longer in the catalogue`, {
+          description: 'It was kept in the basket. Remove it manually before checkout.',
+        });
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [cart, draftKey, loadedDraftKey]);
 
   const setLine = (product: ShopProduct, quantity: number) =>
     setCart((current) => {
@@ -201,9 +329,9 @@ export function SupershopPosPage() {
     }
     const current = cart.find((line) => line.product._id === product._id)?.quantity ?? 0;
     const onHand = product.stock?.quantityOnHand ?? 0;
-    // Out of stock entirely is what the permission covers; having SOME but not
-    // enough is refused for everyone, here and on the server.
-    const sellable = onHand <= 0 && canSellOutOfStock ? current + 1 : onHand;
+    // Anyone may sell when there is none, with a required note at checkout.
+    // Having SOME but not enough remains blocked here and on the server.
+    const sellable = onHand <= 0 ? current + 1 : onHand;
     if (current + 1 > sellable) {
       toast.error(`Only ${onHand} of ${product.name} in stock`);
       return;
@@ -211,23 +339,15 @@ export function SupershopPosPage() {
     setLine(product, current + 1);
   };
 
-  // A till that may add to the catalogue is offered the chance to, rather than
-  // being told the beep went nowhere.
-  const canCreateProduct = can('products.create');
-
   const scan = useMutation({
     mutationFn: (barcode: string) => supershopApi.lookup(barcode),
     onSuccess: (product) => {
       add(product);
       setTerm('');
     },
-    onError: (err, barcode) => {
-      // Only "nothing has that barcode" opens the form. Anything else - a
-      // refused permission, a network failure - is reported as itself.
-      if (err instanceof ApiError && err.status === 404 && canCreateProduct) {
-        setUnknownBarcode(barcode);
-        return;
-      }
+    onError: (err) => {
+      // Product creation by scan belongs on Products & stock. Checkout only
+      // sells catalogue items that already exist.
       toast.error(err instanceof ApiError && err.status !== 404 ? err.message : 'No product has that barcode');
     },
   });
@@ -242,8 +362,16 @@ export function SupershopPosPage() {
       }
       setLoyaltyMember(member);
       setRedeemPoints(null);
-      if (member.customer) setCustomer({ id: member.customer.id, name: member.customer.name, phone: member.customer.phone, email: member.customer.email });
-      toast.success(`Loyalty member: ${member.customer?.name ?? member.cardNumber}`, { description: `${member.pointsBalance} points` });
+      if (member.customer)
+        setCustomer({
+          id: member.customer.id,
+          name: member.customer.name,
+          phone: member.customer.phone,
+          email: member.customer.email,
+        });
+      toast.success(`Loyalty member: ${member.customer?.name ?? member.cardNumber}`, {
+        description: `${member.pointsBalance} points`,
+      });
       setCardDialogOpen(false);
       return true;
     } catch (error) {
@@ -258,17 +386,34 @@ export function SupershopPosPage() {
     setRedeemPoints(null);
   };
 
+  const handleBarcode = async (value: string) => {
+    const barcode = value.trim();
+    if (!/^[A-Za-z0-9-]{3,64}$/.test(barcode)) return;
+    if (loyaltyAvailable && isLoyaltyCardCode(barcode) && (await attachCard(barcode))) {
+      setTerm('');
+      return;
+    }
+    scan.mutate(barcode);
+  };
+
   const reset = () => {
     setCart([]);
     removeCard();
-    setDiscount(0);
+    setDiscountMode('amount');
+    setDiscountAmount(0);
+    setDiscountPercent('');
     setCustomer(null);
+    setNote('');
     payments.reset();
     scanRef.current?.focus();
   };
 
   // How many baskets are waiting at this branch, for the button's badge.
-  const { data: heldSales } = useQuery({ queryKey: ['supershop', 'held-sales'], queryFn: () => supershopApi.heldSales(), staleTime: 10_000 });
+  const { data: heldSales } = useQuery({
+    queryKey: ['supershop', 'held-sales'],
+    queryFn: () => supershopApi.heldSales(),
+    staleTime: 10_000,
+  });
 
   /**
    * Puts the basket aside. Nothing is sold: no stock moves, no money is taken
@@ -282,6 +427,7 @@ export function SupershopPosPage() {
         discountMinor,
         ...saleCustomerFields(customer),
         ...(loyaltyMember ? { loyaltyCardNumber: loyaltyMember.cardNumber } : {}),
+        note,
       }),
     onSuccess: (result) => {
       toast.success(`${result.holdNumber} held`, { description: 'Open it again from Held sales.' });
@@ -294,8 +440,11 @@ export function SupershopPosPage() {
   /** Puts a resumed basket back on the till, at today's prices. */
   const restore = async (sale: ShopResumedSale) => {
     setCart(sale.items.map((line) => ({ product: line.product, quantity: line.quantity })));
-    setDiscount(sale.discountMinor);
-    setCustomer(sale.customerDraft ? { name: sale.customerDraft.name, phone: sale.customerDraft.phone } : null);
+    setDiscountMode('amount');
+    setDiscountAmount(sale.discountMinor);
+    setDiscountPercent('');
+    setCustomer(sale.customer);
+    setNote(sale.note);
     payments.reset();
     if (sale.loyaltyCardNumber) await attachCard(sale.loyaltyCardNumber);
     if (sale.dropped.length > 0) {
@@ -303,7 +452,9 @@ export function SupershopPosPage() {
     }
     const moved = sale.items.filter((line) => line.priceChanged);
     if (moved.length > 0) {
-      toast.info('Prices have changed since this was held', { description: moved.map((line) => line.product.name).join(', ') });
+      toast.info('Prices have changed since this was held', {
+        description: moved.map((line) => line.product.name).join(', '),
+      });
     }
     toast.success(`${sale.holdNumber} reopened`);
     scanRef.current?.focus();
@@ -319,6 +470,7 @@ export function SupershopPosPage() {
         ...saleCustomerFields(customer),
         // The card is what earns and redeems; the server re-checks both.
         ...(loyaltyMember ? { loyaltyMembershipId: loyaltyMember.id, redeemPoints: redeeming } : {}),
+        note,
       }),
     onSuccess: (sale) => {
       toast.success(`${sale.saleNumber} completed`, {
@@ -343,7 +495,17 @@ export function SupershopPosPage() {
     },
   });
 
-  const canComplete = cart.length > 0 && payments.isSettled && !complete.isPending;
+  // USB/Bluetooth scanners act like fast keyboards. This listener works when
+  // focus is on the product list, basket or page chrome; the search box is also
+  // explicitly marked as a scan target below.
+  useBarcodeScanner({
+    onScan: (barcode) => void handleBarcode(barcode),
+    minLength: 3,
+    enabled: !weighing && !heldOpen && !cardDialogOpen && receiptFor === null && !complete.isPending,
+  });
+
+  const canComplete =
+    cart.length > 0 && discountIsValid && outOfStockNoteValid && payments.isSettled && !complete.isPending;
 
   return (
     <div className="grid h-full gap-4 p-4 lg:grid-cols-[1fr_24rem] lg:p-6">
@@ -353,15 +515,7 @@ export function SupershopPosPage() {
           <form
             onSubmit={async (event) => {
               event.preventDefault();
-              const value = term.trim();
-              if (!/^[A-Za-z0-9-]{3,64}$/.test(value)) return;
-              // A membership card scanned into the product box attaches the
-              // member rather than looking for goods that do not exist.
-              if (loyaltyAvailable && isLoyaltyCardCode(value) && (await attachCard(value))) {
-                setTerm('');
-                return;
-              }
-              scan.mutate(value);
+              await handleBarcode(term);
             }}
             className="relative"
           >
@@ -372,6 +526,7 @@ export function SupershopPosPage() {
               className="pl-8"
               value={term}
               onChange={(event) => setTerm(event.target.value)}
+              data-barcode-target="true"
               placeholder="Scan a barcode and press Enter, or type a name"
               aria-label="Scan or search"
             />
@@ -402,20 +557,20 @@ export function SupershopPosPage() {
             <ul className="divide-y">
               {products.map((product) => {
                 const onHand = product.stock?.quantityOnHand ?? 0;
-                const blocked = onHand <= 0 && !canSellOutOfStock;
                 return (
                   <li key={product._id}>
                     <button
                       type="button"
-                      disabled={blocked}
                       onClick={() => add(product)}
-                      className={cn('flex w-full items-center justify-between gap-3 px-1 py-2.5 text-left hover:bg-muted/50', blocked && 'cursor-not-allowed opacity-50')}
+                      className="flex w-full items-center justify-between gap-3 px-1 py-2.5 text-left hover:bg-muted/50"
                     >
                       <div className="min-w-0">
                         <p className="font-medium">
                           {product.name} {product.unitType === 'weight' && <Badge variant="secondary">by weight</Badge>}
                         </p>
-                        <p className="truncate text-xs text-muted-foreground">{[product.brand, product.category, product.barcode].filter(Boolean).join(' · ')}</p>
+                        <p className="truncate text-xs text-muted-foreground">
+                          {[product.brand, product.category, product.barcode].filter(Boolean).join(' · ')}
+                        </p>
                       </div>
                       <div className="shrink-0 text-right">
                         <p className="tabular font-semibold">
@@ -423,7 +578,7 @@ export function SupershopPosPage() {
                           {product.unitType === 'weight' ? '/kg' : ''}
                         </p>
                         <p className={cn('text-xs', onHand <= 0 ? 'text-destructive' : 'text-muted-foreground')}>
-                          {onHand > 0 ? `${formatQuantity(onHand, product.unitType)} in stock` : canSellOutOfStock ? 'Out of stock · sell anyway' : 'Out of stock'}
+                          {onHand > 0 ? `${formatQuantity(onHand, product.unitType)} in stock` : 'Out of stock · note required'}
                         </p>
                       </div>
                     </button>
@@ -437,7 +592,13 @@ export function SupershopPosPage() {
           <div ref={sentinelRef} className="h-px" aria-hidden />
           {hasNextPage && (
             <div className="flex justify-center py-3">
-              <Button type="button" variant="outline" size="sm" loading={isFetchingNextPage} onClick={() => void fetchNextPage()}>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                loading={isFetchingNextPage}
+                onClick={() => void fetchNextPage()}
+              >
                 Load more products
               </Button>
             </div>
@@ -458,160 +619,257 @@ export function SupershopPosPage() {
             </Button>
           </div>
         </CardHeader>
-        <CardContent className="scrollbar-thin min-h-0 flex-1 space-y-4 overflow-y-auto">
-          {cart.length === 0 ? (
-            <p className="text-sm text-muted-foreground">Scan the first item.</p>
-          ) : (
-            <ul className="divide-y">
-              {cart.map((line) => (
-                <li key={line.product._id} className="flex items-center gap-2 py-2">
-                  <div className="min-w-0 flex-1">
-                    <p className="truncate text-sm font-medium">{line.product.name}</p>
-                    <p className="text-xs text-muted-foreground">
-                      {formatQuantity(line.quantity, line.product.unitType)} ·{' '}
-                      {formatMoney(lineAmount(line.product.priceMinor, line.quantity, line.product.unitType), currency)}
-                    </p>
-                  </div>
-                  {line.product.unitType === 'weight' ? (
-                    <Button variant="outline" size="icon-sm" onClick={() => setWeighing(line)} aria-label={`Change weight of ${line.product.name}`}>
-                      <Scale />
+        <CardContent className="flex min-h-0 flex-1 flex-col overflow-hidden p-0">
+          <div className="scrollbar-thin min-h-0 flex-1 overflow-y-auto px-6">
+            {cart.length === 0 ? (
+              <p className="py-3 text-sm text-muted-foreground">Scan the first item.</p>
+            ) : (
+              <ul className="divide-y">
+                {cart.map((line) => (
+                  <li key={line.product._id} className="flex items-center gap-2 py-2">
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-sm font-medium">{line.product.name}</p>
+                      <p className="text-xs text-muted-foreground">
+                        {formatQuantity(line.quantity, line.product.unitType)} ·{' '}
+                        {formatMoney(
+                          lineAmount(line.product.priceMinor, line.quantity, line.product.unitType),
+                          currency,
+                        )}
+                      </p>
+                    </div>
+                    {line.product.unitType === 'weight' ? (
+                      <Button
+                        variant="outline"
+                        size="icon-sm"
+                        onClick={() => setWeighing(line)}
+                        aria-label={`Change weight of ${line.product.name}`}
+                      >
+                        <Scale />
+                      </Button>
+                    ) : (
+                      <>
+                        <Button
+                          variant="outline"
+                          size="icon-sm"
+                          onClick={() => setLine(line.product, line.quantity - 1)}
+                          aria-label="One fewer"
+                        >
+                          <Minus />
+                        </Button>
+                        <span className="w-8 text-center tabular">{line.quantity}</span>
+                        <Button
+                          variant="outline"
+                          size="icon-sm"
+                          onClick={() => add(line.product)}
+                          aria-label="One more"
+                        >
+                          <Plus />
+                        </Button>
+                      </>
+                    )}
+                    <Button
+                      variant="ghost"
+                      size="icon-sm"
+                      onClick={() => setLine(line.product, 0)}
+                      aria-label={`Remove ${line.product.name}`}
+                    >
+                      <Trash2 />
                     </Button>
-                  ) : (
-                    <>
-                      <Button variant="outline" size="icon-sm" onClick={() => setLine(line.product, line.quantity - 1)} aria-label="One fewer">
-                        <Minus />
-                      </Button>
-                      <span className="w-8 text-center tabular">{line.quantity}</span>
-                      <Button variant="outline" size="icon-sm" onClick={() => add(line.product)} aria-label="One more">
-                        <Plus />
-                      </Button>
-                    </>
-                  )}
-                  <Button variant="ghost" size="icon-sm" onClick={() => setLine(line.product, 0)} aria-label={`Remove ${line.product.name}`}>
-                    <Trash2 />
-                  </Button>
-                </li>
-              ))}
-            </ul>
-          )}
-
-          <dl className="space-y-1 text-sm">
-            <div className="flex justify-between">
-              <dt>Subtotal (incl. VAT)</dt>
-              <dd className="tabular">{formatMoney(subtotal, currency)}</dd>
-            </div>
-            {can('sales.discount') && (
-              <div className="flex items-center justify-between gap-3">
-                <dt>Discount</dt>
-                <dd className="w-32">
-                  <MoneyInput value={discount} onChange={setDiscount} ariaLabel="Discount" />
-                </dd>
-              </div>
-            )}
-            {loyaltyDiscountMinor > 0 && (
-              <div className="flex justify-between text-success">
-                <dt>Points ({redeeming})</dt>
-                <dd className="tabular">-{formatMoney(loyaltyDiscountMinor, currency)}</dd>
-              </div>
-            )}
-            <div className="flex justify-between text-base font-semibold">
-              <dt>Total</dt>
-              <dd className="tabular">{formatMoney(total, currency)}</dd>
-            </div>
-          </dl>
-
-          <div className="flex items-stretch gap-2">
-            <div className="min-w-0 flex-1">
-              <CustomerPicker value={customer} onChange={setCustomer} canCreate={can('customers.create')} />
-            </div>
-            {loyaltyAvailable && !loyaltyMember && (
-              <Button type="button" variant="outline" size="sm" className="h-auto shrink-0" onClick={() => setCardDialogOpen(true)} title="Scan or enter a loyalty card">
-                <CreditCard />
-                <span className="hidden sm:inline">Card</span>
-              </Button>
+                  </li>
+                ))}
+              </ul>
             )}
           </div>
 
-          {loyaltyMember && (
-            <LoyaltyStrip
-              member={loyaltyMember}
-              currency={currency}
-              canRedeem={loyaltyAccess.canRedeem}
-              redeemPoints={redeemPoints}
-              maxRedeemable={maxRedeemable}
-              pointsToEarn={pointsToEarn}
-              onRedeemChange={setRedeemPoints}
-              onRemove={removeCard}
-            />
-          )}
+          <div className="shrink-0 space-y-2 border-t px-6 py-2.5">
+            <dl className="space-y-1 text-sm">
+              <div className="flex justify-between">
+                <dt>Subtotal (incl. VAT)</dt>
+                <dd className="tabular">{formatMoney(subtotal, currency)}</dd>
+              </div>
+              {can('sales.discount') && (
+                <div className="space-y-1">
+                  <div className="flex items-center justify-between gap-2">
+                    <dt>Discount</dt>
+                    <dd className="flex min-w-0 items-center gap-1.5">
+                      <Select
+                        value={discountMode}
+                        onValueChange={(value) => setDiscountMode(value as ShopDiscountMode)}
+                      >
+                        <SelectTrigger className="h-8 w-[92px]" aria-label="Discount type">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="amount">Amount</SelectItem>
+                          <SelectItem value="percent">Percent</SelectItem>
+                        </SelectContent>
+                      </Select>
+                      {discountMode === 'amount' ? (
+                        <MoneyInput
+                          value={discountAmount}
+                          onChange={setDiscountAmount}
+                          className="w-28 [&_input]:h-8"
+                          ariaLabel="Discount amount"
+                        />
+                      ) : (
+                        <div className="relative w-24">
+                          <Input
+                            value={discountPercent}
+                            onChange={(event) => setDiscountPercent(event.target.value)}
+                            inputMode="decimal"
+                            maxLength={6}
+                            className="h-8 pr-7 text-right tabular"
+                            aria-label="Discount percent"
+                            aria-invalid={discountBps === null}
+                            placeholder="0"
+                          />
+                          <span className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-xs text-muted-foreground">
+                            %
+                          </span>
+                        </div>
+                      )}
+                    </dd>
+                  </div>
+                  {discountMode === 'percent' && discountBps !== null && discountMinor > 0 && (
+                    <p className="text-right text-xs text-muted-foreground">-{formatMoney(discountMinor, currency)}</p>
+                  )}
+                  {discountMode === 'percent' && discountBps === null && (
+                    <p className="text-right text-xs text-destructive">
+                      Enter a percentage from 0 to 100, with at most 2 decimals.
+                    </p>
+                  )}
+                  {discountExceedsSubtotal && (
+                    <p className="text-right text-xs text-destructive">Discount cannot be more than the subtotal.</p>
+                  )}
+                </div>
+              )}
+              {loyaltyDiscountMinor > 0 && (
+                <div className="flex justify-between text-success">
+                  <dt>Points ({redeeming})</dt>
+                  <dd className="tabular">-{formatMoney(loyaltyDiscountMinor, currency)}</dd>
+                </div>
+              )}
+              {roundingMinor !== 0 && (
+                <div className="flex justify-between text-muted-foreground">
+                  <dt>Rounding</dt>
+                  <dd className="tabular">
+                    {roundingMinor > 0 ? '+' : ''}
+                    {formatMoney(roundingMinor, currency)}
+                  </dd>
+                </div>
+              )}
+              <div className="flex justify-between text-base font-semibold">
+                <dt>Total</dt>
+                <dd className="tabular">{formatMoney(total, currency)}</dd>
+              </div>
+            </dl>
 
-          <PaymentPanel
-            rows={payments.rows}
-            availableMethods={availableMethods}
-            totalMinor={total}
-            hasCash={payments.hasCash}
-            remainingPayableMinor={payments.remainingPayableMinor}
-            changeMinor={payments.changeMinor}
-            dueMinor={payments.dueMinor}
-            cashTyped={payments.cashTyped}
-            issues={cart.length > 0 ? payments.issues : []}
-            currency={currency}
-            onAmountChange={payments.setAmount}
-            onMethodChange={payments.setMethod}
-            onAddRow={payments.addRow}
-            onRemoveRow={payments.removeRow}
-          />
+            <div className="flex items-stretch gap-2">
+              <div className="min-w-0 flex-1">
+                <CustomerPicker value={customer} onChange={setCustomer} canCreate={can('customers.create')} />
+              </div>
+              {loyaltyAvailable && !loyaltyMember && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="h-auto shrink-0"
+                  onClick={() => setCardDialogOpen(true)}
+                  title="Scan or enter a loyalty card"
+                >
+                  <CreditCard />
+                  <span className="hidden sm:inline">Card</span>
+                </Button>
+              )}
+            </div>
+
+            {loyaltyMember && (
+              <LoyaltyStrip
+                member={loyaltyMember}
+                currency={currency}
+                canRedeem={loyaltyAccess.canRedeem}
+                redeemPoints={redeemPoints}
+                maxRedeemable={maxRedeemable}
+                pointsToEarn={pointsToEarn}
+                onRedeemChange={setRedeemPoints}
+                onRemove={removeCard}
+              />
+            )}
+
+            <div className="space-y-1">
+              <Label htmlFor="shop-sale-note" className="text-xs">
+                Sale note
+                {hasOutOfStockLine && <span className="ml-1 text-destructive">(required for out-of-stock sale)</span>}
+              </Label>
+              <Input
+                id="shop-sale-note"
+                className="h-8"
+                value={note}
+                maxLength={300}
+                onChange={(event) => setNote(event.target.value)}
+                placeholder={hasOutOfStockLine ? 'Why is this stock-out sale allowed?' : 'Optional note'}
+                aria-invalid={hasOutOfStockLine && !outOfStockNoteValid}
+              />
+              {hasOutOfStockLine && !outOfStockNoteValid && (
+                <p className="text-xs text-destructive">Enter at least 3 characters before completing this sale.</p>
+              )}
+            </div>
+
+            <PaymentPanel
+              rows={payments.rows}
+              availableMethods={availableMethods}
+              totalMinor={total}
+              hasCash={payments.hasCash}
+              remainingPayableMinor={payments.remainingPayableMinor}
+              changeMinor={payments.changeMinor}
+              dueMinor={payments.dueMinor}
+              cashTyped={payments.cashTyped}
+              issues={cart.length > 0 ? payments.issues : []}
+              currency={currency}
+              onAmountChange={payments.setAmount}
+              onMethodChange={payments.setMethod}
+              onAddRow={payments.addRow}
+              onRemoveRow={payments.removeRow}
+            />
+          </div>
         </CardContent>
         <div className="flex gap-2 border-t p-3">
           <Button variant="outline" onClick={reset} disabled={cart.length === 0}>
             Clear
           </Button>
-          <Button variant="outline" disabled={cart.length === 0 || hold.isPending} loading={hold.isPending} onClick={() => hold.mutate()}>
+          <Button
+            variant="outline"
+            disabled={cart.length === 0 || !discountIsValid || hold.isPending}
+            loading={hold.isPending}
+            onClick={() => hold.mutate()}
+          >
             <PauseCircle />
             Hold
           </Button>
-          <Button className="flex-1" disabled={!canComplete} loading={complete.isPending} onClick={() => complete.mutate()}>
+          <Button
+            className="flex-1"
+            disabled={!canComplete}
+            loading={complete.isPending}
+            onClick={() => complete.mutate()}
+          >
             Complete sale · {formatMoney(total, currency)}
           </Button>
         </div>
       </Card>
 
-      {unknownBarcode !== null && (
-        <QuickCreateDialog
-          key={unknownBarcode}
-          barcode={unknownBarcode}
+      {heldOpen && (
+        <HeldSalesDialog
           currency={currency}
-          onClose={() => {
-            setUnknownBarcode(null);
-            scanRef.current?.focus();
-          }}
-          onCreated={(product) => {
-            setTerm('');
-            // A product created without an opening delivery has none on the
-            // shelf. `add` would refuse it with "Only 0 in stock", which is true
-            // but unhelpful two seconds after making it - so say what to do.
-            const onHand = product.stock?.quantityOnHand ?? 0;
-            if (onHand <= 0 && !canSellOutOfStock) {
-              toast.info(`${product.name} is in the catalogue, but none is in stock`, {
-                description: 'Record a delivery on Products & stock, or ask for permission to sell out of stock.',
-              });
-              return;
-            }
-            // Straight into the basket, so the scan finishes the way a scan of
-            // something already in the catalogue would have.
-            add(product);
-          }}
+          onClose={() => setHeldOpen(false)}
+          onResumed={(sale) => void restore(sale)}
         />
       )}
-
-      {heldOpen && <HeldSalesDialog currency={currency} onClose={() => setHeldOpen(false)} onResumed={(sale) => void restore(sale)} />}
 
       {weighing && (
         <WeighDialog
           key={weighing.product._id}
           line={weighing}
           currency={currency}
-          canSellOutOfStock={canSellOutOfStock}
           onClose={() => {
             setWeighing(null);
             scanRef.current?.focus();
@@ -628,7 +886,12 @@ export function SupershopPosPage() {
           printer picker. The sale is already saved; printing cannot undo it. */}
       <LoyaltyCardDialog open={cardDialogOpen} onOpenChange={setCardDialogOpen} onSubmit={(code) => attachCard(code)} />
 
-      <ShopReceiptDialog saleId={receiptFor} onClose={() => setReceiptFor(null)} onNewSale={() => setReceiptFor(null)} autoPrint />
+      <ShopReceiptDialog
+        saleId={receiptFor}
+        onClose={() => setReceiptFor(null)}
+        onNewSale={() => setReceiptFor(null)}
+        autoPrint
+      />
     </div>
   );
 }
@@ -636,21 +899,19 @@ export function SupershopPosPage() {
 function WeighDialog({
   line,
   currency,
-  canSellOutOfStock,
   onClose,
   onConfirm,
 }: {
   line: { product: ShopProduct; quantity: number };
   currency: string;
-  canSellOutOfStock: boolean;
   onClose: () => void;
   onConfirm: (grams: number) => void;
 }) {
   const [kg, setKg] = React.useState(line.quantity > 0 ? gramsToKgText(line.quantity) : '');
   const grams = parseKgToGrams(kg);
   const onHand = line.product.stock?.quantityOnHand ?? 0;
-  // Out of stock entirely is what the permission covers, not "not enough".
-  const tooMuch = grams !== null && grams > onHand && !(onHand <= 0 && canSellOutOfStock);
+  // Anyone may sell a stock-out item with a note, but not exceed a positive balance.
+  const tooMuch = grams !== null && onHand > 0 && grams > onHand;
 
   return (
     <Dialog open onOpenChange={(open) => !open && onClose()}>
@@ -670,9 +931,20 @@ function WeighDialog({
         >
           <div className="space-y-1.5">
             <Label htmlFor="weigh-kg">Weight (kg)</Label>
-            <Input id="weigh-kg" autoFocus inputMode="decimal" value={kg} onChange={(event) => setKg(event.target.value)} placeholder="1.25" />
+            <Input
+              id="weigh-kg"
+              autoFocus
+              inputMode="decimal"
+              value={kg}
+              onChange={(event) => setKg(event.target.value)}
+              placeholder="1.25"
+            />
           </div>
-          {grams !== null && <p className="text-sm">Price: {formatMoney(lineAmount(line.product.priceMinor, grams, 'weight'), currency)}</p>}
+          {grams !== null && (
+            <p className="text-sm">
+              Price: {formatMoney(lineAmount(line.product.priceMinor, grams, 'weight'), currency)}
+            </p>
+          )}
           {kg !== '' && grams === null && <p className="text-sm text-destructive">Enter a weight like 0.5 or 1.25</p>}
           {tooMuch && <p className="text-sm text-destructive">Only {formatQuantity(onHand, 'weight')} in stock</p>}
           <DialogFooter>

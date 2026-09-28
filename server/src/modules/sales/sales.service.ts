@@ -14,7 +14,14 @@ import { resolvePage, searchRegex } from '../../utils/pagination';
 import { inventoryService } from '../../services/inventory/inventory.service';
 import { entitlementService } from '../../services/subscription/entitlement.service';
 import { customerService } from '../customers/customers.service';
-import { assertCovered, assertMethodsEnabled, CLOTHING_TENDER_DIALECT, stampTenderLabels, tenderLabels } from '../../services/pos/paymentMethods.service';
+import {
+  assertChangeIsCash,
+  assertCovered,
+  assertMethodsEnabled,
+  CLOTHING_TENDER_DIALECT,
+  stampTenderLabels,
+  tenderLabels,
+} from '../../services/pos/paymentMethods.service';
 import { clothingInventoryAdapter, type ClothingReservation } from '../../services/inventory/adapters/clothing.adapter';
 import { pointsForSpend } from '../loyalty/loyalty.math';
 import { loyaltyService } from '../loyalty/loyalty.service';
@@ -631,6 +638,12 @@ class SaleService {
     assertCovered(totalMinor, paidMinor, CLOTHING_TENDER_DIALECT);
 
     const changeMinor = paidMinor - totalMinor;
+    const cashMinor = input.payments
+      ? input.payments.filter((payment) => payment.method === 'cash').reduce((sum, payment) => sum + payment.amountMinor, 0)
+      : input.paymentMethod === 'cash'
+        ? paidMinor
+        : 0;
+    assertChangeIsCash(changeMinor, cashMinor, CLOTHING_TENDER_DIALECT);
 
     return { subtotalMinor, discountMinor, taxMinor, totalMinor, paidMinor, changeMinor, paymentStatus: 'paid' };
   }

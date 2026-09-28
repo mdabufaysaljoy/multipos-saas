@@ -1,5 +1,3 @@
-import { formatBytes } from '@/lib/planCatalog';
-
 /**
  * How close a workspace is to each of its plan limits.
  *
@@ -23,7 +21,6 @@ export interface UsageLimitKey {
   label: string;
   /** Plural noun for sentences: "add more products". */
   noun: string;
-  format?: 'bytes';
   /** Where the customer goes to free some up. */
   href?: string;
 }
@@ -34,7 +31,6 @@ export const USAGE_LIMITS: UsageLimitKey[] = [
   { limit: 'maxStores', usage: 'stores', label: 'Branches', noun: 'branches', href: '/branches' },
   { limit: 'maxCustomers', usage: 'customers', label: 'Customer profiles', noun: 'customer profiles', href: '/customers' },
   { limit: 'maxMonthlySales', usage: 'monthlySales', label: 'Sales this month', noun: 'sales this month' },
-  { limit: 'maxStorageBytes', usage: 'storageBytes', label: 'File storage', noun: 'storage', format: 'bytes' },
   { limit: 'maxSuppliers', usage: 'suppliers', label: 'Suppliers', noun: 'suppliers', href: '/suppliers' },
 ];
 
@@ -64,8 +60,7 @@ export interface UsageStatus extends UsageLimitKey {
   remaining: number;
 }
 
-const fmt = (value: number, format?: 'bytes') =>
-  format === 'bytes' ? formatBytes(Math.max(0, value)) : value.toLocaleString();
+const fmt = (value: number) => value.toLocaleString();
 
 export function evaluateUsage(
   definition: UsageLimitKey,
@@ -90,8 +85,8 @@ export function evaluateUsage(
     unlimited,
     percent,
     level,
-    usedLabel: fmt(used, definition.format),
-    maxLabel: unlimited ? 'Unlimited' : fmt(max, definition.format),
+    usedLabel: fmt(used),
+    maxLabel: unlimited ? 'Unlimited' : fmt(max),
     remaining: unlimited ? Infinity : Math.max(0, max - used),
   };
 }

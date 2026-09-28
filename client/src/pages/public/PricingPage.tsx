@@ -12,14 +12,13 @@ import { availableOn, formatLimit, upgradeHighlights } from '@/lib/planCatalog';
 import { PlanComparisonTable } from '@/features/billing/PlanComparisonTable';
 import { cn } from '@/lib/utils';
 
-/** The six numbers that actually decide which plan someone needs. */
-const HEADLINE_LIMITS: { key: string; label: string; format?: 'bytes' }[] = [
+/** The numbers that actually decide which plan someone needs. */
+const HEADLINE_LIMITS: { key: string; label: string }[] = [
   { key: 'maxStores', label: 'Branches' },
   { key: 'maxStaff', label: 'Staff' },
   { key: 'maxProducts', label: 'Products' },
   { key: 'maxMonthlySales', label: 'Sales / month' },
   { key: 'maxCustomers', label: 'Customers' },
-  { key: 'maxStorageBytes', label: 'Storage', format: 'bytes' as const },
 ];
 
 /**
@@ -138,7 +137,7 @@ export function PricingPage() {
                     <div key={limit.key}>
                       <dt className="text-xs text-muted-foreground">{limit.label}</dt>
                       <dd className="tabular font-semibold">
-                        {formatLimit(plan.limits[limit.key], limit.format)}
+                        {formatLimit(plan.limits[limit.key])}
                       </dd>
                     </div>
                   ))}

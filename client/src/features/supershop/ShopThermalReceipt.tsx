@@ -134,6 +134,15 @@ export function ShopThermalReceipt({ payload }: { payload: ShopReceipt }) {
               <td className="r-right">-{money(sale.discountMinor)}</td>
             </tr>
           )}
+          {(sale.roundingMinor ?? 0) !== 0 && (
+            <tr>
+              <td>Rounding</td>
+              <td className="r-right">
+                {(sale.roundingMinor ?? 0) > 0 ? '+' : ''}
+                {money(sale.roundingMinor ?? 0)}
+              </td>
+            </tr>
+          )}
           <tr>
             <td className="r-bold">Total</td>
             <td className="r-right r-bold">{money(sale.totalMinor)}</td>

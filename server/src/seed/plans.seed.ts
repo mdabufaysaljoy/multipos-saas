@@ -19,9 +19,6 @@ import { TRIAL_LENGTH_DAYS } from '../services/subscription/trialPolicy';
  * Existing databases pick up name/price changes with `npm run migrate`
  * (syncPlanPackages), which touches nothing but labels and prices.
  */
-const MB = 1024 ** 2;
-const GB = 1024 ** 3;
-
 export const PLAN_SEEDS = [
   {
     code: 'starter-store-monthly',
@@ -45,7 +42,6 @@ export const PLAN_SEEDS = [
       // Marketing is a growth feature; Starter upgrades for it.
       smsMarketing: false,
       emailMarketing: false,
-      imageOptimization: false,
       loyaltyProgram: false,
       productImport: true,
       supplierManagement: false,
@@ -57,7 +53,6 @@ export const PLAN_SEEDS = [
       maxStores: 1,
       maxMonthlySales: 2_500,
       maxCustomers: 500,
-      maxStorageBytes: MB * 500,
       maxSuppliers: 0,
     },
   },
@@ -84,7 +79,6 @@ export const PLAN_SEEDS = [
       prioritySupport: false,
       smsMarketing: true,
       emailMarketing: true,
-      imageOptimization: false,
       loyaltyProgram: true,
       productImport: true,
       supplierManagement: true,
@@ -95,7 +89,6 @@ export const PLAN_SEEDS = [
       maxStores: 2,
       maxMonthlySales: 30_000,
       maxCustomers: 10_000,
-      maxStorageBytes: GB * 1,
       maxSuppliers: 100,
     },
   },
@@ -121,8 +114,6 @@ export const PLAN_SEEDS = [
       prioritySupport: true,
       smsMarketing: true,
       emailMarketing: true,
-      // Brand only: uploads are resized and stored as WebP.
-      imageOptimization: true,
       loyaltyProgram: true,
       productImport: true,
       supplierManagement: true,
@@ -133,9 +124,6 @@ export const PLAN_SEEDS = [
       maxStores: 10,
       maxMonthlySales: -1,
       maxCustomers: -1,
-      // Storage is the one thing Brand is not unlimited on - bytes cost money.
-      // Brand's automatic WebP optimisation makes this go much further.
-      maxStorageBytes: GB * 2,
       maxSuppliers: -1,
     },
   },

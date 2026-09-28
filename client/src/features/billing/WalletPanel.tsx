@@ -300,7 +300,6 @@ export function WalletPanel() {
                   <SelectItem value="sms">SMS</SelectItem>
                   <SelectItem value="email">Email</SelectItem>
                   <SelectItem value="ai">AI</SelectItem>
-                  <SelectItem value="storage">Storage</SelectItem>
                   <SelectItem value="adjustment">Adjustment</SelectItem>
                 </SelectContent>
               </Select>

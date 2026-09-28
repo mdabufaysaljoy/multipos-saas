@@ -11,9 +11,11 @@ import { SaleModel } from '../../models/Sale';
 import { PERMISSIONS } from '../../config/permissions';
 import type { FeatureEntitlementKey } from '../../config/entitlements';
 import type { Permission } from '../../config/permissions';
+import type { PosVertical } from '../../config/verticals';
 import type { TenantContext } from '../../types/express';
 import { reportService } from '../reports/reports.service';
 import type { ReportRangeInput } from '../reports/reports.validators';
+import { VERTICAL_EXPORT_DATASETS } from './export.vertical-datasets';
 
 /**
  * The export registry: the ONLY data the export API can produce.
@@ -55,6 +57,8 @@ export interface ExportDataset {
   description: string;
   /** Whether the date range applies (static lists such as inventory ignore it). */
   dated: boolean;
+  /** POS types whose model this query reads. Omitted for shared datasets. */
+  verticals?: readonly PosVertical[];
   /**
    * What a caller needs BEYOND the export gate itself.
    *
@@ -162,12 +166,13 @@ const VARIANT_COLUMNS: ExportColumn[] = [
   { key: 'isActive', label: 'Active', type: 'boolean' },
 ];
 
-export const EXPORT_DATASETS: ExportDataset[] = [
+const CLOTHING_AND_SHARED_EXPORT_DATASETS: ExportDataset[] = [
   {
     key: 'customers',
     label: 'Customers',
     description: 'Customer directory with purchase totals.',
     dated: true,
+    requires: { entitlement: 'customerManagement', permission: PERMISSIONS.CUSTOMERS_VIEW },
     sections: async (scope) =>
       single(
         'customers',
@@ -199,6 +204,8 @@ export const EXPORT_DATASETS: ExportDataset[] = [
     label: 'Products & variants',
     description: 'One row per sellable variant, with prices and stock.',
     dated: true,
+    verticals: ['clothing'],
+    requires: { permission: PERMISSIONS.PRODUCTS_VIEW },
     sections: async (scope) =>
       single('products', 'Products', VARIANT_COLUMNS, () =>
         cursorRows(
@@ -217,6 +224,8 @@ export const EXPORT_DATASETS: ExportDataset[] = [
     label: 'Categories',
     description: 'Product categories.',
     dated: true,
+    verticals: ['clothing'],
+    requires: { permission: PERMISSIONS.CATEGORIES_VIEW },
     sections: async (scope) =>
       single(
         'categories',
@@ -245,6 +254,7 @@ export const EXPORT_DATASETS: ExportDataset[] = [
     // suppliers" would be a surprising way to lose the older ones.
     description: 'Every supplier contact, with terms and tax details. Banking details are never exported.',
     dated: false,
+    verticals: ['clothing', 'supershop'],
     // Suppliers are their own Professional/Enterprise feature with their own
     // permission; holding `reports.export` alone is not enough.
     requires: { entitlement: 'supplierManagement', permission: PERMISSIONS.SUPPLIERS_VIEW },
@@ -327,6 +337,8 @@ export const EXPORT_DATASETS: ExportDataset[] = [
     label: 'Inventory (current stock)',
     description: 'Stock on hand per variant, with stock value.',
     dated: false,
+    verticals: ['clothing'],
+    requires: { permission: PERMISSIONS.INVENTORY_VIEW },
     sections: async (scope) =>
       single(
         'inventory',
@@ -358,6 +370,8 @@ export const EXPORT_DATASETS: ExportDataset[] = [
     label: 'Stock movements',
     description: 'The inventory ledger: every stock change with its reason.',
     dated: true,
+    verticals: ['clothing'],
+    requires: { entitlement: 'inventoryLedger', permission: PERMISSIONS.INVENTORY_VIEW },
     sections: async (scope) =>
       single(
         'stock-movements',
@@ -391,6 +405,8 @@ export const EXPORT_DATASETS: ExportDataset[] = [
     label: 'Sales',
     description: 'One row per sale: totals, payment, customer and cashier.',
     dated: true,
+    verticals: ['clothing'],
+    requires: { permission: PERMISSIONS.SALES_VIEW },
     sections: async (scope) =>
       single(
         'sales',
@@ -452,6 +468,8 @@ export const EXPORT_DATASETS: ExportDataset[] = [
     label: 'Sale items',
     description: 'One row per sold line, with SKU, quantity and price.',
     dated: true,
+    verticals: ['clothing'],
+    requires: { permission: PERMISSIONS.SALES_VIEW },
     sections: async (scope) =>
       single(
         'sale-items',
@@ -498,6 +516,8 @@ export const EXPORT_DATASETS: ExportDataset[] = [
     label: 'Sale payments',
     description: 'One row per tender taken on a sale (split payments included).',
     dated: true,
+    verticals: ['clothing'],
+    requires: { permission: PERMISSIONS.SALES_VIEW },
     sections: async (scope) =>
       single(
         'sale-payments',
@@ -534,6 +554,7 @@ export const EXPORT_DATASETS: ExportDataset[] = [
     label: 'Returns & exchanges',
     description: 'Returned lines, including the replacement sale of an exchange.',
     dated: true,
+    requires: { permission: PERMISSIONS.RETURNS_VIEW },
     sections: async (scope) =>
       single(
         'returns',
@@ -547,6 +568,7 @@ export const EXPORT_DATASETS: ExportDataset[] = [
           { key: 'variantName', label: 'Variant', type: 'text' },
           { key: 'sku', label: 'SKU', type: 'text' },
           { key: 'quantity', label: 'Quantity', type: 'number' },
+          { key: 'unitType', label: 'Unit', type: 'text' },
           { key: 'unitPriceMinor', label: 'Unit price', type: 'money' },
           { key: 'lineTotalMinor', label: 'Line total', type: 'money' },
           { key: 'restock', label: 'Restocked', type: 'boolean' },
@@ -568,6 +590,7 @@ export const EXPORT_DATASETS: ExportDataset[] = [
                 variantName: item.variantNameSnapshot,
                 sku: item.skuSnapshot,
                 quantity: item.quantity,
+                unitType: item.unitType ?? 'each',
                 unitPriceMinor: item.unitPriceMinor,
                 lineTotalMinor: item.lineTotalMinor,
                 restock: item.restock !== false,
@@ -584,6 +607,7 @@ export const EXPORT_DATASETS: ExportDataset[] = [
     label: 'Loyalty members',
     description: 'Membership cards with their point balances.',
     dated: true,
+    requires: { entitlement: 'loyalty', permission: PERMISSIONS.LOYALTY_VIEW },
     sections: async (scope) =>
       single(
         'loyalty-members',
@@ -631,6 +655,7 @@ export const EXPORT_DATASETS: ExportDataset[] = [
     label: 'Loyalty point ledger',
     description: 'Every point movement, with the sale or return behind it.',
     dated: true,
+    requires: { entitlement: 'loyalty', permission: PERMISSIONS.LOYALTY_VIEW },
     sections: async (scope) =>
       single(
         'loyalty-ledger',
@@ -676,6 +701,8 @@ export const EXPORT_DATASETS: ExportDataset[] = [
     label: 'Sales report',
     description: 'The sales & profit report for the period, with a daily breakdown.',
     dated: true,
+    verticals: ['clothing'],
+    requires: { entitlement: 'salesReports', permission: PERMISSIONS.REPORTS_VIEW },
     sections: async (scope) => {
       // The authoritative report calculation, reused - not a second implementation.
       const analytics = await reportService.salesAnalytics(scope.ctx, scope.report);
@@ -737,8 +764,13 @@ export const EXPORT_DATASETS: ExportDataset[] = [
   },
 ];
 
-export const findDataset = (key: string): ExportDataset | undefined => EXPORT_DATASETS.find((dataset) => dataset.key === key);
+export const EXPORT_DATASETS: ExportDataset[] = [...CLOTHING_AND_SHARED_EXPORT_DATASETS, ...VERTICAL_EXPORT_DATASETS];
 
-export const EXPORT_TYPES = EXPORT_DATASETS.map((dataset) => dataset.key) as [string, ...string[]];
+const supportsVertical = (dataset: ExportDataset, vertical: PosVertical) => !dataset.verticals || dataset.verticals.includes(vertical);
+
+export const findDataset = (key: string, vertical: PosVertical): ExportDataset | undefined =>
+  EXPORT_DATASETS.find((dataset) => dataset.key === key && supportsVertical(dataset, vertical));
+
+export const EXPORT_TYPES = [...new Set(EXPORT_DATASETS.map((dataset) => dataset.key))] as [string, ...string[]];
 
 export type ExportScopeIds = { tenantId: Types.ObjectId; storeId: Types.ObjectId };

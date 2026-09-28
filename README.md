@@ -1,8 +1,13 @@
-# Clothing POS — Multi-tenant SaaS Point of Sale
+# Multipos SaaS — Multi-tenant, multi-vertical Point of Sale
 
-A production-oriented point of sale for clothing retailers. Every business gets an
-isolated workspace (tenant) with its own products, stock, sales, staff and
-reports, gated by a database-driven subscription.
+A production-oriented point of sale for Clothing, Restaurant, Pharmacy, and
+Super Shop businesses. Every business gets an isolated workspace (tenant) with
+its own vertical-specific catalogue, sales, staff, reports, and—where the
+vertical uses it—stock, gated by a database-driven subscription.
+
+> This README began as the Clothing implementation guide and some detailed API
+> sections remain Clothing-focused. See `docs/ARCHITECTURE.md` for the current
+> system map and `docs/AUDIT-2026-09-27.md` for the cross-vertical audit.
 
 Built with React + Vite + TypeScript on the front, Node + Express + TypeScript +
 MongoDB on the back.
@@ -57,7 +62,7 @@ to end you can:
 | 21 | Prepaid wallet: top-ups, ledger, spend breakdown | ✅ |
 | 22 | Buy or renew a subscription from the wallet, settled instantly | ✅ |
 | 23 | Workspace locked to wallet + subscription when no plan is active | ✅ |
-| 24 | Plan limits on branches, staff, products, customers, monthly sales and storage | ✅ enforced server-side |
+| 24 | Plan limits on branches, staff, products, customers and monthly sales | ✅ enforced server-side |
 | 25 | Usage warnings at 80% / 90% / 100% of every limit | ✅ |
 | 26 | 7-day free trial, Starter plan only | ✅ |
 | 27 | SMS marketing (Alpha SMS), gateway configured by the platform admin | ✅ structure, ⏳ live credentials |
@@ -189,7 +194,7 @@ To enable them locally, run `mongod --replSet rs0` and `rs.initiate()` once.
 | `npm test` | Runs the end-to-end suite against a throwaway database, then drops it |
 | `npm run test:only` | Runs the suite against whatever API `API_BASE` points at (no isolation) |
 | `npm run migrate` | Runs every data migration in order (safe to re-run) |
-| `node scripts/smoke-test.mjs` | 81-check end-to-end verification against a running API |
+| `node scripts/smoke-test.mjs` | Full end-to-end verification against a running test API (currently 3,570 assertions) |
 
 `npm run seed` is safe to re-run: if the demo tenant already exists it does
 nothing and tells you to pass `--reset`.
@@ -444,7 +449,7 @@ node scripts/smoke-test.mjs
 ```
 
 ```
-==========  241 passed, 0 failed  ==========
+==========  3570 passed, 0 failed  ==========
 ```
 
 > The suite soft-deletes products and consumes stock by design, so it needs a

@@ -12,7 +12,6 @@
     "migrate:plan-limits": "tsx src/migrations/backfillPlanLimits.ts",
     "migrate:storage-ledger": "tsx src/migrations/backfillStorageLedger.ts",
     "migrate:sms-credentials": "tsx src/migrations/migrateSmsCredentials.ts",
-    "migrate:subscription-storage": "tsx src/migrations/syncSubscriptionStorageLimits.ts",
     "migrate:plan-packages": "tsx src/migrations/syncPlanPackages.ts",
     "migrate:accounts": "tsx src/migrations/backfillAccounts.ts",
     "migrate:wallets": "tsx src/migrations/migrateAccountWallets.ts",
@@ -49,7 +48,7 @@
     "mongoose": "^8.9.5",
     "morgan": "^1.10.0",
     "multer": "^1.4.5-lts.1",
-    "nodemailer": "^6.10.1",
+    "nodemailer": "^10.0.10",
     "pdfkit": "^0.15.2",
     "sharp": "^0.35.4",
     "zod": "^3.24.1"

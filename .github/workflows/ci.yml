@@ -58,6 +58,11 @@ jobs:
       - name: Install
         run: npm ci
 
+      # Block known high/critical production dependency vulnerabilities while
+      # allowing moderate advisories to be scheduled as deliberate upgrades.
+      - name: Dependency security audit
+        run: npm audit --audit-level=high
+
       - name: Lint
         run: npm run lint
 

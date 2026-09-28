@@ -3,7 +3,14 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { Repeat2, Search, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
@@ -14,7 +21,7 @@ import { usePayments } from '@/features/payments/usePayments';
 import { ApiError } from '@/api/client';
 import { supershopApi } from '@/api/supershop';
 import { formatMoney } from '@/lib/money';
-import { formatQuantity, lineAmount } from '@/lib/supershop';
+import { formatQuantity, lineAmount, roundShopTotal } from '@/lib/supershop';
 import { tendersFromConfig, type TenderOption } from '@/types/domain';
 import type { ShopProduct, ShopSale } from '@/types/supershop';
 
@@ -51,22 +58,29 @@ export function ShopExchangeDialog({
 
   // One key per opening of this dialog: a double click sends the same key, and
   // the server answers with the exchange it already made rather than a second one.
-  const idempotencyKey = React.useMemo(() => `ex-${sale._id}-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`, [sale._id]);
+  const idempotencyKey = React.useMemo(
+    () => `ex-${sale._id}-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`,
+    [sale._id],
+  );
 
   const remainingOf = (line: ShopSale['items'][number]) => line.quantity - (line.returnedQuantity ?? 0);
   const returning = sale.items
     .map((line) => ({ line, quantity: quantities[line._id] ?? 0 }))
     .filter((entry) => entry.quantity > 0);
 
-  // The till's estimate of what the returned goods are worth: their own price,
-  // less their share of any discount the whole sale had.
+  // The till's estimate of what the returned goods are worth: their share of
+  // the amount actually charged, including this sale's rounding adjustment.
   const shareOfDiscount = (gross: number) =>
-    sale.discountMinor > 0 && sale.subtotalMinor > 0 ? Math.floor((gross * (sale.subtotalMinor - sale.discountMinor)) / sale.subtotalMinor) : gross;
+    sale.subtotalMinor > 0 ? Math.floor((gross * sale.totalMinor) / sale.subtotalMinor) : gross;
   const creditMinor = returning.reduce(
     (sum, entry) => sum + shareOfDiscount(lineAmount(entry.line.unitPriceMinor, entry.quantity, entry.line.unitType)),
     0,
   );
-  const replacementMinor = replacement.reduce((sum, row) => sum + lineAmount(row.product.priceMinor, row.quantity, row.product.unitType), 0);
+  const replacementSubtotalMinor = replacement.reduce(
+    (sum, row) => sum + lineAmount(row.product.priceMinor, row.quantity, row.product.unitType),
+    0,
+  );
+  const replacementMinor = roundShopTotal(replacementSubtotalMinor);
   const extraPayableMinor = Math.max(0, replacementMinor - creditMinor);
   const cheaper = replacement.length > 0 && returning.length > 0 && replacementMinor < creditMinor;
 
@@ -99,7 +113,9 @@ export function ShopExchangeDialog({
       }),
     onSuccess: (result) => {
       toast.success(result.replayed ? 'That exchange was already recorded' : `${result.returnNumber} exchanged`, {
-        description: result.exchange ? `Replacement ${result.exchange.saleNumber} · ${formatMoney(result.exchange.extraPayableMinor, currency)} collected` : undefined,
+        description: result.exchange
+          ? `Replacement ${result.exchange.saleNumber} · ${formatMoney(result.exchange.extraPayableMinor, currency)} collected`
+          : undefined,
       });
       void queryClient.invalidateQueries({ queryKey: ['supershop'] });
       if (result.exchange) onDone(result.exchange.saleId);
@@ -147,7 +163,8 @@ export function ShopExchangeDialog({
                       <p className="truncate text-sm font-medium">{line.nameSnapshot}</p>
                       <p className="text-xs text-muted-foreground">
                         {formatMoney(line.unitPriceMinor, currency)}
-                        {line.unitType === 'weight' ? '/kg' : ''} · {left > 0 ? `${formatQuantity(left, line.unitType)} left` : 'fully returned'}
+                        {line.unitType === 'weight' ? '/kg' : ''} ·{' '}
+                        {left > 0 ? `${formatQuantity(left, line.unitType)} left` : 'fully returned'}
                       </p>
                     </div>
                     <Input
@@ -160,7 +177,10 @@ export function ShopExchangeDialog({
                       value={quantities[line._id] ?? ''}
                       onChange={(event) => {
                         const next = Number(event.target.value);
-                        setQuantities((current) => ({ ...current, [line._id]: Number.isFinite(next) ? Math.min(Math.max(0, Math.trunc(next)), left) : 0 }));
+                        setQuantities((current) => ({
+                          ...current,
+                          [line._id]: Number.isFinite(next) ? Math.min(Math.max(0, Math.trunc(next)), left) : 0,
+                        }));
                       }}
                     />
                   </li>
@@ -180,13 +200,23 @@ export function ShopExchangeDialog({
             <Label>Replacement</Label>
             <div className="relative">
               <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
-              <Input className="pl-8" value={term} onChange={(event) => setTerm(event.target.value)} placeholder="Search or scan the replacement" aria-label="Find a replacement product" />
+              <Input
+                className="pl-8"
+                value={term}
+                onChange={(event) => setTerm(event.target.value)}
+                placeholder="Search or scan the replacement"
+                aria-label="Find a replacement product"
+              />
             </div>
             {search.length > 0 && (found?.items ?? []).length > 0 && (
               <ul className="max-h-40 divide-y overflow-y-auto rounded-md border">
                 {(found?.items ?? []).map((product) => (
                   <li key={product._id}>
-                    <button type="button" className="flex w-full items-center justify-between gap-3 px-2.5 py-2 text-left text-sm hover:bg-muted/50" onClick={() => addReplacement(product)}>
+                    <button
+                      type="button"
+                      className="flex w-full items-center justify-between gap-3 px-2.5 py-2 text-left text-sm hover:bg-muted/50"
+                      onClick={() => addReplacement(product)}
+                    >
                       <span className="truncate">{product.name}</span>
                       <span className="tabular shrink-0 font-medium">
                         {formatMoney(product.priceMinor, currency)}
@@ -203,7 +233,9 @@ export function ShopExchangeDialog({
                   <li key={row.product._id} className="flex items-center gap-2 p-2.5">
                     <div className="min-w-0 flex-1">
                       <p className="truncate text-sm font-medium">{row.product.name}</p>
-                      <p className="text-xs text-muted-foreground">{formatMoney(lineAmount(row.product.priceMinor, row.quantity, row.product.unitType), currency)}</p>
+                      <p className="text-xs text-muted-foreground">
+                        {formatMoney(lineAmount(row.product.priceMinor, row.quantity, row.product.unitType), currency)}
+                      </p>
                     </div>
                     <Input
                       type="number"
@@ -213,7 +245,11 @@ export function ShopExchangeDialog({
                       value={row.quantity}
                       onChange={(event) => {
                         const next = Math.max(1, Math.trunc(Number(event.target.value) || 1));
-                        setReplacement((current) => current.map((entry) => (entry.product._id === row.product._id ? { ...entry, quantity: next } : entry)));
+                        setReplacement((current) =>
+                          current.map((entry) =>
+                            entry.product._id === row.product._id ? { ...entry, quantity: next } : entry,
+                          ),
+                        );
                       }}
                     />
                     <Button
@@ -222,7 +258,9 @@ export function ShopExchangeDialog({
                       size="icon-sm"
                       className="text-muted-foreground hover:text-destructive"
                       aria-label={`Remove ${row.product.name}`}
-                      onClick={() => setReplacement((current) => current.filter((entry) => entry.product._id !== row.product._id))}
+                      onClick={() =>
+                        setReplacement((current) => current.filter((entry) => entry.product._id !== row.product._id))
+                      }
                     >
                       <Trash2 />
                     </Button>
@@ -248,7 +286,8 @@ export function ShopExchangeDialog({
             </div>
             {cheaper && (
               <p className="pt-1 text-destructive">
-                The replacement is worth less than what came back. Choose something of equal or higher value, or take a refund instead.
+                The replacement is worth less than what came back. Choose something of equal or higher value, or take a
+                refund instead.
               </p>
             )}
           </section>
@@ -274,7 +313,13 @@ export function ShopExchangeDialog({
 
           <div className="space-y-1.5">
             <Label htmlFor="ex-reason">Reason</Label>
-            <Input id="ex-reason" value={reason} onChange={(event) => setReason(event.target.value)} placeholder="Wrong size, changed their mind…" maxLength={300} />
+            <Input
+              id="ex-reason"
+              value={reason}
+              onChange={(event) => setReason(event.target.value)}
+              placeholder="Wrong size, changed their mind…"
+              maxLength={300}
+            />
           </div>
         </div>
 

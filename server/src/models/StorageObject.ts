@@ -4,13 +4,11 @@ import type { BaseDoc } from './types';
 /**
  * One row per file a workspace has uploaded.
  *
- * This is the ledger behind the storage quota. Before it existed, bytes were
- * written to disk and immediately forgotten - there was no way to answer "how
- * much is this tenant using?". Summing the ledger is the source of truth rather
- * than trusting a counter that can drift.
+ * This ownership registry makes file deletion tenant-safe. Before it existed,
+ * bytes were written to storage without a durable record of which workspace
+ * owned each provider key.
  *
- * Rows are soft-deleted so a removed file leaves an audit trail while freeing
- * the quota it held.
+ * Rows are soft-deleted so removed files retain an audit trail.
  */
 export interface StorageObjectDoc extends BaseDoc {
   tenantId: Types.ObjectId;
@@ -46,7 +44,7 @@ const storageObjectSchema = new Schema<StorageObjectDoc>(
   { timestamps: true },
 );
 
-// The quota query: sum bytes for one tenant's live files.
+// File lifecycle and ownership queries start with the tenant's live rows.
 storageObjectSchema.index({ tenantId: 1, deletedAt: 1 });
 // Deleting the bytes behind a file starts from its key.
 storageObjectSchema.index({ tenantId: 1, key: 1 });

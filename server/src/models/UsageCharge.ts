@@ -2,7 +2,7 @@ import { Schema, model, type Types } from 'mongoose';
 import type { BaseDoc } from './types';
 
 /** Paid platform services billed per use from the account wallet. */
-export const USAGE_SERVICES = ['sms', 'email', 'ai', 'storage'] as const;
+export const USAGE_SERVICES = ['sms', 'email', 'ai'] as const;
 export type UsageService = (typeof USAGE_SERVICES)[number];
 
 /**

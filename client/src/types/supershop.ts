@@ -93,7 +93,13 @@ export interface ShopSaleExchange {
   originalSaleNumber: string;
   /** Refund value of the returned goods, applied here instead of paid out. */
   creditMinor: number;
-  returnedItems: { nameSnapshot: string; detailSnapshot: string; quantity: number; unitType: string; lineTotalMinor: number }[];
+  returnedItems: {
+    nameSnapshot: string;
+    detailSnapshot: string;
+    quantity: number;
+    unitType: string;
+    lineTotalMinor: number;
+  }[];
 }
 
 export interface ShopSale {
@@ -102,12 +108,15 @@ export interface ShopSale {
   items: ShopSaleLine[];
   subtotalMinor: number;
   discountMinor: number;
+  /** Whole-currency rounding applied after discounts; absent on older sales. */
+  roundingMinor?: number;
   totalMinor: number;
   vatMinor: number;
   paidMinor: number;
   changeMinor: number;
   payments: { method: string; amountMinor: number }[];
   customerNameSnapshot: string;
+  note: string;
   status: 'completed' | 'voided';
   /** Value returned against this sale, and whether nothing is left to return. */
   returnedTotalMinor?: number;
@@ -170,9 +179,33 @@ export interface ShopReports {
     marginBps: number;
     averageBasketMinor: number;
   }[];
-  brands: { brand: string; lines: number; quantity: number; revenueMinor: number; vatMinor: number; costMinor: number; profitMinor: number; marginBps: number }[];
-  branchBreakdown: { storeId: string; name: string; salesCount: number; netSalesMinor: number; vatMinor: number; costMinor: number; profitMinor: number; marginBps: number }[];
-  customers: { customerId: string; name: string; salesCount: number; netSalesMinor: number; averageBasketMinor: number }[];
+  brands: {
+    brand: string;
+    lines: number;
+    quantity: number;
+    revenueMinor: number;
+    vatMinor: number;
+    costMinor: number;
+    profitMinor: number;
+    marginBps: number;
+  }[];
+  branchBreakdown: {
+    storeId: string;
+    name: string;
+    salesCount: number;
+    netSalesMinor: number;
+    vatMinor: number;
+    costMinor: number;
+    profitMinor: number;
+    marginBps: number;
+  }[];
+  customers: {
+    customerId: string;
+    name: string;
+    salesCount: number;
+    netSalesMinor: number;
+    averageBasketMinor: number;
+  }[];
   totals: {
     salesCount: number;
     /** What was charged. */
@@ -189,7 +222,15 @@ export interface ShopReports {
     averageBasketMinor: number;
     averageLines: number;
   };
-  trend: { date: string; salesCount: number; grossSalesMinor: number; returnAmountMinor: number; netSalesMinor: number; vatMinor: number; grossProfitMinor: number }[];
+  trend: {
+    date: string;
+    salesCount: number;
+    grossSalesMinor: number;
+    returnAmountMinor: number;
+    netSalesMinor: number;
+    vatMinor: number;
+    grossProfitMinor: number;
+  }[];
   products: {
     productId: string;
     name: string;
@@ -205,7 +246,10 @@ export interface ShopReports {
   vatRates: { vatRateBps: number; lines: number; grossMinor: number; vatMinor: number; netOfVatMinor: number }[];
   hours: { hour: string; salesCount: number; netSalesMinor: number }[];
   payments: { method: string; sales: number; amountMinor: number }[];
-  discounts: { totalMinor: number; byStaff: { userId: string | null; name: string; sales: number; discountsMinor: number }[] };
+  discounts: {
+    totalMinor: number;
+    byStaff: { userId: string | null; name: string; sales: number; discountsMinor: number }[];
+  };
   /** What came back: money, units and the most recent of them. */
   returns: {
     count: number;
@@ -217,10 +261,26 @@ export interface ShopReports {
   voids: {
     count: number;
     valueMinor: number;
-    recent: { _id: string; saleNumber: string; totalMinor: number; voidReason: string; voidedAt: string; voidedByNameSnapshot: string }[];
+    recent: {
+      _id: string;
+      saleNumber: string;
+      totalMinor: number;
+      voidReason: string;
+      voidedAt: string;
+      voidedByNameSnapshot: string;
+    }[];
   };
-  writeOffs: { costMinor: number; byProduct: { productId: string; name: string; unitType: ShopUnitType; quantity: number; costMinor: number }[] };
-  deadStock: { productId: string; name: string; unitType: ShopUnitType; quantityOnHand: number; stockCostMinor: number }[];
+  writeOffs: {
+    costMinor: number;
+    byProduct: { productId: string; name: string; unitType: ShopUnitType; quantity: number; costMinor: number }[];
+  };
+  deadStock: {
+    productId: string;
+    name: string;
+    unitType: ShopUnitType;
+    quantityOnHand: number;
+    stockCostMinor: number;
+  }[];
 }
 
 export interface ShopDashboardTotals {
@@ -243,7 +303,6 @@ export interface ShopDashboard {
   lowStock: { productId: string; name: string; unitType: ShopUnitType; reorderLevel: number; quantityOnHand: number }[];
   lowStockCount: number;
 }
-
 
 /** What the till sends to exchange goods. No prices: the server values both sides. */
 export interface ShopExchangeInput {
@@ -277,7 +336,6 @@ export interface ShopExchange {
   /** True when this response replayed an exchange that had already happened. */
   replayed?: boolean;
 }
-
 
 /** A basket put aside, as the held-sales list shows it. */
 export interface ShopHeldSaleRow {
@@ -314,13 +372,14 @@ export interface ShopResumedSale {
   dropped: string[];
   customerId: string | null;
   customerDraft: { name: string; phone: string } | null;
+  /** Saved customer with id, or the inline customer draft that was held. */
+  customer: { id?: string; name: string; phone: string; email?: string } | null;
   discountMinor: number;
   loyaltyCardNumber: string;
   note: string;
   heldByNameSnapshot: string;
   createdAt: string;
 }
-
 
 /** One branch's last 30 days, for the Branches screen. */
 export interface ShopBranchOverviewRow {

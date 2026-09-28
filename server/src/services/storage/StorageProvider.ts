@@ -31,8 +31,8 @@ export interface StorageProvider {
    *
    * Optional because not every backend can enumerate cheaply. A provider that
    * cannot MUST leave this undefined rather than returning a partial list -
-   * the storage backfill refuses to run instead of silently computing a usage
-   * figure that is too low.
+   * the storage backfill refuses to run instead of silently creating an
+   * incomplete ownership registry.
    *
    * Implementations must report size from metadata (a HEAD or stat), never by
    * downloading the object.

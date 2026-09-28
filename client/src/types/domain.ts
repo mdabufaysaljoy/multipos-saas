@@ -237,7 +237,7 @@ export interface ExportJob {
   createdAt: string;
 }
 
-/** Supplier management (Clothing POS, Professional and Enterprise). */
+/** Supplier management (Clothing and Super Shop POS, Professional and Enterprise). */
 export const SUPPLIER_TYPES = ['manufacturer', 'wholesaler', 'distributor', 'importer', 'local', 'other'] as const;
 export type SupplierType = (typeof SUPPLIER_TYPES)[number];
 
@@ -1080,6 +1080,7 @@ export interface PosReturn {
     productNameSnapshot: string;
     variantNameSnapshot: string;
     quantity: number;
+    unitType?: 'each' | 'weight';
     unitPriceMinor: number;
     lineTotalMinor: number;
     restock: boolean;

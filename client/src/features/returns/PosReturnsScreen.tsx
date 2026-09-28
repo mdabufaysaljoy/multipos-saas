@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { format } from 'date-fns';
-import { RotateCcw, Search } from 'lucide-react';
+import { Repeat2, RotateCcw, Search } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
@@ -15,6 +15,7 @@ import { PosReturnDialog, type ReturnableSaleLine } from '@/features/returns/Pos
 import { ApiError } from '@/api/client';
 import { storeApi } from '@/api/endpoints';
 import { formatMoney } from '@/lib/money';
+import { formatQuantity } from '@/lib/supershop';
 import { useAuth } from '@/hooks/useAuth';
 import type { PosReturn } from '@/types/domain';
 import type { PageMeta } from '@/types/api';
@@ -41,13 +42,19 @@ interface PosReturnsScreenProps<TSale> {
   linesOf: (sale: TSale) => ReturnableSaleLine[];
   createReturn: (
     saleId: string,
-    input: { items: { saleItemId: string; quantity: number; restock: boolean }[]; reason: string; refundMethod: string },
+    input: {
+      items: { saleItemId: string; quantity: number; restock: boolean }[];
+      reason: string;
+      refundMethod: string;
+    },
   ) => Promise<unknown>;
   /** Query keys to refresh once something has come back. */
   invalidate: string[];
   /** False for a restaurant: nothing goes back on a shelf, only money moves. */
   restockable?: boolean;
   searchPlaceholder: string;
+  /** Optional vertical-specific exchange workflow; Super Shop supplies this. */
+  renderExchange?: (sale: TSale, onClose: () => void) => React.ReactNode;
 }
 
 /**
@@ -71,16 +78,24 @@ export function PosReturnsScreen<TSale>({
   invalidate,
   restockable = true,
   searchPlaceholder,
+  renderExchange,
 }: PosReturnsScreenProps<TSale>) {
   const { activeStore } = useAuth();
   const currency = activeStore?.currency ?? 'BDT';
   const money = (minor: number) => formatMoney(minor, currency);
+  const returnedQuantity = (row: PosReturn) =>
+    row.items.some((item) => item.unitType)
+      ? row.items
+          .map((item) => (item.unitType === 'weight' ? formatQuantity(item.quantity, 'weight') : `${item.quantity} pc`))
+          .join(' + ')
+      : `${row.items.reduce((sum, item) => sum + item.quantity, 0)} unit(s)`;
 
   const [page, setPage] = React.useState(1);
   const [term, setTerm] = React.useState('');
   const search = useDebounced(term, 300);
-  const [finding, setFinding] = React.useState(false);
+  const [finding, setFinding] = React.useState<'return' | 'exchange' | null>(null);
   const [chosen, setChosen] = React.useState<TSale | null>(null);
+  const [exchanging, setExchanging] = React.useState<TSale | null>(null);
 
   const { data: posConfig } = useQuery({ queryKey: ['store', 'pos-config'], queryFn: storeApi.posConfig });
   const { data, isLoading, error, refetch } = useQuery({
@@ -100,19 +115,35 @@ export function PosReturnsScreen<TSale>({
         </div>
       ),
     },
-    { key: 'sale', header: 'Original sale', cell: (row) => <span className="font-mono text-sm">{row.saleNumberSnapshot}</span> },
+    {
+      key: 'sale',
+      header: 'Original sale',
+      cell: (row) => <span className="font-mono text-sm">{row.saleNumberSnapshot}</span>,
+    },
     {
       key: 'items',
       header: 'Items',
       cell: (row) => (
         <div className="max-w-xs">
-          <p className="tabular text-sm">{row.items.reduce((sum, item) => sum + item.quantity, 0)} unit(s)</p>
-          <p className="truncate text-xs text-muted-foreground">{row.items.map((item) => item.productNameSnapshot).join(', ')}</p>
+          <p className="tabular text-sm">{returnedQuantity(row)}</p>
+          <p className="truncate text-xs text-muted-foreground">
+            {row.items.map((item) => item.productNameSnapshot).join(', ')}
+          </p>
         </div>
       ),
     },
-    { key: 'reason', header: 'Reason', mobile: 'hide', cell: (row) => <span className="text-sm">{row.reason || '—'}</span> },
-    { key: 'by', header: 'Taken by', mobile: 'hide', cell: (row) => <span className="text-sm">{row.processedByNameSnapshot}</span> },
+    {
+      key: 'reason',
+      header: 'Reason',
+      mobile: 'hide',
+      cell: (row) => <span className="text-sm">{row.reason || '—'}</span>,
+    },
+    {
+      key: 'by',
+      header: 'Taken by',
+      mobile: 'hide',
+      cell: (row) => <span className="text-sm">{row.processedByNameSnapshot}</span>,
+    },
     {
       key: 'total',
       header: 'Refund',
@@ -133,12 +164,24 @@ export function PosReturnsScreen<TSale>({
         title={title}
         description={description}
         actions={
-          <PermissionGate anyOf={['returns.create']}>
-            <Button onClick={() => setFinding(true)}>
-              <RotateCcw />
-              New {noun.one}
-            </Button>
-          </PermissionGate>
+          <div className="flex flex-wrap gap-2">
+            {renderExchange && (
+              <PermissionGate anyOf={['returns.create']}>
+                <PermissionGate anyOf={['sales.create']}>
+                  <Button variant="outline" onClick={() => setFinding('exchange')}>
+                    <Repeat2 />
+                    New exchange
+                  </Button>
+                </PermissionGate>
+              </PermissionGate>
+            )}
+            <PermissionGate anyOf={['returns.create']}>
+              <Button onClick={() => setFinding('return')}>
+                <RotateCcw />
+                New {noun.one}
+              </Button>
+            </PermissionGate>
+          </div>
         }
       />
 
@@ -158,7 +201,7 @@ export function PosReturnsScreen<TSale>({
           emptyDescription="Find a sale to take something back against it."
           emptyAction={
             <PermissionGate anyOf={['returns.create']}>
-              <Button onClick={() => setFinding(true)}>
+              <Button onClick={() => setFinding('return')}>
                 <Search />
                 Find a sale
               </Button>
@@ -168,14 +211,17 @@ export function PosReturnsScreen<TSale>({
       </Card>
 
       <FindSaleDialog
-        open={finding}
-        onOpenChange={setFinding}
+        open={finding !== null}
+        onOpenChange={(open) => !open && setFinding(null)}
+        purpose={finding ?? 'return'}
         currency={currency}
         findSales={findSales}
         summarise={summarise}
         onPick={(sale) => {
-          setFinding(false);
-          setChosen(sale);
+          const purpose = finding;
+          setFinding(null);
+          if (purpose === 'exchange') setExchanging(sale);
+          else setChosen(sale);
         }}
       />
 
@@ -191,6 +237,7 @@ export function PosReturnsScreen<TSale>({
           invalidate={invalidate}
         />
       )}
+      {exchanging && renderExchange?.(exchanging, () => setExchanging(null))}
     </div>
   );
 }
@@ -203,6 +250,7 @@ function FindSaleDialog<TSale>({
   findSales,
   summarise,
   onPick,
+  purpose,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -210,6 +258,7 @@ function FindSaleDialog<TSale>({
   findSales: (search: string) => Promise<{ items: TSale[] }>;
   summarise: (sale: TSale) => ReturnableSaleSummary;
   onPick: (sale: TSale) => void;
+  purpose: 'return' | 'exchange';
 }) {
   const [term, setTerm] = React.useState('');
   const search = useDebounced(term, 300);
@@ -225,12 +274,19 @@ function FindSaleDialog<TSale>({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>Find the original sale</DialogTitle>
-          <DialogDescription>Nothing can be refunded on its own: search by sale number, item or customer.</DialogDescription>
+          <DialogTitle>{purpose === 'exchange' ? 'Find a sale to exchange' : 'Find the original sale'}</DialogTitle>
+          <DialogDescription>
+            Search by sale number, item or customer. Only completed sales with items left are shown.
+          </DialogDescription>
         </DialogHeader>
 
         <div className="space-y-3">
-          <Input autoFocus value={term} onChange={(event) => setTerm(event.target.value)} placeholder="INV-000012, item or customer…" />
+          <Input
+            autoFocus
+            value={term}
+            onChange={(event) => setTerm(event.target.value)}
+            placeholder="INV-000012, item or customer…"
+          />
 
           <div className="scrollbar-thin max-h-72 space-y-1 overflow-y-auto">
             {isLoading && <p className="py-6 text-center text-sm text-muted-foreground">Searching…</p>}

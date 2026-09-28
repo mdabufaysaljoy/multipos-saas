@@ -1,7 +1,8 @@
-# Data Export (Clothing POS)
+# Business Data Export
 
-Scope: **Clothing POS only.** Restaurant, Pharmacy and Super Shop are not exportable through this
-feature and their code is untouched.
+Scope: **Clothing, Restaurant, Pharmacy and Super Shop.** The server selects a vertical-specific,
+field-allow-listed registry from the authenticated workspace. Starter is refused by the backend;
+Professional and Enterprise are enabled by the `dataExport` entitlement.
 
 ---
 
@@ -13,12 +14,12 @@ feature and their code is untouched.
 | Entitlements | `config/entitlements.ts` maps stable keys to plan flags. **`dataExport` → `exportData` already existed** and was **not enforced anywhere**. |
 | Gating middleware | `requireAccess({ entitlement, permission })` / `requireEntitlement` (`middleware/access.ts`), resolved per request from the database. |
 | Tenant / branch scope | `resolveTenant` builds `ctx` (`tenantId`, `storeId`, `isAdmin`, `permissions`); reports use `storeScope(ctx, branch)` where `all` is admin-only. |
-| Models (Clothing) | Customer, Product, ProductVariant, Category, Sale (items + payments embedded), Return (+ exchange block), InventoryTransaction, LoyaltyMembership, LoyaltyTransaction, Store. |
-| Models that do **not** exist | Supplier, Purchase/Purchase item, Expense. They are therefore not offered. |
+| Business models | Shared customers, returns and loyalty plus each POS type's catalogue, sales/orders, line items, payments, stock data and vertical-specific operational records. |
+| Models that do **not** exist | Purchase/Purchase item and Expense. They are therefore not offered. |
 | Payments | POS payments live **inside** `Sale.payments`; the `Payment` model is subscription/wallet billing, not POS. |
 | Reports API | `reports.service.ts` with `resolveRange` (presets `today`…`custom`), `salesAndProfit`, `breakdown`, `inventoryReport`. |
 | Export libraries | **None** (no CSV, XLSX or PDF). Added: `exceljs` (streaming workbook) and `pdfkit` (streaming PDF). |
-| File storage | `services/storage` local provider + `StorageObject` quota - built for product images, not temporary files. |
+| Uploaded files | `services/storage` local provider + tenant-scoped `StorageObject` ownership registry - built for product images, not temporary files. |
 | Queue / workers | **None.** `jobs/subscription.job.ts` is an in-process hourly timer; there is no Redis or worker. |
 | Rate limiting | Global `express-rate-limit` on `/api`, plus per-route limiters (e.g. `adminActionLimiter`). |
 | Audit log | `AuditLog` + `recordAudit(req, …)`. |
@@ -43,7 +44,7 @@ role (tenant admins/owners hold every permission). Existing tenants get it throu
 `npm run migrate:export-permission -w server` (idempotent; never re-grants a permission an admin removed).
 A staff member therefore needs **Professional/Enterprise + `reports.export`**.
 
-Clothing only: the service refuses a workspace whose POS type is not Clothing.
+The same gate protects every supported POS type. A workspace only sees datasets for its own vertical.
 
 ---
 
@@ -52,24 +53,18 @@ Clothing only: the service refuses a workspace whose POS type is not Clothing.
 The client may only name a key from this registry. There is **no** way to name a collection, model or
 field from the request, so arbitrary database export is impossible.
 
-| Key | Contents | Row shape | Date filter |
-|---|---|---|---|
-| `customers` | Customer directory | one row per customer | created |
-| `products` | Catalogue | one row per **variant** (product columns repeated) | created |
-| `categories` | Categories | one row per category | created |
-| `suppliers` | Supplier contacts, terms and tax details (**never banking**) | one row per supplier | – (a snapshot) |
-| `inventory` | Current stock | one row per variant | – |
-| `stock-movements` | Inventory ledger | one row per movement | movement date |
-| `sales` | Sales | one row per sale (totals, payment, customer, cashier) | sale date |
-| `sale-items` | Sale lines | one row per line (SKU, qty, price, returned qty) | sale date |
-| `sale-payments` | Tender breakdown | one row per payment on a sale | sale date |
-| `returns` | Returns and exchanges | one row per returned line, with the exchange link | return date |
-| `loyalty-members` | Membership cards | one row per membership | issued |
-| `loyalty-ledger` | Point transactions | one row per ledger entry | created |
-| `sales-report` | The **existing** sales report | summary + daily rows, reusing `reports.service` | report range |
+| POS type | Datasets offered |
+|---|---|
+| Every POS | Customers, returns/exchanges, loyalty members and loyalty ledger (when the matching feature and read permission are available) |
+| Clothing | Products and variants, categories, current inventory, stock movements, sales, sale items, sale payments and the existing sales report |
+| Restaurant | Menu items, categories, dining tables, orders, order items, order payments, kitchen tickets, cash-drawer shifts and shift cash movements |
+| Pharmacy | Medicines, categories, medicine batches/current inventory, stock movements, sales, sale items with batch allocations, sale payments and prescription records |
+| Super Shop | Products, departments, brands, current inventory, stock movements, sales, sale items (including weight/VAT/cost) and sale payments |
+| Clothing + Super Shop | Supplier contacts, terms and tax details (**never banking**), when Supplier Management is enabled |
 
-A dataset is workspace- or branch-scoped to match the data itself: `suppliers` is workspace-level (they
-have no branch), everything else follows the branch rule below.
+A dataset is workspace- or branch-scoped to match the data itself. Catalogues, departments/categories,
+brands and suppliers are workspace-level; branch-owned sales, orders, stock, tables and shifts follow
+the branch rule below.
 
 Never exported: users, passwords or hashes, tokens, sessions, API keys, provider credentials, platform
 settings, other workspaces' data, or any collection outside this registry.
@@ -132,8 +127,8 @@ POST /api/exports            (Professional/Enterprise + reports.export)
 | Permission | `reports.export` in the same guard. |
 | Tenant isolation | Every dataset query is built from `ctx.tenantId`; the request cannot carry a workspace id. |
 | Branch isolation | `storeId` comes from `ctx`; `branch: all` is honoured only for tenant admins, exactly as reports do. Non-admins always get their own branch. |
-| Registry | Only the 13 keys above; unknown keys are a 422. No collection/model/field names from the client. |
-| Per-dataset access | A dataset may declare its own `requires` (entitlement + permission). `suppliers` needs `supplierManagement` and `suppliers.view`, so `reports.export` alone is not a side door into data the user cannot open elsewhere. Such a dataset is hidden from `GET /datasets` and refused by the download. |
+| Registry | Only the vertical-aware keys above; unknown or wrong-vertical keys are refused. No collection/model/field names come from the client. |
+| Per-dataset access | Each dataset declares its underlying read permission and optional feature entitlement. `reports.export` is never a side door into products, customers, stock, sales, returns, loyalty, suppliers or reports a role cannot otherwise read. Such datasets are hidden from `GET /datasets` and refused by the download. |
 | Field allow-list | Each dataset lists its columns explicitly; documents are projected, never spread. |
 | Secrets | Users, passwords, tokens and settings are not in the registry at all. |
 | Injection | Spreadsheet formula prefixes neutralised; filters are typed and validated by zod. |
@@ -161,7 +156,8 @@ All require: authenticated user → workspace/branch → usable subscription →
 - **No background jobs.** Exports are synchronous. Very large exports are bounded by the row caps above
   rather than being queued; there is no queue in this stack.
 - **No stored files**, so history has no download link; re-run instead. (Deliberate: nothing sensitive at rest.)
-- **Suppliers, purchases and expenses** are not exportable because those models do not exist.
+- **Purchases and expenses** are not exportable because those business models do not exist.
+- **Temporary Super Shop held baskets** are not trade: they take no stock or payment and expire automatically, so they are not exported as sales.
 - **PDF** is a report format, capped at 5,000 rows.
 - **Dates** are formatted in one business timezone (not per user).
 - **PDF text is Latin-only.** The built-in PDF fonts cannot draw Bengali glyphs, so Bengali names appear
@@ -172,7 +168,8 @@ All require: authenticated user → workspace/branch → usable subscription →
 
 ## 9. Verified by the test suite
 
-`scripts/smoke-test.mjs` → "Clothing POS: data export": Starter refusal (entitlement + history + run),
+`scripts/smoke-test.mjs` covers Starter refusal and Professional catalogues/downloads for all four POS
+types. The detailed Clothing export suite additionally verifies entitlement + history + run,
 unauthenticated refusal, the registry, unknown type/format/range refusals, CSV (BOM, CRLF, Bengali,
 formula neutralisation, money in major units, no secret columns), a complete readable XLSX workbook,
 structured JSON, a real PDF, an empty dataset, `reports.export` permission (cashier vs manager), branch

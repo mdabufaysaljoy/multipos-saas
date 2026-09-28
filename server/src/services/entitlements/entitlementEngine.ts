@@ -139,16 +139,14 @@ async function countUsage(workspaceId: Types.ObjectId, key: LimitEntitlementKey,
       return entitlementService.countCustomers(workspaceId);
     case 'monthlySales':
       return entitlementService.countMonthlySales(workspaceId, vertical);
-    case 'storage':
-      return entitlementService.storageBytes(workspaceId);
     case 'suppliers':
       return entitlementService.countSuppliers(workspaceId);
   }
 }
 
 /**
- * Whether a workspace may add `adding` more of a resource (default 1; bytes for
- * storage). A pre-check for the UI and for services; the create paths keep
+ * Whether a workspace may add `adding` more of a resource (default 1). A
+ * pre-check for the UI and for services; the create paths keep
  * their race-safe ordinal checks as the final word.
  */
 export async function checkLimit(

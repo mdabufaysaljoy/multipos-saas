@@ -1,10 +1,11 @@
-import { Types } from 'mongoose';
+import { Types, type HydratedDocument } from 'mongoose';
 import { INVENTORY_TX_TYPES, SALE_STATUS } from '../../config/constants';
-import { ReturnModel, type ReturnExchange } from '../../models/Return';
+import { ReturnModel, type ReturnDoc, type ReturnExchange } from '../../models/Return';
 import { SaleModel } from '../../models/Sale';
 import { StoreModel } from '../../models/Store';
 import { ApiError } from '../../utils/ApiError';
 import { formatDocumentNumber, nextSequence } from '../../utils/counters';
+import { logger } from '../../utils/logger';
 import { resolvePage, searchRegex } from '../../utils/pagination';
 import { inventoryService, type StockMovementResult } from '../../services/inventory/inventory.service';
 import { tenderLabels } from '../../services/pos/paymentMethods.service';
@@ -215,14 +216,16 @@ class ReturnService {
         idempotencyKey: exchange.idempotencyKey,
         loyaltyClaim,
       });
-      await SaleModel.updateOne(
-        { _id: replacement._id, tenantId: ctx.tenantId },
-        { $set: { 'exchange.returnId': returnDoc._id, 'exchange.returnNumber': returnDoc.returnNumber } },
+      await this.afterReturnCommit(ctx, sale._id, returnDoc._id, 'link the replacement sale to its return', () =>
+        SaleModel.updateOne(
+          { _id: replacement._id, tenantId: ctx.tenantId },
+          { $set: { 'exchange.returnId': returnDoc._id, 'exchange.returnNumber': returnDoc.returnNumber } },
+        ),
       );
       return { ...returnDoc, replacementSale: { ...replacement, exchange: { ...replacement.exchange, returnId: returnDoc._id, returnNumber: returnDoc.returnNumber } } };
     } catch (error) {
-      // finalize already undid its restock and released the reservations; the
-      // replacement sale is the last thing to undo. Its stock goes back too.
+      // A thrown finalize failed before the return commit point and released
+      // the held quantities; the replacement sale is the last thing to undo.
       await saleService
         .cancel(ctx, replacement._id, { reason: 'Exchange could not be completed' })
         .catch(() => undefined);
@@ -345,7 +348,7 @@ class ReturnService {
     return reserved;
   }
 
-  /** Restocks, writes the return document and refreshes the sale's roll-ups. Undoes itself on failure. */
+  /** Writes the durable return, then reconciles stock and derived roll-ups. */
   private async finalize(
     ctx: TenantContext,
     input: CreateReturnInput,
@@ -361,20 +364,10 @@ class ReturnService {
     },
   ) {
     const { sale, store, lines, reserved } = state;
-    const restocked: StockMovementResult[] = [];
     let loyaltyClaim = state.loyaltyClaim ?? null;
+    let returnDoc: HydratedDocument<ReturnDoc>;
     try {
       if (state.loyaltyClaim === undefined) loyaltyClaim = await loyaltyService.claimReturn(ctx, sale._id);
-
-      for (const line of lines) {
-        if (!line.restock) continue;
-        const movement = await inventoryService.increase(ctx, line.variantId, line.quantity, {
-          type: INVENTORY_TX_TYPES.RETURN,
-          reason: input.reason || (state.exchange ? 'Customer exchange' : 'Customer return'),
-          referenceType: 'return',
-        });
-        restocked.push(movement);
-      }
 
       const seq = await nextSequence(ctx.tenantId, ctx.storeId, 'return');
       const returnNumber = formatDocumentNumber(store.returnPrefix, seq);
@@ -386,7 +379,7 @@ class ReturnService {
       // loyalty points that paid for them (those are given back as points).
       const totalMinor = Math.max(0, lines.reduce((sum, line) => sum + line.lineTotalMinor, 0) - (loyaltyClaim?.valueMinor ?? 0));
 
-      const returnDoc = await ReturnModel.create({
+      returnDoc = await ReturnModel.create({
         tenantId: ctx.tenantId,
         storeId: ctx.storeId,
         returnNumber,
@@ -418,38 +411,81 @@ class ReturnService {
           : null,
       });
 
-      await inventoryService.attachReference(ctx, restocked, 'return', returnDoc._id, returnNumber);
+    } catch (error) {
+      // Nothing durable exists yet, so the held sale quantities and loyalty
+      // claim can safely be released and the caller may retry.
+      await this.releaseReservations(ctx, sale._id, reserved);
+      await loyaltyService.releaseReturnClaim(ctx, sale._id, loyaltyClaim);
+      throw error;
+    }
 
-      // Refresh the sale's roll-up figures.
+    // The return document is the commit point. From here on the held quantities
+    // remain authoritative even if a derived write needs reconciliation; a 500
+    // would invite the cashier to refund the same goods again.
+    const restocked: StockMovementResult[] = [];
+    for (const line of lines) {
+      if (!line.restock) continue;
+      await this.afterReturnCommit(ctx, sale._id, returnDoc._id, `restore stock for ${line.variantId}`, async () => {
+        const movement = await inventoryService.increase(ctx, line.variantId, line.quantity, {
+          type: INVENTORY_TX_TYPES.RETURN,
+          reason: input.reason || (state.exchange ? 'Customer exchange' : 'Customer return'),
+          referenceType: 'return',
+        });
+        restocked.push(movement);
+      });
+    }
+
+    await this.afterReturnCommit(ctx, sale._id, returnDoc._id, 'attach inventory references', () =>
+      inventoryService.attachReference(ctx, restocked, 'return', returnDoc._id, returnDoc.returnNumber),
+    );
+
+    await this.afterReturnCommit(ctx, sale._id, returnDoc._id, 'refresh sale return totals', async () => {
       const refreshed = await SaleModel.findOne({ _id: sale._id, tenantId: ctx.tenantId }).lean();
       const fullyReturned = Boolean(refreshed?.items.every((item) => item.returnedQuantity >= item.quantity));
       await SaleModel.updateOne(
         { _id: sale._id, tenantId: ctx.tenantId },
-        { $inc: { returnedTotalMinor: totalMinor }, $set: { fullyReturned } },
+        { $inc: { returnedTotalMinor: returnDoc.totalMinor }, $set: { fullyReturned } },
       );
+    });
 
-      if (sale.customerId) {
-        await customerService.applySaleStats(ctx, sale.customerId, { amountMinor: -totalMinor, orderDelta: 0 });
-      }
+    if (sale.customerId) {
+      await this.afterReturnCommit(ctx, sale._id, returnDoc._id, 'refresh customer lifetime value', () =>
+        customerService.applySaleStats(ctx, sale.customerId!, { amountMinor: -returnDoc.totalMinor, orderDelta: 0 }),
+      );
+    }
 
-      if (loyaltyClaim) {
-        await loyaltyService.applyReturnClaim(ctx, loyaltyClaim, {
+    if (loyaltyClaim) {
+      await this.afterReturnCommit(ctx, sale._id, returnDoc._id, 'apply loyalty reversal', () =>
+        loyaltyService.applyReturnClaim(ctx, loyaltyClaim!, {
           key: `return:${returnDoc._id}`,
           saleId: sale._id,
           saleNumber: sale.saleNumber,
           returnId: returnDoc._id,
-          returnNumber,
+          returnNumber: returnDoc.returnNumber,
           reason: state.exchange ? 'Goods exchanged' : 'Goods returned',
-        });
-      }
+        }),
+      );
+    }
 
-      return returnDoc.toObject();
+    return returnDoc.toObject();
+  }
+
+  private async afterReturnCommit(
+    ctx: TenantContext,
+    saleId: Types.ObjectId,
+    returnId: Types.ObjectId,
+    operation: string,
+    task: () => Promise<unknown>,
+  ): Promise<void> {
+    try {
+      await task();
     } catch (error) {
-      // Undo in reverse order: stock first, then the reservations and the loyalty claim.
-      await inventoryService.compensate(ctx, restocked, 'return could not be completed');
-      await this.releaseReservations(ctx, sale._id, reserved);
-      await loyaltyService.releaseReturnClaim(ctx, sale._id, loyaltyClaim);
-      throw error;
+      logger.error(`CRITICAL: failed to ${operation} after a return committed; reconciliation is required`, {
+        tenantId: String(ctx.tenantId),
+        saleId: String(saleId),
+        returnId: String(returnId),
+        error,
+      });
     }
   }
 

@@ -22,10 +22,11 @@ import { SUPPLIER_TYPE_LABELS } from '@/features/suppliers/supplierLabels';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { saveBlob } from '@/lib/download';
 import { cn } from '@/lib/utils';
+import { useAuth } from '@/hooks/useAuth';
 import type { SupplierListItem, SupplierType } from '@/types/domain';
 
 /**
- * Suppliers (Clothing POS, Professional and Enterprise).
+ * Suppliers (Clothing and Super Shop POS, Professional and Enterprise).
  *
  * Workspace-level: every branch of the business sees the same supplier list.
  * The server enforces the plan, the permissions and the supplier ceiling; this
@@ -33,6 +34,8 @@ import type { SupplierListItem, SupplierType } from '@/types/domain';
  */
 export function SuppliersPage() {
   const queryClient = useQueryClient();
+  const { session } = useAuth();
+  const canExportSuppliers = session?.entitlement?.features?.exportData === true;
 
   const [page, setPage] = React.useState(1);
   const [term, setTerm] = React.useState('');
@@ -242,21 +245,23 @@ export function SuppliersPage() {
         description="Who you buy from. Shared across every branch of this workspace."
         actions={
           <>
-            <PermissionGate anyOf={['reports.export']}>
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <Button variant="outline" loading={exportSuppliers.isPending} disabled={exportSuppliers.isPending || (data?.meta?.total ?? 0) === 0}>
-                    <Download />
-                    Export
-                  </Button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="end">
-                  <DropdownMenuItem onSelect={() => exportSuppliers.mutate('xlsx')}>Excel (.xlsx)</DropdownMenuItem>
-                  <DropdownMenuItem onSelect={() => exportSuppliers.mutate('csv')}>CSV</DropdownMenuItem>
-                  <DropdownMenuItem onSelect={() => exportSuppliers.mutate('pdf')}>PDF</DropdownMenuItem>
-                </DropdownMenuContent>
-              </DropdownMenu>
-            </PermissionGate>
+            {canExportSuppliers && (
+              <PermissionGate anyOf={['reports.export']}>
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button variant="outline" loading={exportSuppliers.isPending} disabled={exportSuppliers.isPending || (data?.meta?.total ?? 0) === 0}>
+                      <Download />
+                      Export
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end">
+                    <DropdownMenuItem onSelect={() => exportSuppliers.mutate('xlsx')}>Excel (.xlsx)</DropdownMenuItem>
+                    <DropdownMenuItem onSelect={() => exportSuppliers.mutate('csv')}>CSV</DropdownMenuItem>
+                    <DropdownMenuItem onSelect={() => exportSuppliers.mutate('pdf')}>PDF</DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              </PermissionGate>
+            )}
             <PermissionGate anyOf={['suppliers.create']}>
               <Button
                 onClick={() => {

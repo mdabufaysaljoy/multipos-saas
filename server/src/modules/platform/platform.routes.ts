@@ -126,9 +126,8 @@ router.patch(
         })
         .optional(),
       emailCostMinor: z.number().int().min(0).optional(),
-      // Per-use prices for AI and storage, in minor units.
+      // Per-use price for AI, in minor units.
       aiRequestCostMinor: z.number().int().min(0).max(100_000_000).optional(),
-      storageGbMonthCostMinor: z.number().int().min(0).max(100_000_000).optional(),
       // Digest emails about payments needing attention; admins always receive them.
       paymentAlerts: z
         .object({

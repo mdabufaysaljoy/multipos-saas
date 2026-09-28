@@ -49,7 +49,13 @@ export interface ShopSaleExchange {
   /** Refund value of the returned goods, applied here instead of paid out. */
   creditMinor: number;
   /** What came back, snapshotted at the time of the exchange, for the receipt. */
-  returnedItems: { nameSnapshot: string; detailSnapshot: string; quantity: number; unitType: string; lineTotalMinor: number }[];
+  returnedItems: {
+    nameSnapshot: string;
+    detailSnapshot: string;
+    quantity: number;
+    unitType: string;
+    lineTotalMinor: number;
+  }[];
 }
 
 export interface ShopSaleDoc extends BaseDoc {
@@ -59,6 +65,8 @@ export interface ShopSaleDoc extends BaseDoc {
   items: ShopSaleLine[];
   subtotalMinor: number;
   discountMinor: number;
+  /** Whole-currency rounding applied after discounts; may be negative. */
+  roundingMinor: number;
   totalMinor: number;
   vatMinor: number;
   costMinor: number;
@@ -89,7 +97,17 @@ export interface ShopSaleDoc extends BaseDoc {
   voidReason: string;
 }
 
-const minor = { type: Number, required: true, min: 0, validate: { validator: Number.isSafeInteger, message: 'Amounts must be whole minor units' } };
+const minor = {
+  type: Number,
+  required: true,
+  min: 0,
+  validate: { validator: Number.isSafeInteger, message: 'Amounts must be whole minor units' },
+};
+const signedMinor = {
+  type: Number,
+  default: 0,
+  validate: { validator: Number.isSafeInteger, message: 'Amounts must be whole minor units' },
+};
 
 const lineSchema = new Schema<ShopSaleLine>({
   productId: { type: Schema.Types.ObjectId, ref: 'ShopProduct', required: true },
@@ -116,6 +134,7 @@ const shopSaleSchema = new Schema<ShopSaleDoc>(
     items: { type: [lineSchema], required: true },
     subtotalMinor: minor,
     discountMinor: minor,
+    roundingMinor: signedMinor,
     totalMinor: minor,
     vatMinor: minor,
     costMinor: minor,
