@@ -10,7 +10,6 @@ import { PageHeader } from '@/components/PageHeader';
 import { AdvancedAnalyticsLocked } from '@/features/reports/AdvancedAnalyticsLocked';
 import { PrintReportButton } from '@/features/reports/PrintReportButton';
 import { REPORT_PRESETS, RangePicker, isRangeReady, rangeParams, type RangeValue } from '@/features/reports/RangePicker';
-import { AnalyticsFilters, NO_FILTERS, analyticsParams, type AnalyticsFilterValue } from '@/features/supershop/AnalyticsFilters';
 import { ApiError } from '@/api/client';
 import { supershopApi } from '@/api/supershop';
 import { formatMoney, formatMoneyCompact } from '@/lib/money';
@@ -42,12 +41,16 @@ export function SupershopReportsPage() {
   const isAdmin = session?.user.role === 'admin';
 
   const [range, setRange] = React.useState<RangeValue>({ preset: 'last30', from: '', to: '' });
-  const [filters, setFilters] = React.useState<AnalyticsFilterValue>(NO_FILTERS);
   const ready = isRangeReady(range);
-  const params = { ...rangeParams(range), ...analyticsParams(filters) };
+  // A date range and the tabs. The report endpoint still accepts narrowing
+  // filters - staff, department, brand, product, tender, customer - and they
+  // are still covered by tests; this screen simply does not put a row of
+  // dropdowns in front of them, because the tabs already answer the same
+  // questions with less to read.
+  const params = rangeParams(range);
 
   const { data, isLoading, error } = useQuery({
-    queryKey: ['supershop', 'reports', range, filters],
+    queryKey: ['supershop', 'reports', range],
     queryFn: () => supershopApi.reports(params),
     enabled: hasAdvanced && ready,
     retry: false,
@@ -73,9 +76,8 @@ export function SupershopReportsPage() {
       />
 
       <Card>
-        <CardContent className="space-y-3 p-4">
+        <CardContent className="p-4">
           <RangePicker value={range} onChange={setRange} presets={REPORT_PRESETS} />
-          <AnalyticsFilters value={filters} onChange={setFilters} branches={data?.branches ?? []} customers={data?.customers ?? []} />
         </CardContent>
       </Card>
 
@@ -85,14 +87,6 @@ export function SupershopReportsPage() {
 
       {ready && data && (
         <>
-          {/* Refunds cannot be pinned to a cashier, a tender or a single line. */}
-          {!data.returnsAttributable && (
-            <p className="rounded-md border border-dashed px-3 py-2 text-xs text-muted-foreground">
-              Refunds are left out of these figures: a return records the goods and the customer, not which cashier sold them, which
-              tender paid for them, or which line they came from. Clear those filters to include returns.
-            </p>
-          )}
-
           <Tabs defaultValue="sales">
             <TabsList className="h-auto flex-wrap justify-start gap-1">
               <TabsTrigger value="sales">Sales &amp; profit</TabsTrigger>
@@ -101,6 +95,7 @@ export function SupershopReportsPage() {
               <TabsTrigger value="brands">Brands</TabsTrigger>
               <TabsTrigger value="staff">Staff</TabsTrigger>
               <TabsTrigger value="payments">Payments</TabsTrigger>
+              <TabsTrigger value="vat">VAT</TabsTrigger>
               <TabsTrigger value="returns">Returns</TabsTrigger>
               <TabsTrigger value="inventory">Inventory</TabsTrigger>
               <TabsTrigger value="customers">Customers</TabsTrigger>
@@ -124,6 +119,9 @@ export function SupershopReportsPage() {
             </TabsContent>
             <TabsContent value="payments">
               <PaymentsTab data={data} money={money} />
+            </TabsContent>
+            <TabsContent value="vat">
+              <VatTab data={data} money={money} />
             </TabsContent>
             <TabsContent value="returns">
               <ReturnsTab data={data} money={money} />
@@ -504,23 +502,6 @@ function PaymentsTab({ data, money }: { data: ShopReports; money: Money }) {
           rows={data.payments.map((row) => ({ method: row.method, sales: row.sales, amount: money(row.amountMinor) }))}
         />
       </Panel>
-      <Panel title="VAT by rate" description="Super Shop prices include VAT; this is what was inside them.">
-        <RowTable
-          empty="No sales in this period"
-          columns={[
-            { key: 'rate', label: 'Rate' },
-            { key: 'lines', label: 'Lines', align: 'right' },
-            { key: 'net', label: 'Excl. VAT', align: 'right' },
-            { key: 'vat', label: 'VAT', align: 'right' },
-          ]}
-          rows={data.vatRates.map((row) => ({
-            rate: formatVatRate(row.vatRateBps),
-            lines: row.lines,
-            net: money(row.netOfVatMinor),
-            vat: money(row.vatMinor),
-          }))}
-        />
-      </Panel>
       <Panel title="Busy hours" description="When the till is working hardest.">
         <RowTable
           empty="No sales in this period"
@@ -532,6 +513,57 @@ function PaymentsTab({ data, money }: { data: ShopReports; money: Money }) {
           rows={data.hours.map((row) => ({ hour: `${row.hour}:00`, sales: row.salesCount, net: money(row.netSalesMinor) }))}
         />
       </Panel>
+    </div>
+  );
+}
+
+function VatTab({ data, money }: { data: ShopReports; money: Money }) {
+  const t = data.totals;
+  const netOfVat = t.netSalesMinor - t.vatMinor;
+  const effective = netOfVat > 0 ? (t.vatMinor / netOfVat) * 100 : 0;
+
+  return (
+    <div className="space-y-4">
+      <Card>
+        <CardHeader className="pb-2">
+          <CardTitle className="text-base">VAT collected</CardTitle>
+          <CardDescription>
+            Super Shop prices INCLUDE VAT, so this is what sat inside what was charged — never an amount added on top of it. It is
+            collected for the government, which is why it comes out before profit.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+          <Stat label="Net sales (incl. VAT)" value={money(t.netSalesMinor)} />
+          <Stat label="Excluding VAT" value={money(netOfVat)} />
+          <Stat label="VAT collected" value={money(t.vatMinor)} />
+          <Stat label="Effective rate" value={`${effective.toFixed(2)}%`} />
+        </CardContent>
+      </Card>
+
+      <Panel title="By rate" description="Every rate the period's lines carried, and what each one raised.">
+        <RowTable
+          empty="No sales in this period"
+          columns={[
+            { key: 'rate', label: 'Rate' },
+            { key: 'lines', label: 'Lines', align: 'right' },
+            { key: 'gross', label: 'Charged', align: 'right' },
+            { key: 'net', label: 'Excl. VAT', align: 'right' },
+            { key: 'vat', label: 'VAT', align: 'right' },
+          ]}
+          rows={data.vatRates.map((row) => ({
+            rate: formatVatRate(row.vatRateBps),
+            lines: row.lines,
+            gross: money(row.grossMinor),
+            net: money(row.netOfVatMinor),
+            vat: money(row.vatMinor),
+          }))}
+        />
+      </Panel>
+
+      <p className="text-xs text-muted-foreground">
+        A refund gives back the VAT that was collected with it. These figures are for sales that stand; what came back is on the
+        Returns tab.
+      </p>
     </div>
   );
 }

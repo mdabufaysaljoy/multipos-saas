@@ -861,7 +861,7 @@ class SupershopService {
         },
       ]);
 
-    const [currentRows, previousRows, trend, paymentsTaken, recentSales, stockPosition, refunds, topProducts, reorderable, stocked] = await Promise.all([
+    const [currentRows, previousRows, trend, vatByRate, paymentsTaken, recentSales, stockPosition, refunds, topProducts, reorderable, stocked] = await Promise.all([
       totals(range.from, range.to),
       totals(previousFrom, previousTo),
       // The shape of the period, bucketed the way the range asked for: hours for
@@ -869,6 +869,15 @@ class SupershopService {
       ShopSaleModel.aggregate<{ _id: string; salesCount: number; netSalesMinor: number }>([
         { $match: soldIn(range.from, range.to) },
         { $group: { _id: { $dateToString: { format: bucketFormat, date: '$soldAt', timezone: bucketTimezone } }, salesCount: { $sum: 1 }, netSalesMinor: { $sum: '$totalMinor' } } },
+        { $sort: { _id: 1 } },
+      ]),
+      // VAT is collected for the government, not earned. A Super Shop price
+      // INCLUDES it, so this is what was inside what was charged, split by the
+      // rate each line carried.
+      ShopSaleModel.aggregate<{ _id: number; grossMinor: number; vatMinor: number; lines: number }>([
+        { $match: soldIn(range.from, range.to) },
+        { $unwind: '$items' },
+        { $group: { _id: '$items.vatRateBps', grossMinor: { $sum: '$items.lineTotalMinor' }, vatMinor: { $sum: '$items.vatMinor' }, lines: { $sum: 1 } } },
         { $sort: { _id: 1 } },
       ]),
       // What the drawer actually took, by tender. Cash is netted of change below.
@@ -981,6 +990,22 @@ class SupershopService {
         grossProfitMinor: current.grossProfitMinor - refunds.totalMinor + refunds.costMinor,
       },
       previous: summarise(previousRows),
+      /**
+       * What VAT was collected, and at which rates. Super Shop prices INCLUDE
+       * VAT, so these figures are what sat inside what was charged - never an
+       * amount added on top of it.
+       */
+      vat: {
+        totalMinor: current.vatMinor,
+        netOfVatMinor: current.totalMinor - current.vatMinor,
+        byRate: vatByRate.map((row) => ({
+          vatRateBps: row._id ?? 0,
+          lines: row.lines,
+          grossMinor: row.grossMinor,
+          vatMinor: row.vatMinor,
+          netOfVatMinor: row.grossMinor - row.vatMinor,
+        })),
+      },
       /** The period's shape, in the buckets `range.bucket` names. */
       trend: trend.map((row) => ({ bucket: row._id, salesCount: row.salesCount, netSalesMinor: row.netSalesMinor })),
       /**

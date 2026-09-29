@@ -318,6 +318,15 @@ export interface ShopDashboard {
   recentSales: { _id: string; saleNumber: string; totalMinor: number; soldAt: string; cashierNameSnapshot: string; customerNameSnapshot: string }[];
   /** What the shelf is worth now, at weighted average cost. */
   stock: { valueMinor: number; productCount: number };
+  /**
+   * VAT collected, and at which rates. Super Shop prices INCLUDE VAT, so these
+   * are figures from inside what was charged, never added on top of it.
+   */
+  vat: {
+    totalMinor: number;
+    netOfVatMinor: number;
+    byRate: { vatRateBps: number; lines: number; grossMinor: number; vatMinor: number; netOfVatMinor: number }[];
+  };
   range: { from: string; to: string; label: string; preset: string; bucket: 'hour' | 'day' | 'month' };
   /** `totalMinor` is what was charged; `netSalesMinor` is what was kept. */
   kpis: ShopDashboardTotals & { refundCount: number; refundedMinor: number; netSalesMinor: number };

@@ -5882,6 +5882,23 @@ async function main() {
     inventory: (await ssApi('/inventory-summary')).data?.stockValueMinor,
   });
   check('Pieces are counted apart from weighed goods', typeof ssDash.data?.kpis?.unitsSold === 'number' && typeof ssDash.data?.previous?.unitsSold === 'number');
+
+  // ---- VAT, on the dashboard and in the report -------------------------------
+  // A Super Shop price INCLUDES VAT, so these are figures from inside what was
+  // charged - never an amount added on top of it.
+  check('The dashboard reports the VAT collected', typeof ssDash.data?.vat?.totalMinor === 'number' && Array.isArray(ssDash.data?.vat?.byRate), ssDash.data?.vat);
+  check('...matching the VAT on the sales themselves', ssDash.data?.vat?.totalMinor === ssDash.data?.kpis?.vatMinor, {
+    vat: ssDash.data?.vat?.totalMinor,
+    kpi: ssDash.data?.kpis?.vatMinor,
+  });
+  check('...with the charged total less VAT left over', ssDash.data?.vat?.netOfVatMinor === ssDash.data.kpis.totalMinor - ssDash.data.kpis.vatMinor, ssDash.data?.vat);
+  check('...and the rates adding up to it', (ssDash.data?.vat?.byRate ?? []).reduce((sum, row) => sum + row.vatMinor, 0) === ssDash.data?.vat?.totalMinor, ssDash.data?.vat?.byRate);
+  check(
+    '...each rate reporting what it was charged on',
+    (ssDash.data?.vat?.byRate ?? []).every((row) => row.netOfVatMinor === row.grossMinor - row.vatMinor),
+    ssDash.data?.vat?.byRate,
+  );
+
   check(
     'Gross profit is net sales less VAT less cost, never more',
     ssDash.data?.kpis?.grossProfitMinor <= ssDash.data.kpis.totalMinor - ssDash.data.kpis.vatMinor,
@@ -5947,6 +5964,13 @@ async function main() {
   );
   check('Best sellers and departments are ranked', ssR?.products?.[0]?.name === 'Candle' && ssR.products[0].quantity === 4 && ssR?.departments?.[0]?.department === 'Household', { products: ssR?.products, departments: ssR?.departments });
   check('VAT is broken down by rate', JSON.stringify(ssR?.vatRates?.map((r) => [r.vatRateBps, r.grossMinor, r.vatMinor])) === JSON.stringify([[0, 8000, 0]]), ssR?.vatRates);
+  // A Super Shop price INCLUDES VAT, so every rate's figures have to reconcile:
+  // what was charged, less the VAT inside it, is what the shop actually earned.
+  check(
+    '...and every rate reconciles what was charged with what was inside it',
+    (ssR?.vatRates ?? []).every((row) => row.netOfVatMinor === row.grossMinor - row.vatMinor),
+    ssR?.vatRates,
+  );
   check('Busy hours are grouped by hour of day', ssR?.hours?.length === 1 && ssR.hours[0].salesCount === 2, ssR?.hours);
   check('The voided basket is reported, not counted in sales', ssR?.voids?.count === 1 && ssR.voids.valueMinor === 27_800, ssR?.voids);
   check('Write-offs are valued at average cost', ssR?.writeOffs?.costMinor === 2 * 3150, ssR?.writeOffs);

@@ -2,7 +2,7 @@ import * as React from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import { format, parseISO } from 'date-fns';
-import { ArrowRight, Boxes, CreditCard, Package, Receipt, RotateCcw, TrendingUp, Wallet } from 'lucide-react';
+import { ArrowRight, Boxes, CreditCard, Package, Receipt, ReceiptText, RotateCcw, TrendingUp, Wallet } from 'lucide-react';
 import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -11,7 +11,7 @@ import { PageHeader } from '@/components/PageHeader';
 import { DASHBOARD_PRESETS, RangePicker, isRangeReady, rangeParams, type RangeValue } from '@/features/reports/RangePicker';
 import { supershopApi } from '@/api/supershop';
 import { formatMoney, formatMoneyCompact } from '@/lib/money';
-import { formatQuantity } from '@/lib/supershop';
+import { formatQuantity, formatVatRate } from '@/lib/supershop';
 import { useAuth } from '@/hooks/useAuth';
 import type { ShopDashboard } from '@/types/supershop';
 
@@ -162,6 +162,43 @@ function DashboardBody({ data, currency, money }: { data: ShopDashboard; currenc
         </Card>
       </div>
 
+      <Card>
+        <CardHeader className="pb-2">
+          <CardTitle className="flex items-center gap-2 text-base">
+            <ReceiptText className="h-4 w-4" />
+            VAT collected
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+            <Figure label="Charged (incl. VAT)" value={money(data.kpis.totalMinor)} />
+            <Figure label="Excluding VAT" value={money(data.vat.netOfVatMinor)} />
+            <Figure label="VAT collected" value={money(data.vat.totalMinor)} />
+          </div>
+          {data.vat.byRate.length === 0 ? (
+            <p className="text-xs text-muted-foreground">No sales in this period.</p>
+          ) : (
+            <dl className="space-y-1 border-t pt-2 text-sm">
+              {data.vat.byRate.map((row) => (
+                <div key={row.vatRateBps} className="flex justify-between gap-3">
+                  <dt className="text-muted-foreground">
+                    {formatVatRate(row.vatRateBps)} · {row.lines} line{row.lines === 1 ? '' : 's'}
+                  </dt>
+                  <dd className="tabular shrink-0">
+                    {money(row.vatMinor)}
+                    <span className="ml-2 text-xs text-muted-foreground">on {money(row.netOfVatMinor)}</span>
+                  </dd>
+                </div>
+              ))}
+            </dl>
+          )}
+          <p className="text-xs text-muted-foreground">
+            Prices include VAT, so this is what sat inside what was charged. It is collected for the government, which is why profit
+            above has it taken out.
+          </p>
+        </CardContent>
+      </Card>
+
       <div className="grid gap-4 lg:grid-cols-3">
         <Card>
           <CardHeader className="pb-2">
@@ -242,6 +279,15 @@ function DashboardBody({ data, currency, money }: { data: ShopDashboard; currenc
         </Card>
       </div>
     </>
+  );
+}
+
+function Figure({ label, value }: { label: string; value: string }) {
+  return (
+    <div>
+      <p className="text-xs uppercase tracking-wide text-muted-foreground">{label}</p>
+      <p className="text-base font-semibold">{value}</p>
+    </div>
   );
 }
 
