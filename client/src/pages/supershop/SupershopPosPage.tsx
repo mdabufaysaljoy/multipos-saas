@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { CreditCard, Minus, PauseCircle, Plus, ScanBarcode, Scale, Trash2 } from 'lucide-react';
+import { ChevronDown, ChevronUp, CreditCard, Minus, PauseCircle, Plus, ScanBarcode, Scale, ShoppingCart, Trash2 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -92,6 +92,10 @@ export function SupershopPosPage() {
   const loyaltyAccess = useLoyaltyAccess();
   const [receiptFor, setReceiptFor] = React.useState<string | null>(null);
   const [heldOpen, setHeldOpen] = React.useState(false);
+  // On a phone or a tablet the basket is a sheet that slides up from a bar at
+  // the bottom. On a desktop it is simply the right-hand column and this is
+  // ignored.
+  const [basketOpen, setBasketOpen] = React.useState(false);
   const draftKey =
     session?.tenant && activeStore ? shopBasketDraftKey(session.tenant.id, activeStore.id, session.user.id) : null;
   const [loadedDraftKey, setLoadedDraftKey] = React.useState<string | null>(null);
@@ -432,6 +436,7 @@ export function SupershopPosPage() {
     onSuccess: (result) => {
       toast.success(`${result.holdNumber} held`, { description: 'Open it again from Held sales.' });
       reset();
+      setBasketOpen(false);
       void queryClient.invalidateQueries({ queryKey: ['supershop', 'held-sales'] });
     },
     onError: (err) => toast.error(err instanceof ApiError ? err.message : 'Could not hold this sale'),
@@ -477,6 +482,7 @@ export function SupershopPosPage() {
         description: sale.changeMinor > 0 ? `Change due: ${formatMoney(sale.changeMinor, currency)}` : undefined,
       });
       reset();
+      setBasketOpen(false);
       setReceiptFor(sale._id);
       void queryClient.invalidateQueries({ queryKey: ['supershop'] });
     },
@@ -508,8 +514,8 @@ export function SupershopPosPage() {
     cart.length > 0 && discountIsValid && outOfStockNoteValid && payments.isSettled && !complete.isPending;
 
   return (
-    <div className="grid h-full gap-4 p-4 lg:grid-cols-[1fr_24rem] lg:p-6">
-      <Card className="flex min-h-0 flex-col">
+    <div className="flex h-full flex-col gap-4 p-4 lg:grid lg:grid-cols-[1fr_24rem] lg:p-6">
+      <Card className="flex min-h-0 flex-1 flex-col lg:flex-none">
         <CardHeader className="space-y-3 pb-2">
           <CardTitle className="text-base">Scan or search</CardTitle>
           <form
@@ -606,20 +612,67 @@ export function SupershopPosPage() {
           {!isLoading && products.length > 0 && !hasNextPage && totalMatching > 40 && (
             <p className="py-3 text-center text-xs text-muted-foreground">All {totalMatching} products shown</p>
           )}
+          {/* Room for the bar fixed to the bottom, so the last row is reachable. */}
+          <div className="h-16 lg:hidden" aria-hidden />
         </CardContent>
       </Card>
 
-      <Card className="flex min-h-0 flex-col">
-        <CardHeader className="pb-2">
+      {/* ------------------------------------------- the basket, on a phone */}
+      <button
+        type="button"
+        onClick={() => setBasketOpen(true)}
+        className="fixed inset-x-0 bottom-0 z-30 flex items-center gap-3 border-t bg-primary px-4 py-3 text-primary-foreground shadow-lg lg:hidden"
+      >
+        <span className="relative">
+          <ShoppingCart className="h-5 w-5" />
+          {cart.length > 0 && (
+            <span className="absolute -right-2 -top-2 flex h-4 min-w-4 items-center justify-center rounded-full bg-background px-1 text-[10px] font-bold text-foreground">
+              {cart.length}
+            </span>
+          )}
+        </span>
+        <span className="flex-1 text-left text-sm font-medium">
+          {cart.length === 0 ? 'Basket is empty' : `${cart.length} line${cart.length === 1 ? '' : 's'}`}
+        </span>
+        <span className="tabular text-base font-semibold">{formatMoney(total, currency)}</span>
+        <ChevronUp className="h-4 w-4" />
+      </button>
+
+      {basketOpen && <div className="fixed inset-0 z-40 bg-black/50 lg:hidden" onClick={() => setBasketOpen(false)} aria-hidden />}
+
+      <Card
+        className={cn(
+          'flex flex-col',
+          // Phone and tablet: a sheet that slides up over the shelf, reached
+          // from the bar above. The WHOLE sheet scrolls as one, so the tender
+          // block is never a little scrolling window of its own.
+          'fixed inset-x-0 bottom-0 z-50 max-h-[88vh] rounded-t-xl shadow-2xl transition-transform duration-200',
+          basketOpen ? 'translate-y-0' : 'translate-y-full',
+          // Desktop: the right-hand column, always there.
+          'lg:static lg:z-auto lg:h-full lg:min-h-0 lg:max-h-none lg:translate-y-0 lg:rounded-xl lg:shadow-sm',
+        )}
+      >
+        <CardHeader className="shrink-0 pb-2">
           <div className="flex items-center justify-between gap-2">
             <CardTitle className="text-base">Basket · {cart.length} line(s)</CardTitle>
-            <Button variant="outline" size="sm" onClick={() => setHeldOpen(true)}>
-              <PauseCircle />
-              Held{(heldSales ?? []).length > 0 ? ` · ${(heldSales ?? []).length}` : ''}
-            </Button>
+            <div className="flex items-center gap-2">
+              <Button variant="outline" size="sm" onClick={() => setHeldOpen(true)}>
+                <PauseCircle />
+                Held{(heldSales ?? []).length > 0 ? ` · ${(heldSales ?? []).length}` : ''}
+              </Button>
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                className="lg:hidden"
+                onClick={() => setBasketOpen(false)}
+                aria-label="Close the basket"
+              >
+                <ChevronDown />
+              </Button>
+            </div>
           </div>
         </CardHeader>
-        <CardContent className="flex min-h-0 flex-1 flex-col overflow-hidden p-0">
+        <CardContent className="scrollbar-thin flex min-h-0 flex-1 flex-col overflow-y-auto p-0 lg:overflow-hidden">
           {/*
             The basket keeps a floor and the panel below it a ceiling.
             Everything under the list - totals, customer, loyalty, note, tender -
@@ -628,7 +681,7 @@ export function SupershopPosPage() {
             what they had scanned. Now the list always shows a few lines and the
             panel scrolls once it has had its share.
           */}
-          <div className="scrollbar-thin min-h-[6.5rem] flex-1 overflow-y-auto px-4">
+          <div className="scrollbar-thin px-4 lg:min-h-[6.5rem] lg:flex-1 lg:overflow-y-auto">
             {cart.length === 0 ? (
               <p className="py-2 text-sm text-muted-foreground">Scan the first item.</p>
             ) : (
@@ -689,7 +742,13 @@ export function SupershopPosPage() {
             )}
           </div>
 
-          <div className="scrollbar-thin max-h-[58%] min-h-0 shrink space-y-1.5 overflow-y-auto border-t px-4 py-2">
+          {/*
+            On a phone and a tablet this is part of the one sheet scroll: it has
+            no ceiling and no scrollbar of its own, so a cashier is never
+            scrolling inside a scroll. On a desktop it keeps its share of a
+            fixed-height column and scrolls there instead.
+          */}
+          <div className="scrollbar-thin space-y-1.5 border-t px-4 py-2 lg:max-h-[58%] lg:min-h-0 lg:shrink lg:overflow-y-auto">
             <dl className="space-y-0.5 text-sm">
               <div className="flex justify-between">
                 <dt>Subtotal (incl. VAT)</dt>
@@ -845,7 +904,7 @@ export function SupershopPosPage() {
             />
           </div>
         </CardContent>
-        <div className="flex shrink-0 gap-2 border-t p-2.5">
+        <div className="flex shrink-0 gap-2 border-t p-2.5 pb-[max(0.625rem,env(safe-area-inset-bottom))] lg:pb-2.5">
           <Button variant="outline" onClick={reset} disabled={cart.length === 0}>
             Clear
           </Button>
