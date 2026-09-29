@@ -1,323 +1,665 @@
 import * as React from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { format, parseISO } from 'date-fns';
-import { Ban, Building2, Clock, CreditCard, Filter, Layers, Percent, ReceiptText, ShoppingBasket, Snowflake, Tags, Trash2, TrendingUp, Users } from 'lucide-react';
+import { ArrowDownRight, ArrowUpRight } from 'lucide-react';
+import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { EmptyState, LoadingState } from '@/components/states';
 import { PageHeader } from '@/components/PageHeader';
 import { AdvancedAnalyticsLocked } from '@/features/reports/AdvancedAnalyticsLocked';
-import { ReturnsCardBody, ReturnsCardIcon } from '@/features/reports/ReturnsCard';
-import { AnalyticsCard, AnalyticsStat, BarList, PAYMENT_LABELS, formatBps } from '@/features/reports/AnalyticsParts';
 import { PrintReportButton } from '@/features/reports/PrintReportButton';
 import { REPORT_PRESETS, RangePicker, isRangeReady, rangeParams, type RangeValue } from '@/features/reports/RangePicker';
+import { AnalyticsFilters, NO_FILTERS, analyticsParams, type AnalyticsFilterValue } from '@/features/supershop/AnalyticsFilters';
 import { ApiError } from '@/api/client';
 import { supershopApi } from '@/api/supershop';
-import { AnalyticsFilters, NO_FILTERS, analyticsParams, type AnalyticsFilterValue } from '@/features/supershop/AnalyticsFilters';
-import { formatMoney } from '@/lib/money';
+import { formatMoney, formatMoneyCompact } from '@/lib/money';
 import { formatQuantity, formatVatRate } from '@/lib/supershop';
+import { cn } from '@/lib/utils';
 import { useAuth } from '@/hooks/useAuth';
+import type { ShopReports } from '@/types/supershop';
 
 const isLocked = (error: unknown) => error instanceof ApiError && error.code === 'ADVANCED_ANALYTICS_REQUIRED';
+const bps = (value: number) => `${(value / 100).toFixed(1)}%`;
 
 /**
- * Supershop Advanced Analytics for this branch. Locked (not hidden) on plans
- * without it; the server refuses the data regardless of what this screen decides.
+ * Super Shop Advanced Analytics.
+ *
+ * Laid out like Clothing's - a filter card, tabs, a row of compared headline
+ * figures, then the detail - so an owner who runs both reads them the same way.
+ * The METRICS are Super Shop's own: departments and brands rather than
+ * categories and variants, weighed goods counted apart from pieces, and VAT
+ * taken out before profit because a Super Shop price includes it.
+ *
+ * One request feeds every tab. The server does the aggregation and applies the
+ * branch rules; nothing here counts a sale.
  */
 export function SupershopReportsPage() {
   const { session, activeStore } = useAuth();
   const currency = activeStore?.currency ?? 'BDT';
   const money = (minor: number) => formatMoney(minor, currency);
   const hasAdvanced = session?.entitlement?.features?.advancedReports ?? false;
+  const isAdmin = session?.user.role === 'admin';
+
   const [range, setRange] = React.useState<RangeValue>({ preset: 'last30', from: '', to: '' });
   const [filters, setFilters] = React.useState<AnalyticsFilterValue>(NO_FILTERS);
+  const ready = isRangeReady(range);
   const params = { ...rangeParams(range), ...analyticsParams(filters) };
 
   const { data, isLoading, error } = useQuery({
     queryKey: ['supershop', 'reports', range, filters],
     queryFn: () => supershopApi.reports(params),
-    enabled: hasAdvanced && isRangeReady(range),
+    enabled: hasAdvanced && ready,
     retry: false,
   });
 
   if (!hasAdvanced || isLocked(error)) {
     return (
-      <div className="p-4 lg:p-6">
+      <div className="space-y-5 p-4 lg:p-6">
+        <PageHeader title="Advanced Analytics" description="Deeper sales, profit, product and customer analysis." />
         <AdvancedAnalyticsLocked />
       </div>
     );
   }
 
+  const multiBranch = (data?.branches ?? []).length > 1;
+
   return (
     <div className="space-y-5 p-4 lg:p-6">
       <PageHeader
         title="Advanced Analytics"
-        description={
-          data
-            ? `${data.range.label} · ${format(parseISO(data.range.from), 'dd MMM')} – ${format(parseISO(data.range.to), 'dd MMM yyyy')}`
-            : 'Margin, VAT, best sellers, busy hours and dead stock'
-        }
+        description="Deeper sales, profit, product and customer analysis."
         actions={<PrintReportButton path="/supershop/reports/print" params={params} disabled={!data} />}
       />
-      <RangePicker value={range} onChange={setRange} presets={REPORT_PRESETS} />
-      <AnalyticsFilters value={filters} onChange={setFilters} branches={data?.branches ?? []} customers={data?.customers ?? []} />
 
-      {/* Returns cannot be pinned to a cashier, a tender or a single line, so
-          under those filters they are left out rather than subtracted wrongly. */}
-      {data && !data.returnsAttributable && (
-        <p className="rounded-md border border-dashed px-3 py-2 text-xs text-muted-foreground">
-          Refunds are left out of these figures: a return records the goods and the customer, not which cashier sold them, which tender
-          paid for them, or which line they came from. Clear those filters to include returns.
-        </p>
-      )}
+      <Card>
+        <CardContent className="space-y-3 p-4">
+          <RangePicker value={range} onChange={setRange} presets={REPORT_PRESETS} />
+          <AnalyticsFilters value={filters} onChange={setFilters} branches={data?.branches ?? []} customers={data?.customers ?? []} />
+        </CardContent>
+      </Card>
 
-      {/* A line filter selects LINES, not baskets, and says so rather than
-          letting the totals above be read as if they were about those lines. */}
-      {data?.selection && (
-        <AnalyticsCard title="The lines you filtered to" icon={<Filter className="h-4 w-4" />}>
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-            <AnalyticsStat label="Lines" value={String(data.selection.lines)} hint={`in ${data.selection.salesCount} sale(s)`} />
-            <AnalyticsStat label="Revenue" value={money(data.selection.revenueMinor)} hint="before any sale discount" />
-            <AnalyticsStat label="Cost" value={money(data.selection.costMinor)} />
-            <AnalyticsStat label="Profit" value={money(data.selection.profitMinor)} hint={`${formatBps(data.selection.marginBps)} margin`} />
-          </div>
-        </AnalyticsCard>
-      )}
+      {!ready && <EmptyState title="Pick a start and end date" description="Choose both dates to run the report." />}
+      {ready && isLoading && <LoadingState label="Crunching the numbers…" />}
+      {ready && error && !isLocked(error) && <EmptyState title="Could not load the reports" description="Please try again." />}
 
-      {isLoading && <LoadingState label="Crunching the numbers…" />}
-      {error && !isLocked(error) && <EmptyState title="Could not load the reports" description="Please try again." />}
-
-      {data && (
+      {ready && data && (
         <>
-          <div className="grid grid-cols-2 gap-3 xl:grid-cols-4">
-            <AnalyticsStat
-              label="Net sales"
-              value={money(data.totals.netSalesMinor)}
-              hint={
-                data.totals.returnAmountMinor > 0
-                  ? `${money(data.totals.grossSalesMinor)} charged less ${money(data.totals.returnAmountMinor)} refunded · ${data.totals.salesCount} sales`
-                  : `${data.totals.salesCount} sales · ${data.totals.averageLines} lines per basket`
-              }
-            />
-            <AnalyticsStat label="VAT collected" value={money(data.totals.vatMinor)} hint="Included in net sales" />
-            <AnalyticsStat
-              label="Gross profit"
-              value={money(data.totals.grossProfitMinor)}
-              hint={`${formatBps(data.totals.marginBps)} margin excluding VAT`}
-              tone={data.totals.grossProfitMinor < 0 ? 'danger' : undefined}
-            />
-            <AnalyticsStat label="Average basket" value={money(data.totals.averageBasketMinor)} hint={`Discounts ${money(data.totals.discountsMinor)}`} />
-          </div>
+          {/* Refunds cannot be pinned to a cashier, a tender or a single line. */}
+          {!data.returnsAttributable && (
+            <p className="rounded-md border border-dashed px-3 py-2 text-xs text-muted-foreground">
+              Refunds are left out of these figures: a return records the goods and the customer, not which cashier sold them, which
+              tender paid for them, or which line they came from. Clear those filters to include returns.
+            </p>
+          )}
 
-          <div className="grid gap-4 lg:grid-cols-3">
-            <AnalyticsCard title="Daily sales" icon={<TrendingUp className="h-4 w-4" />} isEmpty={data.trend.length === 0} empty="No sales in this period">
-              <BarList
-                rows={data.trend.map((row) => ({
-                  key: row.date,
-                  label: format(parseISO(row.date), 'EEE d MMM'),
-                  value: row.netSalesMinor,
-                  detail: `${row.salesCount} sale(s) · VAT ${money(row.vatMinor)} · profit ${money(row.grossProfitMinor)}`,
-                }))}
-                formatValue={money}
-              />
-            </AnalyticsCard>
+          <Tabs defaultValue="sales">
+            <TabsList className="h-auto flex-wrap justify-start gap-1">
+              <TabsTrigger value="sales">Sales &amp; profit</TabsTrigger>
+              <TabsTrigger value="products">Products</TabsTrigger>
+              <TabsTrigger value="departments">Departments</TabsTrigger>
+              <TabsTrigger value="brands">Brands</TabsTrigger>
+              <TabsTrigger value="staff">Staff</TabsTrigger>
+              <TabsTrigger value="payments">Payments</TabsTrigger>
+              <TabsTrigger value="returns">Returns</TabsTrigger>
+              <TabsTrigger value="inventory">Inventory</TabsTrigger>
+              <TabsTrigger value="customers">Customers</TabsTrigger>
+              {multiBranch && isAdmin && <TabsTrigger value="branches">Branches</TabsTrigger>}
+            </TabsList>
 
-            <AnalyticsCard title="Best sellers" icon={<ShoppingBasket className="h-4 w-4" />} className="lg:col-span-2" isEmpty={data.products.length === 0} empty="Nothing sold in this period">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="text-left text-xs uppercase tracking-wide text-muted-foreground">
-                    <th className="pb-2 font-medium">Product</th>
-                    <th className="pb-2 text-right font-medium">Sold</th>
-                    <th className="pb-2 text-right font-medium">Revenue</th>
-                    <th className="pb-2 text-right font-medium">Profit</th>
-                    <th className="pb-2 text-right font-medium">Margin</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y">
-                  {data.products.map((row) => (
-                    <tr key={row.productId}>
-                      <td className="py-2">{row.name}</td>
-                      <td className="tabular py-2 text-right">{formatQuantity(row.quantity, row.unitType)}</td>
-                      <td className="tabular py-2 text-right font-medium">{money(row.revenueMinor)}</td>
-                      <td className="tabular py-2 text-right">{money(row.profitMinor)}</td>
-                      <td className="tabular py-2 text-right text-muted-foreground">{formatBps(row.marginBps)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-              <p className="mt-2 text-xs text-muted-foreground">Per line, before sale discounts and returns. Profit excludes VAT.</p>
-            </AnalyticsCard>
-          </div>
-
-          <div className="grid gap-4 lg:grid-cols-3">
-            <AnalyticsCard title="Staff" icon={<Users className="h-4 w-4" />} className="lg:col-span-2" isEmpty={data.staff.length === 0} empty="Nobody sold anything in this period">
-              <table className="w-full text-sm">
-                <thead className="text-xs text-muted-foreground">
-                  <tr>
-                    <th className="pb-1 text-left font-medium">Cashier</th>
-                    <th className="pb-1 text-right font-medium">Sales</th>
-                    <th className="pb-1 text-right font-medium">Net sales</th>
-                    <th className="pb-1 text-right font-medium">Basket</th>
-                    <th className="pb-1 text-right font-medium">Discounts</th>
-                    <th className="pb-1 text-right font-medium">Profit</th>
-                    <th className="pb-1 text-right font-medium">Margin</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {data.staff.map((row) => (
-                    <tr key={row.userId} className="border-t">
-                      <td className="py-1.5">{row.name}</td>
-                      <td className="tabular py-1.5 text-right">{row.salesCount}</td>
-                      <td className="tabular py-1.5 text-right">{money(row.netSalesMinor)}</td>
-                      <td className="tabular py-1.5 text-right">{money(row.averageBasketMinor)}</td>
-                      <td className="tabular py-1.5 text-right">{money(row.discountsMinor)}</td>
-                      <td className="tabular py-1.5 text-right">{money(row.profitMinor)}</td>
-                      <td className="tabular py-1.5 text-right">{formatBps(row.marginBps)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </AnalyticsCard>
-
-            <AnalyticsCard title="Brands" icon={<Tags className="h-4 w-4" />} isEmpty={data.brands.length === 0} empty="Nothing branded sold">
-              <BarList
-                rows={data.brands.map((row) => ({ key: row.brand, label: row.brand, value: row.revenueMinor, detail: `${money(row.profitMinor)} profit · ${formatBps(row.marginBps)}` }))}
-                formatValue={money}
-              />
-            </AnalyticsCard>
-
-            {/* Only worth a card when more than one branch is in view. */}
-            {data.branchBreakdown.length > 1 && (
-              <AnalyticsCard title="Branches" icon={<Building2 className="h-4 w-4" />}>
-                <BarList
-                  rows={data.branchBreakdown.map((row) => ({ key: row.storeId, label: row.name, value: row.netSalesMinor, detail: `${money(row.profitMinor)} profit · ${row.salesCount} sales` }))}
-                  formatValue={money}
-                />
-              </AnalyticsCard>
+            <TabsContent value="sales">
+              <SalesProfitTab data={data} currency={currency} money={money} />
+            </TabsContent>
+            <TabsContent value="products">
+              <ProductsTab data={data} money={money} />
+            </TabsContent>
+            <TabsContent value="departments">
+              <DepartmentsTab data={data} money={money} />
+            </TabsContent>
+            <TabsContent value="brands">
+              <BrandsTab data={data} money={money} />
+            </TabsContent>
+            <TabsContent value="staff">
+              <StaffTab data={data} money={money} />
+            </TabsContent>
+            <TabsContent value="payments">
+              <PaymentsTab data={data} money={money} />
+            </TabsContent>
+            <TabsContent value="returns">
+              <ReturnsTab data={data} money={money} />
+            </TabsContent>
+            <TabsContent value="inventory">
+              <InventoryTab data={data} money={money} />
+            </TabsContent>
+            <TabsContent value="customers">
+              <CustomersTab data={data} money={money} />
+            </TabsContent>
+            {multiBranch && isAdmin && (
+              <TabsContent value="branches">
+                <BranchesTab data={data} money={money} />
+              </TabsContent>
             )}
-
-            <AnalyticsCard title="Top customers" icon={<Users className="h-4 w-4" />} isEmpty={data.customers.length === 0} empty="Every sale this period was a walk-in">
-              <BarList
-                rows={data.customers.map((row) => ({ key: row.customerId, label: row.name, value: row.netSalesMinor, detail: `${row.salesCount} sale(s) · ${money(row.averageBasketMinor)} basket` }))}
-                formatValue={money}
-              />
-            </AnalyticsCard>
-
-            <AnalyticsCard title="Departments" icon={<Layers className="h-4 w-4" />} isEmpty={data.departments.length === 0} empty="No sales">
-              <BarList
-                rows={data.departments.map((row) => ({ key: row.department, label: row.department, value: row.revenueMinor, detail: `${row.lines} line(s) · profit ${money(row.profitMinor)}` }))}
-                formatValue={money}
-              />
-            </AnalyticsCard>
-
-            <AnalyticsCard title="VAT by rate" icon={<ReceiptText className="h-4 w-4" />} isEmpty={data.vatRates.length === 0} empty="No sales">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="text-left text-xs uppercase tracking-wide text-muted-foreground">
-                    <th className="pb-2 font-medium">Rate</th>
-                    <th className="pb-2 text-right font-medium">Sales</th>
-                    <th className="pb-2 text-right font-medium">Excl. VAT</th>
-                    <th className="pb-2 text-right font-medium">VAT</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y">
-                  {data.vatRates.map((row) => (
-                    <tr key={row.vatRateBps}>
-                      <td className="py-2">{formatVatRate(row.vatRateBps)}</td>
-                      <td className="tabular py-2 text-right">{money(row.grossMinor)}</td>
-                      <td className="tabular py-2 text-right">{money(row.netOfVatMinor)}</td>
-                      <td className="tabular py-2 text-right font-medium">{money(row.vatMinor)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-              <p className="mt-2 text-xs text-muted-foreground">Per line, before sale discounts and returns. VAT actually collected: {money(data.totals.vatMinor)}.</p>
-            </AnalyticsCard>
-
-            <AnalyticsCard title="Busy hours" icon={<Clock className="h-4 w-4" />} isEmpty={data.hours.length === 0} empty="No sales">
-              <BarList
-                rows={data.hours.map((row) => ({ key: row.hour, label: `${row.hour}:00`, value: row.netSalesMinor, detail: `${row.salesCount} sale(s)` }))}
-                formatValue={money}
-              />
-            </AnalyticsCard>
-          </div>
-
-          <div className="grid gap-4 lg:grid-cols-4">
-            <AnalyticsCard title="Returns" icon={<ReturnsCardIcon />} isEmpty={data.returns.count === 0} empty="Nothing came back">
-              <ReturnsCardBody returns={data.returns} currency={currency} />
-            </AnalyticsCard>
-
-            <AnalyticsCard title="Dead stock" icon={<Snowflake className="h-4 w-4" />} isEmpty={data.deadStock.length === 0} empty="Everything in stock sold at least once">
-              <ul className="divide-y text-sm">
-                {data.deadStock.map((row) => (
-                  <li key={row.productId} className="flex items-center justify-between gap-3 py-2">
-                    <span className="truncate">{row.name}</span>
-                    <span className="tabular shrink-0 text-right">
-                      {money(row.stockCostMinor)}
-                      <span className="block text-xs text-muted-foreground">{formatQuantity(row.quantityOnHand, row.unitType)}</span>
-                    </span>
-                  </li>
-                ))}
-              </ul>
-              <p className="mt-2 text-xs text-muted-foreground">In stock with no sales in this period, at average cost.</p>
-            </AnalyticsCard>
-
-            <AnalyticsCard title="Payments" icon={<CreditCard className="h-4 w-4" />} isEmpty={data.payments.length === 0} empty="No payments">
-              <BarList
-                rows={data.payments.map((row) => ({ key: row.method, label: PAYMENT_LABELS[row.method] ?? row.method, value: row.amountMinor, detail: `${row.sales} sale(s)` }))}
-                formatValue={money}
-              />
-            </AnalyticsCard>
-
-            <AnalyticsCard title="Write-offs" icon={<Trash2 className="h-4 w-4" />} isEmpty={data.writeOffs.byProduct.length === 0} empty="Nothing written off">
-              <ul className="divide-y text-sm">
-                {data.writeOffs.byProduct.map((row) => (
-                  <li key={row.productId} className="flex items-center justify-between gap-2 py-1.5">
-                    <span className="truncate">
-                      {formatQuantity(row.quantity, row.unitType)} × {row.name}
-                    </span>
-                    <span className="tabular text-destructive">{money(row.costMinor)}</span>
-                  </li>
-                ))}
-              </ul>
-            </AnalyticsCard>
-
-            <AnalyticsCard title="Voids & discounts" icon={<Ban className="h-4 w-4" />} isEmpty={data.voids.recent.length === 0 && data.discounts.byStaff.length === 0} empty="No voids or discounts">
-              <div className="space-y-3 text-sm">
-                {data.voids.recent.length > 0 && (
-                  <ul className="divide-y">
-                    {data.voids.recent.map((row) => (
-                      <li key={row._id} className="py-1.5">
-                        <div className="flex justify-between gap-2">
-                          <span className="font-mono text-xs">{row.saleNumber}</span>
-                          <span className="tabular">{money(row.totalMinor)}</span>
-                        </div>
-                        <p className="truncate text-xs text-muted-foreground">
-                          {format(new Date(row.voidedAt), 'd MMM hh:mm a')} · {row.voidReason}
-                        </p>
-                      </li>
-                    ))}
-                  </ul>
-                )}
-                {data.discounts.byStaff.length > 0 && (
-                  <div className="border-t pt-2">
-                    <p className="mb-1 flex items-center gap-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                      <Percent className="h-3 w-3" />
-                      Discounts by staff
-                    </p>
-                    <ul className="divide-y">
-                      {data.discounts.byStaff.map((row, index) => (
-                        <li key={row.userId ?? index} className="flex justify-between gap-2 py-1.5">
-                          <span className="truncate">{row.name}</span>
-                          <span className="tabular">{money(row.discountsMinor)}</span>
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-                )}
-              </div>
-            </AnalyticsCard>
-          </div>
+          </Tabs>
         </>
       )}
     </div>
+  );
+}
+
+type Money = (minor: number) => string;
+
+// ------------------------------------------------------------ sales & profit
+
+function SalesProfitTab({ data, currency, money }: { data: ShopReports; currency: string; money: Money }) {
+  const t = data.totals;
+  const p = data.previous;
+  const headline = [
+    { label: 'Net sales', value: money(t.netSalesMinor), now: t.netSalesMinor, before: p.netSalesMinor },
+    { label: 'Gross profit', value: money(t.grossProfitMinor), now: t.grossProfitMinor, before: p.grossProfitMinor },
+    { label: 'Sales', value: String(t.salesCount), now: t.salesCount, before: p.salesCount },
+    { label: 'Pieces sold', value: String(t.unitsSold), now: t.unitsSold, before: p.unitsSold },
+    { label: 'Average basket', value: money(t.averageBasketMinor), now: t.averageBasketMinor, before: p.averageBasketMinor },
+    { label: 'Discounts', value: money(t.discountsMinor), now: t.discountsMinor, before: p.discountsMinor, lowerIsBetter: true },
+    { label: 'Refunds', value: money(t.returnAmountMinor), now: t.returnAmountMinor, before: p.returnAmountMinor, lowerIsBetter: true },
+    { label: 'Margin', value: bps(t.marginBps), now: t.marginBps, before: p.marginBps },
+  ];
+
+  // The P&L, in the order a shopkeeper reads it. VAT comes out before profit
+  // because a Super Shop price includes it: it was collected, not earned.
+  const lines = [
+    { label: 'Gross sales', value: t.grossSalesMinor, tone: '' },
+    { label: 'Discounts', value: -t.discountsMinor, tone: 'text-warning' },
+    { label: 'Refunds', value: -t.returnAmountMinor, tone: 'text-destructive' },
+    { label: 'Net sales', value: t.netSalesMinor, tone: 'border-t pt-2 font-semibold' },
+    { label: 'VAT collected (included in the price)', value: -t.vatMinor, tone: 'text-muted-foreground' },
+    { label: 'Cost of goods sold', value: -t.costMinor, tone: 'text-muted-foreground' },
+    { label: 'Gross profit', value: t.grossProfitMinor, tone: 'border-t pt-2 text-lg font-bold text-success' },
+  ];
+
+  const returnShare = t.grossSalesMinor > 0 ? (t.returnAmountMinor / t.grossSalesMinor) * 100 : 0;
+
+  return (
+    <div className="space-y-4">
+      <div>
+        <p className="mb-2 text-xs text-muted-foreground">Compared with the period immediately before this one.</p>
+        <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+          {headline.map((item) => (
+            <Card key={item.label}>
+              <CardContent className="p-4">
+                <Stat label={item.label} value={item.value} />
+                <Delta now={item.now} before={item.before} lowerIsBetter={item.lowerIsBetter} />
+              </CardContent>
+            </Card>
+          ))}
+        </div>
+      </div>
+
+      {data.selection && (
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-base">The lines you filtered to</CardTitle>
+            <CardDescription>
+              A department, brand or product filter picks LINES. The figures above are still whole baskets.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+            <Stat label="Lines" value={`${data.selection.lines} in ${data.selection.salesCount} sale(s)`} />
+            <Stat label="Revenue" value={money(data.selection.revenueMinor)} />
+            <Stat label="Cost" value={money(data.selection.costMinor)} />
+            <Stat label="Profit" value={`${money(data.selection.profitMinor)} · ${bps(data.selection.marginBps)}`} />
+          </CardContent>
+        </Card>
+      )}
+
+      <Card>
+        <CardHeader className="pb-2">
+          <CardTitle className="text-base">Sales trend</CardTitle>
+        </CardHeader>
+        <CardContent>
+          {data.trend.length === 0 ? (
+            <EmptyState title="No sales in this period" className="py-10" />
+          ) : (
+            <div className="h-56 w-full">
+              <ResponsiveContainer width="100%" height="100%">
+                <AreaChart data={data.trend} margin={{ top: 8, right: 8, bottom: 0, left: 0 }}>
+                  <defs>
+                    <linearGradient id="shopAnalyticsGradient" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor="#2563eb" stopOpacity={0.28} />
+                      <stop offset="100%" stopColor="#2563eb" stopOpacity={0.02} />
+                    </linearGradient>
+                  </defs>
+                  <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" vertical={false} />
+                  <XAxis dataKey="date" tick={{ fontSize: 11, fill: 'hsl(var(--muted-foreground))' }} tickLine={false} axisLine={false} />
+                  <YAxis
+                    tickFormatter={(v: number) => formatMoneyCompact(v, currency)}
+                    tick={{ fontSize: 11, fill: 'hsl(var(--muted-foreground))' }}
+                    tickLine={false}
+                    axisLine={false}
+                    width={60}
+                  />
+                  <Tooltip
+                    contentStyle={{ background: 'hsl(var(--popover))', border: '1px solid hsl(var(--border))', borderRadius: 8, fontSize: 12 }}
+                    formatter={(v: number) => [money(v), 'Net sales']}
+                  />
+                  <Area type="monotone" dataKey="netSalesMinor" stroke="#2563eb" strokeWidth={2} fill="url(#shopAnalyticsGradient)" />
+                </AreaChart>
+              </ResponsiveContainer>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      <div className="grid gap-4 lg:grid-cols-2">
+        <Card>
+          <CardHeader className="pb-3">
+            <CardTitle className="text-base">Profit &amp; loss</CardTitle>
+            <CardDescription>
+              {format(parseISO(data.range.from), 'dd MMM yyyy')} – {format(parseISO(data.range.to), 'dd MMM yyyy')}
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <dl className="space-y-2 text-sm">
+              {lines.map((line) => (
+                <div key={line.label} className={cn('flex justify-between gap-3', line.tone)}>
+                  <dt>{line.label}</dt>
+                  <dd className="tabular shrink-0">{money(line.value)}</dd>
+                </div>
+              ))}
+            </dl>
+            <p className="mt-3 text-xs text-muted-foreground">
+              Profit uses the weighted average cost captured on each sale line at the time of sale, never the product's cost today.
+            </p>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader className="pb-3">
+            <CardTitle className="text-base">Return impact</CardTitle>
+            <CardDescription>How much of the period's gross sales came back.</CardDescription>
+          </CardHeader>
+          <CardContent className="grid grid-cols-2 gap-3">
+            <Stat label="Refunds" value={String(data.returns.count)} />
+            <Stat label="Refunded" value={money(data.returns.amountMinor)} />
+            <Stat label="Share of gross sales" value={`${returnShare.toFixed(1)}%`} />
+            <Stat label="Cost of goods returned" value={money(data.returns.costMinor)} />
+            <Stat label="VAT collected" value={money(t.vatMinor)} />
+            <Stat label="Average lines per sale" value={String(t.averageLines)} />
+          </CardContent>
+        </Card>
+      </div>
+    </div>
+  );
+}
+
+/** Change against the previous period, coloured by whether it is good news. */
+function Delta({ now, before, lowerIsBetter }: { now: number; before: number; lowerIsBetter?: boolean }) {
+  if (before === 0) {
+    return <p className="mt-1 text-xs text-muted-foreground">{now === 0 ? 'No change' : 'Nothing in the previous period'}</p>;
+  }
+  const change = ((now - before) / Math.abs(before)) * 100;
+  if (Math.abs(change) < 0.05) return <p className="mt-1 text-xs text-muted-foreground">No change</p>;
+  const up = change > 0;
+  const good = lowerIsBetter ? !up : up;
+  const Icon = up ? ArrowUpRight : ArrowDownRight;
+  return (
+    <p className={cn('mt-1 flex items-center gap-0.5 text-xs font-medium', good ? 'text-success' : 'text-destructive')}>
+      <Icon className="h-3.5 w-3.5" />
+      {Math.abs(change).toFixed(1)}% vs previous
+    </p>
+  );
+}
+
+function Stat({ label, value }: { label: string; value: string }) {
+  return (
+    <div>
+      <p className="text-xs uppercase tracking-wide text-muted-foreground">{label}</p>
+      <p className="text-lg font-semibold">{value}</p>
+    </div>
+  );
+}
+
+/** One table, however the rows were grouped. */
+function RowTable({
+  columns,
+  rows,
+  empty,
+}: {
+  columns: { key: string; label: string; align?: 'right' }[];
+  rows: Record<string, React.ReactNode>[];
+  empty: string;
+}) {
+  if (rows.length === 0) return <EmptyState title={empty} className="py-10" />;
+  return (
+    <div className="overflow-x-auto">
+      <table className="w-full text-sm">
+        <thead className="text-xs text-muted-foreground">
+          <tr>
+            {columns.map((column) => (
+              <th key={column.key} className={cn('pb-2 text-left font-medium', column.align === 'right' && 'text-right')}>
+                {column.label}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row, index) => (
+            <tr key={index} className="border-t">
+              {columns.map((column) => (
+                <td key={column.key} className={cn('py-1.5', column.align === 'right' && 'tabular text-right')}>
+                  {row[column.key]}
+                </td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function Panel({ title, description, children }: { title: string; description?: string; children: React.ReactNode }) {
+  return (
+    <Card>
+      <CardHeader className="pb-2">
+        <CardTitle className="text-base">{title}</CardTitle>
+        {description && <CardDescription>{description}</CardDescription>}
+      </CardHeader>
+      <CardContent>{children}</CardContent>
+    </Card>
+  );
+}
+
+// ------------------------------------------------------------------- the tabs
+
+function ProductsTab({ data, money }: { data: ShopReports; money: Money }) {
+  return (
+    <Panel title="Product performance" description="Per line, before any sale-level discount.">
+      <RowTable
+        empty="Nothing sold in this period"
+        columns={[
+          { key: 'name', label: 'Product' },
+          { key: 'quantity', label: 'Sold', align: 'right' },
+          { key: 'revenue', label: 'Revenue', align: 'right' },
+          { key: 'cost', label: 'Cost', align: 'right' },
+          { key: 'profit', label: 'Profit', align: 'right' },
+          { key: 'margin', label: 'Margin', align: 'right' },
+        ]}
+        rows={data.products.map((row) => ({
+          name: row.name,
+          quantity: formatQuantity(row.quantity, row.unitType),
+          revenue: money(row.revenueMinor),
+          cost: money(row.costMinor),
+          profit: money(row.profitMinor),
+          margin: bps(row.marginBps),
+        }))}
+      />
+    </Panel>
+  );
+}
+
+function DepartmentsTab({ data, money }: { data: ShopReports; money: Money }) {
+  return (
+    <Panel title="Department performance" description="Which aisles earn their shelf space.">
+      <RowTable
+        empty="No sales in this period"
+        columns={[
+          { key: 'name', label: 'Department' },
+          { key: 'lines', label: 'Lines', align: 'right' },
+          { key: 'revenue', label: 'Revenue', align: 'right' },
+          { key: 'profit', label: 'Profit', align: 'right' },
+        ]}
+        rows={data.departments.map((row) => ({
+          name: row.department,
+          lines: row.lines,
+          revenue: money(row.revenueMinor),
+          profit: money(row.profitMinor),
+        }))}
+      />
+    </Panel>
+  );
+}
+
+function BrandsTab({ data, money }: { data: ShopReports; money: Money }) {
+  return (
+    <Panel title="Brand performance" description="Unbranded goods are not a brand, and are left out.">
+      <RowTable
+        empty="Nothing branded sold in this period"
+        columns={[
+          { key: 'name', label: 'Brand' },
+          { key: 'lines', label: 'Lines', align: 'right' },
+          { key: 'revenue', label: 'Revenue', align: 'right' },
+          { key: 'cost', label: 'Cost', align: 'right' },
+          { key: 'profit', label: 'Profit', align: 'right' },
+          { key: 'margin', label: 'Margin', align: 'right' },
+        ]}
+        rows={data.brands.map((row) => ({
+          name: row.brand,
+          lines: row.lines,
+          revenue: money(row.revenueMinor),
+          cost: money(row.costMinor),
+          profit: money(row.profitMinor),
+          margin: bps(row.marginBps),
+        }))}
+      />
+    </Panel>
+  );
+}
+
+function StaffTab({ data, money }: { data: ShopReports; money: Money }) {
+  return (
+    <div className="space-y-4">
+      <Panel title="Sales by staff" description="Whole baskets: a sale belongs to whoever rang it up.">
+        <RowTable
+          empty="Nobody sold anything in this period"
+          columns={[
+            { key: 'name', label: 'Cashier' },
+            { key: 'sales', label: 'Sales', align: 'right' },
+            { key: 'net', label: 'Net sales', align: 'right' },
+            { key: 'basket', label: 'Basket', align: 'right' },
+            { key: 'discounts', label: 'Discounts', align: 'right' },
+            { key: 'profit', label: 'Profit', align: 'right' },
+            { key: 'margin', label: 'Margin', align: 'right' },
+          ]}
+          rows={data.staff.map((row) => ({
+            name: row.name,
+            sales: row.salesCount,
+            net: money(row.netSalesMinor),
+            basket: money(row.averageBasketMinor),
+            discounts: money(row.discountsMinor),
+            profit: money(row.profitMinor),
+            margin: bps(row.marginBps),
+          }))}
+        />
+      </Panel>
+      <Panel title="Discounts given" description="Who is taking money off, and how much.">
+        <RowTable
+          empty="No discounts in this period"
+          columns={[
+            { key: 'name', label: 'Cashier' },
+            { key: 'sales', label: 'Sales', align: 'right' },
+            { key: 'discounts', label: 'Discounts', align: 'right' },
+          ]}
+          rows={data.discounts.byStaff.map((row) => ({
+            name: row.name,
+            sales: row.sales,
+            discounts: money(row.discountsMinor),
+          }))}
+        />
+      </Panel>
+    </div>
+  );
+}
+
+function PaymentsTab({ data, money }: { data: ShopReports; money: Money }) {
+  return (
+    <div className="space-y-4">
+      <Panel title="Payments taken" description="Cash is net of the change given back.">
+        <RowTable
+          empty="Nothing was taken in this period"
+          columns={[
+            { key: 'method', label: 'Method' },
+            { key: 'sales', label: 'Sales', align: 'right' },
+            { key: 'amount', label: 'Taken', align: 'right' },
+          ]}
+          rows={data.payments.map((row) => ({ method: row.method, sales: row.sales, amount: money(row.amountMinor) }))}
+        />
+      </Panel>
+      <Panel title="VAT by rate" description="Super Shop prices include VAT; this is what was inside them.">
+        <RowTable
+          empty="No sales in this period"
+          columns={[
+            { key: 'rate', label: 'Rate' },
+            { key: 'lines', label: 'Lines', align: 'right' },
+            { key: 'net', label: 'Excl. VAT', align: 'right' },
+            { key: 'vat', label: 'VAT', align: 'right' },
+          ]}
+          rows={data.vatRates.map((row) => ({
+            rate: formatVatRate(row.vatRateBps),
+            lines: row.lines,
+            net: money(row.netOfVatMinor),
+            vat: money(row.vatMinor),
+          }))}
+        />
+      </Panel>
+      <Panel title="Busy hours" description="When the till is working hardest.">
+        <RowTable
+          empty="No sales in this period"
+          columns={[
+            { key: 'hour', label: 'Hour' },
+            { key: 'sales', label: 'Sales', align: 'right' },
+            { key: 'net', label: 'Net sales', align: 'right' },
+          ]}
+          rows={data.hours.map((row) => ({ hour: `${row.hour}:00`, sales: row.salesCount, net: money(row.netSalesMinor) }))}
+        />
+      </Panel>
+    </div>
+  );
+}
+
+function ReturnsTab({ data, money }: { data: ShopReports; money: Money }) {
+  return (
+    <div className="space-y-4">
+      <Panel title="Refunds" description="A refund gives money back on a sale that stands.">
+        <RowTable
+          empty="Nothing came back in this period"
+          columns={[
+            { key: 'number', label: 'Refund' },
+            { key: 'sale', label: 'Sale' },
+            { key: 'reason', label: 'Reason' },
+            { key: 'by', label: 'Taken by' },
+            { key: 'amount', label: 'Refunded', align: 'right' },
+          ]}
+          rows={data.returns.recent.map((row) => ({
+            number: row.returnNumber,
+            sale: row.saleNumber,
+            reason: row.reason,
+            by: row.by,
+            amount: money(row.totalMinor),
+          }))}
+        />
+      </Panel>
+      <Panel title="Voided sales" description="A void cancels a sale outright; it is not a refund.">
+        <RowTable
+          empty="Nothing was voided in this period"
+          columns={[
+            { key: 'sale', label: 'Sale' },
+            { key: 'reason', label: 'Reason' },
+            { key: 'by', label: 'Voided by' },
+            { key: 'amount', label: 'Value', align: 'right' },
+          ]}
+          rows={data.voids.recent.map((row) => ({
+            sale: row.saleNumber,
+            reason: row.voidReason,
+            by: row.voidedByNameSnapshot,
+            amount: money(row.totalMinor),
+          }))}
+        />
+      </Panel>
+    </div>
+  );
+}
+
+function InventoryTab({ data, money }: { data: ShopReports; money: Money }) {
+  return (
+    <div className="space-y-4">
+      <Panel title="Write-offs" description="Valued at what the goods cost, not what they would have sold for.">
+        <RowTable
+          empty="Nothing was written off in this period"
+          columns={[
+            { key: 'name', label: 'Product' },
+            { key: 'quantity', label: 'Quantity', align: 'right' },
+            { key: 'cost', label: 'Cost', align: 'right' },
+          ]}
+          rows={data.writeOffs.byProduct.map((row) => ({
+            name: row.name,
+            quantity: formatQuantity(row.quantity, row.unitType),
+            cost: money(row.costMinor),
+          }))}
+        />
+      </Panel>
+      <Panel title="Dead stock" description="On the shelf, but not sold once in this period.">
+        <RowTable
+          empty="Everything in stock sold at least once"
+          columns={[
+            { key: 'name', label: 'Product' },
+            { key: 'onHand', label: 'On hand', align: 'right' },
+            { key: 'value', label: 'At cost', align: 'right' },
+          ]}
+          rows={data.deadStock.map((row) => ({
+            name: row.name,
+            onHand: formatQuantity(row.quantityOnHand, row.unitType),
+            value: money(row.stockCostMinor),
+          }))}
+        />
+      </Panel>
+    </div>
+  );
+}
+
+function CustomersTab({ data, money }: { data: ShopReports; money: Money }) {
+  return (
+    <Panel title="Top customers" description="Walk-in sales carry no customer and are not counted here.">
+      <RowTable
+        empty="Every sale this period was a walk-in"
+        columns={[
+          { key: 'name', label: 'Customer' },
+          { key: 'sales', label: 'Sales', align: 'right' },
+          { key: 'net', label: 'Net sales', align: 'right' },
+          { key: 'basket', label: 'Basket', align: 'right' },
+        ]}
+        rows={data.customers.map((row) => ({
+          name: row.name,
+          sales: row.salesCount,
+          net: money(row.netSalesMinor),
+          basket: money(row.averageBasketMinor),
+        }))}
+      />
+    </Panel>
+  );
+}
+
+function BranchesTab({ data, money }: { data: ShopReports; money: Money }) {
+  return (
+    <Panel title="Branch comparison" description="Only the branches this report was run across.">
+      <RowTable
+        empty="No sales in this period"
+        columns={[
+          { key: 'name', label: 'Branch' },
+          { key: 'sales', label: 'Sales', align: 'right' },
+          { key: 'net', label: 'Net sales', align: 'right' },
+          { key: 'cost', label: 'Cost', align: 'right' },
+          { key: 'profit', label: 'Profit', align: 'right' },
+          { key: 'margin', label: 'Margin', align: 'right' },
+        ]}
+        rows={data.branchBreakdown.map((row) => ({
+          name: row.name,
+          sales: row.salesCount,
+          net: money(row.netSalesMinor),
+          cost: money(row.costMinor),
+          profit: money(row.profitMinor),
+          margin: bps(row.marginBps),
+        }))}
+      />
+    </Panel>
   );
 }

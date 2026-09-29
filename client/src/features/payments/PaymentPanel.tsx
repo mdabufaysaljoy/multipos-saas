@@ -23,6 +23,12 @@ interface PaymentPanelProps {
   onMethodChange: (id: string, method: string) => void;
   onAddRow: (method: string) => void;
   onRemoveRow: (id: string) => void;
+  /**
+   * Tighter rows and a hidden heading, for a till whose basket has to share the
+   * screen with it. Optional and off by default, so every existing caller looks
+   * exactly as it did.
+   */
+  compact?: boolean;
 }
 
 /**
@@ -47,6 +53,7 @@ export function PaymentPanel({
   onMethodChange,
   onAddRow,
   onRemoveRow,
+  compact = false,
 }: PaymentPanelProps) {
   const usedMethods = new Set(rows.map((row) => row.method));
   const unusedMethods = availableMethods.filter((tender) => !usedMethods.has(tender.key));
@@ -56,13 +63,13 @@ export function PaymentPanel({
   const isSplit = rows.length > 1;
 
   return (
-    <div className="space-y-1.5">
-      <Label className="flex items-center gap-1.5 text-xs">
+    <div className={cn('space-y-1.5', compact && 'space-y-1')}>
+      <Label className={cn('flex items-center gap-1.5 text-xs', compact && 'sr-only')}>
         <Wallet className="h-3.5 w-3.5" />
         {isSplit ? `Split payment (${rows.length} methods)` : 'Payment'}
       </Label>
 
-      <div className="space-y-1.5">
+      <div className={cn('space-y-1.5', compact && 'space-y-1')}>
         {rows.map((row, index) => {
           const isCash = row.method === 'cash';
           const derived = !hasCash && index === 0;
@@ -124,7 +131,7 @@ export function PaymentPanel({
 
       {unusedMethods.length > 0 && (
         <div className="flex flex-wrap items-center gap-1">
-          <span className="text-[11px] text-muted-foreground">Split with:</span>
+          <span className="text-[11px] text-muted-foreground">{compact ? 'Split:' : 'Split with:'}</span>
           {unusedMethods.map((tender) => (
             <Button
               key={tender.key}

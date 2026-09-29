@@ -620,16 +620,24 @@ export function SupershopPosPage() {
           </div>
         </CardHeader>
         <CardContent className="flex min-h-0 flex-1 flex-col overflow-hidden p-0">
-          <div className="scrollbar-thin min-h-0 flex-1 overflow-y-auto px-6">
+          {/*
+            The basket keeps a floor and the panel below it a ceiling.
+            Everything under the list - totals, customer, loyalty, note, tender -
+            used to be `shrink-0`, so attaching a customer or a loyalty card grew
+            it until the basket had no room left and the cashier could not see
+            what they had scanned. Now the list always shows a few lines and the
+            panel scrolls once it has had its share.
+          */}
+          <div className="scrollbar-thin min-h-[6.5rem] flex-1 overflow-y-auto px-4">
             {cart.length === 0 ? (
-              <p className="py-3 text-sm text-muted-foreground">Scan the first item.</p>
+              <p className="py-2 text-sm text-muted-foreground">Scan the first item.</p>
             ) : (
               <ul className="divide-y">
                 {cart.map((line) => (
-                  <li key={line.product._id} className="flex items-center gap-2 py-2">
+                  <li key={line.product._id} className="flex items-center gap-1.5 py-1.5">
                     <div className="min-w-0 flex-1">
-                      <p className="truncate text-sm font-medium">{line.product.name}</p>
-                      <p className="text-xs text-muted-foreground">
+                      <p className="truncate text-sm font-medium leading-tight">{line.product.name}</p>
+                      <p className="text-xs leading-tight text-muted-foreground">
                         {formatQuantity(line.quantity, line.product.unitType)} ·{' '}
                         {formatMoney(
                           lineAmount(line.product.priceMinor, line.quantity, line.product.unitType),
@@ -656,7 +664,7 @@ export function SupershopPosPage() {
                         >
                           <Minus />
                         </Button>
-                        <span className="w-8 text-center tabular">{line.quantity}</span>
+                        <span className="w-7 text-center text-sm tabular">{line.quantity}</span>
                         <Button
                           variant="outline"
                           size="icon-sm"
@@ -681,8 +689,8 @@ export function SupershopPosPage() {
             )}
           </div>
 
-          <div className="shrink-0 space-y-2 border-t px-6 py-2.5">
-            <dl className="space-y-1 text-sm">
+          <div className="scrollbar-thin max-h-[58%] min-h-0 shrink space-y-1.5 overflow-y-auto border-t px-4 py-2">
+            <dl className="space-y-0.5 text-sm">
               <div className="flex justify-between">
                 <dt>Subtotal (incl. VAT)</dt>
                 <dd className="tabular">{formatMoney(subtotal, currency)}</dd>
@@ -797,12 +805,15 @@ export function SupershopPosPage() {
             )}
 
             <div className="space-y-1">
-              <Label htmlFor="shop-sale-note" className="text-xs">
-                Sale note
-                {hasOutOfStockLine && <span className="ml-1 text-destructive">(required for out-of-stock sale)</span>}
-              </Label>
+              {/* The label only earns its line when the note is compulsory. */}
+              {hasOutOfStockLine && (
+                <Label htmlFor="shop-sale-note" className="text-xs">
+                  Sale note <span className="text-destructive">(required for out-of-stock sale)</span>
+                </Label>
+              )}
               <Input
                 id="shop-sale-note"
+                aria-label="Sale note"
                 className="h-8"
                 value={note}
                 maxLength={300}
@@ -816,6 +827,7 @@ export function SupershopPosPage() {
             </div>
 
             <PaymentPanel
+              compact
               rows={payments.rows}
               availableMethods={availableMethods}
               totalMinor={total}
@@ -833,7 +845,7 @@ export function SupershopPosPage() {
             />
           </div>
         </CardContent>
-        <div className="flex gap-2 border-t p-3">
+        <div className="flex shrink-0 gap-2 border-t p-2.5">
           <Button variant="outline" onClick={reset} disabled={cart.length === 0}>
             Clear
           </Button>

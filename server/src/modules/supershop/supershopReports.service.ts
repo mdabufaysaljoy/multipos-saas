@@ -71,6 +71,13 @@ class SupershopReportsService {
 
     const completed = { ...scope, status: 'completed', soldAt: window, ...saleFilters, ...lineFilter };
 
+    // The same length of time immediately before it, so every headline figure
+    // can say whether it went up or down. Same scope, same filters: the only
+    // thing that changes is the dates.
+    const span = range.to.getTime() - range.from.getTime();
+    const previousWindow = { $gte: new Date(range.from.getTime() - span - 1), $lte: new Date(range.from.getTime() - 1) };
+    const previousCompleted = { ...scope, status: 'completed', soldAt: previousWindow, ...saleFilters, ...lineFilter };
+
     /** The `$match` that keeps only the lines the filter asked about. */
     const lineMatch = hasLineFilter
       ? [
@@ -105,9 +112,9 @@ class SupershopReportsService {
         ])
       : [NO_RETURNS, new Map<string, { totalMinor: number; costMinor: number }>(), []];
 
-    const [totals, trend, products, departments, vatRates, hours, payments, discounts, byStaff, byBrand, byBranch, byCustomer, selectionRows, branches, voidTotals, voids, writeOffs, deadStock] = await Promise.all([
-      ShopSaleModel.aggregate<{ salesCount: number; netSalesMinor: number; discountsMinor: number; vatMinor: number; costMinor: number; changeMinor: number; lines: number }>([
-        { $match: completed },
+    const totalsFor = (match: Record<string, unknown>) =>
+      ShopSaleModel.aggregate<{ salesCount: number; netSalesMinor: number; discountsMinor: number; vatMinor: number; costMinor: number; changeMinor: number; lines: number; units: number }>([
+        { $match: match },
         {
           $group: {
             _id: null,
@@ -118,9 +125,23 @@ class SupershopReportsService {
             costMinor: { $sum: '$costMinor' },
             changeMinor: { $sum: '$changeMinor' },
             lines: { $sum: { $size: '$items' } },
+            units: {
+              $sum: {
+                $sum: {
+                  $map: { input: '$items', as: 'i', in: { $cond: [{ $eq: ['$$i.unitType', 'weight'] }, 0, '$$i.quantity'] } },
+                },
+              },
+            },
           },
         },
-      ]),
+      ]);
+
+    const [totals, previousTotals, previousReturns, trend, products, departments, vatRates, hours, payments, discounts, byStaff, byBrand, byBranch, byCustomer, selectionRows, branches, voidTotals, voids, writeOffs, deadStock] = await Promise.all([
+      totalsFor(completed),
+      totalsFor(previousCompleted),
+      returnsAttributable
+        ? returnFiguresFor(ctx, 'supershop', { from: previousWindow.$gte, to: previousWindow.$lte }, returnScope)
+        : Promise.resolve(NO_RETURNS),
       ShopSaleModel.aggregate<{ _id: string; salesCount: number; netSalesMinor: number; vatMinor: number; costMinor: number }>([
         { $match: completed },
         {
@@ -361,6 +382,31 @@ class SupershopReportsService {
        * entirely rather than subtracted wrongly, and the screen says so.
        */
       returnsAttributable,
+      /**
+       * The same figures for the period immediately before this one, so every
+       * headline can say whether it rose or fell. Same scope, same filters.
+       */
+      previous: (() => {
+        const p = previousTotals[0];
+        const gross = p?.netSalesMinor ?? 0;
+        const net = gross - previousReturns.totalMinor;
+        const vat = p?.vatMinor ?? 0;
+        const cost = (p?.costMinor ?? 0) - previousReturns.costMinor;
+        const profit = net - vat - cost;
+        return {
+          salesCount: p?.salesCount ?? 0,
+          grossSalesMinor: gross,
+          returnAmountMinor: previousReturns.totalMinor,
+          netSalesMinor: net,
+          discountsMinor: p?.discountsMinor ?? 0,
+          vatMinor: vat,
+          costMinor: cost,
+          grossProfitMinor: profit,
+          marginBps: marginBps(profit, net - vat),
+          averageBasketMinor: p?.salesCount ? Math.round(gross / p.salesCount) : 0,
+          unitsSold: p?.units ?? 0,
+        };
+      })(),
       /** The branches this user may choose between. One, for a non-admin. */
       branches: branches.map((row) => ({ _id: row._id, name: row.name })),
       /**
@@ -393,6 +439,8 @@ class SupershopReportsService {
         marginBps: marginBps(grossProfitMinor, netSalesMinor - vatMinor),
         averageBasketMinor: t?.salesCount ? Math.round(grossSalesMinor / t.salesCount) : 0,
         averageLines: t?.salesCount ? Math.round((t.lines / t.salesCount) * 10) / 10 : 0,
+        /** Pieces only: grams are a weight, not a count of things sold. */
+        unitsSold: t?.units ?? 0,
       },
       trend: trend.map((row) => {
         const refunded = refundsByDay.get(row._id) ?? { totalMinor: 0, costMinor: 0 };

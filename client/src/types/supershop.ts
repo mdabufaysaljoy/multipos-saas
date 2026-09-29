@@ -154,6 +154,20 @@ export interface ShopReports {
    * rather than subtracted wrongly.
    */
   returnsAttributable: boolean;
+  /** The same figures for the period immediately before this one. */
+  previous: {
+    salesCount: number;
+    grossSalesMinor: number;
+    returnAmountMinor: number;
+    netSalesMinor: number;
+    discountsMinor: number;
+    vatMinor: number;
+    costMinor: number;
+    grossProfitMinor: number;
+    marginBps: number;
+    averageBasketMinor: number;
+    unitsSold: number;
+  };
   /** The branches this user may choose between. One, for a non-admin. */
   branches: { _id: string; name: string }[];
   /** Only when a department, brand or product filter is on: those lines alone. */
@@ -221,6 +235,8 @@ export interface ShopReports {
     marginBps: number;
     averageBasketMinor: number;
     averageLines: number;
+    /** Pieces only: grams are a weight, not a count of things sold. */
+    unitsSold: number;
   };
   trend: {
     date: string;
@@ -290,9 +306,18 @@ export interface ShopDashboardTotals {
   discountMinor: number;
   grossProfitMinor: number;
   averageSaleMinor: number;
+  /** Pieces only: grams are a weight, not a count of things sold. */
+  unitsSold: number;
 }
 
 export interface ShopDashboard {
+  /** The period's shape, bucketed the way `range.bucket` names. */
+  trend: { bucket: string; salesCount: number; netSalesMinor: number }[];
+  /** What each tender took. Cash is net of the change handed back. */
+  payments: { method: string; sales: number; amountMinor: number }[];
+  recentSales: { _id: string; saleNumber: string; totalMinor: number; soldAt: string; cashierNameSnapshot: string; customerNameSnapshot: string }[];
+  /** What the shelf is worth now, at weighted average cost. */
+  stock: { valueMinor: number; productCount: number };
   range: { from: string; to: string; label: string; preset: string; bucket: 'hour' | 'day' | 'month' };
   /** `totalMinor` is what was charged; `netSalesMinor` is what was kept. */
   kpis: ShopDashboardTotals & { refundCount: number; refundedMinor: number; netSalesMinor: number };

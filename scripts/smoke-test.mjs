@@ -5858,6 +5858,30 @@ async function main() {
     ssDash.data ?? ssDash.error,
   );
   check('The dashboard defaults to today, bucketed by hour', ssDash.data?.range?.preset === 'today' && ssDash.data?.range?.bucket === 'hour', ssDash.data?.range);
+
+  // ---- what the dashboard screen actually draws ------------------------------
+  // The screen shows the shape of the period, what the drawer took, the last
+  // few sales and what the shelf is worth. All of it is worked out in the
+  // database; none of it is a sale counted in the browser.
+  check('The dashboard carries a trend, bucketed as the range says', Array.isArray(ssDash.data?.trend) && ssDash.data.trend.every((row) => typeof row.bucket === 'string' && typeof row.netSalesMinor === 'number'), ssDash.data?.trend);
+  check('...and it adds up to what was charged', (ssDash.data?.trend ?? []).reduce((sum, row) => sum + row.netSalesMinor, 0) === ssDash.data?.kpis?.totalMinor, {
+    trend: (ssDash.data?.trend ?? []).reduce((sum, row) => sum + row.netSalesMinor, 0),
+    charged: ssDash.data?.kpis?.totalMinor,
+  });
+  check('It carries the tenders taken', Array.isArray(ssDash.data?.payments) && ssDash.data.payments.every((row) => typeof row.method === 'string' && typeof row.amountMinor === 'number'), ssDash.data?.payments);
+  check('...with cash net of the change handed back', (ssDash.data?.payments ?? []).every((row) => row.method !== 'cash' || row.amountMinor <= ssDash.data.kpis.totalMinor), ssDash.data?.payments);
+  check('It carries the most recent sales, newest first', Array.isArray(ssDash.data?.recentSales) && ssDash.data.recentSales.length <= 5, ssDash.data?.recentSales?.length);
+  check(
+    '...in the order they were rung up',
+    (ssDash.data?.recentSales ?? []).every((row, index, all) => index === 0 || new Date(all[index - 1].soldAt) >= new Date(row.soldAt)),
+    (ssDash.data?.recentSales ?? []).map((row) => row.soldAt),
+  );
+  check('It says what the shelf is worth', typeof ssDash.data?.stock?.valueMinor === 'number' && typeof ssDash.data?.stock?.productCount === 'number', ssDash.data?.stock);
+  check('...valued the same way the inventory screen does', ssDash.data?.stock?.valueMinor === (await ssApi('/inventory-summary')).data?.stockValueMinor, {
+    dashboard: ssDash.data?.stock?.valueMinor,
+    inventory: (await ssApi('/inventory-summary')).data?.stockValueMinor,
+  });
+  check('Pieces are counted apart from weighed goods', typeof ssDash.data?.kpis?.unitsSold === 'number' && typeof ssDash.data?.previous?.unitsSold === 'number');
   check(
     'Gross profit is net sales less VAT less cost, never more',
     ssDash.data?.kpis?.grossProfitMinor <= ssDash.data.kpis.totalMinor - ssDash.data.kpis.vatMinor,
@@ -5932,6 +5956,11 @@ async function main() {
     ssR?.deadStock,
   );
   check('An invalid Supershop range is rejected', (await ssApi('/reports?preset=forever')).status === 422);
+  // Every headline figure is compared with the period immediately before it.
+  const ssPrev = (await ssApi('/reports?preset=today')).data;
+  check('Advanced Analytics reports the previous period too', typeof ssPrev?.previous?.netSalesMinor === 'number' && typeof ssPrev?.previous?.grossProfitMinor === 'number', ssPrev?.previous);
+  check('...worked out the same way as the current one', ssPrev?.previous?.grossProfitMinor === ssPrev.previous.netSalesMinor - ssPrev.previous.vatMinor - ssPrev.previous.costMinor, ssPrev?.previous);
+  check('...and yesterday has none of what sold today', ((await ssApi('/reports?preset=yesterday')).data?.totals?.salesCount ?? -1) >= 0);
 
 
   // --- High-value sales and split payment -------------------------------------
