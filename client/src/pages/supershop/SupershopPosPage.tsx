@@ -651,9 +651,10 @@ export function SupershopPosPage() {
         className={cn(
           'flex flex-col',
           // Phone and tablet: a sheet that slides up over the shelf, reached
-          // from the bar above. The WHOLE sheet scrolls as one, so the tender
-          // block is never a little scrolling window of its own.
-          'fixed inset-x-0 bottom-0 z-50 max-h-[88vh] rounded-t-xl shadow-2xl transition-transform duration-200',
+          // from the bar above. Inside it the same two sections apply - the
+          // basket scrolls, the payment section does not - so a little more of
+          // the screen is given over to it than a sheet would usually take.
+          'fixed inset-x-0 bottom-0 z-50 max-h-[92vh] rounded-t-xl shadow-2xl transition-transform duration-200',
           basketOpen ? 'translate-y-0' : 'translate-y-full',
           // Desktop: the right-hand column, always there.
           'lg:static lg:z-auto lg:h-full lg:min-h-0 lg:max-h-none lg:translate-y-0 lg:rounded-xl lg:shadow-sm',
@@ -680,22 +681,22 @@ export function SupershopPosPage() {
           </div>
         </CardHeader>
         {/*
-          ONE scroll, at every width. The header above and the action bar below
-          stay put; everything between them - the lines, the totals, the
-          customer, the tender - moves together. The tender block used to be a
-          little scrolling window of its own inside this one, which meant a
-          cashier could be scrolling inside a scroll to reach a payment method.
+          Two sections, and only ONE of them scrolls.
+
+          The basket takes whatever room is left and scrolls inside it, so a
+          hundred lines never push anything off the card. The payment section
+          below it is pinned: it is laid out at its natural height and never
+          scrolls, so a cashier taking money is never hunting for a tender row
+          or a Complete button that has slid out of sight.
         */}
-        <CardContent className="scrollbar-thin flex min-h-0 flex-1 flex-col overflow-y-auto p-0">
+        <CardContent className="flex min-h-0 flex-1 flex-col overflow-hidden p-0">
           {/*
-            The basket keeps a floor and the panel below it a ceiling.
-            Everything under the list - totals, customer, loyalty, note, tender -
-            used to be `shrink-0`, so attaching a customer or a loyalty card grew
-            it until the basket had no room left and the cashier could not see
-            what they had scanned. Now the list always shows a few lines and the
-            panel scrolls once it has had its share.
+            The one scroll. The floor keeps a few lines in view even when the
+            payment section below is at its tallest - a customer, a loyalty card
+            and three tenders all attached - so the cashier can always see what
+            they have scanned.
           */}
-          <div className="px-4">
+          <div className="scrollbar-thin min-h-[4rem] flex-1 overflow-y-auto px-4 lg:min-h-[5rem]">
             {cart.length === 0 ? (
               <p className="py-2 text-sm text-muted-foreground">Scan the first item.</p>
             ) : (
@@ -756,8 +757,8 @@ export function SupershopPosPage() {
             )}
           </div>
 
-          {/* No ceiling and no scrollbar of its own: it is part of the one scroll. */}
-          <div className="space-y-1.5 border-t px-4 py-2">
+          {/* Pinned. No scroll of its own and never pushed off by a long basket. */}
+          <div className="shrink-0 space-y-1.5 border-t px-4 py-2">
             <dl className="space-y-0.5 text-sm">
               <div className="flex justify-between">
                 <dt>Subtotal (incl. VAT)</dt>
