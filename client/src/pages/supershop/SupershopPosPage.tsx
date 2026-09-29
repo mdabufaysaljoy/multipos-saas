@@ -233,6 +233,13 @@ export function SupershopPosPage() {
     ? pointsForSpend(Math.max(0, unroundedTotal - vatEstimateMinor), loyaltyMember.earnSpendMinor)
     : 0;
   const hasOutOfStockLine = cart.some((line) => (line.product.stock?.quantityOnHand ?? 0) <= 0);
+
+  // A note explains an out-of-stock line. Take that line out of the basket and
+  // the explanation goes with it, rather than travelling silently to the server
+  // on a sale it has nothing to do with.
+  React.useEffect(() => {
+    if (!hasOutOfStockLine) setNote('');
+  }, [hasOutOfStockLine]);
   const outOfStockNoteValid = !hasOutOfStockLine || note.trim().length >= 3;
 
   // The branch decides which tenders it takes; the till only offers those.
@@ -863,27 +870,31 @@ export function SupershopPosPage() {
               />
             )}
 
-            <div className="space-y-1">
-              {/* The label only earns its line when the note is compulsory. */}
-              {hasOutOfStockLine && (
+            {/*
+              The note is only ever asked for to explain a sale of goods the
+              system says are gone. An ordinary basket needs no note, so the
+              field is not there to be wondered about - it appears with the
+              out-of-stock line that makes it compulsory, and goes with it.
+            */}
+            {hasOutOfStockLine && (
+              <div className="space-y-1">
                 <Label htmlFor="shop-sale-note" className="text-xs">
                   Sale note <span className="text-destructive">(required for out-of-stock sale)</span>
                 </Label>
-              )}
-              <Input
-                id="shop-sale-note"
-                aria-label="Sale note"
-                className="h-8"
-                value={note}
-                maxLength={300}
-                onChange={(event) => setNote(event.target.value)}
-                placeholder={hasOutOfStockLine ? 'Why is this stock-out sale allowed?' : 'Optional note'}
-                aria-invalid={hasOutOfStockLine && !outOfStockNoteValid}
-              />
-              {hasOutOfStockLine && !outOfStockNoteValid && (
-                <p className="text-xs text-destructive">Enter at least 3 characters before completing this sale.</p>
-              )}
-            </div>
+                <Input
+                  id="shop-sale-note"
+                  className="h-8"
+                  value={note}
+                  maxLength={300}
+                  onChange={(event) => setNote(event.target.value)}
+                  placeholder="Why is this stock-out sale allowed?"
+                  aria-invalid={!outOfStockNoteValid}
+                />
+                {!outOfStockNoteValid && (
+                  <p className="text-xs text-destructive">Enter at least 3 characters before completing this sale.</p>
+                )}
+              </div>
+            )}
 
             <PaymentPanel
               compact
