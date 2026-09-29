@@ -1372,3 +1372,91 @@ change to a helper every vertical uses, so it is a platform decision.
 
 **Not touched:** Clothing, Restaurant, Pharmacy. **Still open:** CI (audit Issue
 10), N1 on the ordinary return path, the browser pass.
+
+## 2026-09-29 — Phase 10: the Branches screen, last 30 days
+
+Audit Issue 13. Documented in `docs/SUPERSHOP_ANALYTICS.md`. Super Shop only.
+
+### What was actually there
+
+The Branches screen is **shared by all four verticals**, and it has always asked
+Clothing's `GET /reports/branches` for its per-branch figures. That route is
+behind `requireVertical('clothing')`, so for a Super Shop workspace the call was
+refused and every branch card simply showed no numbers.
+
+### Why not just reuse Clothing's endpoint
+
+**Because the profit would be wrong.** Clothing adds VAT on top of its prices and
+takes profit as net less cost. A Super Shop price *includes* VAT, so VAT has to
+come out before profit — as `docs/SUPERSHOP_COSTING.md` and the analytics screen
+both already do. Sharing the endpoint would have put two different profit figures
+for one shop on two different screens.
+
+So `GET /supershop/branches-overview` is its own thing, and the shared screen
+asks whichever endpoint belongs to the workspace's vertical. **Pharmacy and
+Restaurant are untouched** — they call Clothing's as they always have, are
+refused by its vertical guard as they always have been, and show no figures,
+exactly as before.
+
+### What it reports
+
+One row per branch for the **last 30 calendar days**: sales count, lines, pieces
+and grams sold (counted apart — adding them would be adding apples to rice),
+charged, refunded, net, VAT, cost, profit, margin, average basket and stock
+value, plus totals. **A branch that sold nothing still has a row, reading zero**
+— a missing row would say "no data" when the truth is "no trade".
+
+Only metrics Super Shop can stand behind: every figure comes from a sale
+snapshot, a `Return`, or `ShopStock` valued at weighted average cost with a
+lookup to the product for its unit.
+
+Administrators only, like Clothing's — comparing branches is an owner's view.
+Deliberately **not** behind `advancedAnalytics`: it is an owner's own list of
+their own shops, and gating it would have made the screen look broken on most
+plans.
+
+### Efficiency
+
+Four aggregations for any number of branches — never one per branch, never a sale
+loaded to be counted in JavaScript. Refunds come from `returnFiguresByStore`,
+which shares its cost expression with `returnFiguresFor`, so this screen and
+Advanced Analytics can never disagree about what a refund cost.
+
+### A determinism bug this finally pinned down
+
+The intermittent "Super Shop: printing the same report twice gives the same
+document" failure — seen on and off across these phases — was **three real
+defects in the report, not a flaky test**:
+
+1. the write-off aggregation had no `$sort` (fixed in Phase 9);
+2. **`deadStock` had no sort at all**, so rows came back in whatever order the
+   collection held them;
+3. **every other `$sort` ranked by a measure with no tiebreaker**, so rows that
+   tied came back in an arbitrary order.
+
+All three are fixed: dead stock is ordered, and every sort now ends in `_id`. The
+report is now byte-for-byte reproducible.
+
+### Verification
+
+- `npm run lint` ✅ · `npm run typecheck` ✅ · `npm run build` ✅
+- `npm test` — **3579 passed, 0 failed** (was 3545; **34 net new assertions**)
+
+Covering: the window (30 calendar days, starting at midnight 29 days ago in the
+shop's own day, running to the end of today, with a sale made now inside it);
+every branch having a row and a branch with no trade reading zero rather than
+vanishing; profit being net less VAT less cost on every row, net being charged
+less refunded, and the totals being the rows added up; pieces and grams counted
+apart; **branch isolation** — a sale moving one branch's figures by exactly its
+own amount while the other does not move at all, and a refund coming off that
+branch alone; and permissions — no session, another workspace, and a cashier who
+may read reports still being refused.
+
+### A test-hygiene fix
+
+These phases created six staff tills, which is exactly the Professional plan's
+limit, and that starved a later pre-existing section until it crashed. Each test
+till is now retired when its section is done.
+
+**Not touched:** Clothing, Restaurant, Pharmacy. **Still open:** CI (audit Issue
+10), N1 on the ordinary return path, the browser pass.
