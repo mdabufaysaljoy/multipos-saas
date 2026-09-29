@@ -149,7 +149,7 @@ class SupershopReportsService {
             costMinor: { $sum: '$items.costMinor' },
           },
         },
-        { $sort: { revenueMinor: -1 } },
+        { $sort: { revenueMinor: -1, _id: 1 } },
         { $limit: 50 },
       ]),
       ShopSaleModel.aggregate<{ _id: string; lines: number; revenueMinor: number; vatMinor: number; costMinor: number }>([
@@ -165,7 +165,7 @@ class SupershopReportsService {
             costMinor: { $sum: '$items.costMinor' },
           },
         },
-        { $sort: { revenueMinor: -1 } },
+        { $sort: { revenueMinor: -1, _id: 1 } },
       ]),
       ShopSaleModel.aggregate<{ _id: number; grossMinor: number; vatMinor: number; lines: number }>([
         { $match: completed },
@@ -183,12 +183,12 @@ class SupershopReportsService {
         { $match: completed },
         { $unwind: '$payments' },
         { $group: { _id: '$payments.method', amountMinor: { $sum: '$payments.amountMinor' }, sales: { $sum: 1 } } },
-        { $sort: { amountMinor: -1 } },
+        { $sort: { amountMinor: -1, _id: 1 } },
       ]),
       ShopSaleModel.aggregate<{ _id: Types.ObjectId; name: string; sales: number; discountsMinor: number }>([
         { $match: { ...completed, discountMinor: { $gt: 0 } } },
         { $group: { _id: '$cashierId', name: { $last: '$cashierNameSnapshot' }, sales: { $sum: 1 }, discountsMinor: { $sum: '$discountMinor' } } },
-        { $sort: { discountsMinor: -1 } },
+        { $sort: { discountsMinor: -1, _id: 1 } },
         { $limit: 20 },
       ]),
       // ---- who sold it: staff -------------------------------------------------
@@ -205,7 +205,7 @@ class SupershopReportsService {
             discountsMinor: { $sum: '$discountMinor' },
           },
         },
-        { $sort: { netSalesMinor: -1 } },
+        { $sort: { netSalesMinor: -1, _id: 1 } },
         { $limit: limit },
       ]),
       // ---- under whose name: brand --------------------------------------------
@@ -224,7 +224,7 @@ class SupershopReportsService {
             costMinor: { $sum: '$items.costMinor' },
           },
         },
-        { $sort: { revenueMinor: -1 } },
+        { $sort: { revenueMinor: -1, _id: 1 } },
         { $limit: limit },
       ]),
       // ---- which shop: branch. Only meaningful when more than one is in scope.
@@ -239,13 +239,13 @@ class SupershopReportsService {
             costMinor: { $sum: '$costMinor' },
           },
         },
-        { $sort: { netSalesMinor: -1 } },
+        { $sort: { netSalesMinor: -1, _id: 1 } },
       ]),
       // ---- who bought it: customer. Walk-in sales carry none and are skipped.
       ShopSaleModel.aggregate<{ _id: Types.ObjectId; name: string; salesCount: number; netSalesMinor: number }>([
         { $match: { ...completed, customerId: { $ne: null } } },
         { $group: { _id: '$customerId', name: { $last: '$customerNameSnapshot' }, salesCount: { $sum: 1 }, netSalesMinor: { $sum: '$totalMinor' } } },
-        { $sort: { netSalesMinor: -1 } },
+        { $sort: { netSalesMinor: -1, _id: 1 } },
         { $limit: limit },
       ]),
       // ---- the lines a line-filter actually selected --------------------------
@@ -277,7 +277,7 @@ class SupershopReportsService {
         { $group: { _id: null, count: { $sum: 1 }, valueMinor: { $sum: '$totalMinor' } } },
       ]),
       ShopSaleModel.find({ ...scope, status: 'voided', voidedAt: window })
-        .sort({ voidedAt: -1 })
+        .sort({ voidedAt: -1, _id: -1 })
         .limit(10)
         .select('saleNumber totalMinor voidReason voidedAt voidedByNameSnapshot')
         .lean(),
@@ -293,6 +293,9 @@ class SupershopReportsService {
         const sold = await ShopSaleModel.distinct('items.productId', completed);
         return ShopStockModel.find({ ...scope, quantityOnHand: { $gt: 0 }, productId: { $nin: sold } })
           .populate<{ productId: { _id: Types.ObjectId; name: string; unitType: ShopUnitType; deletedAt: Date | null } | null }>('productId', 'name unitType deletedAt')
+          // Without this the rows come back in whatever order the collection
+          // happens to hold them, so the same report prints differently twice.
+          .sort({ productId: 1 })
           .limit(500)
           .lean();
       })(),
