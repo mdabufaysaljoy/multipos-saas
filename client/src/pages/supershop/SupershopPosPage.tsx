@@ -679,7 +679,14 @@ export function SupershopPosPage() {
             </div>
           </div>
         </CardHeader>
-        <CardContent className="scrollbar-thin flex min-h-0 flex-1 flex-col overflow-y-auto p-0 lg:overflow-hidden">
+        {/*
+          ONE scroll, at every width. The header above and the action bar below
+          stay put; everything between them - the lines, the totals, the
+          customer, the tender - moves together. The tender block used to be a
+          little scrolling window of its own inside this one, which meant a
+          cashier could be scrolling inside a scroll to reach a payment method.
+        */}
+        <CardContent className="scrollbar-thin flex min-h-0 flex-1 flex-col overflow-y-auto p-0">
           {/*
             The basket keeps a floor and the panel below it a ceiling.
             Everything under the list - totals, customer, loyalty, note, tender -
@@ -688,7 +695,7 @@ export function SupershopPosPage() {
             what they had scanned. Now the list always shows a few lines and the
             panel scrolls once it has had its share.
           */}
-          <div className="scrollbar-thin px-4 lg:min-h-[6.5rem] lg:flex-1 lg:overflow-y-auto">
+          <div className="px-4">
             {cart.length === 0 ? (
               <p className="py-2 text-sm text-muted-foreground">Scan the first item.</p>
             ) : (
@@ -749,13 +756,8 @@ export function SupershopPosPage() {
             )}
           </div>
 
-          {/*
-            On a phone and a tablet this is part of the one sheet scroll: it has
-            no ceiling and no scrollbar of its own, so a cashier is never
-            scrolling inside a scroll. On a desktop it keeps its share of a
-            fixed-height column and scrolls there instead.
-          */}
-          <div className="scrollbar-thin space-y-1.5 border-t px-4 py-2 lg:max-h-[58%] lg:min-h-0 lg:shrink lg:overflow-y-auto">
+          {/* No ceiling and no scrollbar of its own: it is part of the one scroll. */}
+          <div className="space-y-1.5 border-t px-4 py-2">
             <dl className="space-y-0.5 text-sm">
               <div className="flex justify-between">
                 <dt>Subtotal (incl. VAT)</dt>
