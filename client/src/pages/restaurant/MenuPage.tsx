@@ -27,6 +27,15 @@ import { ApiError } from '@/api/client';
 import { restaurantApi } from '@/api/restaurant';
 import { restaurantCategoriesApi } from '@/api/posCategories';
 import { CategoryInput } from '@/features/catalogue/CategoryInput';
+import { SubcategoryInput } from '@/features/restaurant/SubcategoryInput';
+import {
+  AddOnGroupsEditor,
+  VariantsEditor,
+  isCompleteAddOn,
+  isCompleteVariant,
+  type AddOnGroupDraft,
+  type VariantDraft,
+} from '@/features/restaurant/MenuOptionsEditor';
 import { formatMoney } from '@/lib/money';
 import { useAuth } from '@/hooks/useAuth';
 import type { MenuItem } from '@/types/restaurant';
@@ -34,12 +43,24 @@ import type { MenuItem } from '@/types/restaurant';
 interface Draft {
   name: string;
   category: string;
+  subcategory: string;
   description: string;
   priceMinor: number | null;
+  variants: VariantDraft[];
+  addOnGroups: AddOnGroupDraft[];
   isAvailable: boolean;
 }
 
-const EMPTY: Draft = { name: '', category: 'General', description: '', priceMinor: null, isAvailable: true };
+const EMPTY: Draft = {
+  name: '',
+  category: 'General',
+  subcategory: '',
+  description: '',
+  priceMinor: null,
+  variants: [],
+  addOnGroups: [],
+  isAvailable: true,
+};
 
 /** The restaurant menu: shared by every branch of the workspace. */
 export function MenuPage() {
@@ -207,7 +228,33 @@ function MenuItemDialog({
     if (open) {
       setDraft(
         item
-          ? { name: item.name, category: item.category, description: item.description, priceMinor: item.priceMinor, isAvailable: item.isAvailable }
+          ? {
+              name: item.name,
+              category: item.category,
+              subcategory: item.subcategory ?? '',
+              description: item.description,
+              priceMinor: item.priceMinor,
+              variants: (item.variants ?? []).map((variant) => ({
+                _id: variant._id,
+                name: variant.name,
+                priceMinor: variant.priceMinor,
+                sku: variant.sku ?? '',
+                isAvailable: variant.isAvailable,
+              })),
+              addOnGroups: (item.addOnGroups ?? []).map((group) => ({
+                _id: group._id,
+                name: group.name,
+                minSelect: group.minSelect,
+                maxSelect: group.maxSelect,
+                options: (group.options ?? []).map((option) => ({
+                  _id: option._id,
+                  name: option.name,
+                  priceMinor: option.priceMinor,
+                  isAvailable: option.isAvailable,
+                })),
+              })),
+              isAvailable: item.isAvailable,
+            }
           : EMPTY,
       );
     }
@@ -215,11 +262,39 @@ function MenuItemDialog({
 
   const save = useMutation({
     mutationFn: () => {
+      // Half-typed rows are dropped rather than sent: the server would refuse
+      // them, and a cashier adding a size and changing their mind should not
+      // have to delete the empty row before they can save.
       const body = {
         name: draft.name.trim(),
         category: draft.category.trim() || 'General',
+        subcategory: draft.subcategory.trim(),
         description: draft.description.trim(),
         priceMinor: draft.priceMinor ?? 0,
+        variants: draft.variants.filter(isCompleteVariant).map((variant, index) => ({
+          ...(variant._id ? { _id: variant._id } : {}),
+          name: variant.name.trim(),
+          priceMinor: variant.priceMinor ?? 0,
+          sku: variant.sku.trim(),
+          isAvailable: variant.isAvailable,
+          sortOrder: index,
+        })),
+        addOnGroups: draft.addOnGroups
+          .filter((group) => group.name.trim().length > 0 && group.options.some(isCompleteAddOn))
+          .map((group, index) => ({
+            ...(group._id ? { _id: group._id } : {}),
+            name: group.name.trim(),
+            minSelect: group.minSelect,
+            maxSelect: group.maxSelect,
+            options: group.options.filter(isCompleteAddOn).map((option, optionIndex) => ({
+              ...(option._id ? { _id: option._id } : {}),
+              name: option.name.trim(),
+              priceMinor: option.priceMinor ?? 0,
+              isAvailable: option.isAvailable,
+              sortOrder: optionIndex,
+            })),
+            sortOrder: index,
+          })),
         isAvailable: draft.isAvailable,
       };
       return item ? restaurantApi.updateMenuItem(item._id, body) : restaurantApi.createMenuItem(body);
@@ -236,7 +311,7 @@ function MenuItemDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent>
+      <DialogContent className="max-h-[92vh] max-w-2xl">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <UtensilsCrossed className="h-4 w-4" />
@@ -245,7 +320,7 @@ function MenuItemDialog({
           <DialogDescription>Changing a price affects new order lines only.</DialogDescription>
         </DialogHeader>
 
-        <div className="space-y-4">
+        <div className="scrollbar-thin -mx-1 max-h-[62vh] space-y-4 overflow-y-auto px-1">
           <div className="space-y-1.5">
             <Label htmlFor="menu-name">Name</Label>
             <Input id="menu-name" value={draft.name} maxLength={120} onChange={(e) => setDraft({ ...draft, name: e.target.value })} />
@@ -255,14 +330,27 @@ function MenuItemDialog({
               id="menu-category"
               label="Section"
               value={draft.category}
-              onChange={(category) => setDraft({ ...draft, category })}
+              onChange={(category) =>
+                // A subsection belongs to one section, so moving the dish to
+                // another section drops a subsection that no longer applies.
+                setDraft({ ...draft, category, subcategory: '' })
+              }
               api={restaurantCategoriesApi}
               queryKey="restaurant"
             />
-            <div className="space-y-1.5">
-              <Label>Price</Label>
-              <MoneyInput value={draft.priceMinor} onChange={(priceMinor) => setDraft({ ...draft, priceMinor })} ariaLabel="Price" />
-            </div>
+            <SubcategoryInput
+              id="menu-subcategory"
+              category={draft.category}
+              value={draft.subcategory}
+              onChange={(subcategory) => setDraft({ ...draft, subcategory })}
+            />
+          </div>
+          <div className="space-y-1.5">
+            <Label>{draft.variants.length > 0 ? 'Base price' : 'Price'}</Label>
+            <MoneyInput value={draft.priceMinor} onChange={(priceMinor) => setDraft({ ...draft, priceMinor })} ariaLabel="Price" />
+            {draft.variants.length > 0 && (
+              <p className="text-xs text-muted-foreground">Sizes are charged at their own price; this is kept as the fallback.</p>
+            )}
           </div>
           <div className="space-y-1.5">
             <Label htmlFor="menu-description">Description</Label>
@@ -281,6 +369,16 @@ function MenuItemDialog({
             </span>
             <Switch checked={draft.isAvailable} onCheckedChange={(isAvailable) => setDraft({ ...draft, isAvailable })} />
           </label>
+          <VariantsEditor
+            variants={draft.variants}
+            onChange={(variants) => setDraft({ ...draft, variants })}
+            currency={currency}
+          />
+          <AddOnGroupsEditor
+            groups={draft.addOnGroups}
+            onChange={(addOnGroups) => setDraft({ ...draft, addOnGroups })}
+            currency={currency}
+          />
           <p className="text-xs text-muted-foreground">Prices are in {currency}.</p>
         </div>
 

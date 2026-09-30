@@ -125,6 +125,7 @@ const NAV_SECTIONS: { heading: string; items: NavItem[] }[] = [
       { to: '/inventory', label: 'Inventory', icon: Boxes, anyOf: ['inventory.view'], verticals: ['clothing'] },
       { to: '/menu', label: 'Menu', icon: UtensilsCrossed, anyOf: ['products.view'], verticals: ['restaurant'] },
       { to: '/menu-categories', label: 'Menu sections', icon: FolderTree, anyOf: ['categories.view'], verticals: ['restaurant'] },
+      { to: '/menu-subcategories', label: 'Menu subsections', icon: FolderTree, anyOf: ['categories.view'], verticals: ['restaurant'] },
       { to: '/menu-import', label: 'Import menu', icon: FileUp, anyOf: ['products.import'], feature: 'productImport', verticals: ['restaurant'] },
       { to: '/tables', label: 'Tables', icon: Armchair, anyOf: ['sales.create', 'settings.edit'], verticals: ['restaurant'] },
       { to: '/medicines', label: 'Medicines', icon: Pill, anyOf: ['products.view'], verticals: ['pharmacy'] },

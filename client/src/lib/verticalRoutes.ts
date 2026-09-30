@@ -8,7 +8,7 @@
 const VERTICAL_ONLY_PATHS: Record<string, string[]> = {
   // `/dashboard`, `/analytics` and `/pos` are shared: each vertical renders its own there.
   clothing: ['/sales', '/returns', '/catalogue', '/categories', '/inventory'],
-  restaurant: ['/menu', '/menu-categories', '/menu-import', '/tables', '/orders', '/shifts'],
+  restaurant: ['/menu', '/menu-categories', '/menu-subcategories', '/menu-import', '/tables', '/orders', '/shifts'],
   pharmacy: ['/medicines', '/pharmacy-categories', '/pharmacy-import', '/stock', '/pharmacy-sales', '/pharmacy-returns'],
   supershop: ['/shop-products', '/shop-categories', '/shop-brands', '/shop-import', '/shop-inventory', '/shop-sales', '/shop-returns'],
 };

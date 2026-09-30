@@ -2,8 +2,8 @@ import { Types, type PipelineStage } from 'mongoose';
 import dayjs from 'dayjs';
 import { PERMISSIONS } from '../../config/permissions';
 import { DiningTableModel } from '../../models/DiningTable';
-import { MenuItemModel } from '../../models/MenuItem';
-import { RestaurantOrderModel, type RestaurantOrderLine } from '../../models/RestaurantOrder';
+import { MenuItemModel, type MenuItemDoc } from '../../models/MenuItem';
+import { RestaurantOrderModel, type RestaurantOrderLine, type RestaurantOrderLineAddOn } from '../../models/RestaurantOrder';
 import { RestaurantShiftModel } from '../../models/RestaurantShift';
 import { StoreModel } from '../../models/Store';
 import { loadReceiptStore } from '../../services/receipt/receiptStore';
@@ -14,6 +14,7 @@ import { entitlementService } from '../../services/subscription/entitlement.serv
 import { resolveDashboardWindow } from '../reports/reports.service';
 import { customerService } from '../customers/customers.service';
 import { posCategoryService } from '../../services/catalogue/posCategories.service';
+import { menuSubcategoryService } from './menuSubcategories.service';
 import { loyaltyService } from '../loyalty/loyalty.service';
 import { pointsForSpend } from '../loyalty/loyalty.math';
 import { logger } from '../../utils/logger';
@@ -54,6 +55,15 @@ const exactName = (name: string) => new RegExp(`^${name.replace(/[.*+?^${}()|[\]
  *  - payment is a single conditional update from `open`, against the revision
  *    the cashier saw, so an order cannot be paid twice or while being changed
  */
+/**
+ * What a line IS, in one string: the dish, then the size and extras chosen.
+ * Used where there is only room for a name - the kitchen slip.
+ */
+const describeLine = (line: Pick<RestaurantOrderLine, 'nameSnapshot' | 'variantNameSnapshot' | 'addOns'>) => {
+  const detail = [line.variantNameSnapshot, ...(line.addOns ?? []).map((addOn) => addOn.nameSnapshot)].filter(Boolean);
+  return detail.length > 0 ? `${line.nameSnapshot} (${detail.join(', ')})` : line.nameSnapshot;
+};
+
 class RestaurantService {
   // ======================================================================
   //  Menu
@@ -64,6 +74,7 @@ class RestaurantService {
     const filter: Record<string, unknown> = { tenantId: ctx.tenantId, deletedAt: null };
     if (input.availableOnly) filter.isAvailable = true;
     if (input.category) filter.category = input.category;
+    if (input.subcategory) filter.subcategory = input.subcategory;
     if (input.search) filter.name = searchRegex(input.search);
 
     const [items, total] = await Promise.all([
@@ -80,6 +91,8 @@ class RestaurantService {
     // A section the kitchen has retired cannot take new dishes; a new name joins
     // the catalogue so it can be managed like the rest.
     await posCategoryService.assertUsable(ctx, 'restaurant', input.category);
+    await menuSubcategoryService.assertUsable(ctx, input.category, input.subcategory);
+    this.assertMenuShape(input.name, input.variants, input.addOnGroups);
 
     const item = await MenuItemModel.create({ ...input, tenantId: ctx.tenantId, createdBy: ctx.userId });
 
@@ -99,14 +112,63 @@ class RestaurantService {
     if (!item) throw ApiError.notFound('Menu item not found');
     if (input.name && input.name.toLowerCase() !== item.name.toLowerCase()) await this.assertMenuNameFree(ctx, input.name, id);
     if (input.category) await posCategoryService.assertUsable(ctx, 'restaurant', input.category);
+    // A dish may be moved and re-subsectioned in one edit, so the subsection is
+    // checked against whichever section it is ending up in.
+    if (input.subcategory !== undefined) {
+      await menuSubcategoryService.assertUsable(ctx, input.category ?? item.category, input.subcategory);
+    }
+    this.assertMenuShape(
+      input.name ?? item.name,
+      input.variants ?? item.variants,
+      input.addOnGroups ?? item.addOnGroups,
+    );
 
     // Explicit fields only: the validator already rejects anything else.
-    const fields = ['name', 'category', 'description', 'priceMinor', 'isAvailable', 'sortOrder'] as const;
+    const fields = ['name', 'category', 'subcategory', 'description', 'priceMinor', 'variants', 'addOnGroups', 'isAvailable', 'sortOrder'] as const;
     for (const field of fields) {
       if (input[field] !== undefined) item.set(field, input[field]);
     }
     await item.save();
     return item.toObject();
+  }
+
+  /**
+   * What a saved dish may look like. The validator has already checked each
+   * variant and group on its own; these are the rules that need the whole dish
+   * in view, and they live on the server because a till must not be the thing
+   * that decides whether a menu is coherent.
+   */
+  private assertMenuShape(
+    name: string,
+    variants: { name: string; sku?: string }[] | undefined,
+    addOnGroups: { name: string; options: { name: string }[] }[] | undefined,
+  ) {
+    const dish = name || 'This dish';
+    const duplicate = (values: string[]) => {
+      const seen = new Set<string>();
+      return values.some((value) => {
+        const key = value.trim().toLowerCase();
+        if (!key) return false;
+        if (seen.has(key)) return true;
+        seen.add(key);
+        return false;
+      });
+    };
+
+    if (duplicate((variants ?? []).map((variant) => variant.name))) {
+      throw ApiError.badRequest(`${dish} has two sizes with the same name`);
+    }
+    if (duplicate((variants ?? []).map((variant) => variant.sku ?? '').filter(Boolean))) {
+      throw ApiError.badRequest(`${dish} has two sizes with the same code`);
+    }
+    if (duplicate((addOnGroups ?? []).map((group) => group.name))) {
+      throw ApiError.badRequest(`${dish} has two extra groups with the same name`);
+    }
+    for (const group of addOnGroups ?? []) {
+      if (duplicate(group.options.map((option) => option.name))) {
+        throw ApiError.badRequest(`${group.name} has two extras with the same name`);
+      }
+    }
   }
 
   /** Soft delete: past orders keep their snapshots; the item can never be ordered again. */
@@ -383,7 +445,10 @@ class RestaurantService {
     const lines = order.items
       .map((line) => ({
         lineId: line._id,
-        nameSnapshot: line.nameSnapshot,
+        // The size and extras are folded into the name the kitchen reads. A
+        // slip saying "Pizza" when the guest asked for a 12 inch is worse than
+        // useless, and the ticket carries no other field to put them in.
+        nameSnapshot: describeLine(line),
         quantity: line.quantity - (line.sentQuantity ?? 0),
         note: line.note ?? '',
       }))
@@ -830,7 +895,20 @@ class RestaurantService {
     };
   }
 
-  /** Prices lines from the menu - the only source of a price. */
+  /**
+   * Prices lines from the menu - the only source of a price.
+   *
+   * A line costs the VARIANT's price when the dish has variants (and the dish's
+   * own when it has none), plus every add-on chosen. The result is folded into
+   * one `unitPriceMinor`, so reports, bills, the kitchen slip and the tender
+   * maths all keep reading the single number they always read.
+   *
+   * The two rules that keep the hierarchy honest live here, on the server,
+   * because only the server can see the menu:
+   *   - a dish WITH variants must be ordered as one of them, so a till can
+   *     never fall back to the base price by leaving the size out;
+   *   - a dish WITHOUT variants must not name one.
+   */
   private async priceLines(ctx: TenantContext, items: OrderLineInput[]): Promise<RestaurantOrderLine[]> {
     const ids = [...new Set(items.map((item) => String(item.menuItemId)))].map((id) => new Types.ObjectId(id));
     const menu = await MenuItemModel.find({ _id: { $in: ids }, tenantId: ctx.tenantId, deletedAt: null }).lean();
@@ -840,14 +918,39 @@ class RestaurantService {
       const entry = menu.find((m) => m._id.equals(item.menuItemId));
       if (!entry) throw ApiError.badRequest('One of the items is not on this menu');
       if (!entry.isAvailable) throw ApiError.badRequest(`${entry.name} is not available right now`);
-      const lineTotalMinor = entry.priceMinor * item.quantity;
+
+      const variants = entry.variants ?? [];
+      let variantId: Types.ObjectId | null = null;
+      let variantNameSnapshot = '';
+      let unitPriceMinor = entry.priceMinor;
+
+      if (variants.length > 0) {
+        if (!item.variantId) throw ApiError.badRequest(`Choose a size for ${entry.name}`);
+        const variant = variants.find((v) => v._id.equals(item.variantId!));
+        if (!variant) throw ApiError.badRequest(`That size is not on ${entry.name}`);
+        if (!variant.isAvailable) throw ApiError.badRequest(`${entry.name} (${variant.name}) is not available right now`);
+        variantId = variant._id;
+        variantNameSnapshot = variant.name;
+        unitPriceMinor = variant.priceMinor;
+      } else if (item.variantId) {
+        throw ApiError.badRequest(`${entry.name} has no sizes to choose from`);
+      }
+
+      const addOns = this.priceAddOns(entry, item.addOnOptionIds ?? []);
+      unitPriceMinor += addOns.reduce((sum, addOn) => sum + addOn.priceMinor, 0);
+
+      const lineTotalMinor = unitPriceMinor * item.quantity;
       if (!Number.isSafeInteger(lineTotalMinor)) throw ApiError.badRequest('That line is too large');
       return {
         _id: new Types.ObjectId(),
         menuItemId: entry._id,
         nameSnapshot: entry.name,
         categorySnapshot: entry.category,
-        unitPriceMinor: entry.priceMinor,
+        subcategorySnapshot: entry.subcategory ?? '',
+        variantId,
+        variantNameSnapshot,
+        addOns,
+        unitPriceMinor,
         quantity: item.quantity,
         note: item.note,
         lineTotalMinor,
@@ -856,6 +959,43 @@ class RestaurantService {
         voidedAt: null,
       };
     });
+  }
+
+  /**
+   * Turns the option ids a till sent into priced snapshots, and enforces what
+   * each group allows: an option must exist on THIS dish, must be available,
+   * cannot be taken twice, and a group must get at least `minSelect` and at
+   * most `maxSelect` of its options.
+   */
+  private priceAddOns(entry: Pick<MenuItemDoc, 'name' | 'addOnGroups'>, optionIds: Types.ObjectId[]): RestaurantOrderLineAddOn[] {
+    const groups = entry.addOnGroups ?? [];
+    const wanted = optionIds.map(String);
+    if (new Set(wanted).size !== wanted.length) throw ApiError.badRequest('The same extra was added twice');
+    if (wanted.length > 0 && groups.length === 0) throw ApiError.badRequest(`${entry.name} has no extras to add`);
+
+    const chosen: RestaurantOrderLineAddOn[] = [];
+    const takenPerGroup = new Map<string, number>();
+
+    for (const id of wanted) {
+      const group = groups.find((g) => (g.options ?? []).some((option) => String(option._id) === id));
+      const option = group?.options.find((o) => String(o._id) === id);
+      if (!group || !option) throw ApiError.badRequest(`That extra is not on ${entry.name}`);
+      if (!option.isAvailable) throw ApiError.badRequest(`${option.name} is not available right now`);
+      takenPerGroup.set(String(group._id), (takenPerGroup.get(String(group._id)) ?? 0) + 1);
+      chosen.push({ optionId: option._id, groupNameSnapshot: group.name, nameSnapshot: option.name, priceMinor: option.priceMinor });
+    }
+
+    for (const group of groups) {
+      const taken = takenPerGroup.get(String(group._id)) ?? 0;
+      if (taken < group.minSelect) {
+        throw ApiError.badRequest(`${group.name}: choose at least ${group.minSelect} for ${entry.name}`);
+      }
+      if (taken > group.maxSelect) {
+        throw ApiError.badRequest(`${group.name}: at most ${group.maxSelect} may be chosen for ${entry.name}`);
+      }
+    }
+
+    return chosen;
   }
 
   private sumLines(lines: RestaurantOrderLine[]) {

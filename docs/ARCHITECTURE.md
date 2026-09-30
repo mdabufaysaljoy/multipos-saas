@@ -115,8 +115,18 @@ What follows from that shape:
   else.
 - **No restaurant-specific permissions.** Everything reuses `sales.*`,
   `products.*`, `returns.*`, `reports.view`, `settings.edit`.
-- **`MenuItem` is flat**: one `priceMinor`, `category` as a *name*, no
-  subcategory, variants, sizes or add-ons.
+- **The menu is a hierarchy of names.** Section → subsection → dish → size,
+  with extras on the dish. `category` and `subcategory` are NAMES (the shared
+  `PosCategory` list and Restaurant's own `MenuSubcategory`); `variants[]` and
+  `addOnGroups[]` are embedded on `MenuItem`. Every part is optional, so a dish
+  that is just a dish at one price carries none of it.
+- **A variant is not an add-on.** A variant answers "which version?" — one is
+  chosen and its price *replaces* the dish's. An add-on answers "what extra?" —
+  several may be chosen and each price is *added*. They are separate arrays, and
+  the server refuses a dish with sizes that is ordered without one, so a till
+  can never fall back to the base price.
+- **`unitPriceMinor` is the fully-loaded price of one**, variant and extras
+  folded in, so reports, bills, refunds and the tender rules read one number.
 
 The audit for the next change to this vertical — dependency maps for the kitchen
 and refund features, the billing flow, and the recommended menu hierarchy — is

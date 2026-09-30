@@ -30,8 +30,9 @@ import { LoyaltyStrip } from '@/features/loyalty/LoyaltyStrip';
 import { maxRedeemablePoints, pointsForSpend } from '@/features/loyalty/loyaltyMath';
 import { useLoyaltyAccess } from '@/features/loyalty/useLoyaltyAccess';
 import { CategoryFilter } from '@/features/catalogue/CategoryFilter';
+import { MenuItemPicker, needsChoosing, type PickedMenuItem } from '@/features/restaurant/MenuItemPicker';
 import { loyaltyApi, storeApi } from '@/api/endpoints';
-import { restaurantApi } from '@/api/restaurant';
+import { restaurantApi, type OrderLineBody } from '@/api/restaurant';
 import { restaurantCategoriesApi } from '@/api/posCategories';
 import { formatMoney } from '@/lib/money';
 import { cn } from '@/lib/utils';
@@ -46,8 +47,29 @@ interface Draft {
   tableName?: string;
   /** Whose order this is. Chosen before it is sent - see the panel below. */
   customer?: SelectedCustomer | null;
-  lines: { menuItemId: string; name: string; priceMinor: number; quantity: number }[];
+  lines: DraftLine[];
 }
+
+interface DraftLine {
+  /** Identifies the LINE, not the dish: one dish may appear at two sizes. */
+  key: string;
+  menuItemId: string;
+  name: string;
+  variantId?: string;
+  variantName: string;
+  addOnOptionIds: string[];
+  addOnNames: string[];
+  /** A preview only. The server prices the line again when the order is sent. */
+  priceMinor: number;
+  quantity: number;
+}
+
+/** Two lines are the same line only if the dish, the size and the extras match. */
+const lineKey = (menuItemId: string, variantId: string | undefined, addOnOptionIds: string[]) =>
+  [menuItemId, variantId ?? '', [...addOnOptionIds].sort().join('+')].join('|');
+
+/** How a chosen line reads under the dish name: "10 inch · Extra cheese". */
+const lineDetail = (variantName: string, addOnNames: string[]) => [variantName, ...addOnNames].filter(Boolean).join(' · ');
 
 const errorMessage = (err: unknown, fallback: string) => (err instanceof ApiError ? err.message : fallback);
 
@@ -70,6 +92,7 @@ export function RestaurantPosPage() {
   const [category, setCategory] = React.useState('all');
   const [search, setSearch] = React.useState('');
   const [cancelling, setCancelling] = React.useState(false);
+  const [choosing, setChoosing] = React.useState<MenuItem | null>(null);
   const [ticketToPrint, setTicketToPrint] = React.useState<{ orderId: string; ticketId: string } | null>(null);
   const [receiptFor, setReceiptFor] = React.useState<string | null>(null);
   // A bill is asked for; a receipt follows a payment and prints itself.
@@ -122,7 +145,12 @@ export function RestaurantPosPage() {
         type: current.type,
         ...(current.tableId ? { tableId: current.tableId } : {}),
         ...saleCustomerFields(current.customer ?? null),
-        items: current.lines.map((line) => ({ menuItemId: line.menuItemId, quantity: line.quantity })),
+        items: current.lines.map((line) => ({
+          menuItemId: line.menuItemId,
+          ...(line.variantId ? { variantId: line.variantId } : {}),
+          ...(line.addOnOptionIds.length > 0 ? { addOnOptionIds: line.addOnOptionIds } : {}),
+          quantity: line.quantity,
+        })),
       });
       try {
         return await restaurantApi.sendToKitchen(created._id, created.rev);
@@ -146,7 +174,7 @@ export function RestaurantPosPage() {
   });
 
   const addToOrder = useMutation({
-    mutationFn: ({ id, menuItemId }: { id: string; menuItemId: string }) => restaurantApi.addItems(id, [{ menuItemId, quantity: 1 }]),
+    mutationFn: ({ id, line }: { id: string; line: OrderLineBody }) => restaurantApi.addItems(id, [line]),
     onSuccess: showOrder,
     onError: (err) => toast.error(errorMessage(err, 'Could not add the item')),
   });
@@ -168,21 +196,53 @@ export function RestaurantPosPage() {
       (!search.trim() || item.name.toLowerCase().includes(search.trim().toLowerCase())),
   );
 
+  /** A dish with sizes or extras is asked about first; a plain one goes straight on. */
   const pickMenuItem = (item: MenuItem) => {
-    if (order && order.status === 'open') {
-      addToOrder.mutate({ id: order._id, menuItemId: item._id });
-      return;
-    }
-    if (!draft) {
+    if (!order?.status && !draft) {
       toast.info('Choose a table or start a takeaway first');
       return;
     }
-    const existing = draft.lines.find((line) => line.menuItemId === item._id);
+    if (needsChoosing(item)) {
+      setChoosing(item);
+      return;
+    }
+    addChosen(item, { variantName: '', addOnOptionIds: [], addOnNames: [], unitPriceMinor: item.priceMinor });
+  };
+
+  const addChosen = (item: MenuItem, picked: PickedMenuItem) => {
+    if (order && order.status === 'open') {
+      addToOrder.mutate({
+        id: order._id,
+        line: {
+          menuItemId: item._id,
+          ...(picked.variantId ? { variantId: picked.variantId } : {}),
+          ...(picked.addOnOptionIds.length > 0 ? { addOnOptionIds: picked.addOnOptionIds } : {}),
+          quantity: 1,
+        },
+      });
+      return;
+    }
+    if (!draft) return;
+    const key = lineKey(item._id, picked.variantId, picked.addOnOptionIds);
+    const existing = draft.lines.find((line) => line.key === key);
     setDraft({
       ...draft,
       lines: existing
-        ? draft.lines.map((line) => (line.menuItemId === item._id ? { ...line, quantity: line.quantity + 1 } : line))
-        : [...draft.lines, { menuItemId: item._id, name: item.name, priceMinor: item.priceMinor, quantity: 1 }],
+        ? draft.lines.map((line) => (line.key === key ? { ...line, quantity: line.quantity + 1 } : line))
+        : [
+            ...draft.lines,
+            {
+              key,
+              menuItemId: item._id,
+              name: item.name,
+              variantId: picked.variantId,
+              variantName: picked.variantName,
+              addOnOptionIds: picked.addOnOptionIds,
+              addOnNames: picked.addOnNames,
+              priceMinor: picked.unitPriceMinor,
+              quantity: 1,
+            },
+          ],
     });
   };
 
@@ -329,16 +389,23 @@ export function RestaurantPosPage() {
           {draft && (
             <ul className="divide-y">
               {draft.lines.map((line) => (
-                <li key={line.menuItemId} className="flex items-center gap-2 py-2">
-                  <span className="min-w-0 flex-1 truncate text-sm">{line.name}</span>
+                <li key={line.key} className="flex items-center gap-2 py-2">
+                  <span className="min-w-0 flex-1 text-sm">
+                    <span className="block truncate">{line.name}</span>
+                    {lineDetail(line.variantName, line.addOnNames) && (
+                      <span className="block truncate text-xs text-muted-foreground">
+                        {lineDetail(line.variantName, line.addOnNames)}
+                      </span>
+                    )}
+                  </span>
                   <QuantityStepper
                     quantity={line.quantity}
                     onChange={(quantity) =>
                       setDraft({
                         ...draft,
                         lines: quantity > 0
-                          ? draft.lines.map((l) => (l.menuItemId === line.menuItemId ? { ...l, quantity } : l))
-                          : draft.lines.filter((l) => l.menuItemId !== line.menuItemId),
+                          ? draft.lines.map((l) => (l.key === line.key ? { ...l, quantity } : l))
+                          : draft.lines.filter((l) => l.key !== line.key),
                       })
                     }
                   />
@@ -356,8 +423,13 @@ export function RestaurantPosPage() {
                 const unsent = !voided && line.quantity > (line.sentQuantity ?? 0);
                 return (
                   <li key={line._id} className="flex items-center gap-2 py-2">
-                    <span className={cn('min-w-0 flex-1 truncate text-sm', voided && 'text-muted-foreground line-through')}>
-                      {line.nameSnapshot}
+                    <span className={cn('min-w-0 flex-1 text-sm', voided && 'text-muted-foreground line-through')}>
+                      <span className="block truncate">{line.nameSnapshot}</span>
+                      {lineDetail(line.variantNameSnapshot ?? '', (line.addOns ?? []).map((addOn) => addOn.nameSnapshot)) && (
+                        <span className="block truncate text-xs text-muted-foreground">
+                          {lineDetail(line.variantNameSnapshot ?? '', (line.addOns ?? []).map((addOn) => addOn.nameSnapshot))}
+                        </span>
+                      )}
                     </span>
                     {voided && <Badge variant="secondary">Void</Badge>}
                     {unsent && activeOrder.status === 'open' && <Badge variant="warning">New</Badge>}
@@ -459,6 +531,16 @@ export function RestaurantPosPage() {
           }}
         />
       )}
+
+      <MenuItemPicker
+        item={choosing}
+        currency={currency}
+        onClose={() => setChoosing(null)}
+        onPick={(picked) => {
+          if (choosing) addChosen(choosing, picked);
+          setChoosing(null);
+        }}
+      />
 
       <KitchenTicketDialog target={ticketToPrint} onClose={() => setTicketToPrint(null)} />
       <RestaurantReceiptDialog

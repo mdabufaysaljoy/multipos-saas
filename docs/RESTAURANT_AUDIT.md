@@ -2,8 +2,10 @@
 
 **Date:** 2026-09-30 · **Commit:** `main` · **Scope:** Restaurant POS only.
 
-> **Status: phases 1, 2 and 3 are done** (kitchen management and refunds
-> removed, billing moved below the cart; all 2026-09-30). The rest of this
+> **Status: phases 1-4, 6 and 7 are done** (kitchen management and refunds
+> removed, billing moved below the cart, and the menu hierarchy built:
+> subsections, variants and add-ons; all 2026-09-30). Phase 5, POS filtering by
+> subsection, is the one still outstanding. The rest of this
 > document is the audit as written before that work, kept as the record it was
 > made from. Two things it had missed, both found during the removal and both
 > handled there:
@@ -14,7 +16,8 @@
 > - **A second refund entry point.** The Orders page had its own "Refund items"
 >   action and dialog, not only the Refunds screen.
 >
-> What actually changed is recorded in §12 and §13 at the end of this document.
+> What actually changed is recorded in §12, §13 and §14 at the end of this
+> document.
 
 Read with `docs/ARCHITECTURE.md` (the platform) and `docs/ANALYTICS_PARITY.md`
 (the money vocabulary).
@@ -320,10 +323,10 @@ Ordered by dependency, not by the brief's numbering.
 | **1** ✅ | Remove Kitchen management (keep send + token) | Self-contained; shrinks the surface everything else touches |
 | **2** ✅ | Remove Refunds | Self-contained; also shrinks it |
 | **3** ✅ | Billing below the cart | Pure UI; no model change; unblocks judging the POS layout before it grows |
-| **4** | Subcategory (model + menu screen + import column) | The hierarchy's first half |
-| **5** | POS filtering by category **and** subcategory | Needs phase 4 |
-| **6** | Variants (model, menu screen, order line snapshots, pricing) | The heaviest; needs phase 4's screens |
-| **7** | Add-ons / option groups | Needs phase 6's picker |
+| **4** ✅ | Subcategory (model + menu screen) | The hierarchy's first half |
+| **5** | POS filtering by category **and** subcategory | Needs phase 4 — **still outstanding** |
+| **6** ✅ | Variants (model, menu screen, order line snapshots, pricing) | The heaviest; needs phase 4's screens |
+| **7** ✅ | Add-ons / option groups | Needs phase 6's picker |
 
 **Phases 1–3 are safe and independent. Phase 6 is where the money is** — it
 changes what an order line means, and every report, bill and refund reads that.
@@ -521,3 +524,126 @@ the whole flow driven by hand at 1440×900 and at phone width:
 `npm run lint` ✅ · `npm run typecheck` ✅ · `npm run build` ✅ ·
 `npm test` ✅ **3578 passed, 0 failed** (no server change, so the count is the
 same as phase 2).
+
+---
+
+## 14. Phases 4, 6 and 7: the menu hierarchy — 2026-09-30
+
+Section → subsection → dish → size, with extras hanging off the dish. Built
+close to what §7 recommended; where it differs, the difference is noted.
+
+### The two kinds of option, kept apart on purpose
+
+This is the distinction the whole model turns on:
+
+| | Variant | Add-on |
+|---|---|---|
+| Answers | **which version?** | **what extra?** |
+| How many | exactly one | several, within the group's limits |
+| Price | **replaces** the dish's own | **adds** to the line |
+| Lives on | `MenuItem.variants[]` | `MenuItem.addOnGroups[].options[]` |
+| On the line | `variantId`, `variantNameSnapshot` | `addOns[]`, each with its own price |
+
+They are separate arrays, separate validators and separate editors, so a
+kitchen cannot model "Large" as an extra and end up with two sizes on one line.
+
+### What was added
+
+```
+PosCategory (shared, untouched)   Pizza · Burger · Biryani
+        │
+        ▼
+MenuSubcategory (NEW, restaurant) Italian · Mexican · Naga Hot
+        │   { tenantId, categoryName, categorySlug, name, slug, isActive, sortOrder }
+        ▼
+MenuItem (EXTENDED)               + subcategory (a NAME, like category)
+        ├── variants[]            { name, priceMinor, sku, isAvailable, sortOrder }
+        └── addOnGroups[]         { name, minSelect, maxSelect, options[] }
+```
+
+`RestaurantOrderLine` gained `subcategorySnapshot`, `variantId`,
+`variantNameSnapshot` and `addOns[]`. **`unitPriceMinor` keeps its meaning** —
+the fully-loaded price of one — so reports, bills, refund maths and the tender
+rules all read the number they always read (audit R5).
+
+**`PosCategory` was not given a parent** (audit R4). It is shared with Super
+Shop and Pharmacy, flat by design, and a hierarchy there would have changed two
+verticals that never asked for one. `MenuSubcategory` is Restaurant's own and
+deliberately mirrors the shared service's behaviour one level down: the name is
+the link, an unknown name joins the list when a dish uses it, renaming rewrites
+the dishes that carry it and never a past order, and a name in use can only be
+hidden. It differs in the one way that matters — a subsection belongs to exactly
+one section, so two sections may each have a "Hot".
+
+**No migration.** Every new field is optional and defaults to empty. An existing
+dish has no subsection and no variants, and sells exactly as it did.
+
+### The rules, and where they live
+
+All of them are on the server, because only the server can see the menu:
+
+- a dish **with** variants must be ordered as one of them — otherwise a till
+  could quietly fall back to the base price and charge 450 for an 850 pizza;
+- a dish **without** variants must not be given one;
+- a variant or add-on must belong to **that** dish;
+- each add-on group must get between its own `minSelect` and `maxSelect`;
+- the same extra cannot be taken twice;
+- within a dish, no two sizes share a name or a code, and no two groups or
+  extras share a name;
+- a subsection must belong to the section the dish is in, and a hidden one
+  takes no new dishes.
+
+The POS picker enforces the same rules before it will offer the line, so a till
+never sends something the server will refuse — but the server is what decides.
+
+### Permissions, isolation, and one thing that is NOT branch-scoped
+
+Subsections reuse `categories.view/create/edit/delete`; dishes reuse
+`products.*`. No new permission was added. A Cashier can read subsections (they
+need them to take an order) and can create neither.
+
+**The menu is workspace-wide, not per branch** — that is the existing Restaurant
+design, unchanged here: every branch of a restaurant serves the same menu. So
+isolation is cross-workspace, and that is what the tests assert.
+
+### Files
+
+New: `models/MenuSubcategory.ts` · `modules/restaurant/menuSubcategories.service.ts` ·
+`features/restaurant/MenuOptionsEditor.tsx` · `features/restaurant/SubcategoryInput.tsx` ·
+`features/restaurant/MenuItemPicker.tsx` · `pages/restaurant/MenuSubcategoriesPage.tsx`
+
+Changed: `models/MenuItem.ts` · `models/RestaurantOrder.ts` ·
+`restaurant.{service,controller,routes,validators}.ts` · `MenuPage.tsx` ·
+`RestaurantPosPage.tsx` · `RestaurantPrints.tsx` · `api/restaurant.ts` ·
+`types/restaurant.ts` · routing and nav · `smoke-test.mjs`
+
+### Verified
+
+`npm run lint` ✅ · `npm run typecheck` ✅ · `npm run build` ✅ ·
+`npm test` ✅ **3630 passed, 0 failed** (52 new, in a `Restaurant menu
+hierarchy` section whose fixtures are retired at the end so later counts are
+untouched).
+
+Then in a browser, against a throwaway Restaurant workspace on `localhost`
+seeded with the brief's own examples:
+
+- the subsections screen, grouped by section, with dish counts — Pizza →
+  Italian / Mexican / Naga Hot;
+- the dish editor showing Section, Subsection, Base price, three sizes with
+  their prices and codes, and an Extras group with min/max;
+- the till asking for a size and extras, previewing 10 inch (৳650) + Extra
+  cheese (৳80) = **৳730**, and the server storing exactly that;
+- **the kitchen slip reading `1 × Mexican Hot Pizza (10 inch, Extra cheese)`** —
+  a slip that said only "Pizza" would have the kitchen making the wrong thing.
+
+One layout bug was found and fixed by looking: `DialogFooter` reverses its
+children on a narrow screen, which put the picker's price *below* its buttons.
+
+### Not in this phase
+
+- **POS filtering by subsection** (phase 5). The server already accepts a
+  `subcategory` filter and it is tested; the till's chip row still filters by
+  section only.
+- **Bulk import** does not carry a subsection or variant column, so an imported
+  menu is still flat. Additive columns, when that is wanted.
+- The **100-item POS menu cap** (audit R6) is still there.

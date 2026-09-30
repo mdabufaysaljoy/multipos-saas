@@ -3,6 +3,7 @@ import type {
   DiningTable,
   KitchenTicketPayload,
   MenuItem,
+  MenuSubcategoryRow,
   RestaurantDashboard,
   RestaurantOrder,
   RestaurantReceiptPayload,
@@ -15,10 +16,24 @@ import type { SaleCustomerFields } from '@/features/customers/CustomerPicker';
 
 type Query = Record<string, unknown>;
 
+/**
+ * One line as a till sends it: what to make, and which version of it. Never a
+ * price - the server prices the variant and every add-on from the menu.
+ */
+export interface OrderLineBody {
+  menuItemId: string;
+  /** Required when the dish has sizes; refused when it has none. */
+  variantId?: string;
+  /** The extras chosen, by option id. */
+  addOnOptionIds?: string[];
+  quantity: number;
+  note?: string;
+}
+
 export interface CreateOrderInput extends SaleCustomerFields {
   type: 'dine_in' | 'takeaway';
   tableId?: string;
-  items: { menuItemId: string; quantity: number; note?: string }[];
+  items: OrderLineBody[];
   note?: string;
 }
 
@@ -32,6 +47,14 @@ export const restaurantApi = {
   updateMenuItem: (id: string, body: Record<string, unknown>) => patch<MenuItem>(`/restaurant/menu/${id}`, body),
   removeMenuItem: (id: string) => del<{ id: string }>(`/restaurant/menu/${id}`),
 
+  /** Subsections of a section: Pizza -> Italian, Mexican, Naga Hot. */
+  subcategories: (params?: Query) => get<MenuSubcategoryRow[]>('/restaurant/subcategories', params),
+  createSubcategory: (body: { category: string; name: string; sortOrder?: number }) =>
+    post<MenuSubcategoryRow>('/restaurant/subcategories', body),
+  updateSubcategory: (id: string, body: { name?: string; isActive?: boolean; sortOrder?: number }) =>
+    patch<MenuSubcategoryRow>(`/restaurant/subcategories/${id}`, body),
+  removeSubcategory: (id: string) => del<{ id: string }>(`/restaurant/subcategories/${id}`),
+
   tables: () => get<DiningTable[]>('/restaurant/tables'),
   createTable: (body: { name: string; seats?: number }) => post<DiningTable>('/restaurant/tables', body),
   updateTable: (id: string, body: Record<string, unknown>) => patch<DiningTable>(`/restaurant/tables/${id}`, body),
@@ -40,8 +63,7 @@ export const restaurantApi = {
   orders: (params?: Query) => getPaginated<RestaurantOrder>('/restaurant/orders', params),
   order: (id: string) => get<RestaurantOrder>(`/restaurant/orders/${id}`),
   createOrder: (body: CreateOrderInput) => post<RestaurantOrder>('/restaurant/orders', body),
-  addItems: (id: string, items: { menuItemId: string; quantity: number }[]) =>
-    post<RestaurantOrder>(`/restaurant/orders/${id}/items`, { items }),
+  addItems: (id: string, items: OrderLineBody[]) => post<RestaurantOrder>(`/restaurant/orders/${id}/items`, { items }),
   updateLine: (id: string, lineId: string, quantity: number) =>
     patch<RestaurantOrder>(`/restaurant/orders/${id}/items/${lineId}`, { quantity }),
   removeLine: (id: string, lineId: string) => del<RestaurantOrder>(`/restaurant/orders/${id}/items/${lineId}`),

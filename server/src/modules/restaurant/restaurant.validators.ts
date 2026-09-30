@@ -12,12 +12,63 @@ const queryFlag = z.enum(['true', 'false']).optional().transform((value) => valu
 
 // ------------------------------------------------------------------ menu
 
+/**
+ * A size or set of a dish. Exactly one is chosen and its price REPLACES the
+ * dish's own - see `addOnGroupInput` for the other kind.
+ */
+const variantInput = z
+  .object({
+    /** Absent when the variant is being added; present when one is being edited. */
+    _id: objectId.optional(),
+    name: z.string().trim().min(1, 'Give the size a name').max(60),
+    priceMinor: amount,
+    sku: z.string().trim().max(40).optional().default(''),
+    isAvailable: z.boolean().optional().default(true),
+    sortOrder: z.number().int().min(0).max(10_000).optional().default(0),
+  })
+  .strict();
+
+/** One extra. Several may be chosen and each price is ADDED to the line. */
+const addOnInput = z
+  .object({
+    _id: objectId.optional(),
+    name: z.string().trim().min(1, 'Give the extra a name').max(60),
+    priceMinor: amount,
+    isAvailable: z.boolean().optional().default(true),
+    sortOrder: z.number().int().min(0).max(10_000).optional().default(0),
+  })
+  .strict();
+
+const addOnGroupInput = z
+  .object({
+    _id: objectId.optional(),
+    name: z.string().trim().min(1, 'Give the group a name').max(60),
+    /** 1 or more makes the group a required choice. */
+    minSelect: z.number().int().min(0).max(20).optional().default(0),
+    maxSelect: z.number().int().min(1).max(20).optional().default(1),
+    options: z.array(addOnInput).max(40),
+    sortOrder: z.number().int().min(0).max(10_000).optional().default(0),
+  })
+  .strict()
+  .refine((group) => group.maxSelect >= group.minSelect, {
+    message: 'A group cannot require more extras than it allows',
+    path: ['maxSelect'],
+  })
+  .refine((group) => group.options.length >= group.minSelect, {
+    message: 'A group cannot require more extras than it offers',
+    path: ['options'],
+  });
+
 export const createMenuItemSchema = z
   .object({
     name: z.string().trim().min(1, 'Name is required').max(120),
     category: z.string().trim().min(1).max(60).optional().default('General'),
+    /** Empty for a dish that sits directly under its section. */
+    subcategory: z.string().trim().max(60).optional().default(''),
     description: z.string().trim().max(300).optional().default(''),
     priceMinor: amount,
+    variants: z.array(variantInput).max(30).optional().default([]),
+    addOnGroups: z.array(addOnGroupInput).max(10).optional().default([]),
     isAvailable: z.boolean().default(true),
     sortOrder: z.number().int().min(0).max(10_000).default(0),
   })
@@ -27,8 +78,11 @@ export const updateMenuItemSchema = z
   .object({
     name: z.string().trim().min(1).max(120),
     category: z.string().trim().min(1).max(60),
+    subcategory: z.string().trim().max(60),
     description: z.string().trim().max(300),
     priceMinor: amount,
+    variants: z.array(variantInput).max(30),
+    addOnGroups: z.array(addOnGroupInput).max(10),
     isAvailable: z.boolean(),
     sortOrder: z.number().int().min(0).max(10_000),
   })
@@ -37,8 +91,42 @@ export const updateMenuItemSchema = z
 
 export const listMenuSchema = searchSchema.extend({
   category: z.string().trim().max(60).optional(),
+  subcategory: z.string().trim().max(60).optional(),
   availableOnly: queryFlag,
 });
+
+// --------------------------------------------------------- subsections
+
+const subcategoryName = z.string().trim().min(1, 'Give the subsection a name').max(60);
+
+export const createSubcategorySchema = z
+  .object({
+    /** The section it belongs to. One level of nesting, no deeper. */
+    category: z.string().trim().min(1, 'Choose a section').max(60),
+    name: subcategoryName,
+    sortOrder: z.number().int().min(0).max(1000).optional().default(0),
+  })
+  .strict();
+
+export const updateSubcategorySchema = z
+  .object({
+    name: subcategoryName.optional(),
+    isActive: z.boolean().optional(),
+    sortOrder: z.number().int().min(0).max(1000).optional(),
+  })
+  .strict()
+  .refine((input) => Object.keys(input).length > 0, 'Nothing to update');
+
+export const listSubcategoriesSchema = z
+  .object({
+    category: z.string().trim().max(60).optional(),
+    includeInactive: queryFlag,
+  })
+  .strict();
+
+export type CreateSubcategoryInput = z.infer<typeof createSubcategorySchema>;
+export type UpdateSubcategoryInput = z.infer<typeof updateSubcategorySchema>;
+export type ListSubcategoriesInput = z.infer<typeof listSubcategoriesSchema>;
 
 // ---------------------------------------------------------------- tables
 
@@ -67,6 +155,13 @@ export const updateTableSchema = z
 const lineInput = z
   .object({
     menuItemId: objectId,
+    /**
+     * Which size or set. Required when the dish has variants, refused when it
+     * has none - the service decides, because only it can see the menu.
+     */
+    variantId: objectId.optional(),
+    /** The extras chosen, by option id. The service prices them. */
+    addOnOptionIds: z.array(objectId).max(20).optional().default([]),
     quantity: z.number().int().min(1).max(999),
     note: z.string().trim().max(200).optional().default(''),
   })
