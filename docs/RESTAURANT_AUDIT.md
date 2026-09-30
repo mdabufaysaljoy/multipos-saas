@@ -2,10 +2,11 @@
 
 **Date:** 2026-09-30 · **Commit:** `main` · **Scope:** Restaurant POS only.
 
-> **Status: phases 1 and 2 are done** (kitchen management and refunds removed,
-> 2026-09-30). The rest of this document is the audit as written before that
-> work, kept as the record it was made from. Two things it had missed, both
-> found during the removal and both handled there:
+> **Status: phases 1, 2 and 3 are done** (kitchen management and refunds
+> removed, billing moved below the cart; all 2026-09-30). The rest of this
+> document is the audit as written before that work, kept as the record it was
+> made from. Two things it had missed, both found during the removal and both
+> handled there:
 >
 > - **Prep-time analytics.** Restaurant reports carried a "Kitchen speed" block
 >   computed from `tickets.readyAt`, which only the mark-ready action ever set.
@@ -13,7 +14,7 @@
 > - **A second refund entry point.** The Orders page had its own "Refund items"
 >   action and dialog, not only the Refunds screen.
 >
-> What actually changed is recorded in §12 at the end of this document.
+> What actually changed is recorded in §12 and §13 at the end of this document.
 
 Read with `docs/ARCHITECTURE.md` (the platform) and `docs/ANALYTICS_PARITY.md`
 (the money vocabulary).
@@ -318,7 +319,7 @@ Ordered by dependency, not by the brief's numbering.
 |---|---|---|
 | **1** ✅ | Remove Kitchen management (keep send + token) | Self-contained; shrinks the surface everything else touches |
 | **2** ✅ | Remove Refunds | Self-contained; also shrinks it |
-| **3** | Billing below the cart | Pure UI; no model change; unblocks judging the POS layout before it grows |
+| **3** ✅ | Billing below the cart | Pure UI; no model change; unblocks judging the POS layout before it grows |
 | **4** | Subcategory (model + menu screen + import column) | The hierarchy's first half |
 | **5** | POS filtering by category **and** subcategory | Needs phase 4 |
 | **6** | Variants (model, menu screen, order line snapshots, pricing) | The heaviest; needs phase 4's screens |
@@ -449,3 +450,74 @@ routes that remain.
 **Not verified in a browser.** No Restaurant screen was opened; signing in needs
 the owner's password. The nav entries, the two deleted pages and the Orders
 dialog are covered by the build and typecheck only.
+
+---
+
+## 13. Phase 3: billing below the cart — 2026-09-30
+
+`PayDialog` is gone. Everything it did now lives in a `BillingPanel` pinned
+under the cart in the order column, on show for the whole life of an open order.
+
+### The shape
+
+```
+Card ── header            pinned   order number · table
+     ├─ cart              SCROLLS  the only scrolling thing in the column
+     ├─ billing           pinned   customer · discount · loyalty · tenders · due/change
+     └─ action bar        pinned   cancel · print bill · Complete sale
+```
+
+The cart is capped at `38vh` on a phone, where the card has no column height to
+fill, so the billing section is never pushed below the fold by a long order. On
+`lg` and up the cap lifts and the cart simply takes what is left. The order
+column went from `22rem` to `24rem` to fit the tenders.
+
+### The state trap the audit called out (R3), and how it is closed
+
+The modal reset itself every time it opened. An inline panel has no "open", so a
+discount typed for table 4 could follow the cashier to table 7. The panel is
+keyed on the order id, so React remounts it whenever the order changes — the
+reset is structural rather than an effect somebody has to remember.
+
+Untouched cash still follows what is due, so adding a dish mid-payment just
+moves the figure rather than wiping what has been typed.
+
+### Two defects found by looking at it
+
+Neither would have shown up in the test suite.
+
+1. **The discount field was outlined in red on every order.** `MoneyInput` marks
+   an empty or zero amount invalid, which is right for a payment row and wrong
+   for a discount nobody is giving. In a modal it flashed by; pinned on screen it
+   is permanent. `MoneyInput` gained an `optional` prop, **defaulted off**, so
+   the `isInvalid` expression for every existing caller is unchanged. Only this
+   panel passes it.
+2. **A fast double-click sent a second payment.** The button disables on
+   `loading`, but three clicks in one tick beat the re-render. The server refused
+   the extras on the revision check — no double charge — but the cashier saw
+   "Payment failed" on a sale that had gone through. A ref guard now drops a
+   click while one is in flight. Proved in the server log: before, 3 clicks gave
+   `200, 409, 409`; after, 3 clicks give one `200`.
+
+### Verified in a browser
+
+A throwaway Restaurant workspace on `localhost` (menu, tables, trial plan), then
+the whole flow driven by hand at 1440×900 and at phone width:
+
+| | |
+|---|---|
+| Customer selection | new customer attached, shown on the bill |
+| Order sent | `KOT-000001` generated, slip offered |
+| Normal / exact payment | cash pre-filled to what is due, `Change ৳0.00` |
+| Discount | ৳100 off ৳800 → `To pay ৳700.00`; server stored `discountMinor 10000` |
+| Overpayment | cash ৳1000 → `Change ৳300.00` |
+| Insufficient | `Remaining due ৳300.00`, Complete sale disabled |
+| Split | cash ৳500 + bKash ৳200 = ৳700; server stored both rows |
+| Validation | discount above the order → message, `To pay ৳0.00`, button disabled |
+| Completion | both orders `paid` with the right money |
+| Repeat submission | 3 clicks → 1 request |
+| Phone (375px) | stacks, page scrolls, no horizontal scroll, Complete sale reachable |
+
+`npm run lint` ✅ · `npm run typecheck` ✅ · `npm run build` ✅ ·
+`npm test` ✅ **3578 passed, 0 failed** (no server change, so the count is the
+same as phase 2).

@@ -105,6 +105,11 @@ What follows from that shape:
   same date. An open order is changed or cancelled instead. The shared return
   engine is untouched and still serves the other three verticals; Restaurant
   reporting keeps its refund figures so orders refunded earlier still add up.
+- **The bill is never a modal.** The till's order column is header, a scrolling
+  cart, then a pinned billing section (customer, discount, loyalty, tenders,
+  due and change) and a pinned action bar — the same four-layer shape the Super
+  Shop till uses, and the same rule: one scroll, and the money never moves. The
+  panel is keyed on the order, so switching tables resets it.
 - **No stock.** `restaurant.adapter` is a deliberate no-op inventory adapter and
   `/stock-ledger` answers with an empty page — the same route shape as everywhere
   else.

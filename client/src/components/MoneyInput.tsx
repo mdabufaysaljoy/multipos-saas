@@ -15,6 +15,14 @@ export interface MoneyInputProps {
   onEnter?: () => void;
   autoFocus?: boolean;
   max?: number;
+  /**
+   * The field may legitimately be empty or zero - a discount nobody is giving,
+   * say. It then reads as valid instead of being marked in red.
+   *
+   * Off by default, so every existing caller (payment rows and the rest, where
+   * an amount IS required) looks and behaves exactly as it did.
+   */
+  optional?: boolean;
 }
 
 /**
@@ -39,6 +47,7 @@ export const MoneyInput = React.forwardRef<HTMLInputElement, MoneyInputProps>(
       onEnter,
       autoFocus,
       max = 99_999_999_99,
+      optional = false,
     },
     forwardedRef,
   ) => {
@@ -96,7 +105,11 @@ export const MoneyInput = React.forwardRef<HTMLInputElement, MoneyInputProps>(
       setDraft(minorToMoneyString(parsed));
     };
 
-    const isInvalid = draft === '' || parseMoneyToMinor(draft) === null || (parseMoneyToMinor(draft) ?? 0) <= 0;
+    const parsedDraft = parseMoneyToMinor(draft);
+    // An optional field is only wrong when what is typed is not a number at all.
+    const isInvalid = optional
+      ? draft !== '' && parsedDraft === null
+      : draft === '' || parsedDraft === null || (parsedDraft ?? 0) <= 0;
 
     return (
       <div className={cn('relative', className)}>

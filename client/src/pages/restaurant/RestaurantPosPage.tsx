@@ -69,7 +69,6 @@ export function RestaurantPosPage() {
   const [orderId, setOrderId] = React.useState<string | null>(null);
   const [category, setCategory] = React.useState('all');
   const [search, setSearch] = React.useState('');
-  const [paying, setPaying] = React.useState(false);
   const [cancelling, setCancelling] = React.useState(false);
   const [ticketToPrint, setTicketToPrint] = React.useState<{ orderId: string; ticketId: string } | null>(null);
   const [receiptFor, setReceiptFor] = React.useState<string | null>(null);
@@ -191,9 +190,9 @@ export function RestaurantPosPage() {
   const pendingKitchen = activeOrder ? unsentChanges(activeOrder) : 0;
 
   return (
-    <div className="grid h-full gap-4 p-4 lg:grid-cols-[16rem_1fr_22rem] lg:p-6">
+    <div className="flex min-h-full flex-col gap-4 p-4 lg:grid lg:h-full lg:grid-cols-[16rem_1fr_24rem] lg:p-6">
       {/* ---------------------------------------------------- floor */}
-      <Card className="flex min-h-0 flex-col">
+      <Card className="flex flex-col lg:min-h-0">
         <CardHeader className="pb-2">
           <CardTitle className="text-base">Floor</CardTitle>
         </CardHeader>
@@ -267,12 +266,12 @@ export function RestaurantPosPage() {
       </Card>
 
       {/* ---------------------------------------------------- menu */}
-      <Card className="flex min-h-0 flex-col">
+      <Card className="flex flex-col lg:min-h-0">
         <CardHeader className="space-y-3 pb-2">
           <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search dishes…" />
           <CategoryFilter categories={categories} value={category} onChange={setCategory} className="pb-1" />
         </CardHeader>
-        <CardContent className="scrollbar-thin min-h-0 flex-1 overflow-y-auto">
+        <CardContent className="scrollbar-thin max-h-[55vh] min-h-0 flex-1 overflow-y-auto lg:max-h-none">
           {menuLoading && <LoadingState label="Loading the menu…" />}
           {!menuLoading && visibleMenu.length === 0 && <EmptyState title="Nothing to show" description="Add dishes on the Menu page." />}
           <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-4">
@@ -293,8 +292,17 @@ export function RestaurantPosPage() {
       </Card>
 
       {/* ---------------------------------------------------- order */}
-      <Card className="flex min-h-0 flex-col">
-        <CardHeader className="flex-row items-center justify-between space-y-0 pb-2">
+      {/*
+        Three sections, and only ONE of them scrolls.
+
+        The cart takes whatever room is left and scrolls inside it, so a long
+        order never pushes anything off the card. The billing section below it is
+        pinned at its natural height and never scrolls: a cashier taking money is
+        never hunting for a tender row or a Complete button that has slid out of
+        sight. This is the same shape the Super Shop till uses.
+      */}
+      <Card className="flex flex-col lg:min-h-0">
+        <CardHeader className="shrink-0 flex-row items-center justify-between space-y-0 pb-2">
           <CardTitle className="text-base">
             {activeOrder
               ? `${activeOrder.orderNumber} · ${activeOrder.type === 'takeaway' ? 'Takeaway' : `Table ${activeOrder.tableNameSnapshot}`}`
@@ -309,7 +317,13 @@ export function RestaurantPosPage() {
           )}
         </CardHeader>
 
-        <CardContent className="scrollbar-thin min-h-0 flex-1 overflow-y-auto">
+        <CardContent className="flex min-h-0 flex-1 flex-col overflow-hidden p-0">
+          {/*
+            The one scroll. Capped on a phone, where the card has no column
+            height to fill, so the billing section below is never pushed off the
+            bottom of an order with twenty lines on it.
+          */}
+          <div className="scrollbar-thin max-h-[38vh] min-h-[4rem] flex-1 overflow-y-auto px-4 lg:max-h-none lg:min-h-[5rem]">
           {!activeOrder && !draft && <EmptyState title="Pick a table" description="Or start a takeaway, then tap dishes to add them." />}
 
           {draft && (
@@ -362,105 +376,77 @@ export function RestaurantPosPage() {
               })}
             </ul>
           )}
-        </CardContent>
+          </div>
 
-        {(draft || activeOrder) && (
-          <div className="space-y-3 border-t p-4">
-            {activeOrder?.customerNameSnapshot && (
-              <p className="flex items-center gap-1.5 text-sm">
-                <UserRound className="h-4 w-4 text-muted-foreground" />
-                <span className="truncate font-medium">{activeOrder.customerNameSnapshot}</span>
-              </p>
-            )}
-
-            <div className="flex items-baseline justify-between">
-              <span className="text-sm text-muted-foreground">{draft ? 'Estimated total' : 'Total'}</span>
-              <span className="tabular text-2xl font-bold">
-                {formatMoney(
-                  draft ? draft.lines.reduce((sum, line) => sum + line.priceMinor * line.quantity, 0) : activeOrder!.totalMinor,
-                  currency,
-                )}
-              </span>
+          {/* ------------------------------------------- not sent yet */}
+          {draft && (
+            <div className="shrink-0 space-y-3 border-t p-4">
+              <div className="flex items-baseline justify-between">
+                <span className="text-sm text-muted-foreground">Estimated total</span>
+                <span className="tabular text-2xl font-bold">
+                  {formatMoney(draft.lines.reduce((sum, line) => sum + line.priceMinor * line.quantity, 0), currency)}
+                </span>
+              </div>
+              {/* A restaurant customer belongs to the order: chosen now, and
+                  fixed once the kitchen has it. */}
+              <CustomerPicker
+                value={draft.customer ?? null}
+                onChange={(customer) => setDraft({ ...draft, customer })}
+                canCreate={can('customers.create')}
+              />
+              <Button className="w-full" size="lg" disabled={draft.lines.length === 0} loading={send.isPending} onClick={() => send.mutate(draft)}>
+                <ChefHat />
+                Send order
+              </Button>
             </div>
+          )}
 
-            {draft && (
-              <>
-                {/* A restaurant customer belongs to the order: chosen now, and
-                    fixed once the kitchen has it. */}
-                <CustomerPicker
-                  value={draft.customer ?? null}
-                  onChange={(customer) => setDraft({ ...draft, customer })}
-                  canCreate={can('customers.create')}
-                />
-                <Button className="w-full" size="lg" disabled={draft.lines.length === 0} loading={send.isPending} onClick={() => send.mutate(draft)}>
-                  <ChefHat />
-                  Send order
-                </Button>
-              </>
-            )}
+          {/* ------------------------------------------- billing, always on show */}
+          {activeOrder?.status === 'open' && (
+            <BillingPanel
+              // Remounting on the order keeps a discount typed for table 4 from
+              // following the cashier to table 7.
+              key={activeOrder._id}
+              order={activeOrder}
+              currency={currency}
+              allowDiscount={can('sales.discount')}
+              canCancel={can('sales.cancel')}
+              pendingKitchen={pendingKitchen}
+              sendingChanges={sendChanges.isPending}
+              onSendChanges={() => sendChanges.mutate(activeOrder)}
+              onCancel={() => setCancelling(true)}
+              onPrintBill={() => {
+                setAutoPrintReceipt(false);
+                setReceiptFor(activeOrder._id);
+              }}
+              onPaid={(paid) => {
+                toast.success(`Order ${paid.orderNumber} paid`, {
+                  description: paid.changeMinor > 0 ? `Give ${formatMoney(paid.changeMinor, currency)} change.` : undefined,
+                });
+                clear();
+                refresh();
+                // The receipt prints itself as soon as the order is settled.
+                setAutoPrintReceipt(true);
+                setReceiptFor(paid._id);
+              }}
+            />
+          )}
 
-            {activeOrder?.status === 'open' && (
-              <>
-                {pendingKitchen > 0 && can('sales.create') && (
-                  <Button variant="secondary" className="w-full" loading={sendChanges.isPending} onClick={() => sendChanges.mutate(activeOrder)}>
-                    <ChefHat />
-                    Send {pendingKitchen} change{pendingKitchen === 1 ? '' : 's'} to kitchen
-                  </Button>
-                )}
-                <div className="grid grid-cols-[auto_auto_1fr] gap-2">
-                  {can('sales.cancel') ? (
-                    <Button variant="outline" size="lg" onClick={() => setCancelling(true)} aria-label="Cancel order">
-                      <Trash2 />
-                    </Button>
-                  ) : (
-                    <span />
-                  )}
-                  <Button
-                    variant="outline"
-                    size="lg"
-                    onClick={() => {
-                      setAutoPrintReceipt(false);
-                      setReceiptFor(activeOrder._id);
-                    }}
-                    aria-label="Print bill"
-                  >
-                    <Printer />
-                  </Button>
-                  <Button size="lg" disabled={activeOrder.items.every((line) => line.quantity === 0)} onClick={() => setPaying(true)}>
-                    <CreditCard />
-                    Take payment
-                  </Button>
-                </div>
-              </>
-            )}
-            {activeOrder && activeOrder.status !== 'open' && (
+          {/* ------------------------------------------- settled or cancelled */}
+          {activeOrder && activeOrder.status !== 'open' && (
+            <div className="shrink-0 space-y-3 border-t p-4">
+              <div className="flex items-baseline justify-between">
+                <span className="text-sm text-muted-foreground">Total</span>
+                <span className="tabular text-2xl font-bold">{formatMoney(activeOrder.totalMinor, currency)}</span>
+              </div>
               <Badge variant={activeOrder.status === 'paid' ? 'success' : 'secondary'} className="w-full justify-center py-1.5">
                 {activeOrder.status === 'paid' ? 'Paid' : 'Cancelled'}
               </Badge>
-            )}
-          </div>
-        )}
+            </div>
+          )}
+        </CardContent>
       </Card>
 
-      {activeOrder && (
-        <PayDialog
-          open={paying}
-          order={activeOrder}
-          currency={currency}
-          allowDiscount={can('sales.discount')}
-          onOpenChange={setPaying}
-          onPaid={(paid) => {
-            toast.success(`Order ${paid.orderNumber} paid`, {
-              description: paid.changeMinor > 0 ? `Give ${formatMoney(paid.changeMinor, currency)} change.` : undefined,
-            });
-            clear();
-            refresh();
-            // The receipt prints itself as soon as the order is settled.
-            setAutoPrintReceipt(true);
-            setReceiptFor(paid._id);
-          }}
-        />
-      )}
       {activeOrder && (
         <CancelDialog
           open={cancelling}
@@ -501,19 +487,40 @@ function QuantityStepper({ quantity, onChange, disabled }: { quantity: number; o
   );
 }
 
-function PayDialog({
-  open,
+/**
+ * The billing section, pinned under the cart and always on show.
+ *
+ * Everything a bill needs in one place: the customer the order belongs to, a
+ * discount, a loyalty card, the tenders (split included), what is still due or
+ * owed back in change, and Complete sale. It is laid out at its natural height
+ * and never scrolls - the cart above it is the only thing that does - so the
+ * cashier can always see the money.
+ *
+ * The parent remounts this per order, which is what resets a typed discount or
+ * a scanned card between one table and the next. Every amount is recomputed by
+ * the server on payment; nothing here is trusted.
+ */
+function BillingPanel({
   order,
   currency,
   allowDiscount,
-  onOpenChange,
+  canCancel,
+  pendingKitchen,
+  sendingChanges,
+  onSendChanges,
+  onCancel,
+  onPrintBill,
   onPaid,
 }: {
-  open: boolean;
   order: RestaurantOrder;
   currency: string;
   allowDiscount: boolean;
-  onOpenChange: (open: boolean) => void;
+  canCancel: boolean;
+  pendingKitchen: number;
+  sendingChanges: boolean;
+  onSendChanges: () => void;
+  onCancel: () => void;
+  onPrintBill: () => void;
   onPaid: (order: RestaurantOrder) => void;
 }) {
   const [discountMinor, setDiscountMinor] = React.useState<number | null>(0);
@@ -536,18 +543,9 @@ function PayDialog({
   const pointsToEarn = loyaltyMember ? pointsForSpend(total, loyaltyMember.earnSpendMinor) : 0;
   const availableMethods = tendersFromConfig(posConfig);
   // The same payment maths as every other till: cash is what the guest hands
-  // over, and change comes out of it.
+  // over, and change comes out of it. Untouched cash follows what is due, so
+  // adding a dish mid-payment simply moves the figure.
   const payments = usePayments(total);
-  const { reset: resetPayments } = payments;
-
-  React.useEffect(() => {
-    if (open) {
-      setDiscountMinor(0);
-      setLoyaltyMember(null);
-      setRedeemPoints(null);
-      resetPayments();
-    }
-  }, [open, order.totalMinor, resetPayments]);
 
   const attachCard = async (code: string): Promise<boolean> => {
     if (!loyaltyAvailable) return false;
@@ -568,93 +566,142 @@ function PayDialog({
     }
   };
 
+  // A second click before React has re-rendered the disabled button would send
+  // a second payment. The server refuses it (the revision has moved on), but
+  // the cashier should not see a failure for a sale that went through.
+  const inFlight = React.useRef(false);
+
   const pay = useMutation({
     mutationFn: () =>
       restaurantApi.pay(order._id, {
         // Cash carries what was handed over; the excess is the change.
         payments: tenderedRows(payments),
         discountMinor: discountMinor ?? 0,
+        // The revision the cashier is looking at; a dish added meanwhile is refused.
         rev: order.rev,
         // The card is what earns and redeems; the server re-checks both.
         ...(loyaltyMember ? { loyaltyMembershipId: loyaltyMember.id, redeemPoints: redeeming } : {}),
       }),
-    onSuccess: (paid) => {
-      onOpenChange(false);
-      onPaid(paid);
-    },
+    onSuccess: onPaid,
     onError: (err) => toast.error(errorMessage(err, 'Payment failed')),
+    onSettled: () => {
+      inFlight.current = false;
+    },
   });
 
-  const valid = payments.isSettled && (discountMinor ?? 0) <= order.subtotalMinor;
+  const completeSale = () => {
+    if (inFlight.current) return;
+    inFlight.current = true;
+    pay.mutate();
+  };
+
+  const discountTooBig = (discountMinor ?? 0) > order.subtotalMinor;
+  const nothingToCharge = order.items.every((line) => line.quantity === 0);
+  const valid = payments.isSettled && !discountTooBig && !nothingToCharge;
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-sm">
-        <DialogHeader>
-          <DialogTitle>Take payment</DialogTitle>
-          <DialogDescription>{order.orderNumber}</DialogDescription>
-        </DialogHeader>
-        <div className="space-y-4">
-          <div className="flex items-baseline justify-between rounded-md bg-muted/40 p-3">
-            <span className="text-sm text-muted-foreground">To pay</span>
-            <span className="tabular text-2xl font-bold">{formatMoney(total, currency)}</span>
+    <>
+      <div className="shrink-0 space-y-1.5 border-t px-4 py-2">
+        {order.customerNameSnapshot && (
+          <p className="flex items-center gap-1.5 text-sm">
+            <UserRound className="h-4 w-4 shrink-0 text-muted-foreground" />
+            <span className="truncate font-medium">{order.customerNameSnapshot}</span>
+          </p>
+        )}
+
+        <dl className="space-y-0.5 text-sm">
+          <div className="flex justify-between">
+            <dt className="text-muted-foreground">Subtotal</dt>
+            <dd className="tabular">{formatMoney(order.subtotalMinor, currency)}</dd>
           </div>
           {allowDiscount && (
-            <div className="space-y-1.5">
-              <Label>Discount</Label>
-              <MoneyInput value={discountMinor} onChange={setDiscountMinor} ariaLabel="Discount" />
+            <div className="flex items-center justify-between gap-2">
+              <dt className="text-muted-foreground">Discount</dt>
+              <dd>
+                <MoneyInput optional value={discountMinor} onChange={setDiscountMinor} className="w-28 [&_input]:h-8" ariaLabel="Discount" />
+              </dd>
             </div>
           )}
-          {loyaltyAvailable && !loyaltyMember && (
-            <Button type="button" variant="outline" className="w-full" onClick={() => setCardDialogOpen(true)}>
-              <CreditCard />
-              Loyalty card
-            </Button>
+          {loyaltyDiscountMinor > 0 && (
+            <div className="flex justify-between">
+              <dt className="text-muted-foreground">Points</dt>
+              <dd className="tabular text-success">− {formatMoney(loyaltyDiscountMinor, currency)}</dd>
+            </div>
           )}
-          {loyaltyMember && (
-            <LoyaltyStrip
-              member={loyaltyMember}
-              currency={currency}
-              canRedeem={loyaltyAccess.canRedeem}
-              redeemPoints={redeemPoints}
-              maxRedeemable={maxRedeemable}
-              pointsToEarn={pointsToEarn}
-              onRedeemChange={setRedeemPoints}
-              onRemove={() => {
-                setLoyaltyMember(null);
-                setRedeemPoints(null);
-              }}
-            />
-          )}
-          <PaymentPanel
-            rows={payments.rows}
-            availableMethods={availableMethods}
-            totalMinor={total}
-            hasCash={payments.hasCash}
-            remainingPayableMinor={payments.remainingPayableMinor}
-            changeMinor={payments.changeMinor}
-            dueMinor={payments.dueMinor}
-            cashTyped={payments.cashTyped}
-            issues={payments.issues}
+          <div className="flex items-baseline justify-between border-t pt-1">
+            <dt className="font-semibold">To pay</dt>
+            <dd className="tabular text-2xl font-bold">{formatMoney(total, currency)}</dd>
+          </div>
+        </dl>
+
+        {discountTooBig && <p className="text-xs text-destructive">A discount cannot be more than the order.</p>}
+
+        {loyaltyAvailable && !loyaltyMember && (
+          <Button type="button" variant="outline" size="sm" className="w-full" onClick={() => setCardDialogOpen(true)}>
+            <CreditCard />
+            Loyalty card
+          </Button>
+        )}
+        {loyaltyMember && (
+          <LoyaltyStrip
+            member={loyaltyMember}
             currency={currency}
-            onAmountChange={payments.setAmount}
-            onMethodChange={payments.setMethod}
-            onAddRow={payments.addRow}
-            onRemoveRow={payments.removeRow}
+            canRedeem={loyaltyAccess.canRedeem}
+            redeemPoints={redeemPoints}
+            maxRedeemable={maxRedeemable}
+            pointsToEarn={pointsToEarn}
+            onRedeemChange={setRedeemPoints}
+            onRemove={() => {
+              setLoyaltyMember(null);
+              setRedeemPoints(null);
+            }}
           />
-        </div>
-        <DialogFooter>
-          <Button variant="outline" onClick={() => onOpenChange(false)}>
-            Back
+        )}
+
+        <PaymentPanel
+          compact
+          rows={payments.rows}
+          availableMethods={availableMethods}
+          totalMinor={total}
+          hasCash={payments.hasCash}
+          remainingPayableMinor={payments.remainingPayableMinor}
+          changeMinor={payments.changeMinor}
+          dueMinor={payments.dueMinor}
+          cashTyped={payments.cashTyped}
+          issues={payments.issues}
+          currency={currency}
+          onAmountChange={payments.setAmount}
+          onMethodChange={payments.setMethod}
+          onAddRow={payments.addRow}
+          onRemoveRow={payments.removeRow}
+        />
+
+        {pendingKitchen > 0 && (
+          <Button variant="secondary" size="sm" className="w-full" loading={sendingChanges} onClick={onSendChanges}>
+            <ChefHat />
+            Send {pendingKitchen} change{pendingKitchen === 1 ? '' : 's'} to kitchen
           </Button>
-          <Button disabled={!valid} loading={pay.isPending} onClick={() => pay.mutate()}>
-            Confirm payment
+        )}
+      </div>
+
+      {/* Pinned: the cashier never scrolls to find Complete sale. */}
+      <div className="flex shrink-0 gap-2 border-t p-2.5 pb-[max(0.625rem,env(safe-area-inset-bottom))] lg:pb-2.5">
+        {canCancel && (
+          <Button variant="outline" size="lg" onClick={onCancel} aria-label="Cancel order">
+            <Trash2 />
           </Button>
-        </DialogFooter>
-      </DialogContent>
+        )}
+        <Button variant="outline" size="lg" onClick={onPrintBill} aria-label="Print bill">
+          <Printer />
+        </Button>
+        <Button className="flex-1" size="lg" disabled={!valid} loading={pay.isPending} onClick={completeSale}>
+          <CreditCard />
+          Complete sale
+        </Button>
+      </div>
 
       <LoyaltyCardDialog open={cardDialogOpen} onOpenChange={setCardDialogOpen} onSubmit={(code) => attachCard(code)} />
-    </Dialog>
+    </>
   );
 }
 
