@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { format, parseISO } from 'date-fns';
-import { Ban, ChefHat, Lock, Percent, Soup, Timer } from 'lucide-react';
+import { Ban, Lock, Percent, Soup } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { EmptyState, LoadingState } from '@/components/states';
@@ -15,12 +15,6 @@ import { ApiError } from '@/api/client';
 import { restaurantApi } from '@/api/restaurant';
 import { formatMoney } from '@/lib/money';
 import { useAuth } from '@/hooks/useAuth';
-
-const duration = (seconds: number) => {
-  if (seconds < 60) return `${seconds}s`;
-  const minutes = Math.floor(seconds / 60);
-  return minutes < 60 ? `${minutes}m ${seconds % 60}s` : `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
-};
 
 /**
  * Restaurant Advanced Analytics. Locked (not hidden) on plans without it; the
@@ -55,7 +49,7 @@ export function RestaurantReportsPage() {
         description={
           data
             ? `${data.range.label} · ${format(parseISO(data.range.from), 'dd MMM')} – ${format(parseISO(data.range.to), 'dd MMM yyyy')}`
-            : 'Menu, voids, kitchen and cash drawer analysis'
+            : 'Menu, voids and cash drawer analysis'
         }
         actions={<PrintReportButton path="/restaurant/reports/print" params={rangeParams(range)} disabled={!data} />}
       />
@@ -197,46 +191,7 @@ export function RestaurantReportsPage() {
             </Card>
           </div>
 
-          <div className="grid gap-4 lg:grid-cols-3">
-            <Card>
-              <CardHeader className="pb-2">
-                <CardTitle className="flex items-center gap-2 text-base">
-                  <ChefHat className="h-4 w-4" />
-                  Kitchen speed
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-3">
-                {data.kitchen.tickets === 0 ? (
-                  <p className="py-6 text-center text-sm text-muted-foreground">No tickets marked ready</p>
-                ) : (
-                  <>
-                    <div className="grid grid-cols-2 gap-2 text-sm">
-                      <div className="rounded-md border p-2">
-                        <p className="text-xs text-muted-foreground">Average</p>
-                        <p className="flex items-center gap-1 font-semibold">
-                          <Timer className="h-3.5 w-3.5" />
-                          {duration(data.kitchen.averagePrepSeconds)}
-                        </p>
-                      </div>
-                      <div className="rounded-md border p-2">
-                        <p className="text-xs text-muted-foreground">Slowest</p>
-                        <p className="font-semibold">{duration(data.kitchen.slowestPrepSeconds)}</p>
-                      </div>
-                    </div>
-                    <ul className="divide-y text-sm">
-                      {data.kitchen.byHour.map((row) => (
-                        <li key={row.hour} className="flex justify-between py-1.5">
-                          <span className="tabular">{row.hour}</span>
-                          <span className="text-muted-foreground">{row.tickets} tickets</span>
-                          <span className="tabular font-medium">{duration(row.averagePrepSeconds)}</span>
-                        </li>
-                      ))}
-                    </ul>
-                  </>
-                )}
-              </CardContent>
-            </Card>
-
+          <div className="grid gap-4 lg:grid-cols-2">
             <Card>
               <CardHeader className="pb-2">
                 <CardTitle className="flex items-center gap-2 text-base">

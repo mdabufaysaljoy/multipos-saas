@@ -9,7 +9,7 @@ import type { DashboardInput } from './restaurant.validators';
 
 /**
  * Restaurant Advanced Analytics for the current branch: menu performance,
- * voids and cancellations, discounts, kitchen speed and cash-drawer variance.
+ * voids and cancellations, discounts and cash-drawer variance.
  *
  * Gated behind the `advancedReports` feature at the route, exactly like the
  * Clothing analytics. All figures come from order snapshots.
@@ -20,7 +20,6 @@ class RestaurantReportsService {
     const scope = { tenantId: ctx.tenantId, storeId: ctx.storeId };
     const window = { $gte: range.from, $lte: range.to };
     const paidMatch = { ...scope, status: 'paid', paidAt: window };
-    const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
 
     // A kitchen restocks nothing, so a refund takes money out and no cost back.
     const [returns, returnList] = await Promise.all([
@@ -28,7 +27,7 @@ class RestaurantReportsService {
       recentReturns(ctx, 'restaurant', range),
     ]);
 
-    const [totals, payments, menu, categories, voids, cancelTotals, cancellations, discounts, kitchen, shifts] = await Promise.all([
+    const [totals, payments, menu, categories, voids, cancelTotals, cancellations, discounts, shifts] = await Promise.all([
       RestaurantOrderModel.aggregate<{ paidOrders: number; netSalesMinor: number; discountsMinor: number; changeMinor: number; unshiftedSalesMinor: number }>([
         { $match: paidMatch },
         {
@@ -105,26 +104,6 @@ class RestaurantReportsService {
         { $sort: { discountsMinor: -1 } },
         { $limit: 20 },
       ]),
-      RestaurantOrderModel.aggregate<{
-        overall: { tickets: number; averageSeconds: number; slowestSeconds: number }[];
-        byHour: { _id: string; tickets: number; averageSeconds: number }[];
-      }>([
-        { $match: { ...scope, 'tickets.readyAt': window } },
-        { $unwind: '$tickets' },
-        { $match: { 'tickets.status': 'ready', 'tickets.readyAt': window } },
-        {
-          $project: {
-            seconds: { $divide: [{ $subtract: ['$tickets.readyAt', '$tickets.createdAt'] }, 1000] },
-            hour: { $dateToString: { format: '%H:00', date: '$tickets.createdAt', timezone } },
-          },
-        },
-        {
-          $facet: {
-            overall: [{ $group: { _id: null, tickets: { $sum: 1 }, averageSeconds: { $avg: '$seconds' }, slowestSeconds: { $max: '$seconds' } } }],
-            byHour: [{ $group: { _id: '$hour', tickets: { $sum: 1 }, averageSeconds: { $avg: '$seconds' } } }, { $sort: { _id: 1 } }],
-          },
-        },
-      ]),
       RestaurantShiftModel.find({ ...scope, status: 'closed', closedAt: window })
         .sort({ closedAt: -1 })
         .limit(50)
@@ -133,8 +112,6 @@ class RestaurantReportsService {
     ]);
 
     const t = totals[0];
-    const k = kitchen[0];
-    const overall = k?.overall[0];
 
     return {
       range: { from: range.from, to: range.to, label: range.label, preset: input.preset },
@@ -180,12 +157,6 @@ class RestaurantReportsService {
       discounts: {
         totalMinor: t?.discountsMinor ?? 0,
         byStaff: discounts.map((row) => ({ userId: row._id, name: row.name || 'Unknown', orders: row.orders, discountsMinor: row.discountsMinor })),
-      },
-      kitchen: {
-        tickets: overall?.tickets ?? 0,
-        averagePrepSeconds: Math.round(overall?.averageSeconds ?? 0),
-        slowestPrepSeconds: Math.round(overall?.slowestSeconds ?? 0),
-        byHour: (k?.byHour ?? []).map((row) => ({ hour: row._id, tickets: row.tickets, averagePrepSeconds: Math.round(row.averageSeconds) })),
       },
       shifts: {
         closed: shifts.length,

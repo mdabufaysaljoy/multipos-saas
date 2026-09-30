@@ -420,51 +420,6 @@ class RestaurantService {
     return updated;
   }
 
-  /** Tickets waiting in (or recently finished by) the kitchen of this branch. */
-  async kitchenQueue(ctx: TenantContext, status: 'pending' | 'ready') {
-    const since = dayjs().subtract(12, 'hour').toDate();
-    return RestaurantOrderModel.aggregate([
-      { $match: { tenantId: ctx.tenantId, storeId: ctx.storeId, 'tickets.status': status } },
-      { $unwind: '$tickets' },
-      { $match: { 'tickets.status': status, ...(status === 'ready' ? { 'tickets.readyAt': { $gte: since } } : {}) } },
-      {
-        $project: {
-          _id: '$tickets._id',
-          ticketNumber: '$tickets.ticketNumber',
-          lines: '$tickets.lines',
-          status: '$tickets.status',
-          createdAt: '$tickets.createdAt',
-          createdByNameSnapshot: '$tickets.createdByNameSnapshot',
-          readyAt: '$tickets.readyAt',
-          readyByNameSnapshot: '$tickets.readyByNameSnapshot',
-          orderId: '$_id',
-          orderNumber: '$orderNumber',
-          type: '$type',
-          tableNameSnapshot: '$tableNameSnapshot',
-          orderNote: '$note',
-        },
-      },
-      // The oldest pending ticket is the one to cook next; ready shows the latest.
-      { $sort: status === 'pending' ? { createdAt: 1 } : { readyAt: -1 } },
-      { $limit: 100 },
-    ]);
-  }
-
-  /** Doesn't touch the order revision, so the kitchen never blocks a payment. */
-  async markTicketReady(ctx: TenantContext, orderId: Types.ObjectId, ticketId: Types.ObjectId) {
-    const updated = await RestaurantOrderModel.findOneAndUpdate(
-      { _id: orderId, tenantId: ctx.tenantId, storeId: ctx.storeId, tickets: { $elemMatch: { _id: ticketId, status: 'pending' } } },
-      { $set: { 'tickets.$.status': 'ready', 'tickets.$.readyAt': new Date(), 'tickets.$.readyByNameSnapshot': ctx.userName } },
-      { new: true, timestamps: false },
-    ).lean();
-    if (updated) return updated;
-
-    const order = await this.getOrder(ctx, orderId);
-    const ticket = (order.tickets ?? []).find((t) => t._id.equals(ticketId));
-    if (!ticket) throw ApiError.notFound('Kitchen ticket not found');
-    throw ApiError.conflict(`This ticket is already ${ticket.status}`);
-  }
-
   /** Everything needed to (re)print one kitchen ticket. */
   async kitchenTicket(ctx: TenantContext, orderId: Types.ObjectId, ticketId: Types.ObjectId) {
     const order = await this.getOrder(ctx, orderId);

@@ -6,6 +6,11 @@
 > is the root `IMPLIMENTATION_STATUS.md` (note the spelling), which this file
 > does not replace or duplicate. This is the Super Shop audit and plan.
 
+> **Other verticals have their own map.** The Restaurant POS audit — its
+> architecture, the kitchen and refund dependency maps, the billing flow, the
+> menu hierarchy it does not yet have, and the phased plan — is
+> `docs/RESTAURANT_AUDIT.md`.
+
 **Verified this run:** `npm run lint` ✅ · `npm run typecheck` ✅ ·
 `npm run build` ✅ · `npm test` ✅ **3231 passed, 0 failed** (local, MongoDB on
 :27017). CI on GitHub is red — see Issue 10, reproduced below.

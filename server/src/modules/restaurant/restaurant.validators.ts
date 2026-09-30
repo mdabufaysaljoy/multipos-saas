@@ -129,33 +129,12 @@ export const sendToKitchenSchema = z.object({ rev: z.number().int().min(0) }).st
 
 export const ticketParams = z.object({ id: objectId, ticketId: objectId });
 
-export const kitchenQueueSchema = z.object({
-  status: z.enum(['pending', 'ready']).default('pending'),
-});
-
 export const listOrdersSchema = paginationSchema.extend({
   status: z.enum(RESTAURANT_ORDER_STATUSES).optional(),
   type: z.enum(RESTAURANT_ORDER_TYPES).optional(),
   from: calendarDate.optional(),
   to: calendarDate.optional(),
 });
-
-/**
- * A refund against a paid order: which lines, how many of each, and why.
- * Nothing restocks - a kitchen has no shelf - so there is no restock flag.
- */
-export const createOrderReturnSchema = z
-  .object({
-    items: z
-      .array(z.object({ saleItemId: objectId, quantity: z.number().int().min(1).max(999) }).strict())
-      .min(1, 'Choose at least one line to refund')
-      .max(100),
-    reason: z.string().trim().min(3, 'Give a reason for the refund').max(300),
-    refundMethod: paymentMethodKey.default('cash'),
-  })
-  .strict();
-
-export type CreateOrderReturnInput = z.infer<typeof createOrderReturnSchema>;
 
 /** Every vertical's dashboard takes the same range; this is that schema. */
 export const dashboardSchema = dashboardRangeSchema;
@@ -208,7 +187,6 @@ export type PayOrderInput = z.infer<typeof payOrderSchema>;
 export type ListOrdersInput = z.infer<typeof listOrdersSchema>;
 export type SummaryInput = z.infer<typeof summarySchema>;
 export type DashboardInput = z.infer<typeof dashboardSchema>;
-export type KitchenQueueInput = z.infer<typeof kitchenQueueSchema>;
 export type OpenShiftInput = z.infer<typeof openShiftSchema>;
 export type CashMovementInput = z.infer<typeof cashMovementSchema>;
 export type CloseShiftInput = z.infer<typeof closeShiftSchema>;
