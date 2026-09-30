@@ -1,7 +1,19 @@
 # Restaurant POS — audit before the next change
 
 **Date:** 2026-09-30 · **Commit:** `main` · **Scope:** Restaurant POS only.
-**Nothing was implemented.** This is what is there now and what it would take.
+
+> **Status: phases 1 and 2 are done** (kitchen management and refunds removed,
+> 2026-09-30). The rest of this document is the audit as written before that
+> work, kept as the record it was made from. Two things it had missed, both
+> found during the removal and both handled there:
+>
+> - **Prep-time analytics.** Restaurant reports carried a "Kitchen speed" block
+>   computed from `tickets.readyAt`, which only the mark-ready action ever set.
+>   It could not survive the screen that fed it, so it went too.
+> - **A second refund entry point.** The Orders page had its own "Refund items"
+>   action and dialog, not only the Refunds screen.
+>
+> What actually changed is recorded in §12 at the end of this document.
 
 Read with `docs/ARCHITECTURE.md` (the platform) and `docs/ANALYTICS_PARITY.md`
 (the money vocabulary).
@@ -304,8 +316,8 @@ Ordered by dependency, not by the brief's numbering.
 
 | Phase | Work | Why here |
 |---|---|---|
-| **1** | Remove Kitchen management (keep send + token) | Self-contained; shrinks the surface everything else touches |
-| **2** | Remove Refunds | Self-contained; also shrinks it |
+| **1** ✅ | Remove Kitchen management (keep send + token) | Self-contained; shrinks the surface everything else touches |
+| **2** ✅ | Remove Refunds | Self-contained; also shrinks it |
 | **3** | Billing below the cart | Pure UI; no model change; unblocks judging the POS layout before it grows |
 | **4** | Subcategory (model + menu screen + import column) | The hierarchy's first half |
 | **5** | POS filtering by category **and** subcategory | Needs phase 4 |
@@ -380,3 +392,60 @@ tests. So:
 Shop UI work in this repository have shipped unverified visually, for the same
 reason each time — signing in needs the owner's password. Phase 3 is a layout
 change and should not be the next one to ship unseen.
+
+---
+
+## 12. What phases 1 and 2 actually removed — 2026-09-30
+
+### Removed
+
+| Kitchen management | Refunds |
+|---|---|
+| `pages/restaurant/KitchenPage.tsx` | `pages/restaurant/RestaurantRefundsPage.tsx` |
+| its route, nav entry and vertical guard | its route, nav entry and vertical guard |
+| `GET /restaurant/kitchen/tickets` (+ `kitchenQueue`, `kitchenQueueSchema`) | `POST /restaurant/orders/:id/return` (+ `createOrderReturn`, `createOrderReturnSchema`) |
+| `POST /orders/:id/tickets/:ticketId/ready` (+ `markTicketReady`) | `GET /restaurant/returns` (+ `listOrderReturns`) |
+| the `{tenantId, storeId, 'tickets.status'}` index | `services/returns/adapters/restaurant.saleAdapter.ts` |
+| the "Kitchen speed" analytics, server and client | the "Refund items" action on the Orders page |
+
+### Kept, deliberately
+
+- **`POST /orders/:id/send-to-kitchen`.** This is the Order Sent action, and the
+  only place a token is generated: `nextSequence(…, 'kitchen-ticket')` →
+  `KOT-000001`, per branch. Its name still says "kitchen" because renaming a
+  live endpoint is a separate, breaking change and was not asked for.
+- `sentQuantity`, `voidedAt`, and change-only follow-up tickets.
+- `GET /orders/:id/tickets/:ticketId` and the printed slip — reprinting a token.
+- **The `'ready'` status, `readyAt` and `readyByNameSnapshot`.** Nothing writes
+  them any more. They stay because orders already in the database hold tickets
+  in that state, and removing the enum value would make those documents fail
+  validation on their next save. The Kitchen tickets export keeps its columns
+  for the same reason.
+- **Refund figures in Restaurant reporting.** They subtract zero for any new
+  period, and keep the history honest for orders refunded before this change.
+  The "Refunded so far" line on an order still appears for those orders.
+
+### Not touched
+
+`posReturns.service` and the rest of the shared return engine (Clothing, Super
+Shop and Pharmacy still use it — their return tests passing is the proof), the
+`returns.*` permissions (shared with three other verticals), and every Clothing,
+Super Shop and Pharmacy file.
+
+There was never a `kitchen.*` permission: the screens reused `sales.view` /
+`sales.create`, so nothing had to be removed from the permission catalogue.
+
+### Verified
+
+`npm run lint` ✅ · `npm run typecheck` ✅ · `npm run build` ✅ ·
+`npm test` ✅ **3578 passed, 0 failed**.
+
+The kitchen tests were rewritten rather than deleted: they now prove the token
+survives (KOT numbering, change-only follow-up tickets, a void as a negative
+line, reprinting) and that the queue and mark-ready routes answer 404. The
+cross-vertical isolation the dead queue route used to prove was moved onto the
+routes that remain.
+
+**Not verified in a browser.** No Restaurant screen was opened; signing in needs
+the owner's password. The nav entries, the two deleted pages and the Orders
+dialog are covered by the build and typecheck only.

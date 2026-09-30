@@ -97,6 +97,14 @@ What follows from that shape:
   `sentQuantity`; a removed line is kept at quantity 0 with `voidedAt` set so the
   next ticket can say VOID. Ticket numbers come from
   `nextSequence(tenant, store, 'kitchen-ticket')` as `KOT-000001`, per branch.
+- **Sending an order produces a token; nothing tracks it afterwards.** There is
+  no kitchen queue and no way to mark a ticket done — that screen was removed on
+  2026-09-30. A ticket is `pending` when sent and `void` when its order is
+  cancelled. (`ready` survives in the enum only for orders already stored.)
+- **A paid order cannot be refunded.** Restaurant refunds were removed on the
+  same date. An open order is changed or cancelled instead. The shared return
+  engine is untouched and still serves the other three verticals; Restaurant
+  reporting keeps its refund figures so orders refunded earlier still add up.
 - **No stock.** `restaurant.adapter` is a deliberate no-op inventory adapter and
   `/stock-ledger` answers with an empty page — the same route shape as everywhere
   else.

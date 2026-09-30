@@ -43,7 +43,6 @@ const InventoryPage = lazyPage(() => import('@/pages/InventoryPage'), 'Inventory
 const MenuPage = lazyPage(() => import('@/pages/restaurant/MenuPage'), 'MenuPage');
 const TablesPage = lazyPage(() => import('@/pages/restaurant/TablesPage'), 'TablesPage');
 const OrdersPage = lazyPage(() => import('@/pages/restaurant/OrdersPage'), 'OrdersPage');
-const KitchenPage = lazyPage(() => import('@/pages/restaurant/KitchenPage'), 'KitchenPage');
 const ShiftsPage = lazyPage(() => import('@/pages/restaurant/ShiftsPage'), 'ShiftsPage');
 
 // Pharmacy POS
@@ -63,7 +62,6 @@ const MenuImportPage = lazyPage(() => import('@/pages/restaurant/MenuImportPage'
 const PharmacyCategoriesPage = lazyPage(() => import('@/pages/pharmacy/PharmacyCategoriesPage'), 'PharmacyCategoriesPage');
 const MenuCategoriesPage = lazyPage(() => import('@/pages/restaurant/MenuCategoriesPage'), 'MenuCategoriesPage');
 const PharmacyReturnsPage = lazyPage(() => import('@/pages/pharmacy/PharmacyReturnsPage'), 'PharmacyReturnsPage');
-const RestaurantRefundsPage = lazyPage(() => import('@/pages/restaurant/RestaurantRefundsPage'), 'RestaurantRefundsPage');
 const ShopSalesPage = lazyPage(() => import('@/pages/supershop/ShopSalesPage'), 'ShopSalesPage');
 
 // Shared workspace screens
@@ -198,14 +196,6 @@ export function AppRoutes() {
           }
         />
         <Route
-          path="/kitchen"
-          element={
-            <ProtectedRoute anyOf={['sales.view']}>
-              <KitchenPage />
-            </ProtectedRoute>
-          }
-        />
-        <Route
           path="/shifts"
           element={
             <ProtectedRoute anyOf={['sales.create', 'reports.view']}>
@@ -324,14 +314,6 @@ export function AppRoutes() {
           element={
             <ProtectedRoute anyOf={['returns.view']}>
               <PharmacyReturnsPage />
-            </ProtectedRoute>
-          }
-        />
-        <Route
-          path="/refunds"
-          element={
-            <ProtectedRoute anyOf={['returns.view']}>
-              <RestaurantRefundsPage />
             </ProtectedRoute>
           }
         />

@@ -24,10 +24,8 @@ import {
   restaurantReportsSchema,
   createMenuItemSchema,
   createOrderSchema,
-  createOrderReturnSchema,
   createTableSchema,
   dashboardSchema,
-  kitchenQueueSchema,
   sendToKitchenSchema,
   ticketParams,
   lineParams,
@@ -98,24 +96,11 @@ router.patch('/orders/:id/items/:lineId', requireActiveSubscription, requirePerm
 router.delete('/orders/:id/items/:lineId', requireActiveSubscription, requirePermission(PERMISSIONS.SALES_CREATE), validate({ params: lineParams }), controller.removeLine);
 router.post('/orders/:id/pay', requireActiveSubscription, requirePermission(PERMISSIONS.SALES_CREATE), validate({ params: idParam, body: payOrderSchema }), controller.payOrder);
 router.post('/orders/:id/cancel', requireActiveSubscription, requirePermission(PERMISSIONS.SALES_CANCEL), validate({ params: idParam, body: cancelOrderSchema }), controller.cancelOrder);
-// A refund against a PAID order: money back, nothing restocked. An open order
-// is changed or cancelled instead, which is a different thing.
-router.post(
-  '/orders/:id/return',
-  requireActiveSubscription,
-  requirePermission(PERMISSIONS.RETURNS_CREATE),
-  validate({ params: idParam, body: createOrderReturnSchema }),
-  controller.createOrderReturn,
-);
-router.get('/returns', requirePermission(PERMISSIONS.RETURNS_VIEW), validate({ query: listOrdersSchema }), controller.listOrderReturns);
-
-// ------------------------------------------------ kitchen tickets & printing
-// Reading the queue, tickets and receipts needs sales.view; sending a ticket or
-// marking one ready changes the order, so it needs sales.create.
+// ------------------------------------------------ order tokens & printing
+// Sending an order produces its token (a KOT number) and changes the order, so
+// it needs sales.create. Reprinting a token or a receipt only reads: sales.view.
 router.post('/orders/:id/send-to-kitchen', requireActiveSubscription, requirePermission(PERMISSIONS.SALES_CREATE), validate({ params: idParam, body: sendToKitchenSchema }), controller.sendToKitchen);
-router.get('/kitchen/tickets', requirePermission(PERMISSIONS.SALES_VIEW), validate({ query: kitchenQueueSchema }), controller.kitchenQueue);
 router.get('/orders/:id/tickets/:ticketId', requirePermission(PERMISSIONS.SALES_VIEW), validate({ params: ticketParams }), controller.kitchenTicket);
-router.post('/orders/:id/tickets/:ticketId/ready', requireActiveSubscription, requirePermission(PERMISSIONS.SALES_CREATE), validate({ params: ticketParams }), controller.markTicketReady);
 router.get('/orders/:id/receipt', requirePermission(PERMISSIONS.SALES_VIEW), validate({ params: idParam }), controller.receipt);
 
 // ------------------------------------------------ cash-drawer shifts

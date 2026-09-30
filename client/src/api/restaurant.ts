@@ -1,7 +1,6 @@
 import { del, get, getPaginated, patch, post } from './client';
 import type {
   DiningTable,
-  KitchenQueueTicket,
   KitchenTicketPayload,
   MenuItem,
   RestaurantDashboard,
@@ -13,7 +12,6 @@ import type {
   ShiftPayload,
 } from '@/types/restaurant';
 import type { SaleCustomerFields } from '@/features/customers/CustomerPicker';
-import type { PosReturn } from '@/types/domain';
 
 type Query = Record<string, unknown>;
 
@@ -59,18 +57,14 @@ export const restaurantApi = {
     },
   ) =>
     post<RestaurantOrder>(`/restaurant/orders/${id}/pay`, body),
-  /** A refund against a paid order: money back, nothing restocked. */
-  createReturn: (id: string, body: { items: { saleItemId: string; quantity: number }[]; reason: string; refundMethod: string }) =>
-    post<PosReturn>(`/restaurant/orders/${id}/return`, body),
-  returns: (params?: Query) => getPaginated<PosReturn>('/restaurant/returns', params),
 
   cancel: (id: string, reason: string) => post<RestaurantOrder>(`/restaurant/orders/${id}/cancel`, { reason }),
 
-  /** Sends what the kitchen has not seen; the server works out the changes. */
+  /**
+   * Sends the order: the server works out what has not been sent yet and
+   * answers with the order carrying its new token (a KOT number).
+   */
   sendToKitchen: (id: string, rev: number) => post<RestaurantOrder>(`/restaurant/orders/${id}/send-to-kitchen`, { rev }),
-  kitchenTickets: (status: 'pending' | 'ready' = 'pending') => get<KitchenQueueTicket[]>('/restaurant/kitchen/tickets', { status }),
-  markTicketReady: (orderId: string, ticketId: string) =>
-    post<RestaurantOrder>(`/restaurant/orders/${orderId}/tickets/${ticketId}/ready`),
   kitchenTicket: (orderId: string, ticketId: string) =>
     get<KitchenTicketPayload>(`/restaurant/orders/${orderId}/tickets/${ticketId}`),
   receipt: (id: string) => get<RestaurantReceiptPayload>(`/restaurant/orders/${id}/receipt`),

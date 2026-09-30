@@ -1,12 +1,9 @@
 import * as React from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { format } from 'date-fns';
-import { Printer, Undo2 } from 'lucide-react';
+import { Printer } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { KitchenTicketDialog, RestaurantReceiptDialog } from '@/features/restaurant/RestaurantPrints';
-import { PosReturnDialog } from '@/features/returns/PosReturnDialog';
-import { PermissionGate } from '@/components/PermissionGate';
-import { storeApi } from '@/api/endpoints';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent } from '@/components/ui/card';
 import {
@@ -46,8 +43,6 @@ export function OrdersPage() {
   const { activeStore, can } = useAuth();
   const currency = activeStore?.currency ?? 'BDT';
   const [status, setStatus] = React.useState('all');
-  const [refunding, setRefunding] = React.useState<RestaurantOrder | null>(null);
-  const { data: posConfig } = useQuery({ queryKey: ['store', 'pos-config'], queryFn: storeApi.posConfig });
   const [page, setPage] = React.useState(1);
   const [viewing, setViewing] = React.useState<RestaurantOrder | null>(null);
   const [receiptFor, setReceiptFor] = React.useState<string | null>(null);
@@ -200,6 +195,7 @@ export function OrdersPage() {
                   ))}
                 </div>
               )}
+              {/* Refunds were removed; this still shows for orders refunded before that. */}
               {viewing.returnedTotalMinor ? (
                 <p className="border-t pt-3 text-sm text-warning">
                   Refunded so far: <span className="tabular font-semibold">{formatMoney(viewing.returnedTotalMinor, currency)}</span>
@@ -213,50 +209,11 @@ export function OrdersPage() {
                     {viewing.status === 'paid' ? 'Print receipt' : 'Print bill'}
                   </Button>
                 )}
-                {viewing.status === 'paid' && !viewing.fullyReturned && (
-                  <PermissionGate anyOf={['returns.create']}>
-                    <Button className="w-full" variant="outline" onClick={() => setRefunding(viewing)}>
-                      <Undo2 />
-                      Refund items
-                    </Button>
-                  </PermissionGate>
-                )}
               </div>
             </>
           )}
         </DialogContent>
       </Dialog>
-
-      {refunding && (
-        <PosReturnDialog
-          saleNumber={refunding.orderNumber}
-          currency={currency}
-          posConfig={posConfig}
-          // A kitchen keeps no stock, so nothing is put back - only money moves.
-          restockable={false}
-          lines={refunding.items
-            .filter((line) => !line.voidedAt && line.quantity > 0)
-            .map((line) => ({
-              _id: line._id,
-              label: line.nameSnapshot,
-              quantity: line.quantity,
-              returnedQuantity: line.returnedQuantity,
-              unitPriceMinor: line.unitPriceMinor,
-            }))}
-          onSubmit={(input) =>
-            restaurantApi.createReturn(refunding._id, {
-              items: input.items.map(({ saleItemId, quantity }) => ({ saleItemId, quantity })),
-              reason: input.reason,
-              refundMethod: input.refundMethod,
-            })
-          }
-          onClose={() => {
-            setRefunding(null);
-            setViewing(null);
-          }}
-          invalidate={['restaurant']}
-        />
-      )}
 
       <RestaurantReceiptDialog orderId={receiptFor} onClose={() => setReceiptFor(null)} />
       <KitchenTicketDialog target={ticketToPrint} onClose={() => setTicketToPrint(null)} />

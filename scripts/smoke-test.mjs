@@ -4150,7 +4150,7 @@ async function main() {
   check('A Clothing workspace cannot read the Restaurant dashboard', (await api('/restaurant/dashboard', { token: admin.token })).status === 403);
   }
 
-  // --- kitchen tickets, bills and receipts ------------------------------------
+  // --- order tokens, bills and receipts ---------------------------------------
   {
     const roast = await rvMenu({ name: 'Chicken Roast', category: 'Mains', priceMinor: 30000 });
     const send = (id, rev) => api(`/restaurant/orders/${id}/send-to-kitchen`, { method: 'POST', token: rvToken, body: { rev } });
@@ -4206,21 +4206,14 @@ async function main() {
     check('An order with no live lines cannot be paid', (await rvPay(unsentOnly.data._id, { payments: [{ method: 'cash', amountMinor: 1 }], rev: removedUnsent.data.rev })).status === 400);
     await api(`/restaurant/orders/${unsentOnly.data._id}/cancel`, { method: 'POST', token: rvToken, body: { reason: 'Test cleanup' } });
 
-    const queue = await api('/restaurant/kitchen/tickets', { token: rvToken });
-    const mine = (queue.data ?? []).filter((t) => t.orderId === kt.data._id);
+    // Kitchen management is gone: there is no queue to read and no ticket to
+    // finish. Sending an order and printing its token are what remain.
+    check('The kitchen queue is gone', (await api('/restaurant/kitchen/tickets', { token: rvToken })).status === 404);
     check(
-      'The kitchen queue lists pending tickets oldest first, with their order',
-      mine.length === 3 && mine[0].ticketNumber === firstTicket.ticketNumber && mine[0].orderNumber === kt.data.orderNumber && mine[0].type === 'takeaway',
-      mine.map((t) => t.ticketNumber),
+      'A ticket can no longer be marked ready',
+      (await api(`/restaurant/orders/${kt.data._id}/tickets/${firstTicket._id}/ready`, { method: 'POST', token: rvToken })).status === 404,
     );
-    const readyPath = `/restaurant/orders/${kt.data._id}/tickets/${firstTicket._id}/ready`;
-    const ready = await api(readyPath, { method: 'POST', token: rvToken });
-    check('The kitchen marks a ticket ready', ready.status === 200, ready.error);
-    check('Marking a ticket ready does not change the order revision', ready.data?.rev === k3.data.rev, { ready: ready.data?.rev, before: k3.data.rev });
-    check('A ticket cannot be marked ready twice', (await api(readyPath, { method: 'POST', token: rvToken })).status === 409);
-    check('A ready ticket leaves the pending queue', !((await api('/restaurant/kitchen/tickets', { token: rvToken })).data ?? []).some((t) => t._id === firstTicket._id));
-    check('...and shows in the ready list', ((await api('/restaurant/kitchen/tickets?status=ready', { token: rvToken })).data ?? []).some((t) => t._id === firstTicket._id));
-    check('An unknown queue status is rejected', (await api('/restaurant/kitchen/tickets?status=burnt', { token: rvToken })).status === 422);
+    check('Tickets stay pending once sent', (await api(`/restaurant/orders/${kt.data._id}`, { token: rvToken })).data?.tickets?.every((t) => t.status === 'pending'));
 
     const slip = await api(`/restaurant/orders/${kt.data._id}/tickets/${secondTicket._id}`, { token: rvToken });
     check(
@@ -4236,7 +4229,7 @@ async function main() {
     check('The bill does not include kitchen tickets', bill.data?.order && !('tickets' in bill.data.order));
 
     const settled = await rvPay(kt.data._id, { payments: [{ method: 'cash', amountMinor: 30000 }], rev: k3.data.rev });
-    check('The order is paid while tickets are still in the kitchen', settled.status === 200, settled.error);
+    check('The order is paid while its tickets are still pending', settled.status === 200, settled.error);
     const receipt = await api(`/restaurant/orders/${kt.data._id}/receipt`, { token: rvToken });
     check(
       'The Restaurant receipt carries the branch receipt settings the printer needs',
@@ -4260,9 +4253,13 @@ async function main() {
       kcAfter.data?.status === 'cancelled' && kcAfter.data?.cancelReason === 'Changed mind' && (kcAfter.data?.tickets ?? []).length === 1 && kcAfter.data.tickets.every((t) => t.status === 'void'),
       kcAfter.data?.tickets,
     );
-    check('A voided ticket leaves the kitchen queue', !((await api('/restaurant/kitchen/tickets', { token: rvToken })).data ?? []).some((t) => t.orderId === kc.data._id));
     check('A cancelled order has no bill or receipt', (await api(`/restaurant/orders/${kc.data._id}/receipt`, { token: rvToken })).status === 409);
-    check('A Clothing workspace cannot reach the kitchen queue', (await api('/restaurant/kitchen/tickets', { token: admin.token })).status === 403);
+    // The isolation the dead queue route used to prove, on a route that remains.
+    check(
+      'A Clothing workspace cannot reprint a Restaurant token',
+      (await api(`/restaurant/orders/${kt.data._id}/tickets/${firstTicket._id}`, { token: admin.token })).status === 403,
+    );
+    check('A Clothing workspace cannot send a Restaurant order', (await api(`/restaurant/orders/${kt.data._id}/send-to-kitchen`, { method: 'POST', token: admin.token, body: { rev: 0 } })).status === 403);
   }
 
   // --- cash-drawer shifts and the Z-report --------------------------------------
@@ -4381,7 +4378,6 @@ async function main() {
       body: { type: 'takeaway', items: [{ menuItemId: dish.data._id, quantity: 2 }, { menuItemId: tea.data._id, quantity: 1 }] },
     });
     const sent = await pApi(`/restaurant/orders/${order.data._id}/send-to-kitchen`, { method: 'POST', body: { rev: order.data.rev } });
-    await pApi(`/restaurant/orders/${order.data._id}/tickets/${sent.data.tickets[0]._id}/ready`, { method: 'POST' });
     const teaLine = sent.data.items.find((l) => l.nameSnapshot === 'Tea');
     const voided = await pApi(`/restaurant/orders/${order.data._id}/items/${teaLine._id}`, { method: 'DELETE' });
     await pApi(`/restaurant/orders/${order.data._id}/pay`, { method: 'POST', body: { payments: [{ method: 'cash', amountMinor: 38000 }], discountMinor: 2000, rev: voided.data.rev } });
@@ -4408,7 +4404,7 @@ async function main() {
     check('Voids are reported by item', r?.voids?.quantity === 1 && r.voids.valueMinor === 3000 && r.voids.byItem[0]?.name === 'Tea', r?.voids);
     check('Cancellations are listed with their reason', r?.cancellations?.orders === 1 && r.cancellations.recent[0]?.cancelReason === 'Duplicate order', r?.cancellations);
     check('Discounts are attributed to staff', r?.discounts?.byStaff?.[0]?.discountsMinor === 2000, r?.discounts);
-    check('Kitchen speed counts ready tickets', r?.kitchen?.tickets === 1 && r.kitchen.byHour.length === 1, r?.kitchen);
+    check('Restaurant analytics no longer report kitchen speed', !('kitchen' in (r ?? {})), Object.keys(r ?? {}));
     check('Closed shifts show their variance', r?.shifts?.closed === 1 && r.shifts.list[0].varianceMinor === 1000 && r.shifts.totalVarianceMinor === 1000, r?.shifts);
     check('Nothing was paid outside a shift', r?.totals?.unshiftedSalesMinor === 0);
     check('An invalid range preset is rejected', (await pApi('/restaurant/reports?preset=forever')).status === 422);
@@ -9801,57 +9797,6 @@ async function main() {
   check('Returning needs the returns.create permission', (await api(`/supershop/sales/${retBrokenSale.data._id}/return`, { method: 'POST', token: ssTill.session.token, body: { items: [{ saleItemId: retBrokenSale.data.items[0]._id, quantity: 1 }], reason: 'No permission' } })).status === 403);
 
 
-  // --- Refunding a paid restaurant order ---------------------------------------
-  // A kitchen has no shelf, so a restaurant return is money and a record. An
-  // open order is changed or cancelled instead - a different thing, which is
-  // why only a PAID order can be refunded here.
-  section('Restaurant refunds');
-
-  const rvRefStamp = String(Date.now()).slice(-6);
-  const rvRefItem = await rvMenu({ name: `Refund Curry ${rvRefStamp}`, category: 'Mains', priceMinor: 20_000 });
-  const rvRefOrder = await rvOrder({ type: 'takeaway', items: [{ menuItemId: rvRefItem.data._id, quantity: 3 }] });
-  check('Restaurant: an order is opened for the refund checks', rvRefOrder.status === 201, rvRefOrder.error);
-
-  const rvReturn = (orderId, body) => api(`/restaurant/orders/${orderId}/return`, { method: 'POST', token: rvToken, body });
-  const rvRefLineId = rvRefOrder.data.items[0]._id;
-
-  const rvOpenRefund = await rvReturn(rvRefOrder.data._id, { items: [{ saleItemId: rvRefLineId, quantity: 1 }], reason: 'Not paid yet' });
-  check('Restaurant: an unpaid order cannot be refunded', rvOpenRefund.status === 404, rvOpenRefund.error?.message);
-
-  // Pay it, with a discount, so the refund has to share the discount out.
-  const rvRefPaid = await api(`/restaurant/orders/${rvRefOrder.data._id}/pay`, {
-    method: 'POST',
-    token: rvToken,
-    body: { rev: rvRefOrder.data.rev, discountMinor: 6000, payments: [{ method: 'cash', amountMinor: 54_000 }] },
-  });
-  check('Restaurant: the order is paid with a discount', rvRefPaid.status === 200 && rvRefPaid.data?.totalMinor === 54_000, rvRefPaid.error);
-
-  check('Restaurant: more than was ordered cannot be refunded', (await rvReturn(rvRefOrder.data._id, { items: [{ saleItemId: rvRefLineId, quantity: 4 }], reason: 'Too many' })).status === 400);
-  check('Restaurant: a refund needs a reason', (await rvReturn(rvRefOrder.data._id, { items: [{ saleItemId: rvRefLineId, quantity: 1 }], reason: 'x' })).status === 422);
-  check('Restaurant: a tender this branch does not take is refused', (await rvReturn(rvRefOrder.data._id, { items: [{ saleItemId: rvRefLineId, quantity: 1 }], reason: 'Wrong tender', refundMethod: 'moon-credits' })).status === 400);
-
-  const rvRefunded = await rvReturn(rvRefOrder.data._id, { items: [{ saleItemId: rvRefLineId, quantity: 1 }], reason: 'Dish sent back to the kitchen' });
-  check('Restaurant: one of three dishes is refunded', rvRefunded.status === 201, rvRefunded.error);
-  check(
-    'Restaurant: the refund is what was paid for it, not the menu price',
-    rvRefunded.data?.totalMinor === 18_000,
-    { refunded: rvRefunded.data?.totalMinor, note: 'a 10% order discount means 180.00 back on a 200.00 dish' },
-  );
-  check('Restaurant: the refund names the tender it went back on', rvRefunded.data?.refundMethodLabel === 'Cash', rvRefunded.data?.refundMethodLabel);
-  const rvRefAfter = await api(`/restaurant/orders/${rvRefOrder.data._id}`, { token: rvToken });
-  check('Restaurant: the order tracks what has been refunded', rvRefAfter.data?.items?.[0]?.returnedQuantity === 1 && rvRefAfter.data?.returnedTotalMinor === 18_000 && rvRefAfter.data?.fullyReturned === false, {
-    line: rvRefAfter.data?.items?.[0]?.returnedQuantity,
-    total: rvRefAfter.data?.returnedTotalMinor,
-  });
-  check('Restaurant: the order is still paid, not reopened', rvRefAfter.data?.status === 'paid');
-
-  const rvRefRest = await rvReturn(rvRefOrder.data._id, { items: [{ saleItemId: rvRefLineId, quantity: 2 }], reason: 'The rest went back too' });
-  check('Restaurant: the rest can be refunded later', rvRefRest.status === 201, rvRefRest.error);
-  check('Restaurant: the order is fully refunded', (await api(`/restaurant/orders/${rvRefOrder.data._id}`, { token: rvToken })).data?.fullyReturned === true);
-  check('Restaurant: nothing more can be refunded', (await rvReturn(rvRefOrder.data._id, { items: [{ saleItemId: rvRefLineId, quantity: 1 }], reason: 'Again please' })).status === 400);
-  check('Restaurant: the refunds are listed', ((await api('/restaurant/returns', { token: rvToken })).data ?? []).length >= 2);
-  check('Restaurant: another workspace cannot refund this order', (await api(`/restaurant/orders/${rvRefOrder.data._id}/return`, { method: 'POST', token: admin.token, body: { items: [{ saleItemId: rvRefLineId, quantity: 1 }], reason: 'Not mine' } })).status === 403);
-
   // --- What the shop KEPT, not what it charged ---------------------------------
   // Every vertical records refunds now, so every report that says "net" has to
   // mean net. Clothing has always subtracted returns; these are the other three.
@@ -9915,15 +9860,18 @@ async function main() {
   const rvNetPlan = ((await api('/plans?vertical=restaurant')).data ?? []).find((p) => p.code === 'showroom-monthly');
   await api('/platform/subscriptions', { method: 'POST', token: platform2.token, body: { tenantId: rv.created.data?.workspace?.id, planId: rvNetPlan?._id, periods: 1, status: 'active' } });
   const rvNet = await api('/restaurant/reports?preset=today', { token: rvToken });
+  // The Restaurant has no refunds any more, so its net IS its gross - but the
+  // arithmetic still has to hold, because old orders may carry refunds.
   check(
-    'Restaurant: net is gross less the refunds',
-    rvNet.status === 200 && rvNet.data?.totals?.returnAmountMinor > 0 && rvNet.data.totals.netSalesMinor === rvNet.data.totals.grossSalesMinor - rvNet.data.totals.returnAmountMinor,
+    'Restaurant: net is still gross less the refunds',
+    rvNet.status === 200 && rvNet.data.totals.netSalesMinor === rvNet.data.totals.grossSalesMinor - rvNet.data.totals.returnAmountMinor,
     rvNet.data?.totals,
   );
+  check('Restaurant: nothing can be refunded any more, so nothing is', rvNet.data?.totals?.returnAmountMinor === 0 && rvNet.data.totals.returnCount === 0, rvNet.data?.totals);
   const rvNetDash = await api('/restaurant/dashboard?preset=today', { token: rvToken });
   check(
-    'Restaurant: the dashboard shows what was refunded and what was kept',
-    rvNetDash.data?.kpis?.refundedMinor > 0 && rvNetDash.data.kpis.netRevenueMinor === rvNetDash.data.kpis.revenueMinor - rvNetDash.data.kpis.refundedMinor,
+    'Restaurant: the dashboard still reports what was kept',
+    rvNetDash.data?.kpis?.refundedMinor === 0 && rvNetDash.data.kpis.netRevenueMinor === rvNetDash.data.kpis.revenueMinor - rvNetDash.data.kpis.refundedMinor,
     rvNetDash.data?.kpis,
   );
 
@@ -9942,7 +9890,7 @@ async function main() {
     ssNet.data?.returns?.recent,
   );
   check('Pharmacy: the report lists what came back', (phNet.data.returns?.recent ?? []).length >= 1 && phNet.data.returns.units >= 2, phNet.data?.returns);
-  check('Restaurant: the report lists what was refunded', (rvNet.data.returns?.recent ?? []).length >= 1, rvNet.data?.returns);
+  check('Restaurant: the report has a refunds block, now always empty', Array.isArray(rvNet.data.returns?.recent) && rvNet.data.returns.recent.length === 0, rvNet.data?.returns);
 
   // Restaurant took split payments from task 04 but could not report them.
   check(
@@ -10162,14 +10110,17 @@ async function main() {
   check('Restaurant: more points than the card holds is refused', (await rvPay((await rvOrder({ type: 'takeaway', items: [{ menuItemId: borhani.data._id, quantity: 1 }] })).data._id, { payments: [{ method: 'cash', amountMinor: 8_000 }], rev: 0, loyaltyMembershipId: rvMembershipId, redeemPoints: 9999 })).status === 422);
   check('Restaurant: redeeming without a card is refused', (await rvPay((await rvOrder({ type: 'takeaway', items: [{ menuItemId: borhani.data._id, quantity: 1 }] })).data._id, { payments: [{ method: 'cash', amountMinor: 8_000 }], rev: 0, redeemPoints: 2 })).status === 422);
 
-  // A refund takes the points the refunded food earned.
-  const rvLoyRefund = await api(`/restaurant/orders/${rvLoyPaid.data._id}/return`, {
-    method: 'POST',
-    token: rvToken,
-    body: { items: [{ saleItemId: rvLoyPaid.data.items[0]._id, quantity: 5 }], reason: 'Sent the whole order back' },
-  });
-  check('Restaurant: the bill can be refunded', rvLoyRefund.status === 201, rvLoyRefund.error);
-  check('Restaurant: refunding takes the points that bill earned', (await rvBalance()) === -1, 'earned 4 on that bill, off a balance of 3');
+  // Refunds were removed from the Restaurant, so there is no way to take back
+  // points a bill earned. The route is gone.
+  check(
+    'Restaurant: a bill can no longer be refunded',
+    (await api(`/restaurant/orders/${rvLoyPaid.data._id}/return`, {
+      method: 'POST',
+      token: rvToken,
+      body: { items: [{ saleItemId: rvLoyPaid.data.items[0]._id, quantity: 5 }], reason: 'Sent the whole order back' },
+    })).status === 404,
+  );
+  check('Restaurant: the balance is untouched by the attempt', (await rvBalance()) === 3);
 
   check('Restaurant: a card from another workspace cannot be used', (await rvPay((await rvOrder({ type: 'takeaway', items: [{ menuItemId: borhani.data._id, quantity: 1 }] })).data._id, { payments: [{ method: 'cash', amountMinor: 8_000 }], rev: 0, loyaltyMembershipId: ssMembershipId })).status === 400);
 

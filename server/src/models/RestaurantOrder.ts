@@ -32,6 +32,14 @@ export interface RestaurantOrderLine {
   returnedQuantity?: number;
 }
 
+/**
+ * A ticket is 'pending' when sent and 'void' when its order is cancelled.
+ *
+ * 'ready' is no longer written: the kitchen screen that marked tickets done was
+ * removed. The value stays in the enum because orders already in the database
+ * hold tickets in that state, and dropping it would make those documents fail
+ * validation on their next save.
+ */
 export const KITCHEN_TICKET_STATUSES = ['pending', 'ready', 'void'] as const;
 export type KitchenTicketStatus = (typeof KITCHEN_TICKET_STATUSES)[number];
 
@@ -52,6 +60,7 @@ export interface KitchenTicket {
   createdAt: Date;
   createdBy: Types.ObjectId | null;
   createdByNameSnapshot: string;
+  /** Only ever set by the kitchen screen that used to exist; kept for history. */
   readyAt: Date | null;
   readyByNameSnapshot: string;
 }
@@ -210,8 +219,6 @@ restaurantOrderSchema.index({ tenantId: 1, storeId: 1, status: 1, paidAt: -1 });
 restaurantOrderSchema.index({ tenantId: 1, storeId: 1, orderNumber: 1 }, { unique: true });
 // The Z-report: everything paid during one shift.
 restaurantOrderSchema.index({ tenantId: 1, storeId: 1, shiftId: 1, status: 1 });
-// The kitchen queue: orders in a branch that still have tickets in a given state.
-restaurantOrderSchema.index({ tenantId: 1, storeId: 1, 'tickets.status': 1 });
 // At most one OPEN order per table. The database enforces it, so two cashiers
 // seating the same table at the same moment cannot both succeed.
 restaurantOrderSchema.index(

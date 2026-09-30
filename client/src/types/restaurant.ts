@@ -53,20 +53,13 @@ export interface KitchenTicket {
   _id: string;
   ticketNumber: string;
   lines: KitchenTicketLine[];
+  /** 'pending' when sent, 'void' when the order is cancelled. */
   status: 'pending' | 'ready' | 'void';
   createdAt: string;
   createdByNameSnapshot: string;
+  /** Only ever set by the kitchen screen that used to exist; kept for history. */
   readyAt: string | null;
   readyByNameSnapshot: string;
-}
-
-/** A ticket in the kitchen queue, with the order it belongs to. */
-export interface KitchenQueueTicket extends KitchenTicket {
-  orderId: string;
-  orderNumber: string;
-  type: RestaurantOrderType;
-  tableNameSnapshot: string;
-  orderNote: string;
 }
 
 /** The shared receipt branch; kept under its original name for existing callers. */
@@ -234,12 +227,6 @@ export interface RestaurantReports {
     }[];
   };
   discounts: { totalMinor: number; byStaff: { userId: string | null; name: string; orders: number; discountsMinor: number }[] };
-  kitchen: {
-    tickets: number;
-    averagePrepSeconds: number;
-    slowestPrepSeconds: number;
-    byHour: { hour: string; tickets: number; averagePrepSeconds: number }[];
-  };
   shifts: { closed: number; totalVarianceMinor: number; shortShifts: number; list: RestaurantShift[] };
 }
 
