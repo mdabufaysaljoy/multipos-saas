@@ -76,6 +76,39 @@ Shared means the same **capability**, not the same schema. Clothing keeps its
 own returns engine (exchanges, loyalty, idempotency); the other three use the
 simpler shared one.
 
+## Restaurant: an order, not a sale
+
+The three retail verticals ring up a basket and take the money. A restaurant
+does not: it **opens an order**, adds to it over minutes or hours, tells the
+kitchen what changed, and settles at the end.
+
+```
+open order ──► add / change / remove lines ──► send to kitchen (a token) ──► pay
+```
+
+What follows from that shape:
+
+- **`RestaurantOrder.rev` is an optimistic lock.** Every line change bumps it;
+  paying and sending to the kitchen both quote the `rev` the cashier saw, so an
+  order cannot be paid while somebody is editing it.
+- **One open order per table**, enforced by a partial unique index on `tableId`
+  — two waiters cannot seat the same table.
+- **A ticket carries only the change since the last one.** Each line remembers
+  `sentQuantity`; a removed line is kept at quantity 0 with `voidedAt` set so the
+  next ticket can say VOID. Ticket numbers come from
+  `nextSequence(tenant, store, 'kitchen-ticket')` as `KOT-000001`, per branch.
+- **No stock.** `restaurant.adapter` is a deliberate no-op inventory adapter and
+  `/stock-ledger` answers with an empty page — the same route shape as everywhere
+  else.
+- **No restaurant-specific permissions.** Everything reuses `sales.*`,
+  `products.*`, `returns.*`, `reports.view`, `settings.edit`.
+- **`MenuItem` is flat**: one `priceMinor`, `category` as a *name*, no
+  subcategory, variants, sizes or add-ons.
+
+The audit for the next change to this vertical — dependency maps for the kitchen
+and refund features, the billing flow, and the recommended menu hierarchy — is
+`docs/RESTAURANT_AUDIT.md`.
+
 ## Concurrency
 
 The deployment target is standalone MongoDB — **no multi-document
