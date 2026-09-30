@@ -32,6 +32,8 @@ const variantInput = z
 const addOnInput = z
   .object({
     _id: objectId.optional(),
+    /** The library entry it was picked from, when it was picked rather than typed. */
+    addOnId: objectId.nullable().optional(),
     name: z.string().trim().min(1, 'Give the extra a name').max(60),
     priceMinor: amount,
     isAvailable: z.boolean().optional().default(true),
@@ -123,6 +125,35 @@ export const listSubcategoriesSchema = z
     includeInactive: queryFlag,
   })
   .strict();
+
+// ----------------------------------------------------------- extras list
+
+const addOnName = z.string().trim().min(1, 'Give the extra a name').max(60);
+
+export const createAddOnSchema = z
+  .object({
+    name: addOnName,
+    /** What it usually costs. A dish may still charge something else. */
+    defaultPriceMinor: amount,
+    sortOrder: z.number().int().min(0).max(1000).optional().default(0),
+  })
+  .strict();
+
+export const updateAddOnSchema = z
+  .object({
+    name: addOnName.optional(),
+    defaultPriceMinor: amount.optional(),
+    isActive: z.boolean().optional(),
+    sortOrder: z.number().int().min(0).max(1000).optional(),
+  })
+  .strict()
+  .refine((input) => Object.keys(input).length > 0, 'Nothing to update');
+
+export const listAddOnsSchema = z.object({ includeInactive: queryFlag }).strict();
+
+export type CreateAddOnInput = z.infer<typeof createAddOnSchema>;
+export type UpdateAddOnInput = z.infer<typeof updateAddOnSchema>;
+export type ListAddOnsInput = z.infer<typeof listAddOnsSchema>;
 
 export type CreateSubcategoryInput = z.infer<typeof createSubcategorySchema>;
 export type UpdateSubcategoryInput = z.infer<typeof updateSubcategorySchema>;

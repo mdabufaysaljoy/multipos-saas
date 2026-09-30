@@ -127,6 +127,10 @@ What follows from that shape:
   can never fall back to the base price.
 - **`unitPriceMinor` is the fully-loaded price of one**, variant and extras
   folded in, so reports, bills, refunds and the tender rules read one number.
+- **Extras are a reusable list.** `MenuAddOn` is the workspace's list;
+  `MenuAddOnOption` is one of them as offered on a dish, with that dish's own
+  price. Renaming the list entry follows onto the dishes; repricing it does not,
+  so a menu edit never silently reprices a live kitchen.
 
 The audit for the next change to this vertical — dependency maps for the kitchen
 and refund features, the billing flow, and the recommended menu hierarchy — is

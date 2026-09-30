@@ -23,6 +23,9 @@ import {
   openShiftSchema,
   restaurantReportsSchema,
   createMenuItemSchema,
+  createAddOnSchema,
+  listAddOnsSchema,
+  updateAddOnSchema,
   createSubcategorySchema,
   listSubcategoriesSchema,
   updateSubcategorySchema,
@@ -102,6 +105,19 @@ router.delete(
   validate({ params: idParam }),
   controller.removeSubcategory,
 );
+
+// The reusable extras. They carry a price, so they are managed with the same
+// permissions as the dishes that offer them, not with the name lists.
+router.get('/addons', requirePermission(PERMISSIONS.PRODUCTS_VIEW), validate({ query: listAddOnsSchema }), controller.listAddOns);
+router.post('/addons', requireActiveSubscription, requirePermission(PERMISSIONS.PRODUCTS_CREATE), validate({ body: createAddOnSchema }), controller.createAddOn);
+router.patch(
+  '/addons/:id',
+  requireActiveSubscription,
+  requirePermission(PERMISSIONS.PRODUCTS_EDIT),
+  validate({ params: idParam, body: updateAddOnSchema }),
+  controller.updateAddOn,
+);
+router.delete('/addons/:id', requireActiveSubscription, requirePermission(PERMISSIONS.PRODUCTS_DELETE), validate({ params: idParam }), controller.removeAddOn);
 
 router.get('/menu', requirePermission(PERMISSIONS.PRODUCTS_VIEW), validate({ query: listMenuSchema }), controller.listMenu);
 router.post('/menu', requireActiveSubscription, requirePermission(PERMISSIONS.PRODUCTS_CREATE), validate({ body: createMenuItemSchema }), controller.createMenuItem);

@@ -10203,6 +10203,8 @@ async function main() {
 
   const mhStamp = String(Date.now()).slice(-6);
   const mhSub = (body) => api('/restaurant/subcategories', { method: 'POST', token: rvToken, body });
+  // The menu has no single-item route, so a dish is read back off the list.
+  const mhDish = async (id) => ((await api('/restaurant/menu?limit=100', { token: rvToken })).data ?? []).find((item) => item._id === id);
   const mhRetire = [];
 
   // --- sections and subsections ----------------------------------------------
@@ -10378,8 +10380,7 @@ async function main() {
   check('Hierarchy: a subsection can be renamed', mhRenamed.status === 200, mhRenamed.error);
   check(
     'Hierarchy: renaming moves the dishes that carry it',
-    (await api(`/restaurant/menu/${mhPizzaDish.data._id}`, { token: rvToken })).data?.subcategory === 'Mexican Hot' ||
-      (await api(`/restaurant/menu?category=${encodeURIComponent(mhPizza)}&subcategory=Mexican Hot`, { token: rvToken })).data?.length === 1,
+    (await mhDish(mhPizzaDish.data._id))?.subcategory === 'Mexican Hot',
   );
   check(
     'Hierarchy: the order keeps the name it was sold under',
@@ -10437,6 +10438,108 @@ async function main() {
     (await api('/restaurant/menu', { method: 'POST', token: mhCookSession.token, body: { name: `Nope ${mhStamp}`, category: mhPizza, priceMinor: 100 } })).status === 403,
   );
   check('Hierarchy: a cashier CAN read the subsections, to take an order', (await api('/restaurant/subcategories', { token: mhCookSession.token })).status === 200);
+
+  // --- the reusable extras list ------------------------------------------------
+  // A kitchen defines "Extra cheese" once and picks it everywhere. An extra
+  // typed straight onto a dish joins the list too, the same way an unknown
+  // section does, so nobody has to fill in a management screen first.
+  const mhAddOnList = await api('/restaurant/addons', { token: rvToken });
+  check('Extras: the list holds what the dishes used', mhAddOnList.status === 200 && mhAddOnList.data?.some((row) => row.name === 'Extra cheese'), mhAddOnList.data?.map((r) => r.name));
+  const mhCheese = (mhAddOnList.data ?? []).find((row) => row.name === 'Extra cheese');
+  check('Extras: it remembers what it usually costs', mhCheese?.defaultPriceMinor === 8000, mhCheese);
+  check('Extras: it counts the dishes offering it', mhCheese?.itemCount === 1, mhCheese);
+  check(
+    'Extras: the dish remembers which library entry each extra came from',
+    (await mhDish(mhPizzaDish.data._id))?.addOnGroups?.[0]?.options?.[0]?.addOnId === mhCheese?.id,
+    (await mhDish(mhPizzaDish.data._id))?.addOnGroups?.[0]?.options?.[0],
+  );
+
+  const mhDrink = await api('/restaurant/addons', { method: 'POST', token: rvToken, body: { name: `Extra drink ${mhStamp}`, defaultPriceMinor: 5000 } });
+  check('Extras: one can be defined before any dish uses it', mhDrink.status === 201, mhDrink.error);
+  check('Extras: a duplicate name is refused', (await api('/restaurant/addons', { method: 'POST', token: rvToken, body: { name: `extra drink ${mhStamp}`, defaultPriceMinor: 100 } })).status === 409);
+  check('Extras: a name is required', (await api('/restaurant/addons', { method: 'POST', token: rvToken, body: { name: '  ', defaultPriceMinor: 100 } })).status === 422);
+  check('Extras: a negative price is refused', (await api('/restaurant/addons', { method: 'POST', token: rvToken, body: { name: `Bad ${mhStamp}`, defaultPriceMinor: -1 } })).status === 422);
+  check('Extras: unknown fields are refused', (await api('/restaurant/addons', { method: 'POST', token: rvToken, body: { name: `Sneaky ${mhStamp}`, defaultPriceMinor: 10, tenantId: admin.session.tenant.id } })).status === 422);
+
+  // A dish may charge its own price for a shared extra, and editing the list
+  // must not reprice what is already on the menu.
+  const mhOwnPrice = await rvMenu({
+    name: `Cheesy Burger ${mhStamp}`,
+    category: mhBurger,
+    priceMinor: 20000,
+    addOnGroups: [{ name: 'Extras', maxSelect: 3, options: [{ name: 'Extra cheese', priceMinor: 5000 }] }],
+  });
+  mhRetire.push(mhOwnPrice.data?._id);
+  check('Extras: the same extra can cost something else on another dish', mhOwnPrice.status === 201 && mhOwnPrice.data?.addOnGroups?.[0]?.options?.[0]?.priceMinor === 5000, mhOwnPrice.error);
+  await api(`/restaurant/addons/${mhCheese.id}`, { method: 'PATCH', token: rvToken, body: { defaultPriceMinor: 12000 } });
+  check(
+    'Extras: changing the usual price does NOT reprice the dishes already offering it',
+    (await mhDish(mhPizzaDish.data._id))?.addOnGroups?.[0]?.options?.[0]?.priceMinor === 8000,
+  );
+
+  // Renaming DOES follow, so the menu stays consistent.
+  await api(`/restaurant/addons/${mhCheese.id}`, { method: 'PATCH', token: rvToken, body: { name: `Extra cheese plus ${mhStamp}` } });
+  check(
+    'Extras: renaming one renames it on every dish that offers it',
+    (await mhDish(mhPizzaDish.data._id))?.addOnGroups?.[0]?.options?.[0]?.name === `Extra cheese plus ${mhStamp}`,
+  );
+  check(
+    'Extras: a past order keeps the name it was sold under',
+    (await api(`/restaurant/orders/${mhWithExtras.data._id}`, { token: rvToken })).data?.items?.[0]?.addOns?.[0]?.nameSnapshot === 'Extra cheese',
+  );
+
+  check('Extras: one in use cannot be deleted', (await api(`/restaurant/addons/${mhCheese.id}`, { method: 'DELETE', token: rvToken })).status === 409);
+  check('Extras: an unused one can be deleted', (await api(`/restaurant/addons/${mhDrink.data._id}`, { method: 'DELETE', token: rvToken })).status === 200);
+
+  const mhHiddenExtra = await api('/restaurant/addons', { method: 'POST', token: rvToken, body: { name: `Retired extra ${mhStamp}`, defaultPriceMinor: 1000 } });
+  await api(`/restaurant/addons/${mhHiddenExtra.data._id}`, { method: 'PATCH', token: rvToken, body: { isActive: false } });
+  check(
+    'Extras: a hidden one cannot be put on a new dish',
+    (await mhBad({ addOnGroups: [{ name: 'G', options: [{ name: `Retired extra ${mhStamp}`, priceMinor: 1000 }] }] })).status === 400,
+  );
+  check('Extras: hidden ones are left out of the list by default', !((await api('/restaurant/addons', { token: rvToken })).data ?? []).some((row) => row.id === mhHiddenExtra.data._id));
+  check('Extras: they can be asked for', ((await api('/restaurant/addons?includeInactive=true', { token: rvToken })).data ?? []).some((row) => row.id === mhHiddenExtra.data._id));
+
+  // A guest taking SEVERAL extras on one line is the ordinary case.
+  const mhMulti = await rvMenu({
+    name: `Loaded Fries ${mhStamp}`,
+    category: mhBurger,
+    priceMinor: 15000,
+    addOnGroups: [
+      {
+        name: 'Extras',
+        maxSelect: 3,
+        options: [
+          { name: `Cheese sauce ${mhStamp}`, priceMinor: 4000 },
+          { name: `Jalapenos ${mhStamp}`, priceMinor: 2000 },
+          { name: `Bacon bits ${mhStamp}`, priceMinor: 6000 },
+        ],
+      },
+    ],
+  });
+  mhRetire.push(mhMulti.data?._id);
+  const mhMultiOptions = mhMulti.data.addOnGroups[0].options;
+  const mhMultiOrder = await rvOrder({
+    type: 'takeaway',
+    items: [{ menuItemId: mhMulti.data._id, addOnOptionIds: mhMultiOptions.map((o) => o._id), quantity: 2 }],
+  });
+  check(
+    'Extras: a guest can take three at once, and all three are charged',
+    mhMultiOrder.status === 201 && mhMultiOrder.data?.items?.[0]?.unitPriceMinor === 15000 + 4000 + 2000 + 6000,
+    mhMultiOrder.data?.items?.[0],
+  );
+  check('Extras: each one is on the line', mhMultiOrder.data?.items?.[0]?.addOns?.length === 3, mhMultiOrder.data?.items?.[0]?.addOns);
+  check('Extras: the line total multiplies the whole thing', mhMultiOrder.data?.items?.[0]?.lineTotalMinor === (15000 + 4000 + 2000 + 6000) * 2);
+
+  // Tenancy and permissions on the extras list.
+  check('Extras: reading the list needs a session', (await api('/restaurant/addons')).status === 401);
+  check('Extras: a Super Shop workspace cannot read them', (await api('/restaurant/addons', { token: ssToken })).status === 403);
+  check('Extras: another workspace cannot edit one', (await api(`/restaurant/addons/${mhCheese.id}`, { method: 'PATCH', token: ssToken, body: { name: 'Mine now' } })).status === 403);
+  check(
+    'Extras: a cashier without products.create cannot define one',
+    (await api('/restaurant/addons', { method: 'POST', token: mhCookSession.token, body: { name: `Nope ${mhStamp}`, defaultPriceMinor: 100 } })).status === 403,
+  );
+  check('Extras: a cashier CAN read them, to take an order', (await api('/restaurant/addons', { token: mhCookSession.token })).status === 200);
 
   // --- clean up, so later counts are untouched ---------------------------------
   for (const id of mhRetire.filter(Boolean)) {

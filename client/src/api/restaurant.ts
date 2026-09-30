@@ -3,6 +3,7 @@ import type {
   DiningTable,
   KitchenTicketPayload,
   MenuItem,
+  MenuAddOnRow,
   MenuSubcategoryRow,
   RestaurantDashboard,
   RestaurantOrder,
@@ -54,6 +55,13 @@ export const restaurantApi = {
   updateSubcategory: (id: string, body: { name?: string; isActive?: boolean; sortOrder?: number }) =>
     patch<MenuSubcategoryRow>(`/restaurant/subcategories/${id}`, body),
   removeSubcategory: (id: string) => del<{ id: string }>(`/restaurant/subcategories/${id}`),
+
+  /** The workspace's reusable extras: define one, pick it on any dish. */
+  addOns: (params?: Query) => get<MenuAddOnRow[]>('/restaurant/addons', params),
+  createAddOn: (body: { name: string; defaultPriceMinor: number; sortOrder?: number }) => post<MenuAddOnRow>('/restaurant/addons', body),
+  updateAddOn: (id: string, body: { name?: string; defaultPriceMinor?: number; isActive?: boolean; sortOrder?: number }) =>
+    patch<MenuAddOnRow>(`/restaurant/addons/${id}`, body),
+  removeAddOn: (id: string) => del<{ id: string }>(`/restaurant/addons/${id}`),
 
   tables: () => get<DiningTable[]>('/restaurant/tables'),
   createTable: (body: { name: string; seats?: number }) => post<DiningTable>('/restaurant/tables', body),

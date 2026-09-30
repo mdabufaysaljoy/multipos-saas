@@ -10,11 +10,13 @@ import { loadReceiptStore } from '../../services/receipt/receiptStore';
 import { ApiError } from '../../utils/ApiError';
 import { formatDocumentNumber, nextSequence } from '../../utils/counters';
 import { resolvePage, searchRegex } from '../../utils/pagination';
+import { slugify } from '../../utils/slug';
 import { entitlementService } from '../../services/subscription/entitlement.service';
 import { resolveDashboardWindow } from '../reports/reports.service';
 import { customerService } from '../customers/customers.service';
 import { posCategoryService } from '../../services/catalogue/posCategories.service';
 import { menuSubcategoryService } from './menuSubcategories.service';
+import { menuAddOnService } from './menuAddOns.service';
 import { loyaltyService } from '../loyalty/loyalty.service';
 import { pointsForSpend } from '../loyalty/loyalty.math';
 import { logger } from '../../utils/logger';
@@ -93,8 +95,9 @@ class RestaurantService {
     await posCategoryService.assertUsable(ctx, 'restaurant', input.category);
     await menuSubcategoryService.assertUsable(ctx, input.category, input.subcategory);
     this.assertMenuShape(input.name, input.variants, input.addOnGroups);
+    const addOnGroups = await this.linkAddOns(ctx, input.addOnGroups);
 
-    const item = await MenuItemModel.create({ ...input, tenantId: ctx.tenantId, createdBy: ctx.userId });
+    const item = await MenuItemModel.create({ ...input, addOnGroups, tenantId: ctx.tenantId, createdBy: ctx.userId });
 
     // The pre-flight count is not atomic; confirm by ordinal, undo if over.
     const ordinal = await MenuItemModel.countDocuments({ tenantId: ctx.tenantId, deletedAt: null, _id: { $lte: item._id } });
@@ -123,13 +126,39 @@ class RestaurantService {
       input.addOnGroups ?? item.addOnGroups,
     );
 
+    const linkedGroups = input.addOnGroups === undefined ? undefined : await this.linkAddOns(ctx, input.addOnGroups);
+
     // Explicit fields only: the validator already rejects anything else.
     const fields = ['name', 'category', 'subcategory', 'description', 'priceMinor', 'variants', 'addOnGroups', 'isAvailable', 'sortOrder'] as const;
     for (const field of fields) {
+      if (field === 'addOnGroups') {
+        if (linkedGroups !== undefined) item.set('addOnGroups', linkedGroups);
+        continue;
+      }
       if (input[field] !== undefined) item.set(field, input[field]);
     }
     await item.save();
     return item.toObject();
+  }
+
+  /**
+   * Every extra a dish offers joins the workspace's reusable list, and each one
+   * is stamped with the id of the entry it belongs to.
+   *
+   * That is what lets a kitchen type "Extra cheese" once on a pizza and then
+   * PICK it on the next dish - the same trick the section and subsection lists
+   * use, so nobody has to fill in a management screen before they can work.
+   */
+  private async linkAddOns<T extends { name: string; options: { name: string; priceMinor: number }[] }>(ctx: TenantContext, groups: T[] | undefined) {
+    if (!groups || groups.length === 0) return groups ?? [];
+    const known = await menuAddOnService.registerUsed(
+      ctx,
+      groups.flatMap((group) => group.options.map((option) => ({ name: option.name, priceMinor: option.priceMinor }))),
+    );
+    return groups.map((group) => ({
+      ...group,
+      options: group.options.map((option) => ({ ...option, addOnId: known.get(slugify(option.name)) ?? null })),
+    }));
   }
 
   /**

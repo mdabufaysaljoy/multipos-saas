@@ -647,3 +647,66 @@ children on a narrow screen, which put the picker's price *below* its buttons.
 - **Bulk import** does not carry a subsection or variant column, so an imported
   menu is still flat. Additive columns, when that is wanted.
 - The **100-item POS menu cap** (audit R6) is still there.
+
+---
+
+## 15. Extras as a reusable list, and dropdowns — 2026-09-30
+
+Three follow-ups to §14, from the same brief.
+
+### 1. A guest may take several extras
+
+Already possible — a group's `maxSelect` governs it — but a **new** group used to
+default to `maxSelect: 1`, which fought the ordinary case. A new group now
+starts open (`maxSelect: 20`) and the hint reads "may take any of them" until an
+owner deliberately tightens it. Proven end to end: 10 inch + cheese + sauce +
+drink on one line, ৳650 + 80 + 30 + 50 = **৳810**, all three stored.
+
+### 2. Extras are now a list you define once
+
+`MenuAddOn` (new, Restaurant-owned): `{ name, slug, defaultPriceMinor, isActive,
+sortOrder }`, unique per workspace, with `/restaurant/addons` CRUD under
+`products.*`.
+
+The embedded shape on a dish was renamed `MenuAddOn` → **`MenuAddOnOption`**, so
+the two ideas have two names:
+
+| | `MenuAddOn` (collection) | `MenuAddOnOption` (embedded) |
+|---|---|---|
+| What | the workspace's reusable extra | that extra **as offered on one dish** |
+| Price | what it *usually* costs | what **this dish** charges |
+| Edited from | the Extras screen | the dish |
+
+**Renaming a library entry renames it on every dish** that offers it, so the menu
+stays consistent. **Changing its price does not** — a dish charges what it
+charges, and a menu edit must never silently reprice a live kitchen. Past orders
+are untouched either way; the line already carries its own snapshot.
+
+An extra typed straight onto a dish **joins the list**, exactly as an unknown
+section does, and the dish records `addOnId` so the two stay linked.
+
+### 3. Sections, subsections and extras are dropdowns
+
+`NamePicker` (new, Restaurant-only) is a real `Select` listing what exists, with
+`+ New …` at the bottom that swaps it for a text box. Nothing is created by the
+picker: the name goes to the form and the server adds it on save — the
+convention the whole catalogue already follows. Picking a library extra fills
+its usual price, which stays editable.
+
+The shared `CategoryInput` (a datalist) was **not** touched; it still serves
+Super Shop and Pharmacy unchanged. The Restaurant-only `SubcategoryInput` it
+superseded was deleted.
+
+### Verified
+
+`npm test` ✅ **3656 passed, 0 failed** (26 new). Then in a browser: the Extras
+screen with usage counts; Section listing Biryani / Burger / Pizza + "New
+section…"; the extras dropdown listing the library + "New extra…", auto-filling
+৳50 for Extra drink; and the kitchen slip reading `1 × Mexican Hot Pizza (10
+inch, Extra cheese, Extra sauce, Extra drink)`.
+
+**A latent test defect was found and fixed.** There is no `GET
+/restaurant/menu/:id` — only PATCH and DELETE. A §14 assertion had an `||`
+fallback that hid this; three new assertions failed on it honestly. All four now
+read the dish back off the list. The route was left alone rather than added,
+since nothing needs it.

@@ -19,8 +19,15 @@ export interface MenuItemVariant {
   sortOrder: number;
 }
 
-/** One extra: Extra cheese +80, Extra sauce +30. */
-export interface MenuAddOn {
+/**
+ * One extra AS OFFERED ON ONE DISH: Extra cheese +80, Extra sauce +30.
+ *
+ * The name and price are this dish's copy, so the same extra may cost
+ * different amounts on different dishes. `addOnId` points at the workspace's
+ * reusable list when it was picked from there.
+ */
+export interface MenuAddOnOption {
+  addOnId?: string | null;
   _id: string;
   name: string;
   priceMinor: number;
@@ -35,7 +42,7 @@ export interface MenuAddOnGroup {
   /** 1 or more makes the group a required choice. */
   minSelect: number;
   maxSelect: number;
-  options: MenuAddOn[];
+  options: MenuAddOnOption[];
   sortOrder: number;
 }
 
@@ -53,6 +60,18 @@ export interface MenuItem {
   isAvailable: boolean;
   sortOrder: number;
   createdAt: string;
+}
+
+/** A reusable extra, defined once for the whole workspace. */
+export interface MenuAddOnRow {
+  id: string;
+  name: string;
+  slug: string;
+  /** What it usually costs; a dish may charge something else. */
+  defaultPriceMinor: number;
+  isActive: boolean;
+  sortOrder: number;
+  itemCount: number;
 }
 
 /** A subsection of one menu section, as the server reports it. */

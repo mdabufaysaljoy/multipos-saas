@@ -6,7 +6,7 @@ import type { BaseDoc } from './types';
  * 1 / 2 / 3 persons.
  *
  * A variant answers "WHICH version?", so exactly one is chosen and its price
- * REPLACES the dish's own. Compare `MenuAddOn`, which answers "what EXTRA?",
+ * REPLACES the dish's own. Compare `MenuAddOnOption`, which answers "what EXTRA?",
  * where several may be chosen and each price is added. Keeping the two apart
  * in the schema is what stops a kitchen modelling "Large" as an add-on and
  * ending up with two sizes on one line.
@@ -22,8 +22,17 @@ export interface MenuItemVariant {
   sortOrder: number;
 }
 
-/** One extra that can be added to a dish: Extra cheese +80, Extra sauce +30. */
-export interface MenuAddOn {
+/**
+ * One extra AS OFFERED ON ONE DISH: Extra cheese +80, Extra sauce +30.
+ *
+ * The name and price are this dish's own copy, so the same extra may cost
+ * different amounts on different dishes. `addOnId` points back at the
+ * workspace's reusable list (`models/MenuAddOn`) when it was picked from there,
+ * which is what lets a shop define "Extra cheese" once and reuse it.
+ */
+export interface MenuAddOnOption {
+  /** The library entry this came from, when it was picked rather than typed. */
+  addOnId: Types.ObjectId | null;
   _id: Types.ObjectId;
   name: string;
   /** Minor units, ADDED to whatever the line already costs. */
@@ -43,7 +52,7 @@ export interface MenuAddOnGroup {
   name: string;
   minSelect: number;
   maxSelect: number;
-  options: MenuAddOn[];
+  options: MenuAddOnOption[];
   sortOrder: number;
 }
 
@@ -96,7 +105,8 @@ const variantSchema = new Schema<MenuItemVariant>({
   sortOrder: { type: Number, default: 0, min: 0 },
 });
 
-const addOnSchema = new Schema<MenuAddOn>({
+const addOnSchema = new Schema<MenuAddOnOption>({
+  addOnId: { type: Schema.Types.ObjectId, ref: 'MenuAddOn', default: null },
   name: { type: String, required: true, trim: true, maxlength: 60 },
   priceMinor: price,
   isAvailable: { type: Boolean, default: true },

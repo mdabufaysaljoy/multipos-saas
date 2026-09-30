@@ -26,8 +26,7 @@ import { SearchInput, useDebounced } from '@/components/SearchInput';
 import { ApiError } from '@/api/client';
 import { restaurantApi } from '@/api/restaurant';
 import { restaurantCategoriesApi } from '@/api/posCategories';
-import { CategoryInput } from '@/features/catalogue/CategoryInput';
-import { SubcategoryInput } from '@/features/restaurant/SubcategoryInput';
+import { NamePicker } from '@/features/restaurant/NamePicker';
 import {
   AddOnGroupsEditor,
   VariantsEditor,
@@ -224,6 +223,18 @@ function MenuItemDialog({
 }) {
   const [draft, setDraft] = React.useState<Draft>(EMPTY);
 
+  // The three short lists this form picks from. A name typed instead of picked
+  // joins them when the dish is saved, so they are only ever suggestions.
+  const { data: sections } = useQuery({ queryKey: ['restaurant', 'categories', 'options'], queryFn: () => restaurantCategoriesApi.list() });
+  const { data: subsections } = useQuery({
+    queryKey: ['restaurant', 'subcategories', 'options', draft.category],
+    queryFn: () => restaurantApi.subcategories(draft.category ? { category: draft.category } : undefined),
+    enabled: Boolean(draft.category),
+  });
+  const { data: addOnLibrary } = useQuery({ queryKey: ['restaurant', 'addons', 'options'], queryFn: () => restaurantApi.addOns() });
+  const sectionNames = React.useMemo(() => (sections ?? []).map((row) => row.name), [sections]);
+  const subsectionNames = React.useMemo(() => (subsections ?? []).map((row) => row.name), [subsections]);
+
   React.useEffect(() => {
     if (open) {
       setDraft(
@@ -248,6 +259,7 @@ function MenuItemDialog({
                 maxSelect: group.maxSelect,
                 options: (group.options ?? []).map((option) => ({
                   _id: option._id,
+                  addOnId: option.addOnId ?? null,
                   name: option.name,
                   priceMinor: option.priceMinor,
                   isAvailable: option.isAvailable,
@@ -288,6 +300,7 @@ function MenuItemDialog({
             maxSelect: group.maxSelect,
             options: group.options.filter(isCompleteAddOn).map((option, optionIndex) => ({
               ...(option._id ? { _id: option._id } : {}),
+              ...(option.addOnId ? { addOnId: option.addOnId } : {}),
               name: option.name.trim(),
               priceMinor: option.priceMinor ?? 0,
               isAvailable: option.isAvailable,
@@ -326,22 +339,28 @@ function MenuItemDialog({
             <Input id="menu-name" value={draft.name} maxLength={120} onChange={(e) => setDraft({ ...draft, name: e.target.value })} />
           </div>
           <div className="grid gap-3 sm:grid-cols-2">
-            <CategoryInput
+            <NamePicker
               id="menu-category"
               label="Section"
               value={draft.category}
+              options={sectionNames}
+              createLabel="New section…"
               onChange={(category) =>
                 // A subsection belongs to one section, so moving the dish to
                 // another section drops a subsection that no longer applies.
                 setDraft({ ...draft, category, subcategory: '' })
               }
-              api={restaurantCategoriesApi}
-              queryKey="restaurant"
             />
-            <SubcategoryInput
+            <NamePicker
               id="menu-subcategory"
-              category={draft.category}
+              label="Subsection"
               value={draft.subcategory}
+              options={subsectionNames}
+              optional
+              emptyLabel="None"
+              createLabel="New subsection…"
+              disabled={!draft.category}
+              placeholder={draft.category ? 'Optional' : 'Choose a section first'}
               onChange={(subcategory) => setDraft({ ...draft, subcategory })}
             />
           </div>
@@ -378,6 +397,7 @@ function MenuItemDialog({
             groups={draft.addOnGroups}
             onChange={(addOnGroups) => setDraft({ ...draft, addOnGroups })}
             currency={currency}
+            library={addOnLibrary ?? []}
           />
           <p className="text-xs text-muted-foreground">Prices are in {currency}.</p>
         </div>

@@ -5,6 +5,8 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
 import { MoneyInput } from '@/components/MoneyInput';
+import { NamePicker } from '@/features/restaurant/NamePicker';
+import type { MenuAddOnRow } from '@/types/restaurant';
 
 /**
  * Editing the two kinds of option a dish can carry.
@@ -31,6 +33,8 @@ export interface VariantDraft {
 
 export interface AddOnDraft {
   _id?: string;
+  /** The library entry it was picked from, when it was picked rather than typed. */
+  addOnId?: string | null;
   name: string;
   priceMinor: number | null;
   isAvailable: boolean;
@@ -46,7 +50,14 @@ export interface AddOnGroupDraft {
 
 export const emptyVariant = (): VariantDraft => ({ name: '', priceMinor: null, sku: '', isAvailable: true });
 export const emptyAddOn = (): AddOnDraft => ({ name: '', priceMinor: null, isAvailable: true });
-export const emptyAddOnGroup = (): AddOnGroupDraft => ({ name: '', minSelect: 0, maxSelect: 1, options: [emptyAddOn()] });
+/**
+ * A new group takes any number of its extras by default.
+ *
+ * A guest asking for extra cheese AND extra sauce is the ordinary case, so the
+ * ceiling starts out of the way; an owner who wants "pick exactly one sauce"
+ * lowers it deliberately.
+ */
+export const emptyAddOnGroup = (): AddOnGroupDraft => ({ name: 'Extras', minSelect: 0, maxSelect: 20, options: [emptyAddOn()] });
 
 /** A row is worth sending only once it has a name and a price. */
 export const isCompleteVariant = (variant: VariantDraft) => variant.name.trim().length > 0 && variant.priceMinor !== null;
@@ -148,10 +159,13 @@ export function AddOnGroupsEditor({
   groups,
   onChange,
   currency,
+  library = [],
 }: {
   groups: AddOnGroupDraft[];
   onChange: (groups: AddOnGroupDraft[]) => void;
   currency: string;
+  /** The workspace's reusable extras, to pick from instead of retyping. */
+  library?: MenuAddOnRow[];
 }) {
   const setGroup = (index: number, patch: Partial<AddOnGroupDraft>) =>
     onChange(groups.map((group, i) => (i === index ? { ...group, ...patch } : group)));
@@ -160,6 +174,8 @@ export function AddOnGroupsEditor({
     setGroup(groupIndex, {
       options: groups[groupIndex].options.map((option, i) => (i === optionIndex ? { ...option, ...patch } : option)),
     });
+
+  const libraryNames = React.useMemo(() => library.filter((row) => row.isActive).map((row) => row.name), [library]);
 
   const clampNumber = (value: string, min: number, max: number) => {
     const parsed = Number.parseInt(value, 10);
@@ -223,18 +239,32 @@ export function AddOnGroupsEditor({
               </div>
               <p className="text-xs text-muted-foreground">
                 {group.minSelect > 0 ? `The guest must choose ${group.minSelect}` : 'Choosing is optional'}
-                {`, up to ${group.maxSelect}.`}
+                {group.maxSelect >= group.options.length ? ', and may take any of them.' : `, up to ${group.maxSelect}.`}
               </p>
 
               <ul className="space-y-1.5">
                 {group.options.map((option, optionIndex) => (
-                  <li key={option._id ?? `new-${optionIndex}`} className="grid grid-cols-[1fr_7rem_auto] gap-2">
-                    <Input
+                  <li key={option._id ?? `new-${optionIndex}`} className="grid grid-cols-[1fr_7rem_auto] items-end gap-2">
+                    {/* Picked from the workspace list, or typed when it is not
+                        there yet - in which case it joins the list on save. */}
+                    <NamePicker
+                      id={`addon-${groupIndex}-${optionIndex}`}
+                      label={`Extra ${optionIndex + 1}`}
                       value={option.name}
-                      maxLength={60}
-                      placeholder="Extra cheese"
-                      aria-label={`Group ${groupIndex + 1} extra ${optionIndex + 1} name`}
-                      onChange={(e) => setOption(groupIndex, optionIndex, { name: e.target.value })}
+                      options={libraryNames}
+                      placeholder="Choose an extra…"
+                      createLabel="New extra…"
+                      onChange={(name) => {
+                        const entry = library.find((row) => row.name === name);
+                        setOption(groupIndex, optionIndex, {
+                          name,
+                          addOnId: entry?.id ?? null,
+                          // Its usual price comes with it, and stays editable:
+                          // the same extra is worth different money on
+                          // different dishes.
+                          ...(entry && option.priceMinor === null ? { priceMinor: entry.defaultPriceMinor } : {}),
+                        });
+                      }}
                     />
                     <MoneyInput
                       value={option.priceMinor}
