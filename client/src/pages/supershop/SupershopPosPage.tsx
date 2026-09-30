@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { CreditCard, Minus, PauseCircle, Plus, ScanBarcode, Scale, Trash2 } from 'lucide-react';
+import { ChevronDown, ChevronUp, CreditCard, Minus, PauseCircle, Plus, ScanBarcode, Scale, ShoppingCart, Trash2 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -92,6 +92,10 @@ export function SupershopPosPage() {
   const loyaltyAccess = useLoyaltyAccess();
   const [receiptFor, setReceiptFor] = React.useState<string | null>(null);
   const [heldOpen, setHeldOpen] = React.useState(false);
+  // On a phone or a tablet the basket is a sheet that slides up from a bar at
+  // the bottom. On a desktop it is simply the right-hand column and this is
+  // ignored.
+  const [basketOpen, setBasketOpen] = React.useState(false);
   const draftKey =
     session?.tenant && activeStore ? shopBasketDraftKey(session.tenant.id, activeStore.id, session.user.id) : null;
   const [loadedDraftKey, setLoadedDraftKey] = React.useState<string | null>(null);
@@ -229,6 +233,13 @@ export function SupershopPosPage() {
     ? pointsForSpend(Math.max(0, unroundedTotal - vatEstimateMinor), loyaltyMember.earnSpendMinor)
     : 0;
   const hasOutOfStockLine = cart.some((line) => (line.product.stock?.quantityOnHand ?? 0) <= 0);
+
+  // A note explains an out-of-stock line. Take that line out of the basket and
+  // the explanation goes with it, rather than travelling silently to the server
+  // on a sale it has nothing to do with.
+  React.useEffect(() => {
+    if (!hasOutOfStockLine) setNote('');
+  }, [hasOutOfStockLine]);
   const outOfStockNoteValid = !hasOutOfStockLine || note.trim().length >= 3;
 
   // The branch decides which tenders it takes; the till only offers those.
@@ -432,6 +443,7 @@ export function SupershopPosPage() {
     onSuccess: (result) => {
       toast.success(`${result.holdNumber} held`, { description: 'Open it again from Held sales.' });
       reset();
+      setBasketOpen(false);
       void queryClient.invalidateQueries({ queryKey: ['supershop', 'held-sales'] });
     },
     onError: (err) => toast.error(err instanceof ApiError ? err.message : 'Could not hold this sale'),
@@ -477,6 +489,7 @@ export function SupershopPosPage() {
         description: sale.changeMinor > 0 ? `Change due: ${formatMoney(sale.changeMinor, currency)}` : undefined,
       });
       reset();
+      setBasketOpen(false);
       setReceiptFor(sale._id);
       void queryClient.invalidateQueries({ queryKey: ['supershop'] });
     },
@@ -508,8 +521,8 @@ export function SupershopPosPage() {
     cart.length > 0 && discountIsValid && outOfStockNoteValid && payments.isSettled && !complete.isPending;
 
   return (
-    <div className="grid h-full gap-4 p-4 lg:grid-cols-[1fr_24rem] lg:p-6">
-      <Card className="flex min-h-0 flex-col">
+    <div className="flex h-full flex-col gap-4 p-4 lg:grid lg:grid-cols-[1fr_24rem] lg:p-6">
+      <Card className="flex min-h-0 flex-1 flex-col lg:flex-none">
         <CardHeader className="space-y-3 pb-2">
           <CardTitle className="text-base">Scan or search</CardTitle>
           <form
@@ -606,30 +619,93 @@ export function SupershopPosPage() {
           {!isLoading && products.length > 0 && !hasNextPage && totalMatching > 40 && (
             <p className="py-3 text-center text-xs text-muted-foreground">All {totalMatching} products shown</p>
           )}
+          {/* Room for the bar fixed to the bottom, so the last row is reachable. */}
+          <div className="h-16 lg:hidden" aria-hidden />
         </CardContent>
       </Card>
 
-      <Card className="flex min-h-0 flex-col">
-        <CardHeader className="pb-2">
+      {/* ------------------------------------------- the basket, on a phone */}
+      <button
+        type="button"
+        onClick={() => setBasketOpen(true)}
+        className="fixed inset-x-0 bottom-0 z-30 flex items-center gap-3 border-t bg-primary px-4 py-3 text-primary-foreground shadow-lg lg:hidden"
+      >
+        <span className="relative">
+          <ShoppingCart className="h-5 w-5" />
+          {cart.length > 0 && (
+            <span className="absolute -right-2 -top-2 flex h-4 min-w-4 items-center justify-center rounded-full bg-background px-1 text-[10px] font-bold text-foreground">
+              {cart.length}
+            </span>
+          )}
+        </span>
+        <span className="flex-1 text-left text-sm font-medium">
+          {cart.length === 0 ? 'Basket is empty' : `${cart.length} line${cart.length === 1 ? '' : 's'}`}
+        </span>
+        <span className="tabular text-base font-semibold">{formatMoney(total, currency)}</span>
+        <ChevronUp className="h-4 w-4" />
+      </button>
+
+      {basketOpen && <div className="fixed inset-0 z-40 bg-black/50 lg:hidden" onClick={() => setBasketOpen(false)} aria-hidden />}
+
+      <Card
+        className={cn(
+          'flex flex-col',
+          // Phone and tablet: a sheet that slides up over the shelf, reached
+          // from the bar above. Inside it the same two sections apply - the
+          // basket scrolls, the payment section does not - so a little more of
+          // the screen is given over to it than a sheet would usually take.
+          'fixed inset-x-0 bottom-0 z-50 max-h-[92vh] rounded-t-xl shadow-2xl transition-transform duration-200',
+          basketOpen ? 'translate-y-0' : 'translate-y-full',
+          // Desktop: the right-hand column, always there.
+          'lg:static lg:z-auto lg:h-full lg:min-h-0 lg:max-h-none lg:translate-y-0 lg:rounded-xl lg:shadow-sm',
+        )}
+      >
+        <CardHeader className="shrink-0 pb-2">
           <div className="flex items-center justify-between gap-2">
             <CardTitle className="text-base">Basket · {cart.length} line(s)</CardTitle>
-            <Button variant="outline" size="sm" onClick={() => setHeldOpen(true)}>
-              <PauseCircle />
-              Held{(heldSales ?? []).length > 0 ? ` · ${(heldSales ?? []).length}` : ''}
-            </Button>
+            <div className="flex items-center gap-2">
+              <Button variant="outline" size="sm" onClick={() => setHeldOpen(true)}>
+                <PauseCircle />
+                Held{(heldSales ?? []).length > 0 ? ` · ${(heldSales ?? []).length}` : ''}
+              </Button>
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                className="lg:hidden"
+                onClick={() => setBasketOpen(false)}
+                aria-label="Close the basket"
+              >
+                <ChevronDown />
+              </Button>
+            </div>
           </div>
         </CardHeader>
+        {/*
+          Two sections, and only ONE of them scrolls.
+
+          The basket takes whatever room is left and scrolls inside it, so a
+          hundred lines never push anything off the card. The payment section
+          below it is pinned: it is laid out at its natural height and never
+          scrolls, so a cashier taking money is never hunting for a tender row
+          or a Complete button that has slid out of sight.
+        */}
         <CardContent className="flex min-h-0 flex-1 flex-col overflow-hidden p-0">
-          <div className="scrollbar-thin min-h-0 flex-1 overflow-y-auto px-6">
+          {/*
+            The one scroll. The floor keeps a few lines in view even when the
+            payment section below is at its tallest - a customer, a loyalty card
+            and three tenders all attached - so the cashier can always see what
+            they have scanned.
+          */}
+          <div className="scrollbar-thin min-h-[4rem] flex-1 overflow-y-auto px-4 lg:min-h-[5rem]">
             {cart.length === 0 ? (
-              <p className="py-3 text-sm text-muted-foreground">Scan the first item.</p>
+              <p className="py-2 text-sm text-muted-foreground">Scan the first item.</p>
             ) : (
               <ul className="divide-y">
                 {cart.map((line) => (
-                  <li key={line.product._id} className="flex items-center gap-2 py-2">
+                  <li key={line.product._id} className="flex items-center gap-1.5 py-1.5">
                     <div className="min-w-0 flex-1">
-                      <p className="truncate text-sm font-medium">{line.product.name}</p>
-                      <p className="text-xs text-muted-foreground">
+                      <p className="truncate text-sm font-medium leading-tight">{line.product.name}</p>
+                      <p className="text-xs leading-tight text-muted-foreground">
                         {formatQuantity(line.quantity, line.product.unitType)} ·{' '}
                         {formatMoney(
                           lineAmount(line.product.priceMinor, line.quantity, line.product.unitType),
@@ -656,7 +732,7 @@ export function SupershopPosPage() {
                         >
                           <Minus />
                         </Button>
-                        <span className="w-8 text-center tabular">{line.quantity}</span>
+                        <span className="w-7 text-center text-sm tabular">{line.quantity}</span>
                         <Button
                           variant="outline"
                           size="icon-sm"
@@ -681,8 +757,9 @@ export function SupershopPosPage() {
             )}
           </div>
 
-          <div className="shrink-0 space-y-2 border-t px-6 py-2.5">
-            <dl className="space-y-1 text-sm">
+          {/* Pinned. No scroll of its own and never pushed off by a long basket. */}
+          <div className="shrink-0 space-y-1.5 border-t px-4 py-2">
+            <dl className="space-y-0.5 text-sm">
               <div className="flex justify-between">
                 <dt>Subtotal (incl. VAT)</dt>
                 <dd className="tabular">{formatMoney(subtotal, currency)}</dd>
@@ -796,26 +873,34 @@ export function SupershopPosPage() {
               />
             )}
 
-            <div className="space-y-1">
-              <Label htmlFor="shop-sale-note" className="text-xs">
-                Sale note
-                {hasOutOfStockLine && <span className="ml-1 text-destructive">(required for out-of-stock sale)</span>}
-              </Label>
-              <Input
-                id="shop-sale-note"
-                className="h-8"
-                value={note}
-                maxLength={300}
-                onChange={(event) => setNote(event.target.value)}
-                placeholder={hasOutOfStockLine ? 'Why is this stock-out sale allowed?' : 'Optional note'}
-                aria-invalid={hasOutOfStockLine && !outOfStockNoteValid}
-              />
-              {hasOutOfStockLine && !outOfStockNoteValid && (
-                <p className="text-xs text-destructive">Enter at least 3 characters before completing this sale.</p>
-              )}
-            </div>
+            {/*
+              The note is only ever asked for to explain a sale of goods the
+              system says are gone. An ordinary basket needs no note, so the
+              field is not there to be wondered about - it appears with the
+              out-of-stock line that makes it compulsory, and goes with it.
+            */}
+            {hasOutOfStockLine && (
+              <div className="space-y-1">
+                <Label htmlFor="shop-sale-note" className="text-xs">
+                  Sale note <span className="text-destructive">(required for out-of-stock sale)</span>
+                </Label>
+                <Input
+                  id="shop-sale-note"
+                  className="h-8"
+                  value={note}
+                  maxLength={300}
+                  onChange={(event) => setNote(event.target.value)}
+                  placeholder="Why is this stock-out sale allowed?"
+                  aria-invalid={!outOfStockNoteValid}
+                />
+                {!outOfStockNoteValid && (
+                  <p className="text-xs text-destructive">Enter at least 3 characters before completing this sale.</p>
+                )}
+              </div>
+            )}
 
             <PaymentPanel
+              compact
               rows={payments.rows}
               availableMethods={availableMethods}
               totalMinor={total}
@@ -833,7 +918,7 @@ export function SupershopPosPage() {
             />
           </div>
         </CardContent>
-        <div className="flex gap-2 border-t p-3">
+        <div className="flex shrink-0 gap-2 border-t p-2.5 pb-[max(0.625rem,env(safe-area-inset-bottom))] lg:pb-2.5">
           <Button variant="outline" onClick={reset} disabled={cart.length === 0}>
             Clear
           </Button>

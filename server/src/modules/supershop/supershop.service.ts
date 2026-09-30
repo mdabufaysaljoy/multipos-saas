@@ -825,7 +825,7 @@ class SupershopService {
    * for the government, not earned - the same definition Advanced Analytics uses.
    */
   async dashboard(ctx: TenantContext, input: DashboardRangeInput) {
-    const { bucket, previousFrom, previousTo, ...range } = resolveDashboardWindow(input);
+    const { bucket, format: bucketFormat, timezone: bucketTimezone, previousFrom, previousTo, ...range } = resolveDashboardWindow(input);
     const completed = { tenantId: ctx.tenantId, storeId: ctx.storeId, status: 'completed' };
     const soldIn = (from: Date, to: Date) => ({ ...completed, soldAt: { $gte: from, $lte: to } });
     const totals = (from: Date, to: Date) =>
@@ -835,6 +835,10 @@ class SupershopService {
         vatMinor: number;
         costMinor: number;
         discountMinor: number;
+        /** Change handed back, so the cash row can report what was KEPT. */
+        changeMinor: number;
+        /** Pieces only: grams are a weight, not a count of things sold. */
+        units: number;
       }>([
         { $match: soldIn(from, to) },
         {
@@ -845,13 +849,73 @@ class SupershopService {
             vatMinor: { $sum: '$vatMinor' },
             costMinor: { $sum: '$costMinor' },
             discountMinor: { $sum: '$discountMinor' },
+            changeMinor: { $sum: '$changeMinor' },
+            units: {
+              $sum: {
+                $sum: {
+                  $map: { input: '$items', as: 'i', in: { $cond: [{ $eq: ['$$i.unitType', 'weight'] }, 0, '$$i.quantity'] } },
+                },
+              },
+            },
           },
         },
       ]);
 
-    const [currentRows, previousRows, refunds, topProducts, reorderable, stocked] = await Promise.all([
+    const [currentRows, previousRows, trend, vatByRate, paymentsTaken, recentSales, stockPosition, refunds, topProducts, reorderable, stocked] = await Promise.all([
       totals(range.from, range.to),
       totals(previousFrom, previousTo),
+      // The shape of the period, bucketed the way the range asked for: hours for
+      // a day, days for a month, months for a year.
+      ShopSaleModel.aggregate<{ _id: string; salesCount: number; netSalesMinor: number }>([
+        { $match: soldIn(range.from, range.to) },
+        { $group: { _id: { $dateToString: { format: bucketFormat, date: '$soldAt', timezone: bucketTimezone } }, salesCount: { $sum: 1 }, netSalesMinor: { $sum: '$totalMinor' } } },
+        { $sort: { _id: 1 } },
+      ]),
+      // VAT is collected for the government, not earned. A Super Shop price
+      // INCLUDES it, so this is what was inside what was charged, split by the
+      // rate each line carried.
+      ShopSaleModel.aggregate<{ _id: number; grossMinor: number; vatMinor: number; lines: number }>([
+        { $match: soldIn(range.from, range.to) },
+        { $unwind: '$items' },
+        { $group: { _id: '$items.vatRateBps', grossMinor: { $sum: '$items.lineTotalMinor' }, vatMinor: { $sum: '$items.vatMinor' }, lines: { $sum: 1 } } },
+        { $sort: { _id: 1 } },
+      ]),
+      // What the drawer actually took, by tender. Cash is netted of change below.
+      ShopSaleModel.aggregate<{ _id: string; amountMinor: number; sales: number }>([
+        { $match: soldIn(range.from, range.to) },
+        { $unwind: '$payments' },
+        { $group: { _id: '$payments.method', amountMinor: { $sum: '$payments.amountMinor' }, sales: { $sum: 1 } } },
+        { $sort: { amountMinor: -1, _id: 1 } },
+      ]),
+      ShopSaleModel.find(soldIn(range.from, range.to))
+        .sort({ soldAt: -1, _id: -1 })
+        .limit(5)
+        .select('saleNumber totalMinor soldAt cashierNameSnapshot customerNameSnapshot')
+        .lean(),
+      // What is on the shelf right now, at weighted average cost. Weighed goods
+      // are priced per kilogram and counted in grams, so the lookup is what
+      // keeps the valuation honest.
+      ShopStockModel.aggregate<{ stockValueMinor: number; productCount: number }>([
+        { $match: { tenantId: ctx.tenantId, storeId: ctx.storeId, quantityOnHand: { $gt: 0 } } },
+        { $lookup: { from: ShopProductModel.collection.name, localField: 'productId', foreignField: '_id', as: 'product' } },
+        { $addFields: { unitType: { $ifNull: [{ $arrayElemAt: ['$product.unitType', 0] }, 'each'] } } },
+        {
+          $group: {
+            _id: null,
+            productCount: { $sum: 1 },
+            stockValueMinor: {
+              $sum: {
+                $floor: {
+                  $divide: [
+                    { $multiply: ['$quantityOnHand', '$costPriceMinor'] },
+                    { $cond: [{ $eq: ['$unitType', 'weight'] }, 1000, 1] },
+                  ],
+                },
+              },
+            },
+          },
+        },
+      ]),
       // What was charged is on the sales; what was kept is that less refunds.
       returnFiguresFor(ctx, 'supershop', { from: range.from, to: range.to }),
       ShopSaleModel.aggregate<{
@@ -895,7 +959,7 @@ class SupershopService {
       .sort((a, b) => a.quantityOnHand / a.reorderLevel - b.quantityOnHand / b.reorderLevel);
 
     const summarise = (
-      rows: { count: number; totalMinor: number; vatMinor: number; costMinor: number; discountMinor: number }[],
+      rows: { count: number; totalMinor: number; vatMinor: number; costMinor: number; discountMinor: number; units?: number }[],
     ) => {
       const row = rows[0];
       const salesCount = row?.count ?? 0;
@@ -907,6 +971,8 @@ class SupershopService {
         discountMinor: row?.discountMinor ?? 0,
         grossProfitMinor: totalMinor - (row?.vatMinor ?? 0) - (row?.costMinor ?? 0),
         averageSaleMinor: salesCount > 0 ? Math.round(totalMinor / salesCount) : 0,
+        /** Pieces only: grams are a weight, not a count of things sold. */
+        unitsSold: row?.units ?? 0,
       };
     };
 
@@ -924,6 +990,47 @@ class SupershopService {
         grossProfitMinor: current.grossProfitMinor - refunds.totalMinor + refunds.costMinor,
       },
       previous: summarise(previousRows),
+      /**
+       * What VAT was collected, and at which rates. Super Shop prices INCLUDE
+       * VAT, so these figures are what sat inside what was charged - never an
+       * amount added on top of it.
+       */
+      vat: {
+        totalMinor: current.vatMinor,
+        netOfVatMinor: current.totalMinor - current.vatMinor,
+        byRate: vatByRate.map((row) => ({
+          vatRateBps: row._id ?? 0,
+          lines: row.lines,
+          grossMinor: row.grossMinor,
+          vatMinor: row.vatMinor,
+          netOfVatMinor: row.grossMinor - row.vatMinor,
+        })),
+      },
+      /** The period's shape, in the buckets `range.bucket` names. */
+      trend: trend.map((row) => ({ bucket: row._id, salesCount: row.salesCount, netSalesMinor: row.netSalesMinor })),
+      /**
+       * What each tender took. Cash is reported NET of the change handed back,
+       * so the row is money the drawer kept rather than money that passed
+       * through it - the same way Advanced Analytics reports it.
+       */
+      payments: paymentsTaken.map((row) => ({
+        method: row._id,
+        sales: row.sales,
+        amountMinor: row._id === 'cash' ? row.amountMinor - (currentRows[0]?.changeMinor ?? 0) : row.amountMinor,
+      })),
+      recentSales: recentSales.map((row) => ({
+        _id: row._id,
+        saleNumber: row.saleNumber,
+        totalMinor: row.totalMinor,
+        soldAt: row.soldAt,
+        cashierNameSnapshot: row.cashierNameSnapshot,
+        customerNameSnapshot: row.customerNameSnapshot ?? '',
+      })),
+      /** What the shelf is worth now, and across how many products. */
+      stock: {
+        valueMinor: stockPosition[0]?.stockValueMinor ?? 0,
+        productCount: stockPosition[0]?.productCount ?? 0,
+      },
       topProducts: topProducts.map((row) => ({
         productId: row._id,
         name: row.name,

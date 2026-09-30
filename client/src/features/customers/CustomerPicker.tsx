@@ -84,7 +84,7 @@ export function CustomerPicker({ value, onChange, canCreate }: CustomerPickerPro
 
   if (value) {
     return (
-      <div className="flex items-center gap-2 rounded-md border bg-card px-3 py-2">
+      <div className="flex items-center gap-2 rounded-md border bg-card px-2">
         <UserRound className="h-4 w-4 shrink-0 text-muted-foreground" />
         <div className="min-w-0 flex-1">
           <p className="truncate text-sm font-medium">{value.name}</p>

@@ -6,6 +6,7 @@ import { Toaster } from 'sonner';
 import { AuthProvider } from '@/hooks/useAuth';
 import { ApiError } from '@/api/client';
 import { AppRoutes } from '@/routes/AppRoutes';
+import { DocumentTitle } from '@/components/DocumentTitle';
 import { PageFallback } from '@/lib/lazyPage';
 import '@/index.css';
 
@@ -44,6 +45,8 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
     <QueryClientProvider client={queryClient}>
       <BrowserRouter>
         <AuthProvider>
+          {/* Names the browser tab after the shop and the screen. Renders nothing. */}
+          <DocumentTitle />
           {/* Catches pages outside any layout (sign-in, onboarding, platform admin). */}
           <React.Suspense fallback={<PageFallback />}>
             <AppRoutes />

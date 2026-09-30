@@ -76,6 +76,25 @@ interface NavItem {
 /** The POS types that run a card program, as the loyalty feature defines them. */
 const LOYALTY_NAV_VERTICALS = ['clothing', 'restaurant', 'pharmacy', 'supershop'].filter(isLoyaltyVertical);
 
+/**
+ * The label the sidebar gives a path, for anything else that needs to name the
+ * page - the browser tab, for one. Derived from the nav itself rather than a
+ * second list, so renaming a screen renames it everywhere.
+ *
+ * The longest match wins, so `/shop-products` is "Products & stock" rather than
+ * whatever `/shop` might one day be.
+ */
+export function navLabelFor(pathname: string): string | null {
+  let best: { to: string; label: string } | null = null;
+  for (const section of NAV_SECTIONS) {
+    for (const item of section.items) {
+      if (pathname !== item.to && !pathname.startsWith(`${item.to}/`)) continue;
+      if (!best || item.to.length > best.to.length) best = { to: item.to, label: item.label };
+    }
+  }
+  return best?.label ?? null;
+}
+
 const NAV_SECTIONS: { heading: string; items: NavItem[] }[] = [
   {
     heading: 'Sell',
