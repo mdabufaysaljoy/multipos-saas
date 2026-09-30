@@ -29,7 +29,7 @@
     "clsx": "^2.1.1",
     "date-fns": "^4.1.0",
     "html-to-image": "^1.11.13",
-    "isomorphic-dompurify": "^2.36.0",
+    "isomorphic-dompurify": "^4.4.0",
     "jsbarcode": "^3.12.3",
     "lucide-react": "^0.469.0",
     "qrcode": "^1.5.4",

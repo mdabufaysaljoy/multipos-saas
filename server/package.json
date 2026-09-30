@@ -43,7 +43,7 @@
     "express": "^5.2.1",
     "express-rate-limit": "^7.5.0",
     "helmet": "^8.0.0",
-    "isomorphic-dompurify": "^2.36.0",
+    "isomorphic-dompurify": "^4.4.0",
     "jsonwebtoken": "^9.0.2",
     "mongoose": "^9.10.2",
     "morgan": "^1.10.0",
