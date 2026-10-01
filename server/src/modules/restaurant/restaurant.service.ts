@@ -15,7 +15,6 @@ import { entitlementService } from '../../services/subscription/entitlement.serv
 import { resolveDashboardWindow } from '../reports/reports.service';
 import { customerService } from '../customers/customers.service';
 import { posCategoryService } from '../../services/catalogue/posCategories.service';
-import { menuSubcategoryService } from './menuSubcategories.service';
 import { menuAddOnService } from './menuAddOns.service';
 import { loyaltyService } from '../loyalty/loyalty.service';
 import { pointsForSpend } from '../loyalty/loyalty.math';
@@ -76,7 +75,6 @@ class RestaurantService {
     const filter: Record<string, unknown> = { tenantId: ctx.tenantId, deletedAt: null };
     if (input.availableOnly) filter.isAvailable = true;
     if (input.category) filter.category = input.category;
-    if (input.subcategory) filter.subcategory = input.subcategory;
     if (input.search) filter.name = searchRegex(input.search);
 
     const [items, total] = await Promise.all([
@@ -93,7 +91,6 @@ class RestaurantService {
     // A section the kitchen has retired cannot take new dishes; a new name joins
     // the catalogue so it can be managed like the rest.
     await posCategoryService.assertUsable(ctx, 'restaurant', input.category);
-    await menuSubcategoryService.assertUsable(ctx, input.category, input.subcategory);
     this.assertMenuShape(input.name, input.variants, input.addOnGroups);
     const addOnGroups = await this.linkAddOns(ctx, input.addOnGroups);
 
@@ -115,11 +112,6 @@ class RestaurantService {
     if (!item) throw ApiError.notFound('Menu item not found');
     if (input.name && input.name.toLowerCase() !== item.name.toLowerCase()) await this.assertMenuNameFree(ctx, input.name, id);
     if (input.category) await posCategoryService.assertUsable(ctx, 'restaurant', input.category);
-    // A dish may be moved and re-subsectioned in one edit, so the subsection is
-    // checked against whichever section it is ending up in.
-    if (input.subcategory !== undefined) {
-      await menuSubcategoryService.assertUsable(ctx, input.category ?? item.category, input.subcategory);
-    }
     this.assertMenuShape(
       input.name ?? item.name,
       input.variants ?? item.variants,
@@ -129,7 +121,7 @@ class RestaurantService {
     const linkedGroups = input.addOnGroups === undefined ? undefined : await this.linkAddOns(ctx, input.addOnGroups);
 
     // Explicit fields only: the validator already rejects anything else.
-    const fields = ['name', 'category', 'subcategory', 'description', 'priceMinor', 'variants', 'addOnGroups', 'isAvailable', 'sortOrder'] as const;
+    const fields = ['name', 'category', 'description', 'priceMinor', 'variants', 'addOnGroups', 'isAvailable', 'sortOrder'] as const;
     for (const field of fields) {
       if (field === 'addOnGroups') {
         if (linkedGroups !== undefined) item.set('addOnGroups', linkedGroups);
@@ -146,8 +138,8 @@ class RestaurantService {
    * is stamped with the id of the entry it belongs to.
    *
    * That is what lets a kitchen type "Extra cheese" once on a pizza and then
-   * PICK it on the next dish - the same trick the section and subsection lists
-   * use, so nobody has to fill in a management screen before they can work.
+   * PICK it on the next dish - the same trick the section list uses, so nobody
+   * has to fill in a management screen before they can work.
    */
   private async linkAddOns<T extends { name: string; options: { name: string; priceMinor: number }[] }>(ctx: TenantContext, groups: T[] | undefined) {
     if (!groups || groups.length === 0) return groups ?? [];
@@ -975,7 +967,6 @@ class RestaurantService {
         menuItemId: entry._id,
         nameSnapshot: entry.name,
         categorySnapshot: entry.category,
-        subcategorySnapshot: entry.subcategory ?? '',
         variantId,
         variantNameSnapshot,
         addOns,

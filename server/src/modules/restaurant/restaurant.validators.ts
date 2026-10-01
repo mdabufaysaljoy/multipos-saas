@@ -65,8 +65,6 @@ export const createMenuItemSchema = z
   .object({
     name: z.string().trim().min(1, 'Name is required').max(120),
     category: z.string().trim().min(1).max(60).optional().default('General'),
-    /** Empty for a dish that sits directly under its section. */
-    subcategory: z.string().trim().max(60).optional().default(''),
     description: z.string().trim().max(300).optional().default(''),
     priceMinor: amount,
     variants: z.array(variantInput).max(30).optional().default([]),
@@ -80,7 +78,6 @@ export const updateMenuItemSchema = z
   .object({
     name: z.string().trim().min(1).max(120),
     category: z.string().trim().min(1).max(60),
-    subcategory: z.string().trim().max(60),
     description: z.string().trim().max(300),
     priceMinor: amount,
     variants: z.array(variantInput).max(30),
@@ -93,38 +90,8 @@ export const updateMenuItemSchema = z
 
 export const listMenuSchema = searchSchema.extend({
   category: z.string().trim().max(60).optional(),
-  subcategory: z.string().trim().max(60).optional(),
   availableOnly: queryFlag,
 });
-
-// --------------------------------------------------------- subsections
-
-const subcategoryName = z.string().trim().min(1, 'Give the subsection a name').max(60);
-
-export const createSubcategorySchema = z
-  .object({
-    /** The section it belongs to. One level of nesting, no deeper. */
-    category: z.string().trim().min(1, 'Choose a section').max(60),
-    name: subcategoryName,
-    sortOrder: z.number().int().min(0).max(1000).optional().default(0),
-  })
-  .strict();
-
-export const updateSubcategorySchema = z
-  .object({
-    name: subcategoryName.optional(),
-    isActive: z.boolean().optional(),
-    sortOrder: z.number().int().min(0).max(1000).optional(),
-  })
-  .strict()
-  .refine((input) => Object.keys(input).length > 0, 'Nothing to update');
-
-export const listSubcategoriesSchema = z
-  .object({
-    category: z.string().trim().max(60).optional(),
-    includeInactive: queryFlag,
-  })
-  .strict();
 
 // ----------------------------------------------------------- extras list
 
@@ -155,9 +122,6 @@ export type CreateAddOnInput = z.infer<typeof createAddOnSchema>;
 export type UpdateAddOnInput = z.infer<typeof updateAddOnSchema>;
 export type ListAddOnsInput = z.infer<typeof listAddOnsSchema>;
 
-export type CreateSubcategoryInput = z.infer<typeof createSubcategorySchema>;
-export type UpdateSubcategoryInput = z.infer<typeof updateSubcategorySchema>;
-export type ListSubcategoriesInput = z.infer<typeof listSubcategoriesSchema>;
 
 // ---------------------------------------------------------------- tables
 

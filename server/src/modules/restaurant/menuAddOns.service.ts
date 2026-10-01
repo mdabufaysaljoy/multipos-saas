@@ -21,7 +21,7 @@ export interface MenuAddOnRow {
  * The workspace's reusable extras: define "Extra cheese" once, then pick it on
  * every dish that offers it.
  *
- * The same discipline as the section and subsection lists, with one difference
+ * The same discipline as the section list, with one difference
  * that matters: an extra carries a PRICE, and attaching it to a dish copies
  * that price rather than pointing at it. So editing the list changes what the
  * next dish suggests, never what a dish already charges and never a past order.

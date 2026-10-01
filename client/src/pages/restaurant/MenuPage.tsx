@@ -42,7 +42,6 @@ import type { MenuItem } from '@/types/restaurant';
 interface Draft {
   name: string;
   category: string;
-  subcategory: string;
   description: string;
   priceMinor: number | null;
   variants: VariantDraft[];
@@ -53,7 +52,6 @@ interface Draft {
 const EMPTY: Draft = {
   name: '',
   category: 'General',
-  subcategory: '',
   description: '',
   priceMinor: null,
   variants: [],
@@ -223,17 +221,11 @@ function MenuItemDialog({
 }) {
   const [draft, setDraft] = React.useState<Draft>(EMPTY);
 
-  // The three short lists this form picks from. A name typed instead of picked
+  // The two short lists this form picks from. A name typed instead of picked
   // joins them when the dish is saved, so they are only ever suggestions.
   const { data: sections } = useQuery({ queryKey: ['restaurant', 'categories', 'options'], queryFn: () => restaurantCategoriesApi.list() });
-  const { data: subsections } = useQuery({
-    queryKey: ['restaurant', 'subcategories', 'options', draft.category],
-    queryFn: () => restaurantApi.subcategories(draft.category ? { category: draft.category } : undefined),
-    enabled: Boolean(draft.category),
-  });
   const { data: addOnLibrary } = useQuery({ queryKey: ['restaurant', 'addons', 'options'], queryFn: () => restaurantApi.addOns() });
   const sectionNames = React.useMemo(() => (sections ?? []).map((row) => row.name), [sections]);
-  const subsectionNames = React.useMemo(() => (subsections ?? []).map((row) => row.name), [subsections]);
 
   React.useEffect(() => {
     if (open) {
@@ -242,7 +234,6 @@ function MenuItemDialog({
           ? {
               name: item.name,
               category: item.category,
-              subcategory: item.subcategory ?? '',
               description: item.description,
               priceMinor: item.priceMinor,
               variants: (item.variants ?? []).map((variant) => ({
@@ -280,7 +271,6 @@ function MenuItemDialog({
       const body = {
         name: draft.name.trim(),
         category: draft.category.trim() || 'General',
-        subcategory: draft.subcategory.trim(),
         description: draft.description.trim(),
         priceMinor: draft.priceMinor ?? 0,
         variants: draft.variants.filter(isCompleteVariant).map((variant, index) => ({
@@ -338,32 +328,14 @@ function MenuItemDialog({
             <Label htmlFor="menu-name">Name</Label>
             <Input id="menu-name" value={draft.name} maxLength={120} onChange={(e) => setDraft({ ...draft, name: e.target.value })} />
           </div>
-          <div className="grid gap-3 sm:grid-cols-2">
-            <NamePicker
-              id="menu-category"
-              label="Section"
-              value={draft.category}
-              options={sectionNames}
-              createLabel="New section…"
-              onChange={(category) =>
-                // A subsection belongs to one section, so moving the dish to
-                // another section drops a subsection that no longer applies.
-                setDraft({ ...draft, category, subcategory: '' })
-              }
-            />
-            <NamePicker
-              id="menu-subcategory"
-              label="Subsection"
-              value={draft.subcategory}
-              options={subsectionNames}
-              optional
-              emptyLabel="None"
-              createLabel="New subsection…"
-              disabled={!draft.category}
-              placeholder={draft.category ? 'Optional' : 'Choose a section first'}
-              onChange={(subcategory) => setDraft({ ...draft, subcategory })}
-            />
-          </div>
+          <NamePicker
+            id="menu-category"
+            label="Section"
+            value={draft.category}
+            options={sectionNames}
+            createLabel="New section…"
+            onChange={(category) => setDraft({ ...draft, category })}
+          />
           <div className="space-y-1.5">
             <Label>{draft.variants.length > 0 ? 'Base price' : 'Price'}</Label>
             <MoneyInput value={draft.priceMinor} onChange={(priceMinor) => setDraft({ ...draft, priceMinor })} ariaLabel="Price" />

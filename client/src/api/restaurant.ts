@@ -4,7 +4,6 @@ import type {
   KitchenTicketPayload,
   MenuItem,
   MenuAddOnRow,
-  MenuSubcategoryRow,
   RestaurantDashboard,
   RestaurantOrder,
   RestaurantReceiptPayload,
@@ -47,14 +46,6 @@ export const restaurantApi = {
   createMenuItem: (body: Record<string, unknown>) => post<MenuItem>('/restaurant/menu', body),
   updateMenuItem: (id: string, body: Record<string, unknown>) => patch<MenuItem>(`/restaurant/menu/${id}`, body),
   removeMenuItem: (id: string) => del<{ id: string }>(`/restaurant/menu/${id}`),
-
-  /** Subsections of a section: Pizza -> Italian, Mexican, Naga Hot. */
-  subcategories: (params?: Query) => get<MenuSubcategoryRow[]>('/restaurant/subcategories', params),
-  createSubcategory: (body: { category: string; name: string; sortOrder?: number }) =>
-    post<MenuSubcategoryRow>('/restaurant/subcategories', body),
-  updateSubcategory: (id: string, body: { name?: string; isActive?: boolean; sortOrder?: number }) =>
-    patch<MenuSubcategoryRow>(`/restaurant/subcategories/${id}`, body),
-  removeSubcategory: (id: string) => del<{ id: string }>(`/restaurant/subcategories/${id}`),
 
   /** The workspace's reusable extras: define one, pick it on any dish. */
   addOns: (params?: Query) => get<MenuAddOnRow[]>('/restaurant/addons', params),

@@ -50,8 +50,6 @@ export interface MenuItem {
   _id: string;
   name: string;
   category: string;
-  /** Empty for a dish that sits directly under its section. */
-  subcategory: string;
   description: string;
   /** What a dish with no variants costs; the fallback when it has them. */
   priceMinor: number;
@@ -69,18 +67,6 @@ export interface MenuAddOnRow {
   slug: string;
   /** What it usually costs; a dish may charge something else. */
   defaultPriceMinor: number;
-  isActive: boolean;
-  sortOrder: number;
-  itemCount: number;
-}
-
-/** A subsection of one menu section, as the server reports it. */
-export interface MenuSubcategoryRow {
-  /** Null for a name dishes use that was never written down. */
-  id: string | null;
-  category: string;
-  name: string;
-  slug: string;
   isActive: boolean;
   sortOrder: number;
   itemCount: number;
@@ -109,7 +95,6 @@ export interface RestaurantOrderLine {
   menuItemId: string;
   nameSnapshot: string;
   categorySnapshot: string;
-  subcategorySnapshot?: string;
   /** The size chosen. Null for a dish with no variants. */
   variantId?: string | null;
   variantNameSnapshot?: string;

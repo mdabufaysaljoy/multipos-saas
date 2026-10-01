@@ -115,11 +115,12 @@ What follows from that shape:
   else.
 - **No restaurant-specific permissions.** Everything reuses `sales.*`,
   `products.*`, `returns.*`, `reports.view`, `settings.edit`.
-- **The menu is a hierarchy of names.** Section → subsection → dish → size,
-  with extras on the dish. `category` and `subcategory` are NAMES (the shared
-  `PosCategory` list and Restaurant's own `MenuSubcategory`); `variants[]` and
-  `addOnGroups[]` are embedded on `MenuItem`. Every part is optional, so a dish
-  that is just a dish at one price carries none of it.
+- **The menu is a hierarchy of names.** Section → dish → size, with extras on
+  the dish. `category` is a NAME (the shared `PosCategory` list); `variants[]`
+  and `addOnGroups[]` are embedded on `MenuItem`. Every part is optional, so a
+  dish that is just a dish at one price carries none of it. A second level,
+  subsections, was built and removed again on 2026-10-02 — one level of grouping
+  is what the kitchen wanted.
 - **A variant is not an add-on.** A variant answers "which version?" — one is
   chosen and its price *replaces* the dish's. An add-on answers "what extra?" —
   several may be chosen and each price is *added*. They are separate arrays, and

@@ -6,7 +6,6 @@ import { body, params, query } from '../../middleware/validate';
 import { getContext } from '../../middleware/tenant';
 import { recordAudit } from '../../services/audit/audit.service';
 import { restaurantService } from './restaurant.service';
-import { menuSubcategoryService } from './menuSubcategories.service';
 import { menuAddOnService } from './menuAddOns.service';
 import { restaurantReportsService } from './restaurantReports.service';
 import { streamReportPdf } from '../../services/reports/reportPrint';
@@ -23,9 +22,6 @@ import type {
   CreateAddOnInput,
   ListAddOnsInput,
   UpdateAddOnInput,
-  CreateSubcategoryInput,
-  ListSubcategoriesInput,
-  UpdateSubcategoryInput,
   CreateOrderInput,
   CreateTableInput,
   ListMenuInput,
@@ -57,25 +53,6 @@ export const updateMenuItem = asyncHandler(async (req: Request, res: Response) =
 
 export const removeMenuItem = asyncHandler(async (req: Request, res: Response) => {
   ok(res, await restaurantService.removeMenuItem(getContext(req), params<IdParams>(req).id));
-});
-
-// ------------------------------------------------------------ subsections
-// One level below a menu section: Pizza -> Italian, Mexican, Naga Hot.
-
-export const listSubcategories = asyncHandler(async (req: Request, res: Response) => {
-  ok(res, await menuSubcategoryService.list(getContext(req), query<ListSubcategoriesInput>(req)));
-});
-
-export const createSubcategory = asyncHandler(async (req: Request, res: Response) => {
-  created(res, await menuSubcategoryService.create(getContext(req), body<CreateSubcategoryInput>(req)));
-});
-
-export const updateSubcategory = asyncHandler(async (req: Request, res: Response) => {
-  ok(res, await menuSubcategoryService.update(getContext(req), params<IdParams>(req).id, body<UpdateSubcategoryInput>(req)));
-});
-
-export const removeSubcategory = asyncHandler(async (req: Request, res: Response) => {
-  ok(res, await menuSubcategoryService.remove(getContext(req), params<IdParams>(req).id));
 });
 
 // ----------------------------------------------------------- extras list

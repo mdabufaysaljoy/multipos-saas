@@ -24,8 +24,6 @@ export interface RestaurantOrderLine {
   /** Copied from the menu when the line was added; never re-read afterwards. */
   nameSnapshot: string;
   categorySnapshot: string;
-  /** Empty for a dish that sits directly under its section. */
-  subcategorySnapshot: string;
   /** The size or set chosen. Null for a dish that has no variants. */
   variantId: Types.ObjectId | null;
   variantNameSnapshot: string;
@@ -168,7 +166,6 @@ const lineSchema = new Schema<RestaurantOrderLine>({
   menuItemId: { type: Schema.Types.ObjectId, ref: 'MenuItem', required: true },
   nameSnapshot: { type: String, required: true },
   categorySnapshot: { type: String, default: '' },
-  subcategorySnapshot: { type: String, default: '' },
   variantId: { type: Schema.Types.ObjectId, default: null },
   variantNameSnapshot: { type: String, default: '' },
   addOns: { type: [lineAddOnSchema], default: [] },

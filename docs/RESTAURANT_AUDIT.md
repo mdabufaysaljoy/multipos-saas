@@ -2,10 +2,10 @@
 
 **Date:** 2026-09-30 · **Commit:** `main` · **Scope:** Restaurant POS only.
 
-> **Status: phases 1-4, 6 and 7 are done and regression-tested** (kitchen management and refunds
-> removed, billing moved below the cart, and the menu hierarchy built:
-> subsections, variants and add-ons; all 2026-09-30). Phase 5, POS filtering by
-> subsection, is the one still outstanding. The rest of this
+> **Status: phases 1, 2, 3, 6 and 7 are done and regression-tested** (kitchen management and refunds
+> removed, billing moved below the cart, and variants and add-ons built).
+> **Phase 4, subsections, was built and then removed again on 2026-10-02 at the
+> owner's request - see §18.** Phase 5 went with it. The rest of this
 > document is the audit as written before that work, kept as the record it was
 > made from. Two things it had missed, both found during the removal and both
 > handled there:
@@ -16,7 +16,7 @@
 > - **A second refund entry point.** The Orders page had its own "Refund items"
 >   action and dialog, not only the Refunds screen.
 >
-> What actually changed is recorded in §12-§16 at the end of this document.
+> What actually changed is recorded in §12-§18 at the end of this document.
 
 Read with `docs/ARCHITECTURE.md` (the platform) and `docs/ANALYTICS_PARITY.md`
 (the money vocabulary).
@@ -322,8 +322,8 @@ Ordered by dependency, not by the brief's numbering.
 | **1** ✅ | Remove Kitchen management (keep send + token) | Self-contained; shrinks the surface everything else touches |
 | **2** ✅ | Remove Refunds | Self-contained; also shrinks it |
 | **3** ✅ | Billing below the cart | Pure UI; no model change; unblocks judging the POS layout before it grows |
-| **4** ✅ | Subcategory (model + menu screen) | The hierarchy's first half |
-| **5** | POS filtering by category **and** subcategory | Needs phase 4 — **still outstanding** |
+| ~~**4**~~ | ~~Subcategory~~ | Built, then **removed** on 2026-10-02 (§18) |
+| ~~**5**~~ | ~~POS filtering by subcategory~~ | Dropped with phase 4 |
 | **6** ✅ | Variants (model, menu screen, order line snapshots, pricing) | The heaviest; needs phase 4's screens |
 | **7** ✅ | Add-ons / option groups | Needs phase 6's picker |
 
@@ -801,3 +801,50 @@ what the suite covers**. Express 5 in particular changes routing, error handling
 and `req.query` mutability. React 19 removes legacy APIs. Those deserve a
 deliberate read of the changelogs; this pass only established that the suite is
 green under them.
+
+---
+
+## 18. Subsections removed — 2026-10-02
+
+The owner asked for them to go. The menu is **section → dish → variant**, with
+add-ons on the dish; one level of grouping, not two.
+
+### Gone
+
+`MenuSubcategory` and `menuSubcategories.service.ts` (deleted) · the four
+`/restaurant/subcategories` routes, their controllers and validators ·
+`MenuItem.subcategory` and the index that paired it with `category` ·
+`RestaurantOrderLine.subcategorySnapshot` · the `subcategory` filter on
+`GET /menu` · `MenuSubcategoriesPage.tsx` with its route, nav entry and vertical
+guard · the client type, the four API calls and the second `NamePicker` on the
+dish form.
+
+Nothing else changed: sections, variants, add-ons, the extras list, tokens,
+billing and the order line's other snapshots are untouched, and no other
+vertical was involved at any point.
+
+### Stored data
+
+A dish saved while subsections existed may still carry a `subcategory` value,
+and an order line a `subcategorySnapshot`. Both are simply ignored now — mongoose
+does not read a field the schema has dropped. Nothing was deleted from the
+database, so the decision stays reversible; if subsections never come back the
+values can be dropped in a later migration, and until then they cost nothing.
+
+### POS grid
+
+The till now lays dishes out in **two columns at every width**, instead of
+2/3/4 by breakpoint — fewer, bigger targets for a screen that is usually touched
+rather than clicked.
+
+### Verified
+
+`npm run lint` ✅ · `npm run typecheck` ✅ · `npm run build` ✅ ·
+`npm test` ✅ **3639 passed, 0 failed** plus the immutability check **16/0**.
+The hierarchy section keeps two assertions proving the routes now answer 404.
+
+Then in a browser, on a workspace seeded without subsections: the till in two
+columns, the nav without "Menu subsections", the dish form with Section but no
+Subsection, and a full order through — 12 inch (৳850) + Extra cheese (৳80) =
+**৳930**, `KOT-000001`, slip reading `1 × Mexican Hot Pizza (12 inch, Extra
+cheese)`, and the stored line carrying no `subcategorySnapshot`.

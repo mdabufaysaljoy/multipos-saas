@@ -26,9 +26,6 @@ import {
   createAddOnSchema,
   listAddOnsSchema,
   updateAddOnSchema,
-  createSubcategorySchema,
-  listSubcategoriesSchema,
-  updateSubcategorySchema,
   createOrderSchema,
   createTableSchema,
   dashboardSchema,
@@ -79,31 +76,6 @@ router.delete(
   requirePermission(PERMISSIONS.CATEGORIES_DELETE),
   validate({ params: idParam }),
   removeCategory,
-);
-
-// Subsections of a section. Managed with the SAME permissions as the section
-// list above, because they are one list, one level apart.
-router.get('/subcategories', requirePermission(PERMISSIONS.PRODUCTS_VIEW), validate({ query: listSubcategoriesSchema }), controller.listSubcategories);
-router.post(
-  '/subcategories',
-  requireActiveSubscription,
-  requirePermission(PERMISSIONS.CATEGORIES_CREATE),
-  validate({ body: createSubcategorySchema }),
-  controller.createSubcategory,
-);
-router.patch(
-  '/subcategories/:id',
-  requireActiveSubscription,
-  requirePermission(PERMISSIONS.CATEGORIES_EDIT),
-  validate({ params: idParam, body: updateSubcategorySchema }),
-  controller.updateSubcategory,
-);
-router.delete(
-  '/subcategories/:id',
-  requireActiveSubscription,
-  requirePermission(PERMISSIONS.CATEGORIES_DELETE),
-  validate({ params: idParam }),
-  controller.removeSubcategory,
 );
 
 // The reusable extras. They carry a price, so they are managed with the same

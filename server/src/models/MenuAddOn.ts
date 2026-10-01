@@ -11,7 +11,7 @@ import type { BaseDoc } from './types';
  * lets the same extra cost 80 on a pizza and 50 on a burger, and what keeps a
  * past order exact when the list is edited later.
  *
- * Like the section and subsection lists, a name typed straight onto a dish
+ * Like the section list, a name typed straight onto a dish
  * joins this list automatically, so nobody has to visit a management screen
  * first and nothing had to be migrated.
  */

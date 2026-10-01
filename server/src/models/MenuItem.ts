@@ -63,18 +63,16 @@ export interface MenuAddOnGroup {
  * catalogue. Orders copy the name and price at the moment a line is added, so
  * editing or removing a menu item never changes a past order.
  *
- * The hierarchy is section -> subsection -> dish -> variant, with add-ons
- * hanging off the dish. `category` and `subcategory` are NAMES, not ids: see
- * `services/catalogue/posCategories.service` and `MenuSubcategory`. Every field
- * below `priceMinor` is optional, so a dish that is just a dish at one price -
- * which is most of them - carries none of it and behaves exactly as before.
+ * The hierarchy is section -> dish -> variant, with add-ons hanging off the
+ * dish. `category` is a NAME, not an id: see
+ * `services/catalogue/posCategories.service`. Every field below `priceMinor` is
+ * optional, so a dish that is just a dish at one price - which is most of them -
+ * carries none of it and behaves exactly as before.
  */
 export interface MenuItemDoc extends BaseDoc {
   tenantId: Types.ObjectId;
   name: string;
   category: string;
-  /** Empty for a dish that sits directly under its section. */
-  subcategory: string;
   description: string;
   /**
    * Minor units. The price of a dish that has NO variants; when it has them,
@@ -126,7 +124,6 @@ const menuItemSchema = new Schema<MenuItemDoc>(
     tenantId: { type: Schema.Types.ObjectId, ref: 'Tenant', required: true },
     name: { type: String, required: true, trim: true, maxlength: 120 },
     category: { type: String, trim: true, maxlength: 60, default: 'General' },
-    subcategory: { type: String, trim: true, maxlength: 60, default: '' },
     description: { type: String, trim: true, maxlength: 300, default: '' },
     priceMinor: price,
     variants: { type: [variantSchema], default: [] },
@@ -140,7 +137,5 @@ const menuItemSchema = new Schema<MenuItemDoc>(
 );
 
 menuItemSchema.index({ tenantId: 1, deletedAt: 1, category: 1, sortOrder: 1, name: 1 });
-// The till filtering a section down to one of its subsections.
-menuItemSchema.index({ tenantId: 1, deletedAt: 1, category: 1, subcategory: 1, sortOrder: 1, name: 1 });
 
 export const MenuItemModel = model<MenuItemDoc>('MenuItem', menuItemSchema);

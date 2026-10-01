@@ -334,7 +334,9 @@ export function RestaurantPosPage() {
         <CardContent className="scrollbar-thin max-h-[55vh] min-h-0 flex-1 overflow-y-auto lg:max-h-none">
           {menuLoading && <LoadingState label="Loading the menu…" />}
           {!menuLoading && visibleMenu.length === 0 && <EmptyState title="Nothing to show" description="Add dishes on the Menu page." />}
-          <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-4">
+          {/* Two columns at every width: fewer, bigger targets for a till
+              that is usually touched rather than clicked. */}
+          <div className="grid grid-cols-2 gap-2">
             {visibleMenu.map((item) => (
               <button
                 key={item._id}

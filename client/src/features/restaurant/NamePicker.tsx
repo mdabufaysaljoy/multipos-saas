@@ -13,11 +13,11 @@ const NONE = '__none__';
 /**
  * Pick a name from a list, or type a new one.
  *
- * The Restaurant menu is managed out of a few short lists - sections,
- * subsections, extras - and a kitchen filling in a dish should be choosing from
- * them, not retyping and misspelling them. So this is a real dropdown, with one
- * extra row at the bottom that swaps it for a text box when what they want is
- * not there yet.
+ * The Restaurant menu is managed out of a couple of short lists - sections and
+ * extras - and a kitchen filling in a dish should be choosing from them, not
+ * retyping and misspelling them. So this is a real dropdown, with one extra row
+ * at the bottom that swaps it for a text box when what they want is not there
+ * yet.
  *
  * Nothing is created here. The name goes back to the form, and the server adds
  * it to the list when the dish is saved - the convention the whole catalogue
