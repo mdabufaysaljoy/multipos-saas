@@ -308,13 +308,17 @@ class UsageChargeService {
       { _id: chargeId, 'refunds.refundId': refundId },
       { $set: { 'refunds.$.status': 'completed', 'refunds.$.walletTransactionId': transactionId } },
     );
-    await UsageChargeModel.updateOne({ _id: chargeId }, [
-      {
-        $set: {
-          status: { $cond: [{ $gte: ['$refundedMinor', '$amountMinor'] }, 'refunded', 'partially_refunded'] },
+    await UsageChargeModel.updateOne(
+      { _id: chargeId },
+      [
+        {
+          $set: {
+            status: { $cond: [{ $gte: ['$refundedMinor', '$amountMinor'] }, 'refunded', 'partially_refunded'] },
+          },
         },
-      },
-    ]);
+      ],
+      { updatePipeline: true },
+    );
     return true;
   }
 }

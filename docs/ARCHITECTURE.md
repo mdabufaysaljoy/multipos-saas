@@ -147,12 +147,28 @@ transactions**. Correctness comes from ordering and compare-and-swap instead:
   it on failure;
 - billing claims work with a CAS and a period-scoped idempotency key.
 
+## Dependency majors, and what they cost
+
+The stack runs **Express 5, Mongoose 9 and React 19**. Three things about
+Mongoose 9 are worth knowing before writing data code:
+
+- **A pipeline update needs `updatePipeline: true`.** An array passed to
+  `updateOne` / `updateMany` / `findOneAndUpdate` is otherwise refused at
+  runtime. TypeScript will not catch it where the pipeline is cast.
+- **Hooks take no `next`.** A `pre` hook is called with the operation's own
+  arguments and fails by throwing. A hook written `function (next) { next(err) }`
+  calls an undefined `next` and raises a TypeError instead of its own message.
+- **Query filters are typed strictly.** A bare `string` no longer stands in for
+  a union field, so filters built from loose values need the real type.
+
 ## Testing & CI
 
 `npm test` boots a throwaway API on its own port against a derived `*_test`
 database, runs `scripts/smoke-test.mjs` (**3,570 assertions**, all over HTTP,
-including cross-tenant IDOR, auth bypass and payload abuse), then drops the
-database. `.github/workflows/ci.yml` runs lint → typecheck → build → test on
+including cross-tenant IDOR, auth bypass and payload abuse), then runs
+`server/src/seed/immutability.check.ts` at the model layer - the HTTP suite
+cannot reach the immutability guards, because there is deliberately no route
+that edits an invoice or a ledger row - and then drops the database. `.github/workflows/ci.yml` runs lint → typecheck → build → test on
 Node 22 with a `mongo:7` service.
 
 There are no unit tests and no frontend tests; pure-logic modules

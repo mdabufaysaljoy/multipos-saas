@@ -4,7 +4,7 @@ import { AccountModel } from '../../models/Account';
 import { AuditLogModel } from '../../models/AuditLog';
 import { PaymentModel } from '../../models/Payment';
 import { PRIMARY_FIRST, SubscriptionModel, type SubscriptionDoc } from '../../models/Subscription';
-import { SubscriptionEventModel } from '../../models/SubscriptionEvent';
+import { SubscriptionEventModel, type SubscriptionEventDoc } from '../../models/SubscriptionEvent';
 import { SubscriptionPlanModel } from '../../models/SubscriptionPlan';
 import { TenantModel } from '../../models/Tenant';
 import { planChangeService } from '../../modules/subscriptions/planChange.service';
@@ -393,11 +393,13 @@ async function runRenewal(subscription: RenewalCandidate, charger: RenewalCharge
     await issueInvoiceSafely(payment._id);
 
     const changed = String(plan._id) !== String(claimed.planId);
-    await SubscriptionEventModel.create([
+    // Named, because the two rows differ in shape and mongoose 9 will not infer
+    // a usable union for `create([...])` on its own.
+    const events: Partial<SubscriptionEventDoc>[] = [
       {
         tenantId: claimed.tenantId,
         subscriptionId: next._id,
-        type: 'renewed',
+        type: 'renewed' as const,
         message: trigger === 'automatic' ? `Renewed automatically (${charger.provider}): ${plan.name}` : `Renewed by ${actor.name}: ${plan.name}`,
         data: { paymentId: String(payment._id), amountMinor, currency: offer.currency, previousSubscriptionId: String(claimed._id), trigger },
         actorId: actor.id,
@@ -408,7 +410,7 @@ async function runRenewal(subscription: RenewalCandidate, charger: RenewalCharge
             {
               tenantId: claimed.tenantId,
               subscriptionId: next._id,
-              type: 'plan_changed',
+              type: 'plan_changed' as const,
               message: `Scheduled change applied at renewal: ${claimed.planSnapshot?.name ?? 'previous plan'} → ${plan.name}`,
               data: { from: claimed.planSnapshot?.code ?? null, to: plan.code },
               actorId: claimed.scheduledChange?.requestedBy ?? null,
@@ -416,7 +418,8 @@ async function runRenewal(subscription: RenewalCandidate, charger: RenewalCharge
             },
           ]
         : []),
-    ]);
+    ];
+    await SubscriptionEventModel.create(events);
     await audit('subscription.renewed', actor, trigger, claimed.tenantId, plan.name, {
       subscriptionId: String(claimed._id),
       renewedSubscriptionId: String(next._id),

@@ -1,10 +1,10 @@
-import type { Types } from 'mongoose';
+import type { QueryFilter, Types } from 'mongoose';
 import { PAYMENT_STATUS, SUBSCRIPTION_STATUS } from '../../config/constants';
-import { DEFAULT_POS_VERTICAL } from '../../config/verticals';
+import { DEFAULT_POS_VERTICAL, type PosVertical } from '../../config/verticals';
 import { PaymentModel } from '../../models/Payment';
 import { PosProductModel } from '../../models/PosProduct';
 import { SubscriptionModel } from '../../models/Subscription';
-import { TenantModel } from '../../models/Tenant';
+import { TenantModel, type TenantDoc } from '../../models/Tenant';
 import { UpgradeRequestModel } from '../../models/UpgradeRequest';
 import { ApiError } from '../../utils/ApiError';
 
@@ -61,8 +61,11 @@ export async function assertPlanScope(
   if (tenantIds.length === 0) return;
 
   // Workspaces with no POS type stored predate verticals and are Clothing.
-  const ofAnotherType =
-    code === DEFAULT_POS_VERTICAL ? { vertical: { $nin: [code, null] } } : { vertical: { $ne: code } };
+  // Mongoose 9 types filters strictly: the vertical is a union, not a string.
+  const ofAnotherType: QueryFilter<TenantDoc> =
+    code === DEFAULT_POS_VERTICAL
+      ? { vertical: { $nin: [code as PosVertical, null] } }
+      : { vertical: { $ne: code as PosVertical } };
   const affected = await TenantModel.countDocuments({ _id: { $in: tenantIds }, ...ofAnotherType });
   if (affected > 0) {
     throw ApiError.conflict(

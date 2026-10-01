@@ -266,7 +266,7 @@ class SupershopService {
             },
           },
         ] as never,
-        { upsert: true, new: true },
+        { updatePipeline: true, upsert: true, new: true },
       ).lean<StockRecord>();
 
     let stock: StockRecord | null;
@@ -826,7 +826,7 @@ class SupershopService {
    */
   async dashboard(ctx: TenantContext, input: DashboardRangeInput) {
     const { bucket, format: bucketFormat, timezone: bucketTimezone, previousFrom, previousTo, ...range } = resolveDashboardWindow(input);
-    const completed = { tenantId: ctx.tenantId, storeId: ctx.storeId, status: 'completed' };
+    const completed = { tenantId: ctx.tenantId, storeId: ctx.storeId, status: 'completed' as const };
     const soldIn = (from: Date, to: Date) => ({ ...completed, soldAt: { $gte: from, $lte: to } });
     const totals = (from: Date, to: Date) =>
       ShopSaleModel.aggregate<{

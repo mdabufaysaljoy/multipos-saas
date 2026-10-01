@@ -69,7 +69,7 @@ class SupershopReportsService {
     if (input.productId) lineFilter['items.productId'] = input.productId;
     const hasLineFilter = Object.keys(lineFilter).length > 0;
 
-    const completed = { ...scope, status: 'completed', soldAt: window, ...saleFilters, ...lineFilter };
+    const completed = { ...scope, status: 'completed' as const, soldAt: window, ...saleFilters, ...lineFilter };
 
     // The same length of time immediately before it, so every headline figure
     // can say whether it went up or down. Same scope, same filters: the only

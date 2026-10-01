@@ -2,7 +2,7 @@
 
 **Date:** 2026-09-30 · **Commit:** `main` · **Scope:** Restaurant POS only.
 
-> **Status: phases 1-4, 6 and 7 are done** (kitchen management and refunds
+> **Status: phases 1-4, 6 and 7 are done and regression-tested** (kitchen management and refunds
 > removed, billing moved below the cart, and the menu hierarchy built:
 > subsections, variants and add-ons; all 2026-09-30). Phase 5, POS filtering by
 > subsection, is the one still outstanding. The rest of this
@@ -16,8 +16,7 @@
 > - **A second refund entry point.** The Orders page had its own "Refund items"
 >   action and dialog, not only the Refunds screen.
 >
-> What actually changed is recorded in §12, §13 and §14 at the end of this
-> document.
+> What actually changed is recorded in §12-§16 at the end of this document.
 
 Read with `docs/ARCHITECTURE.md` (the platform) and `docs/ANALYTICS_PARITY.md`
 (the money vocabulary).
@@ -710,3 +709,95 @@ inch, Extra cheese, Extra sauce, Extra drink)`.
 fallback that hid this; three new assertions failed on it honestly. All four now
 read the dish back off the list. The route was left alone rather than added,
 since nothing needs it.
+
+---
+
+## 16. Final regression and cleanup — 2026-10-01
+
+### The flow, end to end
+
+Every step of the chain is asserted by `npm test`:
+
+| Step | Covered by |
+|---|---|
+| Category → subcategory | `Hierarchy: a subsection is created under its section` |
+| Product in a subsection | `Hierarchy: a dish is created inside a subsection` |
+| Variant, and its price | `Hierarchy: the line is charged at the SIZE price, not the dish price` |
+| Add-ons, several at once | `Extras: a guest can take three at once, and all three are charged` |
+| Cart keeps the choice | `Hierarchy: the line snapshots the size and the subsection` |
+| Customer | `Restaurant: the customer belongs to the order` |
+| Discount | `Restaurant: the order is paid with a discount` |
+| Payment, split, change | `Restaurant: a split across two methods that adds up is accepted` |
+| Send order → token | `The ticket lists what to make, with notes and a KOT number` |
+| Receipt / history | `A paid order prints as a receipt with its payment and change` |
+| Subcategory filtering | `Hierarchy: the menu can be narrowed to one subsection` |
+
+Removals confirmed still removed: `The kitchen queue is gone`, `A ticket can no
+longer be marked ready`, `Restaurant analytics no longer report kitchen speed`,
+`Restaurant: a bill can no longer be refunded`.
+
+### Dead-code sweep
+
+Nothing left to remove. No reference remains to `kitchenQueue`,
+`markTicketReady`, `KitchenPage`, `KitchenQueueTicket`, the kitchen queue or
+ready routes, `RestaurantRefundsPage`, `restaurantSaleReturnAdapter`,
+`createOrderReturn` or `listOrderReturns`. Every restaurant nav entry resolves to
+a route, every route to a controller, every exported controller is routed, and no
+page or feature file under `pages/restaurant` or `features/restaurant` is
+orphaned. There never was a `kitchen.*` permission to retire.
+
+---
+
+## 17. The dependency migration this pass ran into
+
+`main` had merged **eight unreviewed major upgrades** from dependabot. CI was red
+and the branch could not be checkpointed without dealing with them.
+
+| Server | Client |
+|---|---|
+| express 4 → 5 | react-dom 18 → **19** (react stayed 18) |
+| mongoose 8 → 9 | react-router-dom 6 → 7 |
+| bcryptjs 2 → 3 | tailwind-merge 2 → 3 |
+| multer 1 → 2 | isomorphic-dompurify 2 → 4 |
+
+### Three things that were actually broken
+
+1. **`react-dom` 19 against `react` 18.** Those must share a major. The tree was
+   also serving `@types/react` 19 from the root over a React 18 app, which is
+   what produced the "cannot be used as a JSX component" wall. Resolved by
+   aligning the client on React 19 throughout, which is the direction the
+   bump had already taken `react-dom` and the Radix packages.
+2. **Pipeline updates stopped working.** Mongoose 9 refuses an array update
+   unless `updatePipeline: true` is passed. Six call sites were affected,
+   including `restaurant.service.mutateOpenOrder` — so **every edit to an open
+   restaurant order was a runtime error**. The suite caught it; typecheck could
+   not, because the call sites cast the pipeline.
+3. **The immutability guards threw the wrong error.** Mongoose 9 no longer hands
+   a `next` callback to a hook - kareem calls it with the operation's own
+   arguments and treats a throw as the failure. The guards on `Invoice`,
+   `WalletReceipt` and `WalletTransaction` were written `next(new Error(...))`,
+   so under mongoose 9 they called an undefined `next` and raised a TypeError.
+   They still **failed closed** - no financial record was ever at risk - but the
+   refusal no longer said why. Rewritten to throw.
+
+### The gap that let that happen
+
+**Nothing tested the immutability guards.** CLAUDE.md rule 9 says financial
+records must be immutable, and the HTTP suite cannot check it: there is
+deliberately no route that edits an invoice or a ledger row.
+
+`server/src/seed/immutability.check.ts` (new, 16 assertions, wired into
+`npm test`) closes that. It asserts the refusal **and its reason**, because the
+reason is what regressed - a check that accepted any throw would have called the
+broken guards healthy. Verified in both directions: green as written, and red
+(`An issued invoice cannot be saved again`) when the old `next`-style guard is
+put back.
+
+### What was NOT done
+
+The four client majors and four server majors are now compiling, building and
+passing 3,672 assertions, but **no one has reviewed them for behaviour beyond
+what the suite covers**. Express 5 in particular changes routing, error handling
+and `req.query` mutability. React 19 removes legacy APIs. Those deserve a
+deliberate read of the changelogs; this pass only established that the suite is
+green under them.

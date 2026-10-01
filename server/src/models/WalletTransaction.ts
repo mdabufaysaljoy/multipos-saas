@@ -127,14 +127,17 @@ walletTxSchema.index({ reversalOfTransactionId: 1 }, { unique: true, partialFilt
 
 // Immutable: history is never edited. Corrections are compensating rows.
 const IMMUTABLE_MESSAGE = 'Wallet transactions are immutable. Record a compensating transaction instead.';
-walletTxSchema.pre('save', function refuseEdits(next) {
-  if (!this.isNew && !ledgerMaintenanceActive()) return next(new Error(IMMUTABLE_MESSAGE));
-  next();
+// Mongoose 9 no longer hands a `next` callback to a hook: kareem calls it with
+// the operation's own arguments and takes a THROW as the failure. A hook still
+// written in the old style would be handed SaveOptions as `next` and blow up -
+// or worse, quietly stop guarding - so these throw.
+walletTxSchema.pre('save', function refuseEdits() {
+  if (!this.isNew && !ledgerMaintenanceActive()) throw new Error(IMMUTABLE_MESSAGE);
 });
 for (const operation of ['updateOne', 'updateMany', 'findOneAndUpdate', 'replaceOne', 'findOneAndReplace', 'deleteOne', 'deleteMany', 'findOneAndDelete'] as const) {
-  walletTxSchema.pre(operation, function refuseQueryEdits(next: (error?: Error) => void) {
-    if (ledgerMaintenanceActive()) return next();
-    next(new Error(IMMUTABLE_MESSAGE));
+  walletTxSchema.pre(operation, function refuseQueryEdits() {
+    if (ledgerMaintenanceActive()) return;
+    throw new Error(IMMUTABLE_MESSAGE);
   });
 }
 

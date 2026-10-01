@@ -64,13 +64,16 @@ const walletReceiptSchema = new Schema<WalletReceiptDoc>(
 );
 
 const IMMUTABLE_MESSAGE = 'Receipts are immutable.';
-walletReceiptSchema.pre('save', function refuseEdits(next) {
-  if (!this.isNew) return next(new Error(IMMUTABLE_MESSAGE));
-  next();
+// Mongoose 9 no longer hands a `next` callback to a hook: kareem calls it with
+// the operation's own arguments and takes a THROW as the failure. A hook still
+// written in the old style would be handed SaveOptions as `next` and blow up -
+// or worse, quietly stop guarding - so these throw.
+walletReceiptSchema.pre('save', function refuseEdits() {
+  if (!this.isNew) throw new Error(IMMUTABLE_MESSAGE);
 });
 for (const operation of ['updateOne', 'updateMany', 'findOneAndUpdate', 'replaceOne', 'findOneAndReplace', 'deleteOne', 'deleteMany', 'findOneAndDelete'] as const) {
-  walletReceiptSchema.pre(operation, function refuseQueryEdits(next: (error?: Error) => void) {
-    next(new Error(IMMUTABLE_MESSAGE));
+  walletReceiptSchema.pre(operation, function refuseQueryEdits() {
+    throw new Error(IMMUTABLE_MESSAGE);
   });
 }
 

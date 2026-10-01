@@ -451,7 +451,7 @@ class WalletService {
           mergedAt: '$$NOW',
         },
       },
-    ]);
+    ], { updatePipeline: true });
 
     return this.completeTransfer(absorbedId);
   }

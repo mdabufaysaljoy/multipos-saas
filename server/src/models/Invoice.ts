@@ -117,21 +117,23 @@ const invoiceSchema = new Schema<InvoiceDoc>(
   { timestamps: true },
 );
 
-invoiceSchema.pre('validate', function checkTotals(next) {
+// Mongoose 9 no longer hands a `next` callback to a hook: kareem calls it with
+// the operation's own arguments and takes a THROW as the failure. A hook still
+// written in the old style would be handed SaveOptions as `next` and blow up -
+// or worse, quietly stop guarding - so these throw.
+invoiceSchema.pre('validate', function checkTotals() {
   const expected = this.subtotalMinor - this.discountMinor - this.creditMinor + this.adjustmentMinor;
-  if (expected !== this.totalMinor) return next(new Error('Invoice totals do not add up'));
-  next();
+  if (expected !== this.totalMinor) throw new Error('Invoice totals do not add up');
 });
 
 // Issued once, never edited or removed through the application.
 const IMMUTABLE_MESSAGE = 'Invoices are immutable. Record a refund on the payment instead.';
-invoiceSchema.pre('save', function refuseEdits(next) {
-  if (!this.isNew) return next(new Error(IMMUTABLE_MESSAGE));
-  next();
+invoiceSchema.pre('save', function refuseEdits() {
+  if (!this.isNew) throw new Error(IMMUTABLE_MESSAGE);
 });
 for (const operation of ['updateOne', 'updateMany', 'findOneAndUpdate', 'replaceOne', 'findOneAndReplace', 'deleteOne', 'deleteMany', 'findOneAndDelete'] as const) {
-  invoiceSchema.pre(operation, function refuseQueryEdits(next: (error?: Error) => void) {
-    next(new Error(IMMUTABLE_MESSAGE));
+  invoiceSchema.pre(operation, function refuseQueryEdits() {
+    throw new Error(IMMUTABLE_MESSAGE);
   });
 }
 

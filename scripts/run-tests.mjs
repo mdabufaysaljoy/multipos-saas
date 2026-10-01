@@ -275,6 +275,9 @@ try {
   // run was killed before its cleanup could happen.
   await run(process.execPath, [TSX_CLI, 'server/src/seed/seed.ts', '--reset']);
   await run(process.execPath, ['scripts/smoke-test.mjs'], { API_BASE, BKASH_MOCK_URL: mockBkash.url });
+  // The HTTP suite cannot reach these: there is deliberately no route that edits
+  // an invoice or a ledger row, so the guards are checked at the model.
+  await run(process.execPath, [TSX_CLI, 'server/src/seed/immutability.check.ts']);
 } catch (error) {
   testFailure = error;
 } finally {

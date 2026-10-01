@@ -248,7 +248,7 @@ class PosImportService {
 
   async list(ctx: TenantContext, vertical: PosVertical, input: { page?: number; limit?: number }) {
     const { page, limit, skip } = resolvePage(input);
-    const filter = { ...this.scope(ctx), vertical, status: { $ne: 'pending' } };
+    const filter = { ...this.scope(ctx), vertical, status: { $ne: 'pending' as const } };
     const [items, total] = await Promise.all([
       ProductImportJobModel.find(filter).select('-plan -rowErrors').sort({ createdAt: -1 }).skip(skip).limit(limit).lean(),
       ProductImportJobModel.countDocuments(filter),

@@ -21,12 +21,16 @@ import type { ExportColumn, ExportDataset, ExportSection, DatasetScope } from '.
 type LeanDoc = Record<string, unknown>;
 const BATCH = 500;
 
+// The cursor is typed as `unknown` on purpose. Mongoose 9's Query carries a
+// full Document type that no longer satisfies an index signature, and this
+// helper only ever streams rows through `map`, which reads them as plain
+// objects. Naming the document type at every call site would buy nothing.
 async function* cursorRows(
-  build: () => { cursor: (options: { batchSize: number }) => AsyncIterable<LeanDoc> },
+  build: () => { cursor: (options: { batchSize: number }) => AsyncIterable<unknown> },
   map: (document: LeanDoc) => Record<string, unknown> | Record<string, unknown>[],
 ): AsyncGenerator<Record<string, unknown>> {
   for await (const document of build().cursor({ batchSize: BATCH })) {
-    const mapped = map(document);
+    const mapped = map(document as LeanDoc);
     if (Array.isArray(mapped)) {
       for (const row of mapped) yield row;
     } else {

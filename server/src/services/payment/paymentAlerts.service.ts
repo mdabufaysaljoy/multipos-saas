@@ -1,3 +1,4 @@
+import type { Types } from 'mongoose';
 import { PAYMENT_PROVIDERS, PAYMENT_STATUS, ROLES } from '../../config/constants';
 import { env } from '../../config/env';
 import { PaymentModel } from '../../models/Payment';
@@ -44,7 +45,7 @@ const escapeHtml = (value: unknown) =>
 const money = (minor: number, currency: string) => `${(minor / 100).toFixed(2)} ${currency}`;
 
 type AlertPayment = {
-  _id: unknown;
+  _id: Types.ObjectId;
   amountMinor: number;
   currency: string;
   provider: string;

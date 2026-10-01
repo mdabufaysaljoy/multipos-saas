@@ -508,7 +508,7 @@ class RestaurantService {
           },
         },
       ] as never,
-      { new: true },
+      { updatePipeline: true, new: true },
     ).lean();
     if (!updated) throw ApiError.conflict('The order changed or was already settled. Refresh and try again.');
     return updated;
@@ -710,7 +710,7 @@ class RestaurantService {
           },
         },
       ] as never,
-      { new: true },
+      { updatePipeline: true, new: true },
     ).lean();
     if (cancelled) return cancelled;
     const order = await this.getOrder(ctx, id);
@@ -1056,7 +1056,7 @@ class RestaurantService {
     const updated = await RestaurantOrderModel.findOneAndUpdate(
       { _id: id, tenantId: ctx.tenantId, storeId: ctx.storeId, status: 'open', ...extraFilter },
       [...stages, ...recompute] as never,
-      { new: true },
+      { updatePipeline: true, new: true },
     ).lean();
     if (updated) return updated;
 
