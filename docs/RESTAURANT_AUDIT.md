@@ -2,10 +2,13 @@
 
 **Date:** 2026-09-30 · **Commit:** `main` · **Scope:** Restaurant POS only.
 
-> **Status: phases 1 and 2 are done** (kitchen management and refunds removed,
-> 2026-09-30). The rest of this document is the audit as written before that
-> work, kept as the record it was made from. Two things it had missed, both
-> found during the removal and both handled there:
+> **Status: phases 1-4, 6 and 7 are done and regression-tested** (kitchen management and refunds
+> removed, billing moved below the cart, and the menu hierarchy built:
+> subsections, variants and add-ons; all 2026-09-30). Phase 5, POS filtering by
+> subsection, is the one still outstanding. The rest of this
+> document is the audit as written before that work, kept as the record it was
+> made from. Two things it had missed, both found during the removal and both
+> handled there:
 >
 > - **Prep-time analytics.** Restaurant reports carried a "Kitchen speed" block
 >   computed from `tickets.readyAt`, which only the mark-ready action ever set.
@@ -13,7 +16,7 @@
 > - **A second refund entry point.** The Orders page had its own "Refund items"
 >   action and dialog, not only the Refunds screen.
 >
-> What actually changed is recorded in §12 at the end of this document.
+> What actually changed is recorded in §12-§16 at the end of this document.
 
 Read with `docs/ARCHITECTURE.md` (the platform) and `docs/ANALYTICS_PARITY.md`
 (the money vocabulary).
@@ -318,11 +321,11 @@ Ordered by dependency, not by the brief's numbering.
 |---|---|---|
 | **1** ✅ | Remove Kitchen management (keep send + token) | Self-contained; shrinks the surface everything else touches |
 | **2** ✅ | Remove Refunds | Self-contained; also shrinks it |
-| **3** | Billing below the cart | Pure UI; no model change; unblocks judging the POS layout before it grows |
-| **4** | Subcategory (model + menu screen + import column) | The hierarchy's first half |
-| **5** | POS filtering by category **and** subcategory | Needs phase 4 |
-| **6** | Variants (model, menu screen, order line snapshots, pricing) | The heaviest; needs phase 4's screens |
-| **7** | Add-ons / option groups | Needs phase 6's picker |
+| **3** ✅ | Billing below the cart | Pure UI; no model change; unblocks judging the POS layout before it grows |
+| **4** ✅ | Subcategory (model + menu screen) | The hierarchy's first half |
+| **5** | POS filtering by category **and** subcategory | Needs phase 4 — **still outstanding** |
+| **6** ✅ | Variants (model, menu screen, order line snapshots, pricing) | The heaviest; needs phase 4's screens |
+| **7** ✅ | Add-ons / option groups | Needs phase 6's picker |
 
 **Phases 1–3 are safe and independent. Phase 6 is where the money is** — it
 changes what an order line means, and every report, bill and refund reads that.
@@ -449,3 +452,352 @@ routes that remain.
 **Not verified in a browser.** No Restaurant screen was opened; signing in needs
 the owner's password. The nav entries, the two deleted pages and the Orders
 dialog are covered by the build and typecheck only.
+
+---
+
+## 13. Phase 3: billing below the cart — 2026-09-30
+
+`PayDialog` is gone. Everything it did now lives in a `BillingPanel` pinned
+under the cart in the order column, on show for the whole life of an open order.
+
+### The shape
+
+```
+Card ── header            pinned   order number · table
+     ├─ cart              SCROLLS  the only scrolling thing in the column
+     ├─ billing           pinned   customer · discount · loyalty · tenders · due/change
+     └─ action bar        pinned   cancel · print bill · Complete sale
+```
+
+The cart is capped at `38vh` on a phone, where the card has no column height to
+fill, so the billing section is never pushed below the fold by a long order. On
+`lg` and up the cap lifts and the cart simply takes what is left. The order
+column went from `22rem` to `24rem` to fit the tenders.
+
+### The state trap the audit called out (R3), and how it is closed
+
+The modal reset itself every time it opened. An inline panel has no "open", so a
+discount typed for table 4 could follow the cashier to table 7. The panel is
+keyed on the order id, so React remounts it whenever the order changes — the
+reset is structural rather than an effect somebody has to remember.
+
+Untouched cash still follows what is due, so adding a dish mid-payment just
+moves the figure rather than wiping what has been typed.
+
+### Two defects found by looking at it
+
+Neither would have shown up in the test suite.
+
+1. **The discount field was outlined in red on every order.** `MoneyInput` marks
+   an empty or zero amount invalid, which is right for a payment row and wrong
+   for a discount nobody is giving. In a modal it flashed by; pinned on screen it
+   is permanent. `MoneyInput` gained an `optional` prop, **defaulted off**, so
+   the `isInvalid` expression for every existing caller is unchanged. Only this
+   panel passes it.
+2. **A fast double-click sent a second payment.** The button disables on
+   `loading`, but three clicks in one tick beat the re-render. The server refused
+   the extras on the revision check — no double charge — but the cashier saw
+   "Payment failed" on a sale that had gone through. A ref guard now drops a
+   click while one is in flight. Proved in the server log: before, 3 clicks gave
+   `200, 409, 409`; after, 3 clicks give one `200`.
+
+### Verified in a browser
+
+A throwaway Restaurant workspace on `localhost` (menu, tables, trial plan), then
+the whole flow driven by hand at 1440×900 and at phone width:
+
+| | |
+|---|---|
+| Customer selection | new customer attached, shown on the bill |
+| Order sent | `KOT-000001` generated, slip offered |
+| Normal / exact payment | cash pre-filled to what is due, `Change ৳0.00` |
+| Discount | ৳100 off ৳800 → `To pay ৳700.00`; server stored `discountMinor 10000` |
+| Overpayment | cash ৳1000 → `Change ৳300.00` |
+| Insufficient | `Remaining due ৳300.00`, Complete sale disabled |
+| Split | cash ৳500 + bKash ৳200 = ৳700; server stored both rows |
+| Validation | discount above the order → message, `To pay ৳0.00`, button disabled |
+| Completion | both orders `paid` with the right money |
+| Repeat submission | 3 clicks → 1 request |
+| Phone (375px) | stacks, page scrolls, no horizontal scroll, Complete sale reachable |
+
+`npm run lint` ✅ · `npm run typecheck` ✅ · `npm run build` ✅ ·
+`npm test` ✅ **3578 passed, 0 failed** (no server change, so the count is the
+same as phase 2).
+
+---
+
+## 14. Phases 4, 6 and 7: the menu hierarchy — 2026-09-30
+
+Section → subsection → dish → size, with extras hanging off the dish. Built
+close to what §7 recommended; where it differs, the difference is noted.
+
+### The two kinds of option, kept apart on purpose
+
+This is the distinction the whole model turns on:
+
+| | Variant | Add-on |
+|---|---|---|
+| Answers | **which version?** | **what extra?** |
+| How many | exactly one | several, within the group's limits |
+| Price | **replaces** the dish's own | **adds** to the line |
+| Lives on | `MenuItem.variants[]` | `MenuItem.addOnGroups[].options[]` |
+| On the line | `variantId`, `variantNameSnapshot` | `addOns[]`, each with its own price |
+
+They are separate arrays, separate validators and separate editors, so a
+kitchen cannot model "Large" as an extra and end up with two sizes on one line.
+
+### What was added
+
+```
+PosCategory (shared, untouched)   Pizza · Burger · Biryani
+        │
+        ▼
+MenuSubcategory (NEW, restaurant) Italian · Mexican · Naga Hot
+        │   { tenantId, categoryName, categorySlug, name, slug, isActive, sortOrder }
+        ▼
+MenuItem (EXTENDED)               + subcategory (a NAME, like category)
+        ├── variants[]            { name, priceMinor, sku, isAvailable, sortOrder }
+        └── addOnGroups[]         { name, minSelect, maxSelect, options[] }
+```
+
+`RestaurantOrderLine` gained `subcategorySnapshot`, `variantId`,
+`variantNameSnapshot` and `addOns[]`. **`unitPriceMinor` keeps its meaning** —
+the fully-loaded price of one — so reports, bills, refund maths and the tender
+rules all read the number they always read (audit R5).
+
+**`PosCategory` was not given a parent** (audit R4). It is shared with Super
+Shop and Pharmacy, flat by design, and a hierarchy there would have changed two
+verticals that never asked for one. `MenuSubcategory` is Restaurant's own and
+deliberately mirrors the shared service's behaviour one level down: the name is
+the link, an unknown name joins the list when a dish uses it, renaming rewrites
+the dishes that carry it and never a past order, and a name in use can only be
+hidden. It differs in the one way that matters — a subsection belongs to exactly
+one section, so two sections may each have a "Hot".
+
+**No migration.** Every new field is optional and defaults to empty. An existing
+dish has no subsection and no variants, and sells exactly as it did.
+
+### The rules, and where they live
+
+All of them are on the server, because only the server can see the menu:
+
+- a dish **with** variants must be ordered as one of them — otherwise a till
+  could quietly fall back to the base price and charge 450 for an 850 pizza;
+- a dish **without** variants must not be given one;
+- a variant or add-on must belong to **that** dish;
+- each add-on group must get between its own `minSelect` and `maxSelect`;
+- the same extra cannot be taken twice;
+- within a dish, no two sizes share a name or a code, and no two groups or
+  extras share a name;
+- a subsection must belong to the section the dish is in, and a hidden one
+  takes no new dishes.
+
+The POS picker enforces the same rules before it will offer the line, so a till
+never sends something the server will refuse — but the server is what decides.
+
+### Permissions, isolation, and one thing that is NOT branch-scoped
+
+Subsections reuse `categories.view/create/edit/delete`; dishes reuse
+`products.*`. No new permission was added. A Cashier can read subsections (they
+need them to take an order) and can create neither.
+
+**The menu is workspace-wide, not per branch** — that is the existing Restaurant
+design, unchanged here: every branch of a restaurant serves the same menu. So
+isolation is cross-workspace, and that is what the tests assert.
+
+### Files
+
+New: `models/MenuSubcategory.ts` · `modules/restaurant/menuSubcategories.service.ts` ·
+`features/restaurant/MenuOptionsEditor.tsx` · `features/restaurant/SubcategoryInput.tsx` ·
+`features/restaurant/MenuItemPicker.tsx` · `pages/restaurant/MenuSubcategoriesPage.tsx`
+
+Changed: `models/MenuItem.ts` · `models/RestaurantOrder.ts` ·
+`restaurant.{service,controller,routes,validators}.ts` · `MenuPage.tsx` ·
+`RestaurantPosPage.tsx` · `RestaurantPrints.tsx` · `api/restaurant.ts` ·
+`types/restaurant.ts` · routing and nav · `smoke-test.mjs`
+
+### Verified
+
+`npm run lint` ✅ · `npm run typecheck` ✅ · `npm run build` ✅ ·
+`npm test` ✅ **3630 passed, 0 failed** (52 new, in a `Restaurant menu
+hierarchy` section whose fixtures are retired at the end so later counts are
+untouched).
+
+Then in a browser, against a throwaway Restaurant workspace on `localhost`
+seeded with the brief's own examples:
+
+- the subsections screen, grouped by section, with dish counts — Pizza →
+  Italian / Mexican / Naga Hot;
+- the dish editor showing Section, Subsection, Base price, three sizes with
+  their prices and codes, and an Extras group with min/max;
+- the till asking for a size and extras, previewing 10 inch (৳650) + Extra
+  cheese (৳80) = **৳730**, and the server storing exactly that;
+- **the kitchen slip reading `1 × Mexican Hot Pizza (10 inch, Extra cheese)`** —
+  a slip that said only "Pizza" would have the kitchen making the wrong thing.
+
+One layout bug was found and fixed by looking: `DialogFooter` reverses its
+children on a narrow screen, which put the picker's price *below* its buttons.
+
+### Not in this phase
+
+- **POS filtering by subsection** (phase 5). The server already accepts a
+  `subcategory` filter and it is tested; the till's chip row still filters by
+  section only.
+- **Bulk import** does not carry a subsection or variant column, so an imported
+  menu is still flat. Additive columns, when that is wanted.
+- The **100-item POS menu cap** (audit R6) is still there.
+
+---
+
+## 15. Extras as a reusable list, and dropdowns — 2026-09-30
+
+Three follow-ups to §14, from the same brief.
+
+### 1. A guest may take several extras
+
+Already possible — a group's `maxSelect` governs it — but a **new** group used to
+default to `maxSelect: 1`, which fought the ordinary case. A new group now
+starts open (`maxSelect: 20`) and the hint reads "may take any of them" until an
+owner deliberately tightens it. Proven end to end: 10 inch + cheese + sauce +
+drink on one line, ৳650 + 80 + 30 + 50 = **৳810**, all three stored.
+
+### 2. Extras are now a list you define once
+
+`MenuAddOn` (new, Restaurant-owned): `{ name, slug, defaultPriceMinor, isActive,
+sortOrder }`, unique per workspace, with `/restaurant/addons` CRUD under
+`products.*`.
+
+The embedded shape on a dish was renamed `MenuAddOn` → **`MenuAddOnOption`**, so
+the two ideas have two names:
+
+| | `MenuAddOn` (collection) | `MenuAddOnOption` (embedded) |
+|---|---|---|
+| What | the workspace's reusable extra | that extra **as offered on one dish** |
+| Price | what it *usually* costs | what **this dish** charges |
+| Edited from | the Extras screen | the dish |
+
+**Renaming a library entry renames it on every dish** that offers it, so the menu
+stays consistent. **Changing its price does not** — a dish charges what it
+charges, and a menu edit must never silently reprice a live kitchen. Past orders
+are untouched either way; the line already carries its own snapshot.
+
+An extra typed straight onto a dish **joins the list**, exactly as an unknown
+section does, and the dish records `addOnId` so the two stay linked.
+
+### 3. Sections, subsections and extras are dropdowns
+
+`NamePicker` (new, Restaurant-only) is a real `Select` listing what exists, with
+`+ New …` at the bottom that swaps it for a text box. Nothing is created by the
+picker: the name goes to the form and the server adds it on save — the
+convention the whole catalogue already follows. Picking a library extra fills
+its usual price, which stays editable.
+
+The shared `CategoryInput` (a datalist) was **not** touched; it still serves
+Super Shop and Pharmacy unchanged. The Restaurant-only `SubcategoryInput` it
+superseded was deleted.
+
+### Verified
+
+`npm test` ✅ **3656 passed, 0 failed** (26 new). Then in a browser: the Extras
+screen with usage counts; Section listing Biryani / Burger / Pizza + "New
+section…"; the extras dropdown listing the library + "New extra…", auto-filling
+৳50 for Extra drink; and the kitchen slip reading `1 × Mexican Hot Pizza (10
+inch, Extra cheese, Extra sauce, Extra drink)`.
+
+**A latent test defect was found and fixed.** There is no `GET
+/restaurant/menu/:id` — only PATCH and DELETE. A §14 assertion had an `||`
+fallback that hid this; three new assertions failed on it honestly. All four now
+read the dish back off the list. The route was left alone rather than added,
+since nothing needs it.
+
+---
+
+## 16. Final regression and cleanup — 2026-10-01
+
+### The flow, end to end
+
+Every step of the chain is asserted by `npm test`:
+
+| Step | Covered by |
+|---|---|
+| Category → subcategory | `Hierarchy: a subsection is created under its section` |
+| Product in a subsection | `Hierarchy: a dish is created inside a subsection` |
+| Variant, and its price | `Hierarchy: the line is charged at the SIZE price, not the dish price` |
+| Add-ons, several at once | `Extras: a guest can take three at once, and all three are charged` |
+| Cart keeps the choice | `Hierarchy: the line snapshots the size and the subsection` |
+| Customer | `Restaurant: the customer belongs to the order` |
+| Discount | `Restaurant: the order is paid with a discount` |
+| Payment, split, change | `Restaurant: a split across two methods that adds up is accepted` |
+| Send order → token | `The ticket lists what to make, with notes and a KOT number` |
+| Receipt / history | `A paid order prints as a receipt with its payment and change` |
+| Subcategory filtering | `Hierarchy: the menu can be narrowed to one subsection` |
+
+Removals confirmed still removed: `The kitchen queue is gone`, `A ticket can no
+longer be marked ready`, `Restaurant analytics no longer report kitchen speed`,
+`Restaurant: a bill can no longer be refunded`.
+
+### Dead-code sweep
+
+Nothing left to remove. No reference remains to `kitchenQueue`,
+`markTicketReady`, `KitchenPage`, `KitchenQueueTicket`, the kitchen queue or
+ready routes, `RestaurantRefundsPage`, `restaurantSaleReturnAdapter`,
+`createOrderReturn` or `listOrderReturns`. Every restaurant nav entry resolves to
+a route, every route to a controller, every exported controller is routed, and no
+page or feature file under `pages/restaurant` or `features/restaurant` is
+orphaned. There never was a `kitchen.*` permission to retire.
+
+---
+
+## 17. The dependency migration this pass ran into
+
+`main` had merged **eight unreviewed major upgrades** from dependabot. CI was red
+and the branch could not be checkpointed without dealing with them.
+
+| Server | Client |
+|---|---|
+| express 4 → 5 | react-dom 18 → **19** (react stayed 18) |
+| mongoose 8 → 9 | react-router-dom 6 → 7 |
+| bcryptjs 2 → 3 | tailwind-merge 2 → 3 |
+| multer 1 → 2 | isomorphic-dompurify 2 → 4 |
+
+### Three things that were actually broken
+
+1. **`react-dom` 19 against `react` 18.** Those must share a major. The tree was
+   also serving `@types/react` 19 from the root over a React 18 app, which is
+   what produced the "cannot be used as a JSX component" wall. Resolved by
+   aligning the client on React 19 throughout, which is the direction the
+   bump had already taken `react-dom` and the Radix packages.
+2. **Pipeline updates stopped working.** Mongoose 9 refuses an array update
+   unless `updatePipeline: true` is passed. Six call sites were affected,
+   including `restaurant.service.mutateOpenOrder` — so **every edit to an open
+   restaurant order was a runtime error**. The suite caught it; typecheck could
+   not, because the call sites cast the pipeline.
+3. **The immutability guards threw the wrong error.** Mongoose 9 no longer hands
+   a `next` callback to a hook - kareem calls it with the operation's own
+   arguments and treats a throw as the failure. The guards on `Invoice`,
+   `WalletReceipt` and `WalletTransaction` were written `next(new Error(...))`,
+   so under mongoose 9 they called an undefined `next` and raised a TypeError.
+   They still **failed closed** - no financial record was ever at risk - but the
+   refusal no longer said why. Rewritten to throw.
+
+### The gap that let that happen
+
+**Nothing tested the immutability guards.** CLAUDE.md rule 9 says financial
+records must be immutable, and the HTTP suite cannot check it: there is
+deliberately no route that edits an invoice or a ledger row.
+
+`server/src/seed/immutability.check.ts` (new, 16 assertions, wired into
+`npm test`) closes that. It asserts the refusal **and its reason**, because the
+reason is what regressed - a check that accepted any throw would have called the
+broken guards healthy. Verified in both directions: green as written, and red
+(`An issued invoice cannot be saved again`) when the old `next`-style guard is
+put back.
+
+### What was NOT done
+
+The four client majors and four server majors are now compiling, building and
+passing 3,672 assertions, but **no one has reviewed them for behaviour beyond
+what the suite covers**. Express 5 in particular changes routing, error handling
+and `req.query` mutability. React 19 removes legacy APIs. Those deserve a
+deliberate read of the changelogs; this pass only established that the suite is
+green under them.

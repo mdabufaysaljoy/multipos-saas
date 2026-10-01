@@ -10,12 +10,34 @@ export type RestaurantOrderType = (typeof RESTAURANT_ORDER_TYPES)[number];
 export const RESTAURANT_ORDER_STATUSES = ['open', 'paid', 'cancelled'] as const;
 export type RestaurantOrderStatus = (typeof RESTAURANT_ORDER_STATUSES)[number];
 
+/** One extra carried by a line, as it was priced at the moment it was added. */
+export interface RestaurantOrderLineAddOn {
+  optionId: Types.ObjectId;
+  groupNameSnapshot: string;
+  nameSnapshot: string;
+  priceMinor: number;
+}
+
 export interface RestaurantOrderLine {
   _id: Types.ObjectId;
   menuItemId: Types.ObjectId;
   /** Copied from the menu when the line was added; never re-read afterwards. */
   nameSnapshot: string;
   categorySnapshot: string;
+  /** Empty for a dish that sits directly under its section. */
+  subcategorySnapshot: string;
+  /** The size or set chosen. Null for a dish that has no variants. */
+  variantId: Types.ObjectId | null;
+  variantNameSnapshot: string;
+  /** The extras chosen, each with the price it was charged at. */
+  addOns: RestaurantOrderLineAddOn[];
+  /**
+   * What ONE of this line costs, all in: the variant's price (or the dish's own
+   * when it has no variants) plus every add-on. Reports, bills, the kitchen
+   * slip and the tender maths all read this one number, which is why it stays
+   * the fully-loaded price rather than growing a breakdown they would each have
+   * to learn.
+   */
   unitPriceMinor: number;
   quantity: number;
   note: string;
@@ -132,10 +154,24 @@ const money = {
   validate: { validator: Number.isSafeInteger, message: 'Amounts must be whole minor units' },
 };
 
+const lineAddOnSchema = new Schema<RestaurantOrderLineAddOn>(
+  {
+    optionId: { type: Schema.Types.ObjectId, required: true },
+    groupNameSnapshot: { type: String, default: '' },
+    nameSnapshot: { type: String, required: true },
+    priceMinor: { ...money, required: true },
+  },
+  { _id: false },
+);
+
 const lineSchema = new Schema<RestaurantOrderLine>({
   menuItemId: { type: Schema.Types.ObjectId, ref: 'MenuItem', required: true },
   nameSnapshot: { type: String, required: true },
   categorySnapshot: { type: String, default: '' },
+  subcategorySnapshot: { type: String, default: '' },
+  variantId: { type: Schema.Types.ObjectId, default: null },
+  variantNameSnapshot: { type: String, default: '' },
+  addOns: { type: [lineAddOnSchema], default: [] },
   unitPriceMinor: { ...money, required: true },
   // 0 only for a voided line.
   quantity: { type: Number, required: true, min: 0, max: 999 },

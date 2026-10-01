@@ -105,13 +105,32 @@ What follows from that shape:
   same date. An open order is changed or cancelled instead. The shared return
   engine is untouched and still serves the other three verticals; Restaurant
   reporting keeps its refund figures so orders refunded earlier still add up.
+- **The bill is never a modal.** The till's order column is header, a scrolling
+  cart, then a pinned billing section (customer, discount, loyalty, tenders,
+  due and change) and a pinned action bar — the same four-layer shape the Super
+  Shop till uses, and the same rule: one scroll, and the money never moves. The
+  panel is keyed on the order, so switching tables resets it.
 - **No stock.** `restaurant.adapter` is a deliberate no-op inventory adapter and
   `/stock-ledger` answers with an empty page — the same route shape as everywhere
   else.
 - **No restaurant-specific permissions.** Everything reuses `sales.*`,
   `products.*`, `returns.*`, `reports.view`, `settings.edit`.
-- **`MenuItem` is flat**: one `priceMinor`, `category` as a *name*, no
-  subcategory, variants, sizes or add-ons.
+- **The menu is a hierarchy of names.** Section → subsection → dish → size,
+  with extras on the dish. `category` and `subcategory` are NAMES (the shared
+  `PosCategory` list and Restaurant's own `MenuSubcategory`); `variants[]` and
+  `addOnGroups[]` are embedded on `MenuItem`. Every part is optional, so a dish
+  that is just a dish at one price carries none of it.
+- **A variant is not an add-on.** A variant answers "which version?" — one is
+  chosen and its price *replaces* the dish's. An add-on answers "what extra?" —
+  several may be chosen and each price is *added*. They are separate arrays, and
+  the server refuses a dish with sizes that is ordered without one, so a till
+  can never fall back to the base price.
+- **`unitPriceMinor` is the fully-loaded price of one**, variant and extras
+  folded in, so reports, bills, refunds and the tender rules read one number.
+- **Extras are a reusable list.** `MenuAddOn` is the workspace's list;
+  `MenuAddOnOption` is one of them as offered on a dish, with that dish's own
+  price. Renaming the list entry follows onto the dishes; repricing it does not,
+  so a menu edit never silently reprices a live kitchen.
 
 The audit for the next change to this vertical — dependency maps for the kitchen
 and refund features, the billing flow, and the recommended menu hierarchy — is
@@ -128,12 +147,28 @@ transactions**. Correctness comes from ordering and compare-and-swap instead:
   it on failure;
 - billing claims work with a CAS and a period-scoped idempotency key.
 
+## Dependency majors, and what they cost
+
+The stack runs **Express 5, Mongoose 9 and React 19**. Three things about
+Mongoose 9 are worth knowing before writing data code:
+
+- **A pipeline update needs `updatePipeline: true`.** An array passed to
+  `updateOne` / `updateMany` / `findOneAndUpdate` is otherwise refused at
+  runtime. TypeScript will not catch it where the pipeline is cast.
+- **Hooks take no `next`.** A `pre` hook is called with the operation's own
+  arguments and fails by throwing. A hook written `function (next) { next(err) }`
+  calls an undefined `next` and raises a TypeError instead of its own message.
+- **Query filters are typed strictly.** A bare `string` no longer stands in for
+  a union field, so filters built from loose values need the real type.
+
 ## Testing & CI
 
 `npm test` boots a throwaway API on its own port against a derived `*_test`
 database, runs `scripts/smoke-test.mjs` (**3,570 assertions**, all over HTTP,
-including cross-tenant IDOR, auth bypass and payload abuse), then drops the
-database. `.github/workflows/ci.yml` runs lint → typecheck → build → test on
+including cross-tenant IDOR, auth bypass and payload abuse), then runs
+`server/src/seed/immutability.check.ts` at the model layer - the HTTP suite
+cannot reach the immutability guards, because there is deliberately no route
+that edits an invoice or a ledger row - and then drops the database. `.github/workflows/ci.yml` runs lint → typecheck → build → test on
 Node 22 with a `mongo:7` service.
 
 There are no unit tests and no frontend tests; pure-logic modules

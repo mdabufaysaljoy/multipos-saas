@@ -61,6 +61,8 @@ const PharmacyImportPage = lazyPage(() => import('@/pages/pharmacy/PharmacyImpor
 const MenuImportPage = lazyPage(() => import('@/pages/restaurant/MenuImportPage'), 'MenuImportPage');
 const PharmacyCategoriesPage = lazyPage(() => import('@/pages/pharmacy/PharmacyCategoriesPage'), 'PharmacyCategoriesPage');
 const MenuCategoriesPage = lazyPage(() => import('@/pages/restaurant/MenuCategoriesPage'), 'MenuCategoriesPage');
+const MenuSubcategoriesPage = lazyPage(() => import('@/pages/restaurant/MenuSubcategoriesPage'), 'MenuSubcategoriesPage');
+const MenuAddOnsPage = lazyPage(() => import('@/pages/restaurant/MenuAddOnsPage'), 'MenuAddOnsPage');
 const PharmacyReturnsPage = lazyPage(() => import('@/pages/pharmacy/PharmacyReturnsPage'), 'PharmacyReturnsPage');
 const ShopSalesPage = lazyPage(() => import('@/pages/supershop/ShopSalesPage'), 'ShopSalesPage');
 
@@ -298,6 +300,22 @@ export function AppRoutes() {
           element={
             <ProtectedRoute anyOf={['products.view', 'categories.view']}>
               <MenuCategoriesPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/menu-subcategories"
+          element={
+            <ProtectedRoute anyOf={['products.view', 'categories.view']}>
+              <MenuSubcategoriesPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/menu-addons"
+          element={
+            <ProtectedRoute anyOf={['products.view']}>
+              <MenuAddOnsPage />
             </ProtectedRoute>
           }
         />

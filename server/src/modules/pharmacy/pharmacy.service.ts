@@ -1,7 +1,7 @@
-import { Types } from 'mongoose';
+import { Types, type QueryFilter } from 'mongoose';
 import dayjs from 'dayjs';
 import { PERMISSIONS } from '../../config/permissions';
-import { MedicineModel, type MedicineDoc } from '../../models/Medicine';
+import { MedicineModel, type DosageForm, type MedicineDoc } from '../../models/Medicine';
 import { MedicineBatchModel, type MedicineBatchDoc } from '../../models/MedicineBatch';
 import { PharmacySaleModel } from '../../models/PharmacySale';
 import { PharmacyStockMovementModel } from '../../models/PharmacyStockMovement';
@@ -602,7 +602,7 @@ class PharmacyService {
     const { bucket, previousFrom, previousTo, ...range } = resolveDashboardWindow(input);
     const today = todayUtc();
     const soon = new Date(today.getTime() + 31 * DAY_MS);
-    const completed = { tenantId: ctx.tenantId, storeId: ctx.storeId, status: 'completed' };
+    const completed = { tenantId: ctx.tenantId, storeId: ctx.storeId, status: 'completed' as const };
     const soldIn = (from: Date, to: Date) => ({ ...completed, soldAt: { $gte: from, $lte: to } });
     const totals = (from: Date, to: Date) =>
       PharmacySaleModel.aggregate<{ count: number; totalMinor: number; discountMinor: number }>([
@@ -741,10 +741,11 @@ class PharmacyService {
   /** Same name, strength and form is one medicine; a barcode belongs to one medicine. */
   private async assertUnique(
     ctx: TenantContext,
-    identity: { name: string; strength: string; dosageForm: string; barcode: string },
+    identity: { name: string; strength: string; dosageForm: DosageForm; barcode: string },
     exceptId?: Types.ObjectId,
   ) {
-    const except = exceptId ? { _id: { $ne: exceptId } } : {};
+    // Named, because mongoose 9 will not accept the union of the two spreads.
+    const except: QueryFilter<MedicineDoc> = exceptId ? { _id: { $ne: exceptId } } : {};
     const sameMedicine = await MedicineModel.exists({
       tenantId: ctx.tenantId,
       deletedAt: null,

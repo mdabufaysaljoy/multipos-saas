@@ -76,6 +76,12 @@ export function RestaurantReceipt({ payload }: { payload: RestaurantReceiptPaylo
             <tr key={line._id}>
               <td colSpan={2} style={{ paddingBottom: '1mm' }}>
                 <div>{line.nameSnapshot}</div>
+                {/* The size and extras the guest actually asked for. */}
+                {[line.variantNameSnapshot, ...(line.addOns ?? []).map((addOn) => addOn.nameSnapshot)].filter(Boolean).length > 0 && (
+                  <div className="r-sm">
+                    {[line.variantNameSnapshot, ...(line.addOns ?? []).map((addOn) => addOn.nameSnapshot)].filter(Boolean).join(' · ')}
+                  </div>
+                )}
                 <div className="r-sm" style={{ display: 'flex', justifyContent: 'space-between' }}>
                   <span>
                     {line.quantity} × {formatMoney(line.unitPriceMinor, currency)}

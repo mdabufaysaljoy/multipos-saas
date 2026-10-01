@@ -69,8 +69,8 @@ export async function enableSupplierManagement() {
     .lean()) {
     const seed = seedByFamily.get(family(subscription.planSnapshot?.code ?? ''));
     if (!seed) continue;
-    const features = subscription.planSnapshot?.features as Record<string, unknown> | undefined;
-    const limits = subscription.planSnapshot?.limits as Record<string, unknown> | undefined;
+    const features = subscription.planSnapshot?.features as unknown as Record<string, unknown> | undefined;
+    const limits = subscription.planSnapshot?.limits as unknown as Record<string, unknown> | undefined;
     const set: Record<string, unknown> = {};
     if (features?.supplierManagement === undefined) set['planSnapshot.features.supplierManagement'] = seed.feature;
     if (limits?.maxSuppliers === undefined) set['planSnapshot.limits.maxSuppliers'] = seed.limit;

@@ -1,3 +1,4 @@
+import type { QueryFilter } from 'mongoose';
 import { DEFAULT_POS_VERTICAL, hasPosModule, type PosVertical } from '../../config/verticals';
 import {
   PosProductModel,
@@ -7,7 +8,7 @@ import {
   type PosProductStatus,
 } from '../../models/PosProduct';
 import { SubscriptionPlanModel } from '../../models/SubscriptionPlan';
-import { TenantModel } from '../../models/Tenant';
+import { TenantModel, type TenantDoc } from '../../models/Tenant';
 import { ApiError } from '../../utils/ApiError';
 
 type DefaultProduct = Pick<PosProductDoc, 'code' | 'name' | 'description' | 'status' | 'icon' | 'configuration'>;
@@ -92,8 +93,13 @@ export async function ensureDefaultPosProducts(): Promise<number> {
 }
 
 /** Workspaces that predate verticals have no value stored and are Clothing. */
-const workspaceFilterFor = (code: string) =>
-  code === DEFAULT_POS_VERTICAL ? { $or: [{ vertical: code }, { vertical: null }] } : { vertical: code };
+// Mongoose 9 types query filters strictly, so a loose `string` no longer stands
+// in for the vertical union. The code is validated against the catalogue before
+// it reaches here, so naming the type is the accurate fix, not a widening.
+const workspaceFilterFor = (code: string): QueryFilter<TenantDoc> =>
+  code === DEFAULT_POS_VERTICAL
+    ? { $or: [{ vertical: code as PosVertical }, { vertical: null }] }
+    : { vertical: code as PosVertical };
 
 function present(product: ProductRecord, workspaceCount: number, planCount = 0) {
   return {

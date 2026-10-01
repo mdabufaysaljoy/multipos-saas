@@ -54,7 +54,7 @@ export async function applyProviderReport(
 ): Promise<{ outcome: ConfirmationOutcome; payment: Record<string, unknown>; reason?: string }> {
   const payment = await PaymentModel.findById(paymentId).lean();
   if (!payment) throw ApiError.notFound('Payment not found');
-  const reload = async () => (await PaymentModel.findById(paymentId).lean()) as Record<string, unknown>;
+  const reload = async () => (await PaymentModel.findById(paymentId).lean()) as unknown as Record<string, unknown>;
 
   if (payment.status === PAYMENT_STATUS.PAID) {
     // Paid but possibly never activated (a crash in between): finish it now.
@@ -73,7 +73,7 @@ export async function applyProviderReport(
     return { outcome: 'already_processed', payment: await reload() };
   }
 
-  if (!report.status || report.status === 'pending') return { outcome: 'pending', payment: payment as Record<string, unknown> };
+  if (!report.status || report.status === 'pending') return { outcome: 'pending', payment: payment as unknown as Record<string, unknown> };
 
   const fail = async (status: string, reason: string) => {
     const failed = await PaymentModel.findOneAndUpdate(
@@ -82,7 +82,7 @@ export async function applyProviderReport(
       { new: true },
     ).lean();
     return failed
-      ? { outcome: 'failed' as const, payment: failed as Record<string, unknown>, reason }
+      ? { outcome: 'failed' as const, payment: failed as unknown as Record<string, unknown>, reason }
       : { outcome: 'already_processed' as const, payment: await reload() };
   };
 

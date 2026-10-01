@@ -31,7 +31,11 @@ const sourceExpression = {
 };
 
 export async function backfillWalletLedger() {
-  const wallets = await WalletModel.updateMany({ status: { $exists: false } }, [{ $set: { status: { $cond: ['$isFrozen', 'frozen', 'active'] } } }]);
+  const wallets = await WalletModel.updateMany(
+    { status: { $exists: false } },
+    [{ $set: { status: { $cond: ['$isFrozen', 'frozen', 'active'] } } }],
+    { updatePipeline: true },
+  );
 
   const ledgerRowsBackfilled = await withLedgerMaintenance('backfill ledger descriptive fields', async () => {
     let updated = 0;
@@ -48,7 +52,7 @@ export async function backfillWalletLedger() {
             },
           },
         ],
-        { timestamps: false },
+        { updatePipeline: true, timestamps: false },
       ).exec();
       updated += result.modifiedCount;
     }

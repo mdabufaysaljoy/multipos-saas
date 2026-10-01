@@ -66,7 +66,7 @@ export async function enableLoyaltyProgram() {
   // snapshot already set to true is never touched.
   for (const subscription of await SubscriptionModel.find({ 'planSnapshot.features.loyaltyProgram': { $ne: true } }).select('planSnapshot.code planSnapshot.features.loyaltyProgram').lean()) {
     const value = byFamily.get(family(subscription.planSnapshot?.code ?? ''));
-    const current = (subscription.planSnapshot?.features as Record<string, unknown> | undefined)?.loyaltyProgram;
+    const current = (subscription.planSnapshot?.features as unknown as Record<string, unknown> | undefined)?.loyaltyProgram;
     if (value === undefined || current === value) continue;
     await SubscriptionModel.updateOne(
       { _id: subscription._id, 'planSnapshot.features.loyaltyProgram': { $ne: true } },

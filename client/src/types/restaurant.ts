@@ -3,15 +3,87 @@ import type { PosReturnSummary } from './domain';
 
 /** Restaurant POS vertical. Kept apart from the Clothing domain types on purpose. */
 
+/**
+ * One size or set of a dish: 8 / 10 / 12 inch, Quarter / Half / Full.
+ *
+ * A variant answers "WHICH version?" - exactly one is chosen and its price
+ * REPLACES the dish's own. An add-on answers "what EXTRA?" - several may be
+ * chosen and each price is added on top.
+ */
+export interface MenuItemVariant {
+  _id: string;
+  name: string;
+  priceMinor: number;
+  sku: string;
+  isAvailable: boolean;
+  sortOrder: number;
+}
+
+/**
+ * One extra AS OFFERED ON ONE DISH: Extra cheese +80, Extra sauce +30.
+ *
+ * The name and price are this dish's copy, so the same extra may cost
+ * different amounts on different dishes. `addOnId` points at the workspace's
+ * reusable list when it was picked from there.
+ */
+export interface MenuAddOnOption {
+  addOnId?: string | null;
+  _id: string;
+  name: string;
+  priceMinor: number;
+  isAvailable: boolean;
+  sortOrder: number;
+}
+
+/** Extras offered together, with how many of them a line may take. */
+export interface MenuAddOnGroup {
+  _id: string;
+  name: string;
+  /** 1 or more makes the group a required choice. */
+  minSelect: number;
+  maxSelect: number;
+  options: MenuAddOnOption[];
+  sortOrder: number;
+}
+
 export interface MenuItem {
   _id: string;
   name: string;
   category: string;
+  /** Empty for a dish that sits directly under its section. */
+  subcategory: string;
   description: string;
+  /** What a dish with no variants costs; the fallback when it has them. */
   priceMinor: number;
+  variants: MenuItemVariant[];
+  addOnGroups: MenuAddOnGroup[];
   isAvailable: boolean;
   sortOrder: number;
   createdAt: string;
+}
+
+/** A reusable extra, defined once for the whole workspace. */
+export interface MenuAddOnRow {
+  id: string;
+  name: string;
+  slug: string;
+  /** What it usually costs; a dish may charge something else. */
+  defaultPriceMinor: number;
+  isActive: boolean;
+  sortOrder: number;
+  itemCount: number;
+}
+
+/** A subsection of one menu section, as the server reports it. */
+export interface MenuSubcategoryRow {
+  /** Null for a name dishes use that was never written down. */
+  id: string | null;
+  category: string;
+  name: string;
+  slug: string;
+  isActive: boolean;
+  sortOrder: number;
+  itemCount: number;
 }
 
 export interface DiningTable {
@@ -24,11 +96,25 @@ export interface DiningTable {
   openOrderTotalMinor: number | null;
 }
 
+/** An extra carried by a line, at the price it was charged. */
+export interface RestaurantOrderLineAddOn {
+  optionId: string;
+  groupNameSnapshot: string;
+  nameSnapshot: string;
+  priceMinor: number;
+}
+
 export interface RestaurantOrderLine {
   _id: string;
   menuItemId: string;
   nameSnapshot: string;
   categorySnapshot: string;
+  subcategorySnapshot?: string;
+  /** The size chosen. Null for a dish with no variants. */
+  variantId?: string | null;
+  variantNameSnapshot?: string;
+  addOns?: RestaurantOrderLineAddOn[];
+  /** What ONE costs, all in: the variant (or base) price plus every add-on. */
   unitPriceMinor: number;
   quantity: number;
   note: string;

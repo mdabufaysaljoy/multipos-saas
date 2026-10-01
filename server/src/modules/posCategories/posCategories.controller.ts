@@ -1,8 +1,8 @@
 import type { Request, Response } from 'express';
-import { Types } from 'mongoose';
+import type { Types } from 'mongoose';
 import { asyncHandler } from '../../utils/asyncHandler';
 import { created, ok } from '../../utils/apiResponse';
-import { body, query } from '../../middleware/validate';
+import { body, params, query } from '../../middleware/validate';
 import { getContext } from '../../middleware/tenant';
 import {
   posCategoryService,
@@ -10,6 +10,8 @@ import {
   type ListPosCategoriesInput,
   type UpdatePosCategoryInput,
 } from '../../services/catalogue/posCategories.service';
+
+type IdParams = { id: Types.ObjectId };
 
 /**
  * Managing the departments a workspace sells under, for the POS types whose
@@ -28,10 +30,10 @@ export const createCategory = asyncHandler(async (req: Request, res: Response) =
 
 export const updateCategory = asyncHandler(async (req: Request, res: Response) => {
   const ctx = getContext(req);
-  ok(res, await posCategoryService.update(ctx, ctx.vertical, new Types.ObjectId(req.params.id), body<UpdatePosCategoryInput>(req)));
+  ok(res, await posCategoryService.update(ctx, ctx.vertical, params<IdParams>(req).id, body<UpdatePosCategoryInput>(req)));
 });
 
 export const removeCategory = asyncHandler(async (req: Request, res: Response) => {
   const ctx = getContext(req);
-  ok(res, await posCategoryService.remove(ctx, ctx.vertical, new Types.ObjectId(req.params.id)));
+  ok(res, await posCategoryService.remove(ctx, ctx.vertical, params<IdParams>(req).id));
 });

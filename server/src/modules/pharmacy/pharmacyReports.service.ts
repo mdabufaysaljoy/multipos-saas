@@ -31,7 +31,7 @@ class PharmacyReportsService {
     const range = resolveRange({ ...input, granularity: 'day', branch: 'current', limit: 10 } as ReportRangeInput);
     const scope = { tenantId: ctx.tenantId, storeId: ctx.storeId };
     const window = { $gte: range.from, $lte: range.to };
-    const completed = { ...scope, status: 'completed', soldAt: window };
+    const completed = { ...scope, status: 'completed' as const, soldAt: window };
     const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
     const today = todayUtc();
 

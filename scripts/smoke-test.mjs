@@ -10191,6 +10191,362 @@ async function main() {
   check('A till without categories.create cannot add one', (await api('/supershop/categories', { method: 'POST', token: ssTill.session.token, body: { name: `Nope ${catStamp}` } })).status === 403);
   check('Clothing keeps its own category module, which this one never answers for', (await api('/supershop/categories', { token: admin.token })).status === 403);
 
+  // ------------------------------------------------ the menu hierarchy
+  // Section -> subsection -> dish -> size, with extras hanging off the dish.
+  //
+  // The two kinds of option answer different questions, and the model keeps
+  // them apart: a VARIANT is "which version?" (one is chosen, and its price
+  // REPLACES the dish's), an ADD-ON is "what extra?" (several may be chosen,
+  // and each price is ADDED). Every fixture here is retired at the end of the
+  // section so later counts are untouched.
+  section('Restaurant menu hierarchy');
+
+  const mhStamp = String(Date.now()).slice(-6);
+  const mhSub = (body) => api('/restaurant/subcategories', { method: 'POST', token: rvToken, body });
+  // The menu has no single-item route, so a dish is read back off the list.
+  const mhDish = async (id) => ((await api('/restaurant/menu?limit=100', { token: rvToken })).data ?? []).find((item) => item._id === id);
+  const mhRetire = [];
+
+  // --- sections and subsections ----------------------------------------------
+  const mhPizza = `Pizza ${mhStamp}`;
+  const mhBurger = `Burger ${mhStamp}`;
+  const mhCat = await api('/restaurant/categories', { method: 'POST', token: rvToken, body: { name: mhPizza } });
+  check('Hierarchy: a section is created', mhCat.status === 201, mhCat.error);
+
+  const mhMexican = await mhSub({ category: mhPizza, name: 'Mexican' });
+  check('Hierarchy: a subsection is created under its section', mhMexican.status === 201 && mhMexican.data?.categoryName === mhPizza, mhMexican.error);
+  const mhItalian = await mhSub({ category: mhPizza, name: 'Italian' });
+  check('Hierarchy: a section can hold several subsections', mhItalian.status === 201, mhItalian.error);
+  check('Hierarchy: the same subsection twice in one section is refused', (await mhSub({ category: mhPizza, name: 'mexican' })).status === 409);
+
+  // The same NAME under a different section is a different subsection, which is
+  // the whole point of scoping them - but saying so beats silently forking it.
+  const mhBurgerCat = await api('/restaurant/categories', { method: 'POST', token: rvToken, body: { name: mhBurger } });
+  check('Hierarchy: a second section is created', mhBurgerCat.status === 201, mhBurgerCat.error);
+  const mhSet = await mhSub({ category: mhBurger, name: 'Burger Set' });
+  check('Hierarchy: another section gets its own subsections', mhSet.status === 201, mhSet.error);
+
+  check('Hierarchy: a subsection needs a name', (await mhSub({ category: mhPizza, name: '  ' })).status === 422);
+  check('Hierarchy: a subsection needs a section', (await mhSub({ name: 'Orphan' })).status === 422);
+  check('Hierarchy: unknown subsection fields are refused', (await mhSub({ category: mhPizza, name: 'Sneaky', tenantId: admin.session.tenant.id })).status === 422);
+
+  const mhList = await api(`/restaurant/subcategories?category=${encodeURIComponent(mhPizza)}`, { token: rvToken });
+  check(
+    'Hierarchy: the list is narrowed to one section',
+    mhList.status === 200 && mhList.data?.length === 2 && mhList.data.every((row) => row.category === mhPizza),
+    mhList.data,
+  );
+
+  // --- a dish with sizes ------------------------------------------------------
+  const mhPizzaDish = await rvMenu({
+    name: `Mexican Hot Pizza ${mhStamp}`,
+    category: mhPizza,
+    subcategory: 'Mexican',
+    priceMinor: 45000,
+    variants: [
+      { name: '8 inch', priceMinor: 45000, sku: `MHP8-${mhStamp}` },
+      { name: '10 inch', priceMinor: 65000 },
+      { name: '12 inch', priceMinor: 85000 },
+    ],
+    addOnGroups: [
+      {
+        name: 'Extras',
+        maxSelect: 2,
+        options: [
+          { name: 'Extra cheese', priceMinor: 8000 },
+          { name: 'Extra sauce', priceMinor: 3000 },
+        ],
+      },
+    ],
+  });
+  mhRetire.push(mhPizzaDish.data?._id);
+  check('Hierarchy: a dish is created inside a subsection', mhPizzaDish.status === 201 && mhPizzaDish.data?.subcategory === 'Mexican', mhPizzaDish.error);
+  check('Hierarchy: it carries three sizes, each with its own price', mhPizzaDish.data?.variants?.length === 3, mhPizzaDish.data?.variants);
+  check(
+    'Hierarchy: each size keeps its price and its code',
+    mhPizzaDish.data?.variants?.map((v) => v.priceMinor).join(',') === '45000,65000,85000' && mhPizzaDish.data.variants[0].sku === `MHP8-${mhStamp}`,
+    mhPizzaDish.data?.variants,
+  );
+  check('Hierarchy: extras are a separate list from sizes', mhPizzaDish.data?.addOnGroups?.[0]?.options?.length === 2, mhPizzaDish.data?.addOnGroups);
+
+  const mhPlain = await rvMenu({ name: `Plain Naan ${mhStamp}`, category: mhPizza, priceMinor: 3000 });
+  mhRetire.push(mhPlain.data?._id);
+  check('Hierarchy: a dish needs no subsection and no sizes', mhPlain.status === 201 && mhPlain.data?.subcategory === '' && mhPlain.data?.variants?.length === 0, mhPlain.error);
+
+  const mhSetDish = await rvMenu({
+    name: `Burger Set ${mhStamp}`,
+    category: mhBurger,
+    subcategory: 'Burger Set',
+    priceMinor: 30000,
+    variants: [
+      { name: '1 Person', priceMinor: 30000 },
+      { name: '2 Persons', priceMinor: 55000 },
+      { name: '3 Persons', priceMinor: 78000 },
+    ],
+  });
+  mhRetire.push(mhSetDish.data?._id);
+  check('Hierarchy: a set is sizes too - 1/2/3 persons', mhSetDish.status === 201 && mhSetDish.data?.variants?.length === 3, mhSetDish.error);
+
+  // --- invalid shapes ---------------------------------------------------------
+  const mhBad = (body) => rvMenu({ name: `Bad ${mhStamp}-${Math.random().toString(36).slice(2, 7)}`, category: mhPizza, priceMinor: 1000, ...body });
+  check('Hierarchy: a size needs a name', (await mhBad({ variants: [{ name: '', priceMinor: 100 }] })).status === 422);
+  check('Hierarchy: a size needs a price', (await mhBad({ variants: [{ name: 'Big' }] })).status === 422);
+  check('Hierarchy: a negative size price is refused', (await mhBad({ variants: [{ name: 'Big', priceMinor: -1 }] })).status === 422);
+  check('Hierarchy: two sizes with the same name are refused', (await mhBad({ variants: [{ name: 'Big', priceMinor: 100 }, { name: 'big', priceMinor: 200 }] })).status === 400);
+  check(
+    'Hierarchy: two sizes with the same code are refused',
+    (await mhBad({ variants: [{ name: 'A', priceMinor: 100, sku: 'DUP' }, { name: 'B', priceMinor: 200, sku: 'DUP' }] })).status === 400,
+  );
+  check(
+    'Hierarchy: a group cannot require more extras than it allows',
+    (await mhBad({ addOnGroups: [{ name: 'G', minSelect: 3, maxSelect: 1, options: [{ name: 'X', priceMinor: 10 }] }] })).status === 422,
+  );
+  check(
+    'Hierarchy: a group cannot require more extras than it offers',
+    (await mhBad({ addOnGroups: [{ name: 'G', minSelect: 2, maxSelect: 2, options: [{ name: 'X', priceMinor: 10 }] }] })).status === 422,
+  );
+  check(
+    'Hierarchy: two extras with the same name in one group are refused',
+    (await mhBad({ addOnGroups: [{ name: 'G', options: [{ name: 'X', priceMinor: 10 }, { name: 'x', priceMinor: 20 }] }] })).status === 400,
+  );
+  check('Hierarchy: a subsection from another section is refused', (await mhBad({ subcategory: 'Burger Set' })).status === 400);
+
+  // --- ordering at the size's price ------------------------------------------
+  const mhVariants = mhPizzaDish.data.variants;
+  const mhOrder = await rvOrder({ type: 'takeaway', items: [{ menuItemId: mhPizzaDish.data._id, variantId: mhVariants[1]._id, quantity: 2 }] });
+  check('Hierarchy: an order line names its size', mhOrder.status === 201, mhOrder.error);
+  check(
+    'Hierarchy: the line is charged at the SIZE price, not the dish price',
+    mhOrder.data?.items?.[0]?.unitPriceMinor === 65000 && mhOrder.data.items[0].lineTotalMinor === 130000,
+    mhOrder.data?.items?.[0],
+  );
+  check(
+    'Hierarchy: the line snapshots the size and the subsection',
+    mhOrder.data?.items?.[0]?.variantNameSnapshot === '10 inch' && mhOrder.data.items[0].subcategorySnapshot === 'Mexican',
+    mhOrder.data?.items?.[0],
+  );
+
+  // A dish WITH sizes must name one: otherwise a till could quietly fall back
+  // to the base price and charge 450 for a 850 pizza.
+  check(
+    'Hierarchy: a dish with sizes cannot be ordered without one',
+    (await rvOrder({ type: 'takeaway', items: [{ menuItemId: mhPizzaDish.data._id, quantity: 1 }] })).status === 400,
+  );
+  check(
+    'Hierarchy: a dish without sizes cannot be given one',
+    (await rvOrder({ type: 'takeaway', items: [{ menuItemId: mhPlain.data._id, variantId: mhVariants[0]._id, quantity: 1 }] })).status === 400,
+  );
+  check(
+    "Hierarchy: another dish's size is refused",
+    (await rvOrder({ type: 'takeaway', items: [{ menuItemId: mhSetDish.data._id, variantId: mhVariants[0]._id, quantity: 1 }] })).status === 400,
+  );
+
+  // --- ordering with extras ---------------------------------------------------
+  const mhAddOns = mhPizzaDish.data.addOnGroups[0].options;
+  const mhWithExtras = await rvOrder({
+    type: 'takeaway',
+    items: [{ menuItemId: mhPizzaDish.data._id, variantId: mhVariants[0]._id, addOnOptionIds: [mhAddOns[0]._id, mhAddOns[1]._id], quantity: 1 }],
+  });
+  check(
+    'Hierarchy: extras are ADDED to the size price',
+    mhWithExtras.status === 201 && mhWithExtras.data?.items?.[0]?.unitPriceMinor === 45000 + 8000 + 3000,
+    mhWithExtras.data?.items?.[0],
+  );
+  check(
+    'Hierarchy: each extra is snapshotted with the price it was charged',
+    mhWithExtras.data?.items?.[0]?.addOns?.length === 2 && mhWithExtras.data.items[0].addOns[0].priceMinor === 8000,
+    mhWithExtras.data?.items?.[0]?.addOns,
+  );
+  check(
+    'Hierarchy: more extras than the group allows is refused',
+    (await rvOrder({
+      type: 'takeaway',
+      items: [{ menuItemId: mhSetDish.data._id, variantId: mhSetDish.data.variants[0]._id, addOnOptionIds: [mhAddOns[0]._id], quantity: 1 }],
+    })).status === 400,
+  );
+  check(
+    'Hierarchy: the same extra twice is refused',
+    (await rvOrder({
+      type: 'takeaway',
+      items: [{ menuItemId: mhPizzaDish.data._id, variantId: mhVariants[0]._id, addOnOptionIds: [mhAddOns[0]._id, mhAddOns[0]._id], quantity: 1 }],
+    })).status === 400,
+  );
+
+  // --- filtering and renaming --------------------------------------------------
+  const mhFiltered = await api(`/restaurant/menu?category=${encodeURIComponent(mhPizza)}&subcategory=Mexican`, { token: rvToken });
+  check('Hierarchy: the menu can be narrowed to one subsection', mhFiltered.data?.length === 1 && mhFiltered.data[0]._id === mhPizzaDish.data._id, mhFiltered.data?.map((i) => i.name));
+
+  const mhRenamed = await api(`/restaurant/subcategories/${mhMexican.data._id}`, { method: 'PATCH', token: rvToken, body: { name: 'Mexican Hot' } });
+  check('Hierarchy: a subsection can be renamed', mhRenamed.status === 200, mhRenamed.error);
+  check(
+    'Hierarchy: renaming moves the dishes that carry it',
+    (await mhDish(mhPizzaDish.data._id))?.subcategory === 'Mexican Hot',
+  );
+  check(
+    'Hierarchy: the order keeps the name it was sold under',
+    (await api(`/restaurant/orders/${mhOrder.data._id}`, { token: rvToken })).data?.items?.[0]?.subcategorySnapshot === 'Mexican',
+  );
+  check(
+    'Hierarchy: a subsection in use cannot be deleted',
+    (await api(`/restaurant/subcategories/${mhMexican.data._id}`, { method: 'DELETE', token: rvToken })).status === 409,
+  );
+  check(
+    'Hierarchy: an unused subsection can be deleted',
+    (await api(`/restaurant/subcategories/${mhItalian.data._id}`, { method: 'DELETE', token: rvToken })).status === 200,
+  );
+
+  const mhHidden = await mhSub({ category: mhPizza, name: 'Retired' });
+  await api(`/restaurant/subcategories/${mhHidden.data._id}`, { method: 'PATCH', token: rvToken, body: { isActive: false } });
+  check('Hierarchy: a hidden subsection takes no new dishes', (await mhBad({ subcategory: 'Retired' })).status === 400);
+
+  // --- tenancy and permissions -------------------------------------------------
+  check('Hierarchy: reading subsections needs a session', (await api('/restaurant/subcategories')).status === 401);
+  check(
+    'Hierarchy: a Super Shop workspace cannot read Restaurant subsections',
+    (await api('/restaurant/subcategories', { token: ssToken })).status === 403,
+  );
+  check(
+    'Hierarchy: another workspace cannot rename this one\'s subsection',
+    (await api(`/restaurant/subcategories/${mhMexican.data._id}`, { method: 'PATCH', token: ssToken, body: { name: 'Mine now' } })).status === 403,
+  );
+  check(
+    'Hierarchy: another workspace cannot see this dish, sizes and all',
+    (await api(`/restaurant/menu/${mhPizzaDish.data._id}`, { token: ssToken })).status === 403,
+  );
+
+  // A Cashier holds products.view and categories.view - enough to take an
+  // order - but none of the create/delete grants the hierarchy is managed with.
+  const mhCashierRole = ((await api('/roles', { token: rvToken })).data ?? []).find((role) => role.name === 'Cashier');
+  const mhCookEmail = `mhcook${mhStamp}@example.com`;
+  const mhCook = await api('/staff', {
+    method: 'POST',
+    token: rvToken,
+    body: { name: 'MH Cook', email: mhCookEmail, password: 'Password@123', roleId: mhCashierRole?._id },
+  });
+  check('Hierarchy: a cashier is created for the permission checks', mhCook.status === 201, mhCook.error);
+  const mhCookSession = await login(mhCookEmail, 'Password@123');
+  check(
+    'Hierarchy: a cashier without categories.create cannot add a subsection',
+    (await api('/restaurant/subcategories', { method: 'POST', token: mhCookSession.token, body: { category: mhPizza, name: `Nope ${mhStamp}` } })).status === 403,
+  );
+  check(
+    'Hierarchy: a cashier without categories.delete cannot remove one',
+    (await api(`/restaurant/subcategories/${mhHidden.data._id}`, { method: 'DELETE', token: mhCookSession.token })).status === 403,
+  );
+  check(
+    'Hierarchy: a cashier without products.create cannot add a dish',
+    (await api('/restaurant/menu', { method: 'POST', token: mhCookSession.token, body: { name: `Nope ${mhStamp}`, category: mhPizza, priceMinor: 100 } })).status === 403,
+  );
+  check('Hierarchy: a cashier CAN read the subsections, to take an order', (await api('/restaurant/subcategories', { token: mhCookSession.token })).status === 200);
+
+  // --- the reusable extras list ------------------------------------------------
+  // A kitchen defines "Extra cheese" once and picks it everywhere. An extra
+  // typed straight onto a dish joins the list too, the same way an unknown
+  // section does, so nobody has to fill in a management screen first.
+  const mhAddOnList = await api('/restaurant/addons', { token: rvToken });
+  check('Extras: the list holds what the dishes used', mhAddOnList.status === 200 && mhAddOnList.data?.some((row) => row.name === 'Extra cheese'), mhAddOnList.data?.map((r) => r.name));
+  const mhCheese = (mhAddOnList.data ?? []).find((row) => row.name === 'Extra cheese');
+  check('Extras: it remembers what it usually costs', mhCheese?.defaultPriceMinor === 8000, mhCheese);
+  check('Extras: it counts the dishes offering it', mhCheese?.itemCount === 1, mhCheese);
+  check(
+    'Extras: the dish remembers which library entry each extra came from',
+    (await mhDish(mhPizzaDish.data._id))?.addOnGroups?.[0]?.options?.[0]?.addOnId === mhCheese?.id,
+    (await mhDish(mhPizzaDish.data._id))?.addOnGroups?.[0]?.options?.[0],
+  );
+
+  const mhDrink = await api('/restaurant/addons', { method: 'POST', token: rvToken, body: { name: `Extra drink ${mhStamp}`, defaultPriceMinor: 5000 } });
+  check('Extras: one can be defined before any dish uses it', mhDrink.status === 201, mhDrink.error);
+  check('Extras: a duplicate name is refused', (await api('/restaurant/addons', { method: 'POST', token: rvToken, body: { name: `extra drink ${mhStamp}`, defaultPriceMinor: 100 } })).status === 409);
+  check('Extras: a name is required', (await api('/restaurant/addons', { method: 'POST', token: rvToken, body: { name: '  ', defaultPriceMinor: 100 } })).status === 422);
+  check('Extras: a negative price is refused', (await api('/restaurant/addons', { method: 'POST', token: rvToken, body: { name: `Bad ${mhStamp}`, defaultPriceMinor: -1 } })).status === 422);
+  check('Extras: unknown fields are refused', (await api('/restaurant/addons', { method: 'POST', token: rvToken, body: { name: `Sneaky ${mhStamp}`, defaultPriceMinor: 10, tenantId: admin.session.tenant.id } })).status === 422);
+
+  // A dish may charge its own price for a shared extra, and editing the list
+  // must not reprice what is already on the menu.
+  const mhOwnPrice = await rvMenu({
+    name: `Cheesy Burger ${mhStamp}`,
+    category: mhBurger,
+    priceMinor: 20000,
+    addOnGroups: [{ name: 'Extras', maxSelect: 3, options: [{ name: 'Extra cheese', priceMinor: 5000 }] }],
+  });
+  mhRetire.push(mhOwnPrice.data?._id);
+  check('Extras: the same extra can cost something else on another dish', mhOwnPrice.status === 201 && mhOwnPrice.data?.addOnGroups?.[0]?.options?.[0]?.priceMinor === 5000, mhOwnPrice.error);
+  await api(`/restaurant/addons/${mhCheese.id}`, { method: 'PATCH', token: rvToken, body: { defaultPriceMinor: 12000 } });
+  check(
+    'Extras: changing the usual price does NOT reprice the dishes already offering it',
+    (await mhDish(mhPizzaDish.data._id))?.addOnGroups?.[0]?.options?.[0]?.priceMinor === 8000,
+  );
+
+  // Renaming DOES follow, so the menu stays consistent.
+  await api(`/restaurant/addons/${mhCheese.id}`, { method: 'PATCH', token: rvToken, body: { name: `Extra cheese plus ${mhStamp}` } });
+  check(
+    'Extras: renaming one renames it on every dish that offers it',
+    (await mhDish(mhPizzaDish.data._id))?.addOnGroups?.[0]?.options?.[0]?.name === `Extra cheese plus ${mhStamp}`,
+  );
+  check(
+    'Extras: a past order keeps the name it was sold under',
+    (await api(`/restaurant/orders/${mhWithExtras.data._id}`, { token: rvToken })).data?.items?.[0]?.addOns?.[0]?.nameSnapshot === 'Extra cheese',
+  );
+
+  check('Extras: one in use cannot be deleted', (await api(`/restaurant/addons/${mhCheese.id}`, { method: 'DELETE', token: rvToken })).status === 409);
+  check('Extras: an unused one can be deleted', (await api(`/restaurant/addons/${mhDrink.data._id}`, { method: 'DELETE', token: rvToken })).status === 200);
+
+  const mhHiddenExtra = await api('/restaurant/addons', { method: 'POST', token: rvToken, body: { name: `Retired extra ${mhStamp}`, defaultPriceMinor: 1000 } });
+  await api(`/restaurant/addons/${mhHiddenExtra.data._id}`, { method: 'PATCH', token: rvToken, body: { isActive: false } });
+  check(
+    'Extras: a hidden one cannot be put on a new dish',
+    (await mhBad({ addOnGroups: [{ name: 'G', options: [{ name: `Retired extra ${mhStamp}`, priceMinor: 1000 }] }] })).status === 400,
+  );
+  check('Extras: hidden ones are left out of the list by default', !((await api('/restaurant/addons', { token: rvToken })).data ?? []).some((row) => row.id === mhHiddenExtra.data._id));
+  check('Extras: they can be asked for', ((await api('/restaurant/addons?includeInactive=true', { token: rvToken })).data ?? []).some((row) => row.id === mhHiddenExtra.data._id));
+
+  // A guest taking SEVERAL extras on one line is the ordinary case.
+  const mhMulti = await rvMenu({
+    name: `Loaded Fries ${mhStamp}`,
+    category: mhBurger,
+    priceMinor: 15000,
+    addOnGroups: [
+      {
+        name: 'Extras',
+        maxSelect: 3,
+        options: [
+          { name: `Cheese sauce ${mhStamp}`, priceMinor: 4000 },
+          { name: `Jalapenos ${mhStamp}`, priceMinor: 2000 },
+          { name: `Bacon bits ${mhStamp}`, priceMinor: 6000 },
+        ],
+      },
+    ],
+  });
+  mhRetire.push(mhMulti.data?._id);
+  const mhMultiOptions = mhMulti.data.addOnGroups[0].options;
+  const mhMultiOrder = await rvOrder({
+    type: 'takeaway',
+    items: [{ menuItemId: mhMulti.data._id, addOnOptionIds: mhMultiOptions.map((o) => o._id), quantity: 2 }],
+  });
+  check(
+    'Extras: a guest can take three at once, and all three are charged',
+    mhMultiOrder.status === 201 && mhMultiOrder.data?.items?.[0]?.unitPriceMinor === 15000 + 4000 + 2000 + 6000,
+    mhMultiOrder.data?.items?.[0],
+  );
+  check('Extras: each one is on the line', mhMultiOrder.data?.items?.[0]?.addOns?.length === 3, mhMultiOrder.data?.items?.[0]?.addOns);
+  check('Extras: the line total multiplies the whole thing', mhMultiOrder.data?.items?.[0]?.lineTotalMinor === (15000 + 4000 + 2000 + 6000) * 2);
+
+  // Tenancy and permissions on the extras list.
+  check('Extras: reading the list needs a session', (await api('/restaurant/addons')).status === 401);
+  check('Extras: a Super Shop workspace cannot read them', (await api('/restaurant/addons', { token: ssToken })).status === 403);
+  check('Extras: another workspace cannot edit one', (await api(`/restaurant/addons/${mhCheese.id}`, { method: 'PATCH', token: ssToken, body: { name: 'Mine now' } })).status === 403);
+  check(
+    'Extras: a cashier without products.create cannot define one',
+    (await api('/restaurant/addons', { method: 'POST', token: mhCookSession.token, body: { name: `Nope ${mhStamp}`, defaultPriceMinor: 100 } })).status === 403,
+  );
+  check('Extras: a cashier CAN read them, to take an order', (await api('/restaurant/addons', { token: mhCookSession.token })).status === 200);
+
+  // --- clean up, so later counts are untouched ---------------------------------
+  for (const id of mhRetire.filter(Boolean)) {
+    await api(`/restaurant/menu/${id}`, { method: 'DELETE', token: rvToken });
+  }
+  check('Hierarchy: the fixtures are retired', (await api(`/restaurant/menu?category=${encodeURIComponent(mhPizza)}`, { token: rvToken })).data?.length === 0);
+
   // ------------------------------------------------ cash received, change and receipt
   section('Clothing POS: cash received, change and receipt');
   const ctnStamp = Date.now();
