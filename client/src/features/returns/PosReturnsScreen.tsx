@@ -55,6 +55,8 @@ interface PosReturnsScreenProps<TSale> {
   searchPlaceholder: string;
   /** Optional vertical-specific exchange workflow; Super Shop supplies this. */
   renderExchange?: (sale: TSale, onClose: () => void) => React.ReactNode;
+  /** Pharmacy permits every staff member who can open this page to exchange. */
+  exchangeForAnyStaff?: boolean;
 }
 
 /**
@@ -79,6 +81,7 @@ export function PosReturnsScreen<TSale>({
   restockable = true,
   searchPlaceholder,
   renderExchange,
+  exchangeForAnyStaff = false,
 }: PosReturnsScreenProps<TSale>) {
   const { activeStore } = useAuth();
   const currency = activeStore?.currency ?? 'BDT';
@@ -165,7 +168,13 @@ export function PosReturnsScreen<TSale>({
         description={description}
         actions={
           <div className="flex flex-wrap gap-2">
-            {renderExchange && (
+            {renderExchange && exchangeForAnyStaff && (
+              <Button variant="outline" onClick={() => setFinding('exchange')}>
+                <Repeat2 />
+                New exchange
+              </Button>
+            )}
+            {renderExchange && !exchangeForAnyStaff && (
               <PermissionGate anyOf={['returns.create']}>
                 <PermissionGate anyOf={['sales.create']}>
                   <Button variant="outline" onClick={() => setFinding('exchange')}>

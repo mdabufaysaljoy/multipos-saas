@@ -12,7 +12,7 @@ import * as controller from './suppliers.controller';
 import { createSupplierSchema, listSuppliersSchema, updateSupplierSchema } from './suppliers.validators';
 
 /**
- * Supplier management (Clothing and Super Shop POS).
+ * Supplier management (Clothing, Super Shop and Pharmacy POS).
  *
  * Every route: signed in -> workspace + branch -> supported retail POS -> usable
  * subscription -> the `supplierManagement` entitlement (Professional and
@@ -26,7 +26,7 @@ const router = Router();
 router.use(
   authenticate,
   resolveTenant,
-  requireVertical('clothing', 'supershop'),
+  requireVertical('clothing', 'supershop', 'pharmacy'),
   requireSubscribedAccess,
   requireAccess({ entitlement: 'supplierManagement' }),
 );

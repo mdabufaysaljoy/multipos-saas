@@ -55,6 +55,11 @@ export const PLAN_SEEDS = [
       maxCustomers: 500,
       maxSuppliers: 0,
     },
+    // A pharmacy catalogue commonly carries thousands of dosage/strength
+    // combinations. Keep every other POS on the shared Starter ceiling.
+    verticalOverrides: [
+      { vertical: 'pharmacy' as const, isAvailable: true, features: {}, limits: { maxProducts: 3_000 } },
+    ],
   },
   {
     code: 'showroom-monthly',
@@ -91,6 +96,9 @@ export const PLAN_SEEDS = [
       maxCustomers: 10_000,
       maxSuppliers: 100,
     },
+    verticalOverrides: [
+      { vertical: 'pharmacy' as const, isAvailable: true, features: {}, limits: { maxProducts: 30_000 } },
+    ],
   },
   {
     code: 'brand-monthly',
@@ -126,6 +134,8 @@ export const PLAN_SEEDS = [
       maxCustomers: -1,
       maxSuppliers: -1,
     },
+    // Enterprise already resolves to unlimited for every POS, including Pharmacy.
+    verticalOverrides: [],
   },
 ];
 

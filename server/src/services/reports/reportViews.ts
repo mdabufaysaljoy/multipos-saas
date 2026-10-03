@@ -25,6 +25,8 @@ export function supershopReportView(data: Row, currency: string): PrintableRepor
   const totals = (data.totals ?? {}) as Row;
   const returns = (data.returns ?? {}) as Row;
   const writeOffs = (data.writeOffs ?? {}) as Row;
+  const discounts = (data.discounts ?? {}) as Row;
+  const voids = (data.voids ?? {}) as Row;
   return {
     title: 'Advanced Analytics',
     rangeLabel: String((data.range as Row)?.label ?? ''),
@@ -68,7 +70,10 @@ export function supershopReportView(data: Row, currency: string): PrintableRepor
       ),
       section('hours', 'Busy hours', [text('label', 'Hour'), number('salesCount', 'Sales'), money('netSalesMinor', 'Net sales')], asRows(data.hours).map((row) => ({ ...row, label: `${row.hour}:00` }))),
       section('payments', 'Payments', [text('method', 'Method'), number('sales', 'Sales'), money('amountMinor', 'Taken')], asRows(data.payments)),
+      section('staff', 'Staff performance', [text('name', 'Staff'), number('sales', 'Sales'), number('items', 'Items'), money('netSalesMinor', 'Revenue'), money('discountsMinor', 'Discounts'), money('grossProfitMinor', 'Profit'), money('averageBasketMinor', 'Average basket')], asRows(data.staff)),
+      section('discounts', 'Discounts by staff', [text('name', 'Staff'), number('sales', 'Sales'), money('discountsMinor', 'Discounts')], asRows(discounts.byStaff)),
       section('returns', 'Returns', [text('returnNumber', 'Return'), text('saleNumber', 'Sale'), text('reason', 'Reason'), text('by', 'Taken by'), money('totalMinor', 'Refunded')], asRows(returns.recent)),
+      section('voids', 'Voided sales', [text('saleNumber', 'Sale'), text('voidedByNameSnapshot', 'Voided by'), text('voidReason', 'Reason'), text('voidedAt', 'Date'), money('totalMinor', 'Value')], asRows(voids.recent)),
       section('writeOffs', 'Write-offs', [text('name', 'Product'), number('quantity', 'Quantity'), money('costMinor', 'Cost')], asRows(writeOffs.byProduct)),
       section('deadStock', 'Dead stock', [text('name', 'Product'), number('quantityOnHand', 'On hand'), money('stockCostMinor', 'At cost')], asRows(data.deadStock)),
     ],
@@ -80,6 +85,7 @@ export function pharmacyReportView(data: Row, currency: string): PrintableReport
   const returns = (data.returns ?? {}) as Row;
   const writeOffs = (data.writeOffs ?? {}) as Row;
   const expiry = (data.expiry ?? {}) as Row;
+  const inventory = (data.inventory ?? {}) as Row;
   const bucket = (key: string, label: string) => ({ label, units: num((expiry[key] as Row)?.units), costMinor: num((expiry[key] as Row)?.costMinor) });
   return {
     title: 'Advanced Analytics',
@@ -95,6 +101,9 @@ export function pharmacyReportView(data: Row, currency: string): PrintableReport
       { label: 'Discounts', value: amount(totals.discountsMinor, currency) },
       { label: 'Average basket', value: amount(totals.averageBasketMinor, currency) },
       { label: 'Prescription sales', value: `${num(totals.prescriptionSales)} · ${amount(totals.prescriptionValueMinor, currency)}` },
+      { label: 'Stock value', value: amount(inventory.costMinor, currency) },
+      { label: 'Stock units', value: String(num(inventory.units)) },
+      { label: 'Expired units', value: String(num(inventory.expiredUnits)) },
     ],
     sections: [
       section('trend', 'Daily sales', [text('date', 'Day'), number('salesCount', 'Sales'), money('netSalesMinor', 'Net sales'), money('grossProfitMinor', 'Profit')], asRows(data.trend)),
@@ -113,6 +122,7 @@ export function pharmacyReportView(data: Row, currency: string): PrintableReport
         bucket('within60', 'Within 60 days'),
         bucket('within90', 'Within 90 days'),
       ]),
+      section('expiryBatches', 'Expiry batch details', [text('name', 'Medicine'), text('strength', 'Strength'), text('manufacturer', 'Manufacturer'), text('batchNumber', 'Batch'), text('expiryDate', 'Expiry'), number('daysToExpiry', 'Days left'), number('quantityOnHand', 'Units'), money('costMinor', 'At cost')], asRows(data.expiryBatches)),
       section('writeOffs', 'Write-offs', [text('name', 'Medicine'), number('units', 'Units'), money('costMinor', 'Cost')], asRows(writeOffs.byMedicine)),
       section('slowMovers', 'Slow movers', [text('name', 'Medicine'), text('strength', 'Strength'), number('units', 'On hand'), money('stockCostMinor', 'At cost')], asRows(data.slowMovers)),
     ],

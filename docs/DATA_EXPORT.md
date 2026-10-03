@@ -60,7 +60,7 @@ field from the request, so arbitrary database export is impossible.
 | Restaurant | Menu items, categories, dining tables, orders, order items, order payments, kitchen tickets, cash-drawer shifts and shift cash movements |
 | Pharmacy | Medicines, categories, medicine batches/current inventory, stock movements, sales, sale items with batch allocations, sale payments and prescription records |
 | Super Shop | Products, departments, brands, current inventory, stock movements, sales, sale items (including weight/VAT/cost) and sale payments |
-| Clothing + Super Shop | Supplier contacts, terms and tax details (**never banking**), when Supplier Management is enabled |
+| Clothing + Super Shop + Pharmacy | Supplier contacts, terms and tax details (**never banking**), when Supplier Management is enabled |
 
 A dataset is workspace- or branch-scoped to match the data itself. Catalogues, departments/categories,
 brands and suppliers are workspace-level; branch-owned sales, orders, stock, tables and shifts follow

@@ -5,6 +5,8 @@ import type {
   MedicineDetail,
   MedicineInput,
   PharmacyDashboard,
+  PharmacyExchange,
+  PharmacyExchangeInput,
   PharmacyReceipt,
   PharmacyReports,
   PharmacySale,
@@ -57,6 +59,8 @@ export const pharmacyApi = {
   voidSale: (id: string, reason: string) => post<PharmacySale>(`/pharmacy/sales/${id}/void`, { reason }),
   /** A return against a completed sale: the units go back to their own batches. */
   createReturn: (id: string, body: PosReturnInput) => post<PosReturn>(`/pharmacy/sales/${id}/return`, body),
+  createExchange: (id: string, body: PharmacyExchangeInput) =>
+    post<PharmacyExchange>(`/pharmacy/sales/${id}/exchange`, body),
   returns: (params?: Query) => getPaginated<PosReturn>('/pharmacy/returns', params),
 
   currentShift: () => get<PharmacyShiftDetail | null>('/pharmacy/shifts/current'),

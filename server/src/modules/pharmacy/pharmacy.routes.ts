@@ -21,6 +21,7 @@ import {
   receiveBatchSchema,
   updateMedicineSchema,
   createReturnSchema,
+  createExchangeSchema,
   voidSaleSchema,
   cashMovementSchema,
   closeShiftSchema,
@@ -32,6 +33,11 @@ import { stockLedger } from '../inventory/stockLedger.controller';
 import { posImportRouter } from '../posImports/posImports.routes';
 import { createCategory, listCategories, removeCategory, updateCategory } from '../posCategories/posCategories.controller';
 import { createPosCategorySchema, listPosCategoriesSchema, updatePosCategorySchema } from '../../services/catalogue/posCategories.service';
+import {
+  createPharmacyManufacturerSchema,
+  listPharmacyManufacturersSchema,
+  updatePharmacyManufacturerSchema,
+} from '../../services/catalogue/pharmacyManufacturers.service';
 
 const router = Router();
 
@@ -71,6 +77,34 @@ router.delete(
   removeCategory,
 );
 
+router.get(
+  '/manufacturers',
+  requirePermission(PERMISSIONS.PRODUCTS_VIEW),
+  validate({ query: listPharmacyManufacturersSchema }),
+  controller.listManufacturers,
+);
+router.post(
+  '/manufacturers',
+  requireActiveSubscription,
+  requirePermission(PERMISSIONS.CATEGORIES_CREATE),
+  validate({ body: createPharmacyManufacturerSchema }),
+  controller.createManufacturer,
+);
+router.patch(
+  '/manufacturers/:id',
+  requireActiveSubscription,
+  requirePermission(PERMISSIONS.CATEGORIES_EDIT),
+  validate({ params: idParam, body: updatePharmacyManufacturerSchema }),
+  controller.updateManufacturer,
+);
+router.delete(
+  '/manufacturers/:id',
+  requireActiveSubscription,
+  requirePermission(PERMISSIONS.CATEGORIES_DELETE),
+  validate({ params: idParam }),
+  controller.removeManufacturer,
+);
+
 router.get('/medicines', requirePermission(PERMISSIONS.PRODUCTS_VIEW), validate({ query: listMedicinesSchema }), controller.listMedicines);
 router.get('/medicine-filters', requirePermission(PERMISSIONS.PRODUCTS_VIEW), controller.medicineFilters);
 router.post('/medicines', requireActiveSubscription, requirePermission(PERMISSIONS.PRODUCTS_CREATE), validate({ body: createMedicineSchema }), controller.createMedicine);
@@ -100,6 +134,15 @@ router.post(
   requirePermission(PERMISSIONS.RETURNS_CREATE),
   validate({ params: idParam, body: createReturnSchema }),
   controller.createReturn,
+);
+// Every authenticated Pharmacy staff member may perform an exchange. The
+// exchange engine still requires a note, an active subscription, exact tender,
+// and an equal-or-higher-valued replacement.
+router.post(
+  '/sales/:id/exchange',
+  requireActiveSubscription,
+  validate({ params: idParam, body: createExchangeSchema }),
+  controller.createExchange,
 );
 router.get('/returns', requirePermission(PERMISSIONS.RETURNS_VIEW), validate({ query: listSalesSchema }), controller.listReturns);
 

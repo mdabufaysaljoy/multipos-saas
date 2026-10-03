@@ -2,7 +2,7 @@ import { Schema, model, type Types } from 'mongoose';
 import type { BaseDoc } from './types';
 
 /**
- * A supplier the shop sources stock from (Clothing and Super Shop POS).
+ * A supplier the shop sources stock from (Clothing, Super Shop and Pharmacy POS).
  *
  * WORKSPACE-LEVEL, deliberately: a retail business buys from the same
  * wholesalers for every branch, so a supplier belongs to the workspace and all

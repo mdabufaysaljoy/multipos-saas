@@ -6,6 +6,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { EmptyState, LoadingState } from '@/components/states';
 import { MoneyInput } from '@/components/MoneyInput';
@@ -20,7 +21,6 @@ import { LoyaltyCardDialog } from '@/features/loyalty/LoyaltyCardDialog';
 import { LoyaltyStrip } from '@/features/loyalty/LoyaltyStrip';
 import { isLoyaltyCardCode, maxRedeemablePoints, pointsForSpend } from '@/features/loyalty/loyaltyMath';
 import { useLoyaltyAccess } from '@/features/loyalty/useLoyaltyAccess';
-import { CategoryFilter } from '@/features/catalogue/CategoryFilter';
 import { ApiError } from '@/api/client';
 import { loyaltyApi, storeApi } from '@/api/endpoints';
 import { pharmacyApi } from '@/api/pharmacy';
@@ -64,16 +64,13 @@ export function PharmacyPosPage() {
   const [discountMode, setDiscountMode] = React.useState<'amount' | 'percent'>('amount');
   const [discountPercent, setDiscountPercent] = React.useState('');
   const [rx, setRx] = React.useState(EMPTY_RX);
+  const [note, setNote] = React.useState('');
   const [customer, setCustomer] = React.useState<SelectedCustomer | null>(null);
   // Only a scanned CARD earns or redeems - never a customer or a phone number.
   const [loyaltyMember, setLoyaltyMember] = React.useState<LoyaltyLookup | null>(null);
   const [redeemPoints, setRedeemPoints] = React.useState<number | null>(null);
   const [cardDialogOpen, setCardDialogOpen] = React.useState(false);
   const loyaltyAccess = useLoyaltyAccess();
-  // A till with this permission may dispense units the system thinks are gone.
-  // The server still refuses expired stock, and refuses entirely when there is
-  // no unexpired batch to record the units against.
-  const canSellOutOfStock = can('sales.sellOutOfStock');
   const [receiptFor, setReceiptFor] = React.useState<string | null>(null);
 
   // The categories this pharmacy groups its shelves by, in the owner's order
@@ -118,14 +115,20 @@ export function PharmacyPosPage() {
   const payments = usePayments(cart.length > 0 ? total : 0);
   const needsRx = cart.some((line) => line.medicine.requiresPrescription);
   const rxComplete = rx.patientName.trim().length >= 2 && rx.prescriberName.trim().length >= 2;
+  const hasOutOfStockLine = cart.some((line) => (line.medicine.stock?.sellable ?? 0) <= 0);
+  const outOfStockNoteValid = !hasOutOfStockLine || note.trim().length >= 3;
+
+  React.useEffect(() => {
+    if (!hasOutOfStockLine) setNote('');
+  }, [hasOutOfStockLine]);
 
   const add = (medicine: Medicine, amount = 1) => {
     const sellable = medicine.stock?.sellable ?? 0;
     const existing = cart.find((line) => line.medicine._id === medicine._id);
     const target = (existing?.quantity ?? 0) + amount;
-    // Out of stock entirely is what the permission covers; having SOME but not
-    // enough is refused for everyone, here and on the server.
-    if (target > sellable && !(sellable <= 0 && canSellOutOfStock)) {
+    // A completely empty line may be sold by any cashier with a note. Having
+    // some stock but asking for more than it remains a counting error.
+    if (target > sellable && sellable > 0) {
       toast.error(sellable <= 0 ? `${medicine.name} is out of stock` : `Only ${sellable} of ${medicine.name} in stock`);
       return;
     }
@@ -141,7 +144,7 @@ export function PharmacyPosPage() {
     if (!line) return;
     const clean = Math.min(Math.max(Math.trunc(quantity), 0), 10_000);
     const sellable = line.medicine.stock?.sellable ?? 0;
-    if (clean > sellable && !(sellable <= 0 && canSellOutOfStock)) { toast.error(`Only ${sellable} of ${line.medicine.name} in stock`); return; }
+    if (clean > sellable && sellable > 0) { toast.error(`Only ${sellable} of ${line.medicine.name} in stock`); return; }
     setCart(cart.flatMap((entry) => (entry.medicine._id !== id ? [entry] : clean <= 0 ? [] : [{ ...entry, quantity: clean }])));
   };
 
@@ -176,6 +179,7 @@ export function PharmacyPosPage() {
     setDiscount(0);
     setDiscountPercent('');
     setRx(EMPTY_RX);
+    setNote('');
     setCustomer(null);
     removeCard();
     payments.reset();
@@ -194,6 +198,7 @@ export function PharmacyPosPage() {
           : {}),
         // The card is what earns and redeems; the server re-checks both.
         ...(loyaltyMember ? { loyaltyMembershipId: loyaltyMember.id, redeemPoints: redeeming } : {}),
+        note,
       }),
     onSuccess: (sale) => {
       toast.success(`${sale.saleNumber} completed`, {
@@ -209,7 +214,7 @@ export function PharmacyPosPage() {
     },
   });
 
-  const canComplete = cart.length > 0 && discountValid && (!needsRx || rxComplete) && payments.isSettled && !complete.isPending;
+  const canComplete = cart.length > 0 && discountValid && outOfStockNoteValid && (!needsRx || rxComplete) && payments.isSettled && !complete.isPending;
 
   return (
     <div className="grid h-full gap-4 p-4 lg:grid-cols-[1fr_24rem] lg:p-6">
@@ -235,21 +240,31 @@ export function PharmacyPosPage() {
               aria-label="Search medicines"
             />
           </div>
-          <div className="space-y-1">
-            <span className="text-xs font-medium text-muted-foreground">Dosage form</span>
-            <CategoryFilter categories={(shelves ?? []).map((row) => row.name)} value={category} onChange={setCategory} />
-          </div>
-          <div className="max-w-xs space-y-1">
-            <span className="text-xs font-medium text-muted-foreground">Manufacturer</span>
-            <Select value={manufacturer} onValueChange={setManufacturer}>
-              <SelectTrigger className="h-9">
-                <SelectValue placeholder="All manufacturers" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">All manufacturers</SelectItem>
-                {(medicineFilters?.manufacturers ?? []).map((name) => <SelectItem key={name} value={name}>{name}</SelectItem>)}
-              </SelectContent>
-            </Select>
+          <div className="grid grid-cols-2 gap-2">
+            <div className="min-w-0 space-y-1">
+              <span className="text-xs font-medium text-muted-foreground">Dosage form</span>
+              <Select value={category} onValueChange={setCategory}>
+                <SelectTrigger className="h-9 w-full">
+                  <SelectValue placeholder="All forms" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All forms</SelectItem>
+                  {(shelves ?? []).map((row) => <SelectItem key={row.slug} value={row.name}>{row.name}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="min-w-0 space-y-1">
+              <span className="text-xs font-medium text-muted-foreground">Manufacturer</span>
+              <Select value={manufacturer} onValueChange={setManufacturer}>
+                <SelectTrigger className="h-9 w-full">
+                  <SelectValue placeholder="All manufacturers" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All manufacturers</SelectItem>
+                  {(medicineFilters?.manufacturers ?? []).map((name) => <SelectItem key={name} value={name}>{name}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </div>
           </div>
           <LimitAlert resource="monthlySales" />
         </CardHeader>
@@ -262,17 +277,12 @@ export function PharmacyPosPage() {
             <ul className="divide-y">
               {(results?.items ?? []).map((medicine) => {
                 const sellable = medicine.stock?.sellable ?? 0;
-                const blocked = sellable <= 0 && !canSellOutOfStock;
                 return (
                   <li key={medicine._id} className="py-2.5">
                     <button
                       type="button"
-                      disabled={blocked}
                       onClick={() => add(medicine)}
-                      className={cn(
-                        'flex w-full items-center justify-between gap-3 rounded px-1 py-1 text-left transition-colors hover:bg-muted/50',
-                        blocked && 'cursor-not-allowed opacity-50',
-                      )}
+                      className="flex w-full items-center justify-between gap-3 rounded px-1 py-1 text-left transition-colors hover:bg-muted/50"
                     >
                       <div className="min-w-0">
                         <p className="font-medium">
@@ -288,14 +298,14 @@ export function PharmacyPosPage() {
                       <div className="shrink-0 text-right">
                         <p className="tabular font-semibold">{formatMoney(medicine.sellingPriceMinor, currency)}</p>
                         <p className={cn('text-xs', sellable <= 0 ? 'text-destructive' : 'text-muted-foreground')}>
-                          {sellable > 0 ? `${sellable} in stock` : canSellOutOfStock ? 'Out of stock · sell anyway' : 'Out of stock'}
+                          {sellable > 0 ? `${sellable} in stock` : 'Out of stock · note required'}
                         </p>
                       </div>
                     </button>
                     <div className="mt-1 flex flex-wrap items-center gap-1 px-1" aria-label={`Quick quantities for ${medicine.name}`}>
                       <span className="mr-1 text-[11px] text-muted-foreground">Add</span>
                       {QUICK_QUANTITIES.map((quantity) => (
-                        <Button key={quantity} type="button" variant="outline" size="sm" className="h-6 px-2 text-xs" disabled={blocked || (sellable > 0 && (cart.find((line) => line.medicine._id === medicine._id)?.quantity ?? 0) + quantity > sellable)} onClick={() => add(medicine, quantity)}>{quantity}</Button>
+                        <Button key={quantity} type="button" variant="outline" size="sm" className="h-6 px-2 text-xs" disabled={sellable > 0 && (cart.find((line) => line.medicine._id === medicine._id)?.quantity ?? 0) + quantity > sellable} onClick={() => add(medicine, quantity)}>{quantity}</Button>
                       ))}
                     </div>
                   </li>
@@ -404,6 +414,26 @@ export function PharmacyPosPage() {
               onRedeemChange={setRedeemPoints}
               onRemove={removeCard}
             />
+          )}
+
+          {hasOutOfStockLine && (
+            <div className="space-y-1">
+              <Label htmlFor="pharmacy-sale-note" className="text-xs">
+                Sale note <span className="text-destructive">(required for out-of-stock sale)</span>
+              </Label>
+              <Input
+                id="pharmacy-sale-note"
+                className="h-8"
+                value={note}
+                maxLength={300}
+                onChange={(event) => setNote(event.target.value)}
+                placeholder="Why is this out-of-stock sale allowed?"
+                aria-invalid={!outOfStockNoteValid}
+              />
+              {!outOfStockNoteValid && (
+                <p className="text-xs text-destructive">Enter at least 3 characters before completing this sale.</p>
+              )}
+            </div>
           )}
 
           <PaymentPanel

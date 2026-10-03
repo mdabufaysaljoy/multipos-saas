@@ -61,6 +61,7 @@ const ShopImportPage = lazyPage(() => import('@/pages/supershop/ShopImportPage')
 const PharmacyImportPage = lazyPage(() => import('@/pages/pharmacy/PharmacyImportPage'), 'PharmacyImportPage');
 const MenuImportPage = lazyPage(() => import('@/pages/restaurant/MenuImportPage'), 'MenuImportPage');
 const PharmacyCategoriesPage = lazyPage(() => import('@/pages/pharmacy/PharmacyCategoriesPage'), 'PharmacyCategoriesPage');
+const PharmacyManufacturersPage = lazyPage(() => import('@/pages/pharmacy/PharmacyManufacturersPage'), 'PharmacyManufacturersPage');
 const MenuCategoriesPage = lazyPage(() => import('@/pages/restaurant/MenuCategoriesPage'), 'MenuCategoriesPage');
 const MenuAddOnsPage = lazyPage(() => import('@/pages/restaurant/MenuAddOnsPage'), 'MenuAddOnsPage');
 const PharmacyReturnsPage = lazyPage(() => import('@/pages/pharmacy/PharmacyReturnsPage'), 'PharmacyReturnsPage');
@@ -296,6 +297,14 @@ export function AppRoutes() {
           element={
             <ProtectedRoute anyOf={['products.view', 'categories.view']}>
               <PharmacyCategoriesPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/pharmacy-manufacturers"
+          element={
+            <ProtectedRoute anyOf={['products.view', 'categories.view']}>
+              <PharmacyManufacturersPage />
             </ProtectedRoute>
           }
         />

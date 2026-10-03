@@ -14,13 +14,14 @@ import { resolvePage, searchRegex } from '../../utils/pagination';
 import { entitlementService } from '../../services/subscription/entitlement.service';
 import { customerService } from '../customers/customers.service';
 import { posCategoryService } from '../../services/catalogue/posCategories.service';
+import { pharmacyManufacturerService } from '../../services/catalogue/pharmacyManufacturers.service';
 import { loyaltyService } from '../loyalty/loyalty.service';
 import { pointsForSpend } from '../loyalty/loyalty.math';
 import { logger } from '../../utils/logger';
 import { pharmacyInventoryAdapter, pharmacyMovementRow, todayUtc, type PharmacyReservation } from '../../services/inventory/adapters/pharmacy.adapter';
 import { POS_TENDER_DIALECT, settleTender, stampTenderLabels, tenderLabels } from '../../services/pos/paymentMethods.service';
 import { resolveDashboardWindow } from '../reports/reports.service';
-import { returnFiguresFor } from '../../services/returns/posReturns.figures';
+import { returnFiguresFor, returnsByDay } from '../../services/returns/posReturns.figures';
 import type { DashboardRangeInput } from '../reports/reports.validators';
 import type { TenantContext } from '../../types/express';
 import type {
@@ -116,14 +117,7 @@ class PharmacyService {
 
   /** Values offered by the Pharmacy POS filters, scoped to this workspace. */
   async medicineFilters(ctx: TenantContext) {
-    const manufacturers = (await MedicineModel.distinct('manufacturer', {
-      tenantId: ctx.tenantId,
-      deletedAt: null,
-      isActive: true,
-      manufacturer: { $ne: '' },
-    }))
-      .filter(Boolean)
-      .sort((a, b) => a.localeCompare(b));
+    const manufacturers = await pharmacyManufacturerService.names(ctx);
     return { manufacturers };
   }
 
@@ -157,6 +151,7 @@ class PharmacyService {
     // A category the pharmacy has retired cannot take new medicines; a new name
     // joins the catalogue so it can be managed like the rest.
     await posCategoryService.assertUsable(ctx, 'pharmacy', values.category);
+    await pharmacyManufacturerService.assertUsable(ctx, values.manufacturer);
     const medicine = await MedicineModel.create({ tenantId: ctx.tenantId, ...values, createdBy: ctx.userId });
     return medicine.toObject();
   }
@@ -179,6 +174,7 @@ class PharmacyService {
       throw ApiError.validation('Pack price must equal unit price × pack quantity', { expectedPackPriceMinor: packPriceMinor });
     }
     await posCategoryService.assertUsable(ctx, 'pharmacy', category);
+    await pharmacyManufacturerService.assertUsable(ctx, input.manufacturer ?? before.manufacturer);
     const { category: _ignoredCategory, packPriceMinor: _ignoredPackPrice, ...editable } = input;
 
     const after = await MedicineModel.findOneAndUpdate(
@@ -315,7 +311,18 @@ class PharmacyService {
 
   // ==================================================================== sales
 
-  async createSale(ctx: TenantContext, input: CreateSaleInput) {
+  async createSale(
+    ctx: TenantContext,
+    input: CreateSaleInput,
+    options: {
+      exchange?: {
+        originalSaleId: Types.ObjectId;
+        originalSaleNumber: string;
+        creditMinor: number;
+        returnedItems: { nameSnapshot: string; detailSnapshot: string; quantity: number; unitType: string; lineTotalMinor: number }[];
+      };
+    } = {},
+  ) {
     const entitlement = await entitlementService.forTenant(ctx.tenantId);
     entitlementService.assertUsable(entitlement);
     // Checked before any stock moves, so a refused sale leaves nothing to undo.
@@ -373,10 +380,19 @@ class PharmacyService {
     if (totalMinor <= 0) {
       throw ApiError.validation('A sale must come to more than nothing after points.', { reason: 'LOYALTY_NOTHING_PAYABLE' });
     }
-    // Enabled for the branch, covering the total, change only out of cash:
+    // Returned goods are credit already paid on the original sale. Only the
+    // difference is tendered, while the replacement sale keeps its full value.
+    const creditMinor = options.exchange?.creditMinor ?? 0;
+    if (creditMinor > totalMinor) {
+      throw ApiError.validation('The exchange credit is worth more than the replacement medicines.', {
+        reason: 'EXCHANGE_CREDIT_EXCEEDS_TOTAL',
+      });
+    }
+    const payableMinor = totalMinor - creditMinor;
+    // Enabled for the branch, covering the payable difference, change only out of cash:
     // the same three rules every POS settles by.
     const { paidMinor, changeMinor } = settleTender({
-      totalMinor,
+      totalMinor: payableMinor,
       tendered: input.payments,
       accepted: store.paymentMethods ?? [],
       dialect: POS_TENDER_DIALECT,
@@ -412,8 +428,9 @@ class PharmacyService {
     // ---- take stock, earliest expiry first --------------------------------
     // Through the adapter, so shared code can do this without knowing that a
     // pharmacy fills a line from batches and never from an expired one.
-    // From the permissions resolved for THIS request, never from the client.
-    const allowOutOfStock = ctx.can(PERMISSIONS.SALES_SELL_OUT_OF_STOCK);
+    // Every cashier may complete a fully out-of-stock line, but only with an
+    // explanatory note. The adapter still refuses expired stock and a partial
+    // shortage (some stock, but fewer units than requested).
     const taken: PharmacyReservation[] = [];
     try {
       for (const line of priced) {
@@ -421,8 +438,14 @@ class PharmacyService {
           itemId: line.medicine._id,
           quantity: line.quantity,
           label: line.medicine.name,
-          allowOutOfStock,
+          allowOutOfStock: true,
         }));
+      }
+      if (taken.some((entry) => entry.detail.outOfStockOverride) && input.note.trim().length < 3) {
+        throw ApiError.validation('Add a note explaining why this out-of-stock sale is being completed.', {
+          reason: 'OUT_OF_STOCK_NOTE_REQUIRED',
+          field: 'note',
+        });
       }
     } catch (error) {
       await pharmacyInventoryAdapter.release(ctx, taken);
@@ -492,6 +515,18 @@ class PharmacyService {
             }
           : null,
         status: 'completed',
+        ...(options.exchange
+          ? {
+              exchange: {
+                returnId: null,
+                returnNumber: '',
+                originalSaleId: options.exchange.originalSaleId,
+                originalSaleNumber: options.exchange.originalSaleNumber,
+                creditMinor,
+                returnedItems: options.exchange.returnedItems,
+              },
+            }
+          : {}),
         soldAt,
         cashierId: ctx.userId,
         cashierNameSnapshot: ctx.userName,
@@ -510,7 +545,11 @@ class PharmacyService {
       });
       entitlementService.assertOrdinalWithinLimit(entitlement, 'maxMonthlySales', ordinal, 'sales per month');
 
-      await pharmacyInventoryAdapter.commit(ctx, taken, { referenceId: saleId, referenceNumber: saleNumber });
+      await pharmacyInventoryAdapter.commit(ctx, taken, {
+        reason: input.note || 'Sale',
+        referenceId: saleId,
+        referenceNumber: saleNumber,
+      });
       if (customer) {
         await customerService.applySaleStats(ctx, customer._id, { amountMinor: totalMinor, orderDelta: 1, purchasedAt: soldAt });
       }
@@ -643,17 +682,19 @@ class PharmacyService {
     const soon = new Date(today.getTime() + 31 * DAY_MS);
     const completed = { tenantId: ctx.tenantId, storeId: ctx.storeId, status: 'completed' as const };
     const soldIn = (from: Date, to: Date) => ({ ...completed, soldAt: { $gte: from, $lte: to } });
+    const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
     const totals = (from: Date, to: Date) =>
-      PharmacySaleModel.aggregate<{ count: number; totalMinor: number; discountMinor: number }>([
+      PharmacySaleModel.aggregate<{ count: number; totalMinor: number; discountMinor: number; costMinor: number }>([
         { $match: soldIn(from, to) },
-        { $group: { _id: null, count: { $sum: 1 }, totalMinor: { $sum: '$totalMinor' }, discountMinor: { $sum: '$discountMinor' } } },
+        { $group: { _id: null, count: { $sum: 1 }, totalMinor: { $sum: '$totalMinor' }, discountMinor: { $sum: '$discountMinor' }, costMinor: { $sum: '$costMinor' } } },
       ]);
 
-    const [currentRows, previousRows, refunds, prescriptionSales, expiring, expiredRows, reorderable] = await Promise.all([
+    const [currentRows, previousRows, refunds, refundsByDay, prescriptionSales, expiring, expiredRows, reorderable, trend, payments, topMedicines, recentSales, stockRows] = await Promise.all([
       totals(range.from, range.to),
       totals(previousFrom, previousTo),
       // What was charged is on the sales; what was kept is that less refunds.
       returnFiguresFor(ctx, 'pharmacy', { from: range.from, to: range.to }),
+      returnsByDay(ctx, 'pharmacy', { from: range.from, to: range.to }, timezone),
       PharmacySaleModel.countDocuments({ ...soldIn(range.from, range.to), prescription: { $ne: null } }),
       MedicineBatchModel.find({ tenantId: ctx.tenantId, storeId: ctx.storeId, quantityOnHand: { $gt: 0 }, expiryDate: { $gte: today, $lt: soon } })
         .sort({ expiryDate: 1 })
@@ -675,6 +716,35 @@ class PharmacyService {
         .select('name strength reorderLevel')
         .limit(500)
         .lean<MedicineRecord[]>(),
+      PharmacySaleModel.aggregate<{ _id: string; salesCount: number; totalMinor: number; costMinor: number }>([
+        { $match: soldIn(range.from, range.to) },
+        // Returns are recorded by calendar day, so the dashboard trend uses the
+        // same exact grain and never subtracts one refund from multiple hours.
+        { $group: { _id: { $dateToString: { format: '%Y-%m-%d', date: '$soldAt', timezone } }, salesCount: { $sum: 1 }, totalMinor: { $sum: '$totalMinor' }, costMinor: { $sum: '$costMinor' } } },
+        { $sort: { _id: 1 } },
+      ]),
+      PharmacySaleModel.aggregate<{ _id: string; amountMinor: number; sales: number; changeMinor: number }>([
+        { $match: soldIn(range.from, range.to) },
+        { $unwind: '$payments' },
+        { $group: { _id: '$payments.method', amountMinor: { $sum: '$payments.amountMinor' }, sales: { $sum: 1 }, changeMinor: { $sum: { $cond: [{ $eq: ['$payments.method', 'cash'] }, '$changeMinor', 0] } } } },
+        { $sort: { amountMinor: -1 } },
+      ]),
+      PharmacySaleModel.aggregate<{ _id: Types.ObjectId; name: string; strength: string; quantity: number; revenueMinor: number }>([
+        { $match: soldIn(range.from, range.to) },
+        { $unwind: '$items' },
+        { $group: { _id: '$items.medicineId', name: { $last: '$items.nameSnapshot' }, strength: { $last: '$items.strengthSnapshot' }, quantity: { $sum: '$items.quantity' }, revenueMinor: { $sum: '$items.lineTotalMinor' } } },
+        { $sort: { revenueMinor: -1, quantity: -1 } },
+        { $limit: 8 },
+      ]),
+      PharmacySaleModel.find(soldIn(range.from, range.to))
+        .sort({ soldAt: -1 })
+        .limit(8)
+        .select('saleNumber totalMinor cashierNameSnapshot customerNameSnapshot soldAt items')
+        .lean(),
+      MedicineBatchModel.aggregate<{ batches: number; units: number; costMinor: number }>([
+        { $match: { tenantId: ctx.tenantId, storeId: ctx.storeId, quantityOnHand: { $gt: 0 } } },
+        { $group: { _id: null, batches: { $sum: 1 }, units: { $sum: '$quantityOnHand' }, costMinor: { $sum: { $multiply: ['$quantityOnHand', '$costPriceMinor'] } } } },
+      ]),
     ]);
 
     const stock = await this.stockFor(ctx, reorderable.map((medicine) => medicine._id));
@@ -690,7 +760,7 @@ class PharmacyService {
       .sort((a, b) => a.sellable - b.sellable)
       .slice(0, 10);
 
-    const summarise = (rows: { count: number; totalMinor: number; discountMinor: number }[]) => {
+    const summarise = (rows: { count: number; totalMinor: number; discountMinor: number; costMinor: number }[]) => {
       const row = rows[0];
       const salesCount = row?.count ?? 0;
       const totalMinor = row?.totalMinor ?? 0;
@@ -698,10 +768,13 @@ class PharmacyService {
         salesCount,
         totalMinor,
         discountMinor: row?.discountMinor ?? 0,
+        costMinor: row?.costMinor ?? 0,
         averageSaleMinor: salesCount > 0 ? Math.round(totalMinor / salesCount) : 0,
       };
     };
     const current = summarise(currentRows);
+    const netSalesMinor = current.totalMinor - refunds.totalMinor;
+    const costMinor = current.costMinor - refunds.costMinor;
 
     return {
       range: { from: range.from, to: range.to, label: range.label, preset: range.preset, bucket },
@@ -711,7 +784,9 @@ class PharmacyService {
         refundCount: refunds.count,
         refundedMinor: refunds.totalMinor,
         // What the till actually kept: charged less refunded.
-        netSalesMinor: current.totalMinor - refunds.totalMinor,
+        netSalesMinor,
+        costMinor,
+        grossProfitMinor: netSalesMinor - costMinor,
       },
       previous: summarise(previousRows),
       expiringSoon: expiring.map((batch) => ({
@@ -725,6 +800,22 @@ class PharmacyService {
       })),
       expired: { batches: expiredRows[0]?.batches ?? 0, units: expiredRows[0]?.units ?? 0, costMinor: expiredRows[0]?.costMinor ?? 0 },
       lowStock,
+      stock: { batches: stockRows[0]?.batches ?? 0, units: stockRows[0]?.units ?? 0, costMinor: stockRows[0]?.costMinor ?? 0 },
+      trend: trend.map((row) => {
+        const refunded = refundsByDay.get(row._id.slice(0, 10)) ?? { totalMinor: 0, costMinor: 0 };
+        return { bucket: row._id, salesCount: row.salesCount, netSalesMinor: row.totalMinor - refunded.totalMinor, grossProfitMinor: row.totalMinor - refunded.totalMinor - (row.costMinor - refunded.costMinor) };
+      }),
+      payments: payments.map((row) => ({ method: row._id, sales: row.sales, amountMinor: row.amountMinor - row.changeMinor })),
+      topMedicines: topMedicines.map((row) => ({ medicineId: row._id, name: row.name, strength: row.strength, quantity: row.quantity, revenueMinor: row.revenueMinor })),
+      recentSales: recentSales.map((sale) => ({
+        saleId: sale._id,
+        saleNumber: sale.saleNumber,
+        totalMinor: sale.totalMinor,
+        itemCount: sale.items.reduce((sum, line) => sum + line.quantity, 0),
+        cashierName: sale.cashierNameSnapshot,
+        customerName: sale.customerNameSnapshot,
+        soldAt: sale.soldAt,
+      })),
     };
   }
 

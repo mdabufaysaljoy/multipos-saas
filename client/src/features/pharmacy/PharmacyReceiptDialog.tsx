@@ -51,7 +51,7 @@ export function PharmacyReceiptDialog({
     <Dialog open={Boolean(saleId)} onOpenChange={(open) => !open && onClose()}>
       <DialogContent className="max-w-md gap-3 p-4" hideClose>
         <div className="no-print flex items-center justify-between">
-          <h2 className="font-semibold">Receipt {data?.sale.saleNumber ?? ''}</h2>
+          <h2 className="font-semibold">{data?.sale.exchange ? 'Exchange receipt' : 'Receipt'} {data?.sale.saleNumber ?? ''}</h2>
           <Button variant="ghost" size="icon-sm" onClick={onClose} aria-label="Close">
             <X />
           </Button>

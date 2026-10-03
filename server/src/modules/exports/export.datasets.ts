@@ -254,7 +254,7 @@ const CLOTHING_AND_SHARED_EXPORT_DATASETS: ExportDataset[] = [
     // suppliers" would be a surprising way to lose the older ones.
     description: 'Every supplier contact, with terms and tax details. Banking details are never exported.',
     dated: false,
-    verticals: ['clothing', 'supershop'],
+    verticals: ['clothing', 'supershop', 'pharmacy'],
     // Suppliers are their own Professional/Enterprise feature with their own
     // permission; holding `reports.export` alone is not enough.
     requires: { entitlement: 'supplierManagement', permission: PERMISSIONS.SUPPLIERS_VIEW },

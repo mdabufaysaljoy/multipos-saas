@@ -9,6 +9,12 @@ import { listPosReturns } from '../../services/returns/posReturns.list';
 import { pharmacySaleReturnAdapter } from '../../services/returns/adapters/pharmacy.saleAdapter';
 import { recordAudit } from '../../services/audit/audit.service';
 import { pharmacyService } from './pharmacy.service';
+import {
+  pharmacyManufacturerService,
+  type CreatePharmacyManufacturerInput,
+  type ListPharmacyManufacturersInput,
+  type UpdatePharmacyManufacturerInput,
+} from '../../services/catalogue/pharmacyManufacturers.service';
 import { pharmacyReportsService } from './pharmacyReports.service';
 import { pharmacyShiftsService } from './pharmacyShifts.service';
 import { streamReportPdf } from '../../services/reports/reportPrint';
@@ -26,6 +32,7 @@ import type {
   ReceiveBatchInput,
   UpdateMedicineInput,
   CreateReturnInput,
+  CreateExchangeInput,
   CashMovementInput,
   CloseShiftInput,
   ListShiftsInput,
@@ -33,6 +40,29 @@ import type {
 } from './pharmacy.validators';
 
 type IdParams = { id: Types.ObjectId };
+
+export const listManufacturers = asyncHandler(async (req: Request, res: Response) => {
+  ok(res, await pharmacyManufacturerService.list(getContext(req), query<ListPharmacyManufacturersInput>(req)));
+});
+
+export const createManufacturer = asyncHandler(async (req: Request, res: Response) => {
+  created(res, await pharmacyManufacturerService.create(getContext(req), body<CreatePharmacyManufacturerInput>(req)));
+});
+
+export const updateManufacturer = asyncHandler(async (req: Request, res: Response) => {
+  ok(
+    res,
+    await pharmacyManufacturerService.update(
+      getContext(req),
+      params<IdParams>(req).id,
+      body<UpdatePharmacyManufacturerInput>(req),
+    ),
+  );
+});
+
+export const removeManufacturer = asyncHandler(async (req: Request, res: Response) => {
+  ok(res, await pharmacyManufacturerService.remove(getContext(req), params<IdParams>(req).id));
+});
 
 // ------------------------------------------------------------- medicines
 export const listMedicines = asyncHandler(async (req: Request, res: Response) => {
@@ -167,6 +197,35 @@ export const openShift = asyncHandler(async (req: Request, res: Response) => {
   const ctx = getContext(req);
   const result = await pharmacyShiftsService.open(ctx, body<OpenShiftInput>(req));
   await recordAudit(req, { action: 'pharmacy.shift.opened', targetTenantId: ctx.tenantId, targetStoreId: ctx.storeId, targetLabel: result.shift.shiftNumber, newValue: { openingFloatMinor: result.shift.openingFloatMinor } });
+  created(res, result);
+});
+
+export const createExchange = asyncHandler(async (req: Request, res: Response) => {
+  const ctx = getContext(req);
+  const input = body<CreateExchangeInput>(req);
+  const result = await posReturnService.createExchange(ctx, pharmacySaleReturnAdapter, {
+    saleId: params<IdParams>(req).id,
+    items: input.items,
+    reason: input.reason,
+    replacement: {
+      items: input.replacement.items.map((item) => ({ itemId: item.medicineId, quantity: item.quantity })),
+      payments: input.replacement.payments,
+    },
+    idempotencyKey: input.idempotencyKey,
+  });
+  await recordAudit(req, {
+    action: 'pharmacy.sale_exchanged',
+    targetTenantId: ctx.tenantId,
+    targetStoreId: ctx.storeId,
+    targetLabel: result.returnNumber,
+    newValue: {
+      originalSale: result.saleNumberSnapshot,
+      replacementSale: result.exchange?.saleNumber,
+      creditMinor: result.exchange?.refundableMinor,
+      extraPaidMinor: result.exchange?.extraPayableMinor,
+      reason: input.reason,
+    },
+  });
   created(res, result);
 });
 

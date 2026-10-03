@@ -11,7 +11,7 @@ export interface PlanLimits {
   /** Sales recorded in the current calendar month. */
   maxMonthlySales: number;
   maxCustomers: number;
-  /** Supplier records (Clothing and Super Shop POS). -1 = unlimited. */
+  /** Supplier records (Clothing, Super Shop and Pharmacy POS). -1 = unlimited. */
   maxSuppliers: number;
 }
 
@@ -39,7 +39,7 @@ export interface PlanFeatures {
    * `exportData`), never so a plan can be sold without it.
    */
   productImport: boolean;
-  /** Supplier management (Clothing and Super Shop POS). Professional and Enterprise. */
+  /** Supplier management (Clothing, Super Shop and Pharmacy POS). Professional and Enterprise. */
   supplierManagement: boolean;
 }
 

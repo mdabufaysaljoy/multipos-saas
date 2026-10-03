@@ -1,8 +1,55 @@
 import type { Types } from 'mongoose';
 import { PharmacySaleModel } from '../../../models/PharmacySale';
+import { MedicineModel } from '../../../models/Medicine';
 import type { TenantContext } from '../../../types/express';
 import { loyaltyService } from '../../../modules/loyalty/loyalty.service';
-import type { ReturnableSale, SaleReturnAdapter } from '../posReturns.types';
+import { pharmacyService } from '../../../modules/pharmacy/pharmacy.service';
+import { ApiError } from '../../../utils/ApiError';
+import type { ExchangeQuote, ReplacementSale, ReturnableSale, SaleExchangeAdapter, SaleReturnAdapter } from '../posReturns.types';
+
+/** Replacement medicines use the ordinary Pharmacy checkout and FEFO batches. */
+class PharmacyExchangeAdapter implements SaleExchangeAdapter {
+  async quote(ctx: TenantContext, items: { itemId: Types.ObjectId; quantity: number }[]): Promise<ExchangeQuote> {
+    if (items.length === 0) throw ApiError.validation('Choose the replacement medicine');
+    const medicines = await MedicineModel.find({ _id: { $in: items.map((item) => item.itemId) }, tenantId: ctx.tenantId, deletedAt: null }).lean();
+    const lines = items.map((item) => {
+      const medicine = medicines.find((entry) => entry._id.equals(item.itemId));
+      if (!medicine) throw ApiError.badRequest('One of the replacement medicines is not in this pharmacy');
+      if (!medicine.isActive) throw ApiError.badRequest(`${medicine.name} is not for sale right now`);
+      const lineTotalMinor = medicine.sellingPriceMinor * item.quantity;
+      if (!Number.isSafeInteger(lineTotalMinor)) throw ApiError.badRequest('That replacement line is too large');
+      return { itemId: medicine._id, label: medicine.name, detail: `${medicine.strength} · ${medicine.dosageForm}`, quantity: item.quantity, unitPriceMinor: medicine.sellingPriceMinor, lineTotalMinor };
+    });
+    const subtotalMinor = lines.reduce((sum, line) => sum + line.lineTotalMinor, 0);
+    return { subtotalMinor, totalMinor: subtotalMinor, lines };
+  }
+
+  async create(ctx: TenantContext, input: Parameters<SaleExchangeAdapter['create']>[1]): Promise<ReplacementSale> {
+    const original = await PharmacySaleModel.findOne({ _id: input.originalSaleId, tenantId: ctx.tenantId, storeId: ctx.storeId }).select('prescription').lean();
+    const sale = await pharmacyService.createSale(
+      ctx,
+      {
+        items: input.items.map((item) => ({ medicineId: item.itemId, quantity: item.quantity })),
+        payments: input.payments,
+        discountMinor: 0,
+        ...(input.customerId ? { customerId: input.customerId } : {}),
+        ...(original?.prescription ? { prescription: original.prescription } : {}),
+        redeemPoints: 0,
+        note: input.note,
+      } as never,
+      { exchange: { originalSaleId: input.originalSaleId, originalSaleNumber: input.originalSaleNumber, creditMinor: input.creditMinor, returnedItems: input.returnedItems } },
+    );
+    return { saleId: sale._id, saleNumber: sale.saleNumber, subtotalMinor: sale.subtotalMinor, totalMinor: sale.totalMinor, paidMinor: sale.paidMinor, changeMinor: sale.changeMinor };
+  }
+
+  async cancel(ctx: TenantContext, saleId: Types.ObjectId, reason: string): Promise<void> {
+    await pharmacyService.voidSale(ctx, saleId, reason);
+  }
+
+  async link(ctx: TenantContext, saleId: Types.ObjectId, returnId: Types.ObjectId, returnNumber: string): Promise<void> {
+    await PharmacySaleModel.updateOne({ _id: saleId, tenantId: ctx.tenantId, storeId: ctx.storeId }, { $set: { 'exchange.returnId': returnId, 'exchange.returnNumber': returnNumber } });
+  }
+}
 
 /**
  * A Pharmacy sale, as the return engine reads and holds it.
@@ -12,6 +59,8 @@ import type { ReturnableSale, SaleReturnAdapter } from '../posReturns.types';
  */
 class PharmacySaleReturnAdapter implements SaleReturnAdapter {
   readonly vertical = 'pharmacy' as const;
+  readonly exchangeRequiresPermissions = false;
+  readonly exchange = new PharmacyExchangeAdapter();
 
   async findSale(ctx: TenantContext, saleId: Types.ObjectId): Promise<ReturnableSale | null> {
     const sale = await PharmacySaleModel.findOne({ _id: saleId, tenantId: ctx.tenantId, storeId: ctx.storeId, status: 'completed' }).lean();

@@ -25,7 +25,7 @@ export interface PharmacyStockMovementDoc {
   referenceNumber: string;
   createdBy: Types.ObjectId | null;
   createdByNameSnapshot: string;
-  /** True when this movement sold stock the branch did not have (`sales.sellOutOfStock`). */
+  /** True when this movement sold stock the branch did not have, with a required sale note. */
   outOfStockOverride?: boolean;
   createdAt: Date;
 }

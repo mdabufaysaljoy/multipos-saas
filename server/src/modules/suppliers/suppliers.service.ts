@@ -9,7 +9,7 @@ import type { TenantContext } from '../../types/express';
 import type { CreateSupplierInput, ListSuppliersInput, UpdateSupplierInput } from './suppliers.validators';
 
 /**
- * Supplier management (Clothing and Super Shop POS, Professional and Enterprise).
+ * Supplier management (Clothing, Super Shop and Pharmacy POS, Professional and Enterprise).
  *
  * Suppliers belong to the WORKSPACE, not a branch: the same wholesalers supply
  * every shop of the business. Every query is therefore scoped by `tenantId`

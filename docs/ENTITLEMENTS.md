@@ -24,7 +24,7 @@ request from the database (`config/entitlements.ts` → `services/entitlements/e
 | `smsMarketing` / `emailMarketing` / `marketing` | same | ❌ | ✅ | ✅ | `messaging.routes.ts` |
 | `loyalty` (Clothing) | `loyaltyProgram` | ❌ | ✅ | ✅ | `loyalty.routes.ts`, sales |
 | `productImport` (Clothing) | `productImport` | ✅ | ✅ | ✅ | `productImports/import.routes.ts` |
-| `supplierManagement` (Clothing + Super Shop) | `supplierManagement` | ❌ | ✅ | ✅ | `suppliers/suppliers.routes.ts` |
+| `supplierManagement` (Clothing + Super Shop + Pharmacy) | `supplierManagement` | ❌ | ✅ | ✅ | `suppliers/suppliers.routes.ts` |
 | `prioritySupport` | `prioritySupport` | ❌ | ❌ | ✅ | a support commitment, not a code gate |
 
 **Data export and product import are independent.** Export moves data out and is a paid tier feature;
@@ -35,7 +35,7 @@ workspace has uploaded images resized, compressed and converted to WebP before s
 
 ## Limit entitlements
 
-`products`, `staff`, `branches`, `customers`, `monthlySales`, `suppliers` (Clothing and Super Shop: Starter 0,
+`products`, `staff`, `branches`, `customers`, `monthlySales`, `suppliers` (Clothing, Super Shop and Pharmacy: Starter 0,
 Professional 100, Enterprise unlimited) — see `ENTITLEMENT_LIMITS`.
 `-1` means unlimited and is reported as `{ limit: null, unlimited: true }`.
 

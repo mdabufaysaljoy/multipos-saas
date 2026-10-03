@@ -209,7 +209,7 @@ orderCount, lastPurchaseAt, isActive, deletedAt }`
 `{ tenantId, storeId, name }`
 
 ### `Supplier`
-Who the shop buys from (Clothing and Super Shop POS, Professional and Enterprise).
+Who the shop buys from (Clothing, Super Shop and Pharmacy POS, Professional and Enterprise).
 **WORKSPACE-level: no `storeId`** — the same wholesalers supply every branch.
 
 | Field | Type | Notes |

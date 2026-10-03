@@ -58,9 +58,9 @@ export interface StockDescription {
  * The seam between shared POS logic and each vertical's stock.
  *
  * Clothing keeps stock on the variant and may go below zero with the right
- * permission; Pharmacy holds it in batches and sells the earliest expiry first,
- * never expired, never negative; Super Shop keeps one row per product per
- * branch, never negative; a Restaurant has no stock at all. Those differences
+ * permission; Pharmacy holds it in batches, sells earliest expiry first and
+ * allows a noted sale from a fully empty unexpired batch; Super Shop keeps one
+ * row per product per branch; a Restaurant has no stock at all. Those differences
  * are real and stay - what is shared is only the question being asked.
  *
  * `reserve` takes stock for a sale in progress. `release` puts back exactly

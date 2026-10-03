@@ -100,6 +100,22 @@ export interface PharmacySaleLine {
   returnedQuantity?: number;
 }
 
+/** The original dispensing replaced by this sale, printed on its receipt. */
+export interface PharmacySaleExchange {
+  returnId: string | null;
+  returnNumber: string;
+  originalSaleId: string;
+  originalSaleNumber: string;
+  creditMinor: number;
+  returnedItems: {
+    nameSnapshot: string;
+    detailSnapshot: string;
+    quantity: number;
+    unitType: string;
+    lineTotalMinor: number;
+  }[];
+}
+
 export interface PharmacySale {
   _id: string;
   saleNumber: string;
@@ -118,11 +134,40 @@ export interface PharmacySale {
   /** Value returned against this sale, and whether nothing is left to return. */
   returnedTotalMinor?: number;
   fullyReturned?: boolean;
+  exchange?: PharmacySaleExchange | null;
   soldAt: string;
   cashierNameSnapshot: string;
   voidedAt: string | null;
   voidedByNameSnapshot: string;
   voidReason: string;
+}
+
+export interface PharmacyExchangeInput {
+  items: { saleItemId: string; quantity: number; restock: boolean }[];
+  replacement: {
+    items: { medicineId: string; quantity: number }[];
+    payments: { method: string; amountMinor: number }[];
+  };
+  reason: string;
+  idempotencyKey: string;
+}
+
+export interface PharmacyExchange {
+  _id: string;
+  returnNumber: string;
+  saleNumberSnapshot: string;
+  totalMinor: number;
+  returnedAt: string;
+  exchange: {
+    saleId: string;
+    saleNumber: string;
+    refundableMinor: number;
+    replacementSubtotalMinor: number;
+    replacementTotalMinor: number;
+    extraPayableMinor: number;
+  } | null;
+  replacementSale?: { saleId: string; saleNumber: string; totalMinor: number; paidMinor: number; changeMinor: number };
+  replayed?: boolean;
 }
 
 export interface PharmacyShiftReport {
@@ -201,7 +246,7 @@ export interface PharmacyReports {
     prescriptionSales: number;
     prescriptionValueMinor: number;
   };
-  trend: { date: string; salesCount: number; netSalesMinor: number; grossProfitMinor: number }[];
+  trend: { date: string; salesCount: number; grossSalesMinor: number; returnAmountMinor: number; netSalesMinor: number; grossProfitMinor: number }[];
   medicines: {
     medicineId: string;
     name: string;
@@ -216,6 +261,7 @@ export interface PharmacyReports {
   dosageForms: { dosageForm: string; quantity: number; revenueMinor: number }[];
   payments: { method: string; sales: number; amountMinor: number }[];
   discounts: { totalMinor: number; byStaff: { userId: string | null; name: string; sales: number; discountsMinor: number }[] };
+  staff: { userId: string; name: string; sales: number; items: number; netSalesMinor: number; discountsMinor: number; grossProfitMinor: number; averageBasketMinor: number }[];
   /** What came back: money, units and the most recent of them. */
   returns: {
     count: number;
@@ -227,6 +273,8 @@ export interface PharmacyReports {
   voids: { count: number; valueMinor: number; recent: VoidedSaleRow[] };
   writeOffs: { units: number; costMinor: number; byMedicine: { medicineId: string; name: string; units: number; costMinor: number }[] };
   expiry: { expired: StockBucket; within30: StockBucket; within60: StockBucket; within90: StockBucket };
+  expiryBatches: { batchId: string; medicineId: string; name: string; strength: string; manufacturer: string; batchNumber: string; expiryDate: string; quantityOnHand: number; costMinor: number; daysToExpiry: number }[];
+  inventory: { batches: number; units: number; costMinor: number; expiredUnits: number; sellableUnits: number };
   slowMovers: { medicineId: string; name: string; strength: string; units: number; stockCostMinor: number }[];
 }
 
@@ -235,12 +283,13 @@ export interface PharmacyDashboardTotals {
   totalMinor: number;
   discountMinor: number;
   averageSaleMinor: number;
+  costMinor: number;
 }
 
 export interface PharmacyDashboard {
   range: { from: string; to: string; label: string; preset: string; bucket: 'hour' | 'day' | 'month' };
   /** `totalMinor` is what was charged; `netSalesMinor` is what was kept. */
-  kpis: PharmacyDashboardTotals & { prescriptionSales: number; refundCount: number; refundedMinor: number; netSalesMinor: number };
+  kpis: PharmacyDashboardTotals & { prescriptionSales: number; refundCount: number; refundedMinor: number; netSalesMinor: number; grossProfitMinor: number };
   /** The period of equal length just before the range, for comparison. */
   previous: PharmacyDashboardTotals;
   /** Stock is not a period: expiry and low stock describe the shelf right now. */
@@ -254,5 +303,10 @@ export interface PharmacyDashboard {
     quantityOnHand: number;
   }[];
   expired: { batches: number; units: number; costMinor: number };
+  stock: { batches: number; units: number; costMinor: number };
+  trend: { bucket: string; salesCount: number; netSalesMinor: number; grossProfitMinor: number }[];
+  payments: { method: string; sales: number; amountMinor: number }[];
+  topMedicines: { medicineId: string; name: string; strength: string; quantity: number; revenueMinor: number }[];
+  recentSales: { saleId: string; saleNumber: string; totalMinor: number; itemCount: number; cashierName: string; customerName: string; soldAt: string }[];
   lowStock: { medicineId: string; name: string; strength: string; reorderLevel: number; sellable: number }[];
 }

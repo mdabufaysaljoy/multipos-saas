@@ -26,7 +26,7 @@ import { useAuth } from '@/hooks/useAuth';
 import type { SupplierListItem, SupplierType } from '@/types/domain';
 
 /**
- * Suppliers (Clothing and Super Shop POS, Professional and Enterprise).
+ * Suppliers (Clothing, Super Shop and Pharmacy POS, Professional and Enterprise).
  *
  * Workspace-level: every branch of the business sees the same supplier list.
  * The server enforces the plan, the permissions and the supplier ceiling; this

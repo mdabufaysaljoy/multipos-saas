@@ -233,9 +233,11 @@ class PosReturnService {
    * A repeated key returns the first exchange rather than running it again.
    */
   async createExchange(ctx: TenantContext, adapter: SaleReturnAdapter, input: PosExchangeInput) {
-    if (!ctx.can(PERMISSIONS.RETURNS_CREATE)) throw ApiError.forbidden('You do not have permission to process returns');
-    // It creates a sale, so it needs the permission to create one.
-    if (!ctx.can(PERMISSIONS.SALES_CREATE)) throw ApiError.forbidden('You do not have permission to create a sale');
+    if (adapter.exchangeRequiresPermissions !== false) {
+      if (!ctx.can(PERMISSIONS.RETURNS_CREATE)) throw ApiError.forbidden('You do not have permission to process returns');
+      // It creates a sale, so it needs the permission to create one.
+      if (!ctx.can(PERMISSIONS.SALES_CREATE)) throw ApiError.forbidden('You do not have permission to create a sale');
+    }
 
     const exchange = adapter.exchange;
     if (!exchange) throw ApiError.badRequest('Exchanges are not available in this POS type');
@@ -306,7 +308,7 @@ class PosReturnService {
         originalSaleId: sale.saleId,
         originalSaleNumber: sale.saleNumber,
         returnedItems,
-        note: `Exchange for ${sale.saleNumber}`,
+        note: `Exchange for ${sale.saleNumber}: ${input.reason}`,
       });
     } catch (error) {
       await adapter.release(ctx, sale.saleId, held);

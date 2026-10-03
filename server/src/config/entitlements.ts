@@ -58,7 +58,7 @@ export const ENTITLEMENT_FEATURES = {
   // Separate from `dataExport` on purpose: import is on every plan, export is not.
   // Import is how a catalogue gets in, so every POS type has it on every plan.
   productImport: { label: 'Bulk product import', planFeature: 'productImport' },
-  supplierManagement: { label: 'Supplier management', planFeature: 'supplierManagement', verticals: ['clothing', 'supershop'] },
+  supplierManagement: { label: 'Supplier management', planFeature: 'supplierManagement', verticals: ['clothing', 'supershop', 'pharmacy'] },
 } as const satisfies Record<string, FeatureDefinition>;
 
 export const ENTITLEMENT_LIMITS = {

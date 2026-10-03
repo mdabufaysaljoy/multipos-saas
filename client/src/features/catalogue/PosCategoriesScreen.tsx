@@ -38,7 +38,7 @@ interface PosCategoriesScreenProps {
    * caller reads exactly as it did.
    */
   entityLabel?: string;
-  /** The server's own limit on the name. 60 for a category, 80 for a brand. */
+  /** The server's own limit on the name. */
   maxNameLength?: number;
 }
 
@@ -60,14 +60,18 @@ export function PosCategoriesScreen({
   maxNameLength = 60,
 }: PosCategoriesScreenProps) {
   const queryClient = useQueryClient();
+  // Existing category/brand screens retain their established copy. Pharmacy's
+  // manufacturer screen opts into manufacturer-specific labels.
+  const screenEntityLabel = entityLabel === 'manufacturer' ? entityLabel : 'category';
+  const capitalizedLabel = screenEntityLabel[0].toUpperCase() + screenEntityLabel.slice(1);
   const [editing, setEditing] = React.useState<PosCategoryRow | 'new' | null>(null);
   const [deleting, setDeleting] = React.useState<PosCategoryRow | null>(null);
 
   const { data, isLoading, error, refetch } = useQuery({
-    // Departments and brands share this component, but not a cache entry.
+    // Categories, brands and manufacturers share this component, but not a cache entry.
     // Including the entity kind prevents one screen from briefly rendering the
     // other screen's rows when navigating between them.
-    queryKey: [...invalidate, entityLabel === 'brand' ? 'brands' : 'categories', 'manage'],
+    queryKey: [...invalidate, `${entityLabel}s`, 'manage'],
     queryFn: () => api.list(true),
   });
 
@@ -76,26 +80,26 @@ export function PosCategoriesScreen({
   const setActive = useMutation({
     mutationFn: ({ id, isActive }: { id: string; isActive: boolean }) => api.update(id, { isActive }),
     onSuccess: (_row, variables) => {
-      toast.success(variables.isActive ? 'Category is offered again' : 'Category hidden from the till');
+      toast.success(variables.isActive ? `${capitalizedLabel} is offered again` : `${capitalizedLabel} hidden from the till`);
       refresh();
     },
-    onError: (err) => toast.error(errorMessage(err, 'Could not change the category')),
+    onError: (err) => toast.error(errorMessage(err, `Could not change the ${screenEntityLabel}`)),
   });
 
   const remove = useMutation({
     mutationFn: (id: string) => api.remove(id),
     onSuccess: () => {
-      toast.success('Category removed');
+      toast.success(`${capitalizedLabel} removed`);
       setDeleting(null);
       refresh();
     },
-    onError: (err) => toast.error(errorMessage(err, 'Could not remove the category')),
+    onError: (err) => toast.error(errorMessage(err, `Could not remove the ${screenEntityLabel}`)),
   });
 
   const columns: Column<PosCategoryRow>[] = [
     {
       key: 'name',
-      header: 'Category',
+      header: capitalizedLabel,
       mobile: 'title',
       cell: (row) => (
         <div className="flex flex-wrap items-center gap-2">
@@ -159,7 +163,7 @@ export function PosCategoriesScreen({
           <PermissionGate anyOf={['categories.create']}>
             <Button onClick={() => setEditing('new')}>
               <Plus />
-              Add category
+              Add {screenEntityLabel}
             </Button>
           </PermissionGate>
         }
@@ -171,10 +175,10 @@ export function PosCategoriesScreen({
           rows={data ?? []}
           rowKey={(row) => row.id ?? row.slug}
           loading={isLoading}
-          error={error ? errorMessage(error, 'Could not load the categories') : null}
+          error={error ? errorMessage(error, `Could not load the ${screenEntityLabel}s`) : null}
           onRetry={() => void refetch()}
-          emptyTitle="No categories yet"
-          emptyDescription={`Add one, or simply give a ${noun.one} a category and it appears here.`}
+          emptyTitle={`No ${screenEntityLabel}s yet`}
+          emptyDescription={`Add one, or simply give a ${noun.one} a ${screenEntityLabel} and it appears here.`}
         />
       </Card>
 
@@ -270,7 +274,7 @@ function CategoryDialog({
               id="category-name"
               autoFocus
               value={name}
-              maxLength={60}
+              maxLength={entityLabel === 'manufacturer' ? maxNameLength : 60}
               onChange={(event) => setName(event.target.value)}
             />
           </div>
@@ -293,7 +297,7 @@ function CategoryDialog({
             Cancel
           </Button>
           <Button disabled={!valid} loading={save.isPending} onClick={() => save.mutate()}>
-            {category ? 'Save' : 'Add category'}
+            {category ? 'Save' : entityLabel === 'manufacturer' ? 'Add manufacturer' : 'Add category'}
           </Button>
         </DialogFooter>
       </DialogContent>

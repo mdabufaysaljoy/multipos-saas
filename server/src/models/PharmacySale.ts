@@ -49,6 +49,22 @@ export interface PrescriptionRecord {
 /** What a sale did to a loyalty card: the shared snapshot, under this vertical's name. */
 export type PharmacySaleLoyalty = SaleLoyaltySnapshot;
 
+/** The original dispensing replaced by this sale, printed on its exchange receipt. */
+export interface PharmacySaleExchange {
+  returnId: Types.ObjectId | null;
+  returnNumber: string;
+  originalSaleId: Types.ObjectId;
+  originalSaleNumber: string;
+  creditMinor: number;
+  returnedItems: {
+    nameSnapshot: string;
+    detailSnapshot: string;
+    quantity: number;
+    unitType: string;
+    lineTotalMinor: number;
+  }[];
+}
+
 export interface PharmacySaleDoc extends BaseDoc {
   tenantId: Types.ObjectId;
   storeId: Types.ObjectId;
@@ -72,6 +88,8 @@ export interface PharmacySaleDoc extends BaseDoc {
   /** Value returned against this sale so far, and whether nothing is left. */
   returnedTotalMinor?: number;
   fullyReturned?: boolean;
+  /** Present only on the replacement side of an exchange. */
+  exchange?: PharmacySaleExchange | null;
   soldAt: Date;
   cashierId: Types.ObjectId;
   cashierNameSnapshot: string;
@@ -161,6 +179,34 @@ const pharmacySaleSchema = new Schema<PharmacySaleDoc>(
     status: { type: String, enum: [...PHARMACY_SALE_STATUSES], default: 'completed' },
     returnedTotalMinor: { type: Number, default: 0, min: 0 },
     fullyReturned: { type: Boolean, default: false },
+    exchange: {
+      type: new Schema(
+        {
+          returnId: { type: Schema.Types.ObjectId, ref: 'Return', default: null },
+          returnNumber: { type: String, default: '' },
+          originalSaleId: { type: Schema.Types.ObjectId, ref: 'PharmacySale', required: true },
+          originalSaleNumber: { type: String, required: true },
+          creditMinor: minor,
+          returnedItems: {
+            type: [
+              new Schema(
+                {
+                  nameSnapshot: { type: String, required: true },
+                  detailSnapshot: { type: String, default: '' },
+                  quantity: { type: Number, required: true, min: 1 },
+                  unitType: { type: String, default: 'each' },
+                  lineTotalMinor: minor,
+                },
+                { _id: false },
+              ),
+            ],
+            default: [],
+          },
+        },
+        { _id: false },
+      ),
+      default: null,
+    },
     soldAt: { type: Date, required: true },
     cashierId: { type: Schema.Types.ObjectId, ref: 'User', required: true },
     cashierNameSnapshot: { type: String, required: true },

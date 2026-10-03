@@ -184,6 +184,45 @@ export const createReturnSchema = z
   })
   .strict();
 
+/**
+ * An exchange is a return plus a new, server-priced pharmacy sale. The client
+ * supplies only medicine ids, quantities and tender amounts; catalogue prices
+ * and the value of the original goods are always recalculated by the server.
+ */
+export const createExchangeSchema = z
+  .object({
+    items: z
+      .array(
+        z
+          .object({
+            saleItemId: objectId,
+            quantity: z.number().int().min(1).max(1_000_000),
+            restock: z.boolean().default(true),
+          })
+          .strict(),
+      )
+      .min(1, 'Choose at least one line to exchange')
+      .max(100),
+    replacement: z
+      .object({
+        items: z
+          .array(saleLine)
+          .min(1, 'Choose at least one replacement medicine')
+          .max(100)
+          .refine((items) => new Set(items.map((item) => String(item.medicineId))).size === items.length, {
+            message: 'Each replacement medicine can appear only once',
+          }),
+        payments: z
+          .array(z.object({ method: paymentMethodKey, amountMinor: amount }).strict())
+          .max(5, 'Use no more than five payment methods')
+          .default([]),
+      })
+      .strict(),
+    reason: z.string().trim().min(3, 'Add a note for the exchange').max(300),
+    idempotencyKey: z.string().trim().min(8, 'Invalid exchange key').max(100),
+  })
+  .strict();
+
 export const voidSaleSchema = z.object({ reason: z.string().trim().min(3, 'Give a reason').max(200) }).strict();
 
 export const listSalesSchema = searchSchema.extend({
@@ -208,6 +247,7 @@ export type ListMovementsInput = z.infer<typeof listMovementsSchema>;
 export type CreateSaleInput = z.infer<typeof createSaleSchema>;
 export type ListSalesInput = z.infer<typeof listSalesSchema>;
 export type CreateReturnInput = z.infer<typeof createReturnSchema>;
+export type CreateExchangeInput = z.infer<typeof createExchangeSchema>;
 export type OpenShiftInput = z.infer<typeof openShiftSchema>;
 export type CashMovementInput = z.infer<typeof cashMovementSchema>;
 export type CloseShiftInput = z.infer<typeof closeShiftSchema>;

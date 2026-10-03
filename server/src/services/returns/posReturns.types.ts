@@ -59,6 +59,8 @@ export interface RequestedReturnLine {
  */
 export interface SaleReturnAdapter {
   readonly vertical: PosVertical;
+  /** Pharmacy lets every subscribed staff member exchange; other POS types keep RBAC. */
+  readonly exchangeRequiresPermissions?: boolean;
   /** The sale, or null when it is not this branch's, not completed, or gone. */
   findSale(ctx: TenantContext, saleId: Types.ObjectId): Promise<ReturnableSale | null>;
   /**
@@ -97,11 +99,8 @@ export interface SaleReturnAdapter {
   amountOf?(line: ReturnableLine, quantity: number): number;
   costOf?(line: ReturnableLine, quantity: number): number;
   /**
-   * Exchange support. OPTIONAL, and implemented by Super Shop only: the engine
-   * refuses an exchange when a vertical has not provided it, so Pharmacy and
-   * Restaurant behave exactly as they did. A restaurant has nothing to swap -
-   * the food is gone - and a pharmacy trading one batch for another needs an
-   * expiry and dispensing decision that is its own piece of work.
+   * Exchange support. OPTIONAL. Super Shop and Pharmacy implement it; a
+   * restaurant has nothing safe to put back after it has been served.
    */
   exchange?: SaleExchangeAdapter;
 }

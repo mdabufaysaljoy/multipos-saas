@@ -42,7 +42,7 @@ class PharmacyReportsService {
       recentReturns(ctx, 'pharmacy', range),
     ]);
 
-    const [totals, trend, medicines, dosageForms, payments, discounts, voidTotals, voids, writeOffs, expiry, slowMovers] = await Promise.all([
+    const [totals, trend, medicines, dosageForms, payments, discounts, staff, voidTotals, voids, writeOffs, expiry, expiryBatches, inventory, slowMovers] = await Promise.all([
       PharmacySaleModel.aggregate<{
         salesCount: number;
         netSalesMinor: number;
@@ -114,6 +114,21 @@ class PharmacyReportsService {
         { $sort: { discountsMinor: -1 } },
         { $limit: 20 },
       ]),
+      PharmacySaleModel.aggregate<{ _id: Types.ObjectId; name: string; sales: number; items: number; netSalesMinor: number; discountsMinor: number; costMinor: number }>([
+        { $match: completed },
+        {
+          $group: {
+            _id: '$cashierId',
+            name: { $last: '$cashierNameSnapshot' },
+            sales: { $sum: 1 },
+            items: { $sum: { $sum: '$items.quantity' } },
+            netSalesMinor: { $sum: '$totalMinor' },
+            discountsMinor: { $sum: '$discountMinor' },
+            costMinor: { $sum: '$costMinor' },
+          },
+        },
+        { $sort: { netSalesMinor: -1 } },
+      ]),
       PharmacySaleModel.aggregate<{ count: number; valueMinor: number }>([
         { $match: { ...scope, status: 'voided', voidedAt: window } },
         { $group: { _id: null, count: { $sum: 1 }, valueMinor: { $sum: '$totalMinor' } } },
@@ -157,6 +172,39 @@ class PharmacyReportsService {
           },
         },
         { $group: { _id: '$bucket', units: { $sum: '$quantityOnHand' }, costMinor: { $sum: '$value' } } },
+      ]),
+      MedicineBatchModel.aggregate<{ batchId: Types.ObjectId; medicineId: Types.ObjectId; name: string; strength: string; manufacturer: string; batchNumber: string; expiryDate: Date; quantityOnHand: number; costMinor: number }>([
+        { $match: { ...scope, quantityOnHand: { $gt: 0 }, expiryDate: { $lt: new Date(today.getTime() + 91 * DAY_MS) } } },
+        { $sort: { expiryDate: 1 } },
+        { $limit: 100 },
+        { $lookup: { from: MedicineModel.collection.name, localField: 'medicineId', foreignField: '_id', as: 'medicine' } },
+        {
+          $project: {
+            _id: 0,
+            batchId: '$_id',
+            medicineId: 1,
+            name: { $ifNull: [{ $arrayElemAt: ['$medicine.name', 0] }, 'Removed medicine'] },
+            strength: { $ifNull: [{ $arrayElemAt: ['$medicine.strength', 0] }, ''] },
+            manufacturer: { $ifNull: [{ $arrayElemAt: ['$medicine.manufacturer', 0] }, ''] },
+            batchNumber: 1,
+            expiryDate: 1,
+            quantityOnHand: 1,
+            costMinor: { $multiply: ['$quantityOnHand', '$costPriceMinor'] },
+          },
+        },
+      ]),
+      MedicineBatchModel.aggregate<{ batches: number; units: number; costMinor: number; expiredUnits: number; sellableUnits: number }>([
+        { $match: { ...scope, quantityOnHand: { $gt: 0 } } },
+        {
+          $group: {
+            _id: null,
+            batches: { $sum: 1 },
+            units: { $sum: '$quantityOnHand' },
+            costMinor: { $sum: { $multiply: ['$quantityOnHand', '$costPriceMinor'] } },
+            expiredUnits: { $sum: { $cond: [{ $lt: ['$expiryDate', today] }, '$quantityOnHand', 0] } },
+            sellableUnits: { $sum: { $cond: [{ $gte: ['$expiryDate', today] }, '$quantityOnHand', 0] } },
+          },
+        },
       ]),
       // Sellable stock of medicines that did not sell at all in the period.
       (async () => {
@@ -243,6 +291,16 @@ class PharmacyReportsService {
         totalMinor: t?.discountsMinor ?? 0,
         byStaff: discounts.map((row) => ({ userId: row._id, name: row.name || 'Unknown', sales: row.sales, discountsMinor: row.discountsMinor })),
       },
+      staff: staff.map((row) => ({
+        userId: row._id,
+        name: row.name || 'Unknown',
+        sales: row.sales,
+        items: row.items,
+        netSalesMinor: row.netSalesMinor,
+        discountsMinor: row.discountsMinor,
+        grossProfitMinor: row.netSalesMinor - row.costMinor,
+        averageBasketMinor: row.sales ? Math.round(row.netSalesMinor / row.sales) : 0,
+      })),
       // What came back, next to what was voided: a void cancels a sale, a
       // return gives money back on one that stands.
       returns: { count: returns.count, units: returns.units, amountMinor: returns.totalMinor, costMinor: returns.costMinor, recent: returnList },
@@ -253,6 +311,8 @@ class PharmacyReportsService {
         byMedicine: writeOffs.slice(0, 10).map((row) => ({ medicineId: row._id, name: row.name, units: row.units, costMinor: row.costMinor })),
       },
       expiry: { expired: bucket('expired'), within30: bucket('within30'), within60: bucket('within60'), within90: bucket('within90') },
+      expiryBatches: expiryBatches.map((row) => ({ ...row, daysToExpiry: Math.ceil((row.expiryDate.getTime() - today.getTime()) / DAY_MS) })),
+      inventory: inventory[0] ?? { batches: 0, units: 0, costMinor: 0, expiredUnits: 0, sellableUnits: 0 },
       slowMovers: slowMovers.map((row) => ({
         medicineId: row._id,
         name: row.name ?? 'Removed medicine',

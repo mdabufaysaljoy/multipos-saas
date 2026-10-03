@@ -67,6 +67,32 @@ export function PharmacyThermalReceipt({ payload }: { payload: PharmacyReceipt }
         </div>
       )}
 
+      {sale.exchange && (
+        <>
+          <div className="r-center r-bold" style={{ marginTop: '1.5mm' }}>*** EXCHANGE RECEIPT ***</div>
+          <div className="r-center r-sm">Original sale {sale.exchange.originalSaleNumber}</div>
+          {sale.exchange.returnNumber && <div className="r-center r-sm">Return {sale.exchange.returnNumber}</div>}
+          <div className="r-rule" />
+          <div className="r-sm r-bold">Returned medicines:</div>
+          <table>
+            <tbody>
+              {sale.exchange.returnedItems.map((item, index) => (
+                <tr key={`returned-${index}`}>
+                  <td className="r-sm">{item.quantity} × {item.nameSnapshot}{item.detailSnapshot ? ` (${item.detailSnapshot})` : ''}</td>
+                  <td className="r-sm r-right">{money(item.lineTotalMinor)}</td>
+                </tr>
+              ))}
+              <tr>
+                <td className="r-sm r-bold">Exchange credit</td>
+                <td className="r-sm r-bold r-right">{money(sale.exchange.creditMinor)}</td>
+              </tr>
+            </tbody>
+          </table>
+          <div className="r-rule" />
+          <div className="r-sm r-bold">Replacement medicines:</div>
+        </>
+      )}
+
       <div className="r-rule" />
 
       <table>
@@ -112,9 +138,21 @@ export function PharmacyThermalReceipt({ payload }: { payload: PharmacyReceipt }
             </tr>
           )}
           <tr>
-            <td className="r-bold">Total</td>
+            <td className="r-bold">{sale.exchange ? 'Replacement total' : 'Total'}</td>
             <td className="r-right r-bold">{money(sale.totalMinor)}</td>
           </tr>
+          {sale.exchange && (
+            <>
+              <tr>
+                <td className="r-sm">Exchange credit</td>
+                <td className="r-sm r-right">-{money(sale.exchange.creditMinor)}</td>
+              </tr>
+              <tr>
+                <td className="r-bold">Customer pays</td>
+                <td className="r-right r-bold">{money(sale.totalMinor - sale.exchange.creditMinor)}</td>
+              </tr>
+            </>
+          )}
           {sale.payments.map((payment, index) => (
             <tr key={`${payment.method}-${index}`}>
               <td className="r-sm">Paid ({tenderLabel(payment)})</td>

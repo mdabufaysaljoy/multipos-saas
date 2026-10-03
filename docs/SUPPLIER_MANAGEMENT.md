@@ -1,7 +1,7 @@
-# Supplier management (Clothing and Super Shop POS)
+# Supplier management (Clothing, Super Shop and Pharmacy POS)
 
-Scope: **Clothing and Super Shop POS.** Restaurant and Pharmacy are untouched — those workspaces have
-no supplier module, whatever plan they are on.
+Scope: **Clothing, Super Shop and Pharmacy POS.** Restaurant workspaces have no supplier module,
+whatever plan they are on.
 
 Availability: **Professional and Enterprise.** Starter cannot reach the feature, its data or its API.
 
@@ -165,7 +165,7 @@ are never copied into the log.
 
 ## 10. Exporting the supplier list
 
-In Clothing and Super Shop, the **Export** button on the Suppliers page (Excel, CSV or PDF) goes through the ordinary
+In Clothing, Super Shop and Pharmacy, the **Export** button on the Suppliers page (Excel, CSV or PDF) goes through the ordinary
 Data export API — the same registry, limits, history and audit trail as every other export
 (`docs/DATA_EXPORT.md`). The button appears when the workspace also has the Professional/Enterprise
 Data Export feature and the acting user has `reports.export`.

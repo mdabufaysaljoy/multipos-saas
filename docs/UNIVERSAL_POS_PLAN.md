@@ -38,7 +38,7 @@ billing, roles and permissions, audit log, storage, messaging, **customers** (`/
 vertical gate), platform admin, and the report range helper `resolveRange`.
 
 **Clothing-only modules:** `products`, `categories`, `inventory`, `sales`, `returns`, `reports`, and
-`exports`. Supplier management is shared by Clothing and Super Shop; the other universalized modules
+`exports`. Supplier management is shared by Clothing, Super Shop and Pharmacy; the other universalized modules
 are documented in the feature matrix below.
 
 ---
@@ -57,7 +57,7 @@ Legend: **mature** = reference implementation · **partial** = works but narrowe
 | 5 | Return / exchange / refund / cancel | **mature** | **done** (task 08) | **done** (task 08) | **done** (task 08) | `services/returns/` engine + a sale adapter per vertical, on top of the inventory adapter | a restaurant refunds money only; Pharmacy returns to the *batch* it came from; Clothing keeps its exchange/loyalty engine | folding Clothing in, one day | **High** |
 | 6 | Bulk product import | **mature** (registry, preview, row errors, streamed) | **done** (task 11) | **done** (task 11) | **done** (task 11) | one parser (`services/import/sheet.parse.ts`) + one preview/commit service; a column registry and a create step per vertical | Clothing's file describes products AND variants; Pharmacy's opening stock needs a dated batch; a restaurant has no stock at all | ✅ complete | **Medium** |
 | 7 | Category management + POS filter | **mature** (`Category` model, page, POS filter) | **done** (task 10) | **done** (task 10) | **done** (task 10) | `PosCategory` + `services/catalogue/posCategories.service.ts` + one screen and one filter component | Clothing keeps entities with ids and parents; the other three keep the name on the item, so the name IS the link | ✅ complete (no migration: names in use are listed whether or not a row exists) | **Medium** |
-| 8 | Authorized out-of-stock sale | **mature** (`sales.sellOutOfStock`, ledger flag, negative stock allowed) | n/a (no stock) | **missing** (batch quantity is hard-blocked) | **missing** (`ShopStock.quantityOnHand` has `min: 0`) | the permission exists platform-wide | Pharmacy must never sell *expired* stock, override or not; negative batch quantity is meaningless | Per-vertical override path + ledger flag | **High** |
+| 8 | Controlled out-of-stock sale | **mature** (`sales.sellOutOfStock`, ledger flag, negative stock allowed) | n/a (no stock) | **mature** (any cashier, required note, never expired, ledger flag) | **mature** (any cashier, required note, ledger flag) | rules intentionally differ by vertical | Pharmacy never sells expired stock and still requires a real unexpired batch | Implemented per vertical | — |
 | 9 | Inventory management + ledger | **mature** (`InventoryTransaction`, before/after, actor, reference) | n/a | partial (`PharmacyStockMovement`) | partial (`ShopStockMovement`) | three parallel ledgers with the same shape | batch/expiry (Pharmacy), weighted-average cost (Super Shop), variants (Clothing) | Unify the *read* API and the movement contract, not the storage | **Medium** |
 | 10 | Dashboard date ranges | **mature** (`RangePicker`, presets + custom) | **mature** (same picker) | **done** (task 12) | **done** (task 12) | one `dashboardRangeSchema` + `resolveDashboardWindow`; `RangePicker` + `DashboardKpi` on every page | metric names differ (orders vs sales) - task 13 | ✅ complete | — |
 | 11 | Advanced analytics | **mature** (10 endpoints) | 1 `report`, now net of refunds + payments (task 13) | 1 `report`, now net of refunds (task 13) | 1 `report`, now net of refunds (task 13) | `posMetrics.ts` contract + `advancedAnalytics` entitlement | Restaurant: tables/tickets/shifts; Pharmacy: expiry/prescription; Super Shop: VAT/dead stock | staff performance in Super Shop and Pharmacy | **Medium** |
@@ -148,8 +148,8 @@ shared engine (returns, import, out-of-stock, ledger read)
         │  asks only:  "what is this line? can you take N? put N back"
         ▼
 InventoryAdapter ── clothing: ProductVariant.stock (may go negative, flagged)
-                 ├─ pharmacy: MedicineBatch, FEFO, never expired, never negative
-                 ├─ supershop: ShopStock row, never negative
+                 ├─ pharmacy: MedicineBatch, FEFO, never expired, noted stock-out override
+                 ├─ supershop: ShopStock row, noted stock-out override
                  └─ restaurant: no-op (no stock)
 ```
 

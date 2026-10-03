@@ -55,7 +55,8 @@ export function pharmacyMovementRow(
 }
 
 /**
- * Pharmacy stock: batches, earliest expiry first, never expired, never negative.
+ * Pharmacy stock: batches, earliest expiry first and never expired. A fully
+ * empty unexpired batch may go negative through a noted stock-out sale.
  *
  * A line is filled from as many batches as it takes. Each step is one guarded
  * atomic decrement, so losing a race to another till simply looks again; what
@@ -102,8 +103,8 @@ class PharmacyInventoryAdapter implements InventoryAdapter<PharmacyStockDetail> 
       remaining -= take;
     }
 
-    // The override, where a pharmacy differs from the rest. A till that holds
-    // the permission may dispense units the system thinks are gone - but only
+    // The override, where a pharmacy differs from the rest. A cashier may
+    // dispense units the system thinks are gone with a sale note - but only
     // against a real, UNEXPIRED batch, because the batch number and its expiry
     // are the dispensing record, printed on the receipt and kept for audit.
     // Expired stock is never dispensed, whatever the permission says, and where

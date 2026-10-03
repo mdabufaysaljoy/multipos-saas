@@ -7,8 +7,8 @@ Four POS types keep stock four different ways, and all four are right:
 | Vertical | Where stock lives | Rules that must survive |
 |---|---|---|
 | Clothing | a number on the variant | may go **below zero**, but only for a till with `sales.sellOutOfStock`, and the row says so |
-| Pharmacy | `MedicineBatch` rows | earliest expiry first, **never expired**, never negative; a unit goes back to the batch it came from |
-| Super Shop | one `ShopStock` row per product per branch | never negative; pieces or grams |
+| Pharmacy | `MedicineBatch` rows | earliest expiry first, **never expired**; a noted sale may take a fully empty batch negative; a unit goes back to the batch it came from |
+| Super Shop | one `ShopStock` row per product per branch | a noted sale may take fully empty stock negative; pieces or grams |
 | Restaurant | nowhere | a kitchen cooks to order; there is nothing to count |
 
 Shared features — returns, out-of-stock overrides, imports — need to move stock without knowing any
