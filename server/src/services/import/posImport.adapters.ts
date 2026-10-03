@@ -10,6 +10,7 @@ import { restaurantService } from '../../modules/restaurant/restaurant.service';
 import { createProductSchema as createShopProductSchema } from '../../modules/supershop/supershop.validators';
 import { maxQuantityFor } from '../../models/shopUnits';
 import { createMedicineSchema } from '../../modules/pharmacy/pharmacy.validators';
+import { categoryForDosageForm, normalizeDosageForm } from '../../models/Medicine';
 import { createMenuItemSchema } from '../../modules/restaurant/restaurant.validators';
 
 /**
@@ -26,6 +27,8 @@ export interface PreparedImportItem {
   payload: Record<string, unknown>;
   /** For the preview and the error report. */
   name: string;
+  /** Identity used only to detect duplicates inside this file. Defaults to name. */
+  duplicateKey?: string;
   detail: string;
   priceMinor: number;
   /** The category the row names, so the summary can say which are new. */
@@ -87,16 +90,6 @@ function vatRateBps(raw: string): number | null {
   if (!/^\d{1,3}(\.\d{1,2})?$/.test(cleaned)) return null;
   const bps = Math.round(Number(cleaned) * 100);
   return bps <= 10_000 ? bps : null;
-}
-
-/** An expiry as the pharmacy stores it: a calendar date, never a time. */
-function calendarDate(raw: string): string | null {
-  if (raw === '') return null;
-  const iso = /^(\d{4})-(\d{2})-(\d{2})/.exec(raw.trim());
-  if (iso) return `${iso[1]}-${iso[2]}-${iso[3]}`;
-  const dmy = /^(\d{1,2})[/-](\d{1,2})[/-](\d{4})$/.exec(raw.trim());
-  if (dmy) return `${dmy[3]}-${dmy[2].padStart(2, '0')}-${dmy[1].padStart(2, '0')}`;
-  return null;
 }
 
 /** The message a vertical's own schema gives, so a file is judged by the same rules as the form. */
@@ -200,20 +193,14 @@ const PHARMACY_COLUMNS: ImportColumnSpec[] = [
   { field: 'price', label: 'Price', required: true, aliases: ['selling price', 'mrp', 'unit price'], hint: 'Price per unit sold.' },
   { field: 'genericName', label: 'Generic name', required: false, aliases: ['generic', 'molecule'], hint: 'e.g. Paracetamol. Searchable at the till.' },
   { field: 'strength', label: 'Strength', required: false, aliases: ['dose', 'dosage'], hint: 'e.g. 500 mg.' },
-  { field: 'dosageForm', label: 'Form', required: false, aliases: ['dosage form', 'type'], hint: 'tablet, capsule, syrup, injection, cream, drops, inhaler, other.' },
+  { field: 'dosageForm', label: 'Form', required: true, aliases: ['dosage form', 'type'], hint: 'Any medicine form. A matching category is created automatically.' },
   { field: 'manufacturer', label: 'Manufacturer', required: false, aliases: ['company', 'maker'], hint: 'Optional free text.' },
-  { field: 'category', label: 'Category', required: false, aliases: ['category name', 'shelf'], hint: 'Grouped on the till. Created if it is new.' },
-  { field: 'barcode', label: 'Barcode', required: false, aliases: ['ean', 'upc'], hint: 'Optional.' },
-  { field: 'requiresPrescription', label: 'Prescription', required: false, aliases: ['rx', 'requires prescription', 'prescription only'], hint: 'Yes/No. Defaults to No.' },
-  { field: 'reorderLevel', label: 'Reorder level', required: false, aliases: ['low stock', 'reorder'], hint: 'Units. Defaults to 0.' },
-  { field: 'batchNumber', label: 'Batch', required: false, aliases: ['batch number', 'lot', 'lot number'], hint: 'Opening stock only. Needs an expiry, a quantity and a cost.' },
-  { field: 'expiryDate', label: 'Expiry', required: false, aliases: ['expiry date', 'exp', 'expires'], hint: 'YYYY-MM-DD or DD/MM/YYYY. Must be in the future.' },
-  { field: 'stock', label: 'Quantity', required: false, aliases: ['stock', 'qty', 'opening stock'], hint: 'Units received into this branch for that batch.' },
-  { field: 'costPrice', label: 'Cost price', required: false, aliases: ['cost', 'purchase price'], hint: 'Per unit, for the opening batch.' },
-  { field: 'isActive', label: 'Active', required: false, aliases: ['status', 'is active'], hint: 'Yes/No. Defaults to Yes.' },
+  { field: 'category', label: 'Category', required: false, aliases: ['category name'], hint: 'Ignored during import. Category is always set from Form.' },
+  { field: 'containerType', label: 'Container Type', required: false, aliases: ['container'], hint: 'Bottle, blister, strip, tube, vial, etc.' },
+  { field: 'packQuantity', label: 'Pack Quantity', required: false, aliases: ['quantity in pack', 'units per pack', 'pack qty'], hint: 'Whole sellable units in one pack. Blank defaults to 1.' },
+  { field: 'packPrice', label: 'Total Pack Price (BDT)', required: false, aliases: ['pack price', 'total pack price'], hint: 'Blank defaults to Price × Pack Quantity. An entered pack price is kept as supplied.' },
+  { field: 'packageSize', label: 'Package Size', required: false, aliases: ['pack size'], hint: 'Manufacturer packaging, e.g. 10 x 10 tablets.' },
 ];
-
-const DOSAGE_FORMS = new Set(['tablet', 'capsule', 'syrup', 'injection', 'cream', 'drops', 'inhaler', 'other']);
 
 const pharmacyAdapter: PosImportAdapter = {
   vertical: 'pharmacy',
@@ -223,38 +210,23 @@ const pharmacyAdapter: PosImportAdapter = {
     const issues: RowIssue[] = [];
     const name = text(row, 'name');
     const priceMinor = money(text(row, 'price'));
-    const formRaw = text(row, 'dosageForm').toLowerCase();
-    const dosageForm = formRaw === '' ? 'tablet' : DOSAGE_FORMS.has(formRaw) ? formRaw : null;
-    const rx = flag(text(row, 'requiresPrescription'), false);
-    const reorderLevel = wholeNumber(text(row, 'reorderLevel'), 1_000_000);
-    const active = flag(text(row, 'isActive'), true);
-
-    const batchNumber = text(row, 'batchNumber');
-    const expiry = text(row, 'expiryDate');
-    const quantity = wholeNumber(text(row, 'stock'), 1_000_000);
-    const costMinor = money(text(row, 'costPrice') || '0');
-    const wantsStock = batchNumber !== '' || expiry !== '' || (quantity ?? 0) > 0;
+    const formRaw = text(row, 'dosageForm');
+    const dosageForm = normalizeDosageForm(formRaw);
+    const packQuantityRaw = text(row, 'packQuantity');
+    const packPriceRaw = text(row, 'packPrice');
+    const packQuantity = packQuantityRaw ? wholeNumber(packQuantityRaw, 100_000) : 1;
+    const suppliedPackPriceMinor = packPriceRaw ? money(packPriceRaw) : null;
 
     if (!name) issues.push({ field: 'name', message: 'A medicine needs a name' });
     if (priceMinor === null) issues.push({ field: 'price', message: 'Price must be a number like 12 or 12.50' });
-    if (dosageForm === null) issues.push({ field: 'dosageForm', message: `Form must be one of: ${[...DOSAGE_FORMS].join(', ')}` });
-    if (rx === null) issues.push({ field: 'requiresPrescription', message: 'Prescription must be Yes or No' });
-    if (reorderLevel === null) issues.push({ field: 'reorderLevel', message: 'Reorder level must be a whole number' });
-    if (quantity === null) issues.push({ field: 'stock', message: 'Quantity must be a whole number' });
-    if (costMinor === null) issues.push({ field: 'costPrice', message: 'Cost price must be a number' });
-
-    // Opening stock is all-or-nothing: units must be attributable to a real,
-    // dated batch, exactly as the Receive stock form insists.
-    const expiryDate = calendarDate(expiry);
-    if (wantsStock) {
-      if (!batchNumber) issues.push({ field: 'batchNumber', message: 'Opening stock needs a batch number' });
-      if (!expiryDate) issues.push({ field: 'expiryDate', message: 'Opening stock needs an expiry date (YYYY-MM-DD)' });
-      else if (new Date(`${expiryDate}T00:00:00.000Z`).getTime() <= Date.now()) {
-        issues.push({ field: 'expiryDate', message: 'That batch has already expired' });
-      }
-      if ((quantity ?? 0) <= 0) issues.push({ field: 'stock', message: 'Opening stock needs a quantity' });
-      if ((costMinor ?? 0) <= 0) issues.push({ field: 'costPrice', message: 'Opening stock needs a cost price' });
-    }
+    if (!dosageForm) issues.push({ field: 'dosageForm', message: 'Form is required' });
+    if (dosageForm.length > 60) issues.push({ field: 'dosageForm', message: 'Form must be 60 characters or fewer' });
+    if (packQuantity === null || packQuantity < 1) issues.push({ field: 'packQuantity', message: 'Pack Quantity must be a whole number of at least 1' });
+    if (packPriceRaw && suppliedPackPriceMinor === null) issues.push({ field: 'packPrice', message: 'Total Pack Price must be a number like 120 or 120.50' });
+    const calculatedPackPriceMinor = priceMinor !== null && packQuantity !== null ? priceMinor * packQuantity : null;
+    if (calculatedPackPriceMinor !== null && !Number.isSafeInteger(calculatedPackPriceMinor)) issues.push({ field: 'packPrice', message: 'The calculated Total Pack Price is too large' });
+    const packPriceMinor = packPriceRaw ? suppliedPackPriceMinor : calculatedPackPriceMinor;
+    const category = dosageForm ? categoryForDosageForm(dosageForm) : '';
 
     if (issues.length > 0) return { item: null, issues };
 
@@ -264,12 +236,16 @@ const pharmacyAdapter: PosImportAdapter = {
       strength: text(row, 'strength'),
       dosageForm,
       manufacturer: text(row, 'manufacturer'),
-      category: text(row, 'category') || 'General',
-      barcode: text(row, 'barcode'),
+      category,
+      containerType: text(row, 'containerType'),
+      packageSize: text(row, 'packageSize'),
+      barcode: '',
       sellingPriceMinor: priceMinor!,
-      requiresPrescription: rx!,
-      reorderLevel: reorderLevel!,
-      isActive: active!,
+      packQuantity: packQuantity!,
+      packPriceMinor: packPriceMinor!,
+      requiresPrescription: false,
+      reorderLevel: 0,
+      isActive: true,
     };
     const schema = schemaIssues(createMedicineSchema, payload);
     if (schema.length > 0) return { item: null, issues: schema };
@@ -278,26 +254,17 @@ const pharmacyAdapter: PosImportAdapter = {
       item: {
         payload,
         name,
-        detail: [payload.strength, payload.genericName, payload.requiresPrescription ? 'Rx' : ''].filter(Boolean).join(' · '),
+        duplicateKey: [name, payload.strength, dosageForm].map((value) => String(value).trim().toLocaleLowerCase('en-US')).join('\u0000'),
+        detail: [payload.strength, payload.genericName, payload.manufacturer, `${payload.packQuantity}/pack`].filter(Boolean).join(' · '),
         priceMinor: priceMinor!,
         categoryName: payload.category,
         rowNumber: row.rowNumber,
-        ...(wantsStock ? { opening: { quantity: quantity!, costPriceMinor: costMinor!, batchNumber, expiryDate: expiryDate! } } : {}),
       },
       issues: [],
     };
   },
   async create(ctx, item) {
-    const medicine = await pharmacyService.createMedicine(ctx, createMedicineSchema.parse(item.payload));
-    if (item.opening) {
-      await pharmacyService.receiveBatch(ctx, medicine._id, {
-        batchNumber: item.opening.batchNumber!,
-        expiryDate: item.opening.expiryDate!,
-        quantity: item.opening.quantity,
-        costPriceMinor: item.opening.costPriceMinor,
-        supplierName: 'Opening stock',
-      });
-    }
+    await pharmacyService.createMedicine(ctx, createMedicineSchema.parse(item.payload), { allowIndependentPackPrice: true });
   },
 };
 

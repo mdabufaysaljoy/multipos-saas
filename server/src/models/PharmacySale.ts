@@ -75,13 +75,20 @@ export interface PharmacySaleDoc extends BaseDoc {
   soldAt: Date;
   cashierId: Types.ObjectId;
   cashierNameSnapshot: string;
+  /** The Pharmacy cash-drawer shift open when payment was taken, if any. */
+  shiftId: Types.ObjectId | null;
   voidedAt: Date | null;
   voidedBy: Types.ObjectId | null;
   voidedByNameSnapshot: string;
   voidReason: string;
 }
 
-const minor = { type: Number, required: true, min: 0, validate: { validator: Number.isSafeInteger, message: 'Amounts must be whole minor units' } };
+const minor = {
+  type: Number,
+  required: true,
+  min: 0,
+  validate: { validator: Number.isSafeInteger, message: 'Amounts must be whole minor units' },
+};
 
 const allocationSchema = new Schema<BatchAllocation>(
   {
@@ -157,6 +164,7 @@ const pharmacySaleSchema = new Schema<PharmacySaleDoc>(
     soldAt: { type: Date, required: true },
     cashierId: { type: Schema.Types.ObjectId, ref: 'User', required: true },
     cashierNameSnapshot: { type: String, required: true },
+    shiftId: { type: Schema.Types.ObjectId, ref: 'PharmacyShift', default: null },
     voidedAt: { type: Date, default: null },
     voidedBy: { type: Schema.Types.ObjectId, ref: 'User', default: null },
     voidedByNameSnapshot: { type: String, default: '' },
@@ -167,6 +175,7 @@ const pharmacySaleSchema = new Schema<PharmacySaleDoc>(
 
 pharmacySaleSchema.index({ tenantId: 1, storeId: 1, saleNumber: 1 }, { unique: true });
 pharmacySaleSchema.index({ tenantId: 1, storeId: 1, soldAt: -1 });
+pharmacySaleSchema.index({ tenantId: 1, storeId: 1, shiftId: 1, status: 1 });
 // Monthly allowance meter.
 pharmacySaleSchema.index({ tenantId: 1, status: 1, soldAt: 1 });
 

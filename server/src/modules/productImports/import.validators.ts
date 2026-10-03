@@ -22,7 +22,10 @@ export const commitImportSchema = z
   })
   .strict();
 
+export const posImportPreviewSchema = z.object({ sheetName: z.string().trim().min(1).max(100).optional() }).strict();
+
 export const listImportsSchema = paginationSchema;
 
 export type PreviewImportInput = z.infer<typeof previewImportSchema>;
 export type CommitImportInput = z.infer<typeof commitImportSchema>;
+export type PosImportPreviewInput = z.infer<typeof posImportPreviewSchema>;

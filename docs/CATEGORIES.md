@@ -10,7 +10,7 @@ and every till can filter by them — without a single document being migrated.
 |---|---|---|
 | Clothing | `Category` collection, store-scoped, products point at it by `categoryId` with a name snapshot, parents supported | `modules/categories` (unchanged) |
 | Super Shop | `ShopProduct.category` — a name | shared catalogue |
-| Pharmacy | `Medicine.category` — a name | shared catalogue |
+| Pharmacy | `Medicine.category` — derived from dosage form | shared catalogue for filtering/order |
 | Restaurant | `MenuItem.category` — a name | shared catalogue |
 
 Universal means the same *capability*, not the same schema. Clothing manages products in bulk and
@@ -67,9 +67,9 @@ hidden department disappears from the till as soon as it is hidden:
 
 - **Super Shop** — picking a department browses it, which is new: before, the till showed nothing
   until something was typed or scanned.
-- **Pharmacy** — filters the medicine list (`GET /pharmacy/medicines?category=…`, added here).
+- **Pharmacy** — filters the medicine list by dosage-form category (`GET /pharmacy/medicines?category=Tablet`).
 - **Restaurant** — the chips it always had, now driven by the catalogue instead of by whatever the
   menu happened to contain, so order and hiding are respected.
 
-`features/catalogue/CategoryInput` is the field on an item form: type a new name or pick an existing
-one.
+`features/catalogue/CategoryInput` is used by Super Shop and Restaurant. Pharmacy shows the category
+as read-only beside Form.

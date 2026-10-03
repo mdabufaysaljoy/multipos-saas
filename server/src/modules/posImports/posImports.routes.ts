@@ -9,7 +9,7 @@ import { validate } from '../../middleware/validate';
 import { ApiError } from '../../utils/ApiError';
 import { idParam } from '../common/common.validators';
 import { IMPORTS_PER_MINUTE, MAX_IMPORT_BYTES } from '../productImports/import.limits';
-import { commitImportSchema, listImportsSchema } from '../productImports/import.validators';
+import { commitImportSchema, listImportsSchema, posImportPreviewSchema } from '../productImports/import.validators';
 import * as controller from './posImports.controller';
 
 /**
@@ -66,7 +66,8 @@ export function posImportRouter(): Router {
 
   router.get('/columns', controller.importColumns);
   router.get('/', validate({ query: listImportsSchema }), controller.importHistory);
-  router.post('/preview', requireActiveSubscription, importLimiter, upload.single('file'), controller.previewImport);
+  router.post('/sheets', requireActiveSubscription, importLimiter, upload.single('file'), controller.importSheets);
+  router.post('/preview', requireActiveSubscription, importLimiter, upload.single('file'), validate({ body: posImportPreviewSchema }), controller.previewImport);
   router.post('/:id/commit', requireActiveSubscription, importLimiter, validate({ params: idParam, body: commitImportSchema }), controller.commitImport);
   router.post('/:id/cancel', validate({ params: idParam }), controller.cancelImport);
 

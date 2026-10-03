@@ -80,11 +80,12 @@ export function formatFromFilename(filename: string): ImportFormat | null {
   return null;
 }
 
-async function readWorksheet(buffer: Buffer, format: ImportFormat): Promise<ExcelJS.Worksheet> {
+async function readWorkbook(buffer: Buffer, format: ImportFormat): Promise<{ workbook: ExcelJS.Workbook; csvSheet?: ExcelJS.Worksheet }> {
   const workbook = new ExcelJS.Workbook();
   try {
     if (format === 'csv') {
-      return await workbook.csv.read(Readable.from([buffer]));
+      const csvSheet = await workbook.csv.read(Readable.from([buffer]));
+      return { workbook, csvSheet };
     }
     await workbook.xlsx.load(buffer as unknown as ExcelJS.Buffer);
   } catch {
@@ -92,8 +93,22 @@ async function readWorksheet(buffer: Buffer, format: ImportFormat): Promise<Exce
       format === 'csv' ? 'That CSV file could not be read. Save it as UTF-8 CSV and try again.' : 'That Excel file could not be read. Save it as .xlsx and try again.',
     );
   }
-  // An export writes one sheet per section; the first one carries the items.
-  const sheet = workbook.worksheets[0];
+  return { workbook };
+}
+
+export async function listImportSheets(buffer: Buffer, format: ImportFormat) {
+  const { workbook, csvSheet } = await readWorkbook(buffer, format);
+  if (format === 'csv') return [{ name: csvSheet?.name || 'CSV', rowCount: csvSheet?.rowCount ?? 0 }];
+  return workbook.worksheets.map((sheet) => ({ name: sheet.name, rowCount: sheet.rowCount }));
+}
+
+async function readWorksheet(buffer: Buffer, format: ImportFormat, worksheetName?: string): Promise<ExcelJS.Worksheet> {
+  const { workbook, csvSheet } = await readWorkbook(buffer, format);
+  if (format === 'csv' && csvSheet) return csvSheet;
+  const sheet = worksheetName ? workbook.worksheets.find((entry) => entry.name === worksheetName) : workbook.worksheets[0];
+  if (worksheetName && !sheet) {
+    throw ApiError.badRequest(`The worksheet "${worksheetName}" was not found. Choose one of the worksheets in the uploaded file.`);
+  }
   if (!sheet) throw ApiError.badRequest('The file has no sheets');
   return sheet;
 }
@@ -123,8 +138,9 @@ export async function parseSheet<TField extends string>(
   buffer: Buffer,
   format: ImportFormat,
   registry: ColumnRegistry<TField>,
+  worksheetName?: string,
 ): Promise<ParsedSheet<TField>> {
-  const sheet = await readWorksheet(buffer, format);
+  const sheet = await readWorksheet(buffer, format, worksheetName);
   const width = Math.max(sheet.columnCount, 1);
   const header = findHeaderRow(sheet, width, registry);
   if (header.rowNumber === 0) {

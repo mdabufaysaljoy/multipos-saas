@@ -1,9 +1,10 @@
-import { Types, type QueryFilter } from 'mongoose';
+import { Types } from 'mongoose';
 import dayjs from 'dayjs';
 import { PERMISSIONS } from '../../config/permissions';
-import { MedicineModel, type DosageForm, type MedicineDoc } from '../../models/Medicine';
+import { MedicineModel, categoryForDosageForm, normalizeDosageForm, type MedicineDoc } from '../../models/Medicine';
 import { MedicineBatchModel, type MedicineBatchDoc } from '../../models/MedicineBatch';
 import { PharmacySaleModel } from '../../models/PharmacySale';
+import { PharmacyShiftModel } from '../../models/PharmacyShift';
 import { PharmacyStockMovementModel } from '../../models/PharmacyStockMovement';
 import { StoreModel } from '../../models/Store';
 import { loadReceiptStore } from '../../services/receipt/receiptStore';
@@ -55,6 +56,11 @@ const escapeRegex = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$
 const exact = (value: string) => new RegExp(`^${escapeRegex(value)}$`, 'i');
 const isDuplicateKey = (error: unknown) => (error as { code?: number } | null)?.code === 11000;
 const EMPTY_STOCK: MedicineStock = { onHand: 0, sellable: 0, expired: 0, nearestExpiry: null };
+const exactPackPrice = (unitPriceMinor: number, packQuantity: number) => {
+  const total = unitPriceMinor * packQuantity;
+  if (!Number.isSafeInteger(total)) throw ApiError.validation('That pack total is too large');
+  return total;
+};
 
 /**
  * Pharmacy POS.
@@ -79,6 +85,7 @@ class PharmacyService {
     const filter: Record<string, unknown> = { tenantId: ctx.tenantId, deletedAt: null };
     if (input.activeOnly) filter.isActive = true;
     if (input.category) filter.category = input.category;
+    if (input.manufacturer) filter.manufacturer = exact(input.manufacturer);
     if (input.search) {
       const rx = searchRegex(input.search);
       filter.$or = [{ name: rx }, { genericName: rx }, { barcode: rx }, { manufacturer: rx }];
@@ -107,6 +114,19 @@ class PharmacyService {
     };
   }
 
+  /** Values offered by the Pharmacy POS filters, scoped to this workspace. */
+  async medicineFilters(ctx: TenantContext) {
+    const manufacturers = (await MedicineModel.distinct('manufacturer', {
+      tenantId: ctx.tenantId,
+      deletedAt: null,
+      isActive: true,
+      manufacturer: { $ne: '' },
+    }))
+      .filter(Boolean)
+      .sort((a, b) => a.localeCompare(b));
+    return { manufacturers };
+  }
+
   /** A medicine with its batches in the current branch, earliest expiry first. */
   async getMedicine(ctx: TenantContext, id: Types.ObjectId) {
     const medicine = await this.findMedicine(ctx, id);
@@ -120,11 +140,19 @@ class PharmacyService {
     return { medicine: { ...medicine, stock: stock.get(String(medicine._id)) ?? EMPTY_STOCK }, batches };
   }
 
-  async createMedicine(ctx: TenantContext, input: CreateMedicineInput) {
+  async createMedicine(ctx: TenantContext, input: CreateMedicineInput, options: { allowIndependentPackPrice?: boolean } = {}) {
     const entitlement = await entitlementService.forTenant(ctx.tenantId);
     await entitlementService.assertCanAddProduct(ctx.tenantId, entitlement, 'pharmacy');
 
-    const values = { ...input, category: input.category || 'General' };
+    const dosageForm = normalizeDosageForm(input.dosageForm);
+    const category = categoryForDosageForm(dosageForm);
+    const calculatedPackPriceMinor = exactPackPrice(input.sellingPriceMinor, input.packQuantity);
+    const packPriceMinor = input.packPriceMinor ?? calculatedPackPriceMinor;
+    if (!options.allowIndependentPackPrice && packPriceMinor !== calculatedPackPriceMinor) {
+      throw ApiError.validation('Pack price must equal unit price × pack quantity', { expectedPackPriceMinor: calculatedPackPriceMinor });
+    }
+    const { category: _ignoredCategory, ...catalogueInput } = input;
+    const values = { ...catalogueInput, dosageForm, category, packPriceMinor };
     await this.assertUnique(ctx, values);
     // A category the pharmacy has retired cannot take new medicines; a new name
     // joins the catalogue so it can be managed like the rest.
@@ -134,19 +162,28 @@ class PharmacyService {
   }
 
   async updateMedicine(ctx: TenantContext, id: Types.ObjectId, input: UpdateMedicineInput) {
-    if (input.category) await posCategoryService.assertUsable(ctx, 'pharmacy', input.category);
     const before = await this.findMedicine(ctx, id);
+    const dosageForm = normalizeDosageForm(input.dosageForm ?? before.dosageForm);
     const identity = {
       name: input.name ?? before.name,
       strength: input.strength ?? before.strength,
-      dosageForm: input.dosageForm ?? before.dosageForm,
+      dosageForm,
       barcode: input.barcode ?? before.barcode,
     };
     await this.assertUnique(ctx, identity, id);
+    const category = categoryForDosageForm(dosageForm);
+    const sellingPriceMinor = input.sellingPriceMinor ?? before.sellingPriceMinor;
+    const packQuantity = input.packQuantity ?? before.packQuantity ?? 1;
+    const packPriceMinor = exactPackPrice(sellingPriceMinor, packQuantity);
+    if (input.packPriceMinor !== undefined && input.packPriceMinor !== packPriceMinor) {
+      throw ApiError.validation('Pack price must equal unit price × pack quantity', { expectedPackPriceMinor: packPriceMinor });
+    }
+    await posCategoryService.assertUsable(ctx, 'pharmacy', category);
+    const { category: _ignoredCategory, packPriceMinor: _ignoredPackPrice, ...editable } = input;
 
     const after = await MedicineModel.findOneAndUpdate(
       { _id: id, tenantId: ctx.tenantId, deletedAt: null },
-      { $set: input },
+      { $set: { ...editable, dosageForm, category, packQuantity, packPriceMinor } },
       { new: true, runValidators: true },
     ).lean<MedicineRecord>();
     if (!after) throw ApiError.notFound('Medicine not found');
@@ -400,6 +437,7 @@ class PharmacyService {
       const seq = await nextSequence(ctx.tenantId, ctx.storeId, 'pharmacy-sale');
       const saleNumber = formatDocumentNumber(store.invoicePrefix || 'RX-', seq);
       const soldAt = new Date();
+      const openShift = await PharmacyShiftModel.findOne({ tenantId: ctx.tenantId, storeId: ctx.storeId, status: 'open' }).select('_id').lean();
 
       const sale = await PharmacySaleModel.create({
         _id: saleId,
@@ -457,6 +495,7 @@ class PharmacyService {
         soldAt,
         cashierId: ctx.userId,
         cashierNameSnapshot: ctx.userName,
+        shiftId: openShift?._id ?? null,
       });
       saved = true;
 
@@ -741,11 +780,11 @@ class PharmacyService {
   /** Same name, strength and form is one medicine; a barcode belongs to one medicine. */
   private async assertUnique(
     ctx: TenantContext,
-    identity: { name: string; strength: string; dosageForm: DosageForm; barcode: string },
+    identity: { name: string; strength: string; dosageForm: string; barcode: string },
     exceptId?: Types.ObjectId,
   ) {
     // Named, because mongoose 9 will not accept the union of the two spreads.
-    const except: QueryFilter<MedicineDoc> = exceptId ? { _id: { $ne: exceptId } } : {};
+    const except: { _id?: { $ne: Types.ObjectId } } = exceptId ? { _id: { $ne: exceptId } } : {};
     const sameMedicine = await MedicineModel.exists({
       tenantId: ctx.tenantId,
       deletedAt: null,

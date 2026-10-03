@@ -20,6 +20,7 @@ export interface PosImportPreview {
   importId: string;
   filename: string;
   format: 'xlsx' | 'csv';
+  sheetName: string | null;
   noun: { one: string; many: string };
   headerRow: number;
   mapping: { header: string; field: string | null; ignored: boolean }[];
@@ -68,9 +69,16 @@ export interface PosImportJob {
 export const posImportsApi = (base: string) => ({
   columns: () => get<PosImportCatalog>(`${base}/imports/columns`),
   history: (params?: Record<string, unknown>) => getPaginated<PosImportJob>(`${base}/imports`, params),
-  preview: async (file: File) => {
+  sheets: async (file: File) => {
     const form = new FormData();
     form.append('file', file);
+    const res = await http.post<{ success: true; data: { format: 'xlsx' | 'csv'; sheets: { name: string; rowCount: number }[] } }>(`${base}/imports/sheets`, form);
+    return res.data.data;
+  },
+  preview: async (file: File, sheetName?: string) => {
+    const form = new FormData();
+    form.append('file', file);
+    if (sheetName) form.append('sheetName', sheetName);
     const res = await http.post<{ success: true; data: PosImportPreview }>(`${base}/imports/preview`, form);
     return res.data.data;
   },

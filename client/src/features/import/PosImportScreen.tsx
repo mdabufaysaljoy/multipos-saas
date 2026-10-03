@@ -8,6 +8,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { DataTable, type Column } from '@/components/DataTable';
 import { PageHeader } from '@/components/PageHeader';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { ApiError } from '@/api/client';
 import { formatMoney } from '@/lib/money';
 import { useAuth } from '@/hooks/useAuth';
@@ -23,6 +24,8 @@ interface PosImportScreenProps {
   /** Where "back" goes, and what the cache key of this vertical is. */
   backTo: { href: string; label: string };
   invalidate: string;
+  /** Pharmacy workbooks may contain several catalogues; let the user choose one. */
+  allowWorksheetSelection?: boolean;
 }
 
 /**
@@ -33,7 +36,7 @@ interface PosImportScreenProps {
  * columns and the wording come from that vertical's own registry, so this
  * screen never hard-codes what a file may contain.
  */
-export function PosImportScreen({ title, description, api, backTo, invalidate }: PosImportScreenProps) {
+export function PosImportScreen({ title, description, api, backTo, invalidate, allowWorksheetSelection = false }: PosImportScreenProps) {
   const queryClient = useQueryClient();
   const { activeStore } = useAuth();
   const currency = activeStore?.currency ?? 'BDT';
@@ -43,6 +46,8 @@ export function PosImportScreen({ title, description, api, backTo, invalidate }:
   const [preview, setPreview] = React.useState<PosImportPreview | null>(null);
   const [result, setResult] = React.useState<PosImportResult | null>(null);
   const [showErrors, setShowErrors] = React.useState(false);
+  const [worksheets, setWorksheets] = React.useState<{ name: string; rowCount: number }[]>([]);
+  const [worksheet, setWorksheet] = React.useState('');
 
   const { data: catalog } = useQuery({ queryKey: [invalidate, 'import', 'columns'], queryFn: api.columns, retry: false });
   const { data: history, isLoading: historyLoading } = useQuery({
@@ -57,16 +62,27 @@ export function PosImportScreen({ title, description, api, backTo, invalidate }:
     setPreview(null);
     setResult(null);
     setShowErrors(false);
+    setWorksheets([]);
+    setWorksheet('');
     if (!keepFile) {
       setFile(null);
       if (inputRef.current) inputRef.current.value = '';
     }
   };
 
+  const inspectWorkbook = useMutation({
+    mutationFn: (selected: File) => api.sheets(selected),
+    onSuccess: (data) => {
+      setWorksheets(data.sheets);
+      setWorksheet(data.sheets.length === 1 ? data.sheets[0]?.name ?? '' : '');
+    },
+    onError: (error) => toast.error('The workbook could not be read', { description: message(error, 'Please try again.') }),
+  });
+
   const validate = useMutation({
     mutationFn: async () => {
       if (!file) throw new ApiError('VALIDATION_ERROR', 'Choose a file first.', 400);
-      return api.preview(file);
+      return api.preview(file, worksheet || undefined);
     },
     onSuccess: (data) => {
       setPreview(data);
@@ -173,8 +189,10 @@ export function PosImportScreen({ title, description, api, backTo, invalidate }:
               accept={ACCEPT}
               className="sr-only"
               onChange={(event) => {
-                setFile(event.target.files?.[0] ?? null);
+                const selected = event.target.files?.[0] ?? null;
+                setFile(selected);
                 reset(true);
+                if (selected && allowWorksheetSelection && selected.name.toLowerCase().endsWith('.xlsx')) inspectWorkbook.mutate(selected);
               }}
             />
 
@@ -196,8 +214,27 @@ export function PosImportScreen({ title, description, api, backTo, invalidate }:
               )}
             </div>
 
+            {allowWorksheetSelection && file?.name.toLowerCase().endsWith('.xlsx') && (
+              <div className="max-w-sm space-y-1.5">
+                <label className="text-sm font-medium">Worksheet to import</label>
+                <Select value={worksheet} onValueChange={setWorksheet} disabled={inspectWorkbook.isPending || worksheets.length === 0}>
+                  <SelectTrigger>
+                    <SelectValue placeholder={inspectWorkbook.isPending ? 'Reading workbook…' : 'Select a worksheet'} />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {worksheets.map((sheet) => (
+                      <SelectItem key={sheet.name} value={sheet.name}>
+                        {sheet.name} ({sheet.rowCount.toLocaleString()} rows)
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <p className="text-xs text-muted-foreground">Only the selected worksheet will be validated and imported.</p>
+              </div>
+            )}
+
             <div className="flex flex-wrap items-center gap-3">
-              <Button onClick={() => validate.mutate()} disabled={!file || validate.isPending || commit.isPending} loading={validate.isPending}>
+              <Button onClick={() => validate.mutate()} disabled={!file || validate.isPending || commit.isPending || inspectWorkbook.isPending || (allowWorksheetSelection && file.name.toLowerCase().endsWith('.xlsx') && !worksheet)} loading={validate.isPending}>
                 {validate.isPending ? 'Checking…' : 'Validate & preview'}
               </Button>
               <span className="text-xs text-muted-foreground">A category the file names is created with the {noun.one}.</span>

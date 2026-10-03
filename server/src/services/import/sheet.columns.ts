@@ -53,6 +53,7 @@ const IGNORED_HEADERS = new Set(
     'categoryid',
     'brand id',
     'supplier id',
+    'slug',
     'created',
     'created at',
     'updated',

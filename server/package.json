@@ -28,6 +28,7 @@
     "migrate:export-permission": "tsx src/migrations/grantExportPermission.ts",
     "migrate:product-import": "tsx src/migrations/enableProductImport.ts",
     "migrate:suppliers": "tsx src/migrations/enableSupplierManagement.ts",
+    "migrate:pharmacy-packs": "tsx src/migrations/backfillPharmacyPacks.ts",
     "migrate:verify-clothing": "tsx src/migrations/verifyClothingMigration.ts",
     "report:identities": "tsx src/migrations/reportDuplicateIdentities.ts",
     "bkash:sandbox": "tsx src/scripts/bkashSandboxCheck.ts"

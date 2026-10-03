@@ -1,11 +1,12 @@
 import { z } from 'zod';
-import { DOSAGE_FORMS } from '../../models/Medicine';
 import { PHARMACY_SALE_STATUSES } from '../../models/PharmacySale';
+import { PHARMACY_CASH_MOVEMENT_TYPES, PHARMACY_SHIFT_STATUSES } from '../../models/PharmacyShift';
 import { objectId, paginationSchema, searchSchema, paymentMethodKey } from '../common/common.validators';
 import { posCustomerSchema } from '../customers/customers.validators';
 
 const amount = z.number().int().min(0).max(100_000_000);
 const text = (max: number) => z.string().trim().max(max);
+const dosageForm = z.string().trim().min(1, 'Form is required').max(60);
 
 /** "true"/"false" from a query string. `z.coerce.boolean` would read "false" as true. */
 const queryFlag = z.enum(['true', 'false']).optional().transform((value) => value === 'true');
@@ -26,11 +27,15 @@ export const createMedicineSchema = z
     name: z.string().trim().min(1, 'Name is required').max(120),
     genericName: text(120).optional().default(''),
     strength: text(40).optional().default(''),
-    dosageForm: z.enum(DOSAGE_FORMS).default('tablet'),
+    dosageForm: dosageForm.default('tablet'),
     manufacturer: text(120).optional().default(''),
-    category: text(60).optional().default('General'),
+    category: text(60).optional(),
+    containerType: text(60).optional().default(''),
+    packageSize: text(80).optional().default(''),
     barcode: text(64).optional().default(''),
     sellingPriceMinor: amount,
+    packQuantity: z.number().int().min(1).max(100_000).default(1),
+    packPriceMinor: amount.optional(),
     requiresPrescription: z.boolean().default(false),
     reorderLevel: z.number().int().min(0).max(1_000_000).default(0),
     isActive: z.boolean().default(true),
@@ -42,11 +47,15 @@ export const updateMedicineSchema = z
     name: z.string().trim().min(1).max(120),
     genericName: text(120),
     strength: text(40),
-    dosageForm: z.enum(DOSAGE_FORMS),
+    dosageForm,
     manufacturer: text(120),
-    category: z.string().trim().min(1).max(60),
+    category: text(60),
+    containerType: text(60),
+    packageSize: text(80),
     barcode: text(64),
     sellingPriceMinor: amount,
+    packQuantity: z.number().int().min(1).max(100_000),
+    packPriceMinor: amount,
     requiresPrescription: z.boolean(),
     reorderLevel: z.number().int().min(0).max(1_000_000),
     isActive: z.boolean(),
@@ -57,6 +66,7 @@ export const updateMedicineSchema = z
 
 export const listMedicinesSchema = searchSchema.extend({
   category: z.string().trim().max(60).optional(),
+  manufacturer: z.string().trim().max(120).optional(),
   activeOnly: queryFlag,
   /** Only medicines with unexpired stock in the current branch. */
   inStockOnly: queryFlag,
@@ -183,6 +193,11 @@ export const listSalesSchema = searchSchema.extend({
   to: isoDate.optional(),
 });
 
+export const openShiftSchema = z.object({ openingFloatMinor: amount, note: text(300).optional().default('') }).strict();
+export const cashMovementSchema = z.object({ type: z.enum(PHARMACY_CASH_MOVEMENT_TYPES), amountMinor: z.number().int().min(1).max(100_000_000), reason: z.string().trim().min(3, 'Give a reason').max(200) }).strict();
+export const closeShiftSchema = z.object({ countedCashMinor: amount, note: text(300).optional().default('') }).strict();
+export const listShiftsSchema = paginationSchema.extend({ status: z.enum(PHARMACY_SHIFT_STATUSES).optional() });
+
 export type CreateMedicineInput = z.infer<typeof createMedicineSchema>;
 export type UpdateMedicineInput = z.infer<typeof updateMedicineSchema>;
 export type ListMedicinesInput = z.infer<typeof listMedicinesSchema>;
@@ -193,3 +208,7 @@ export type ListMovementsInput = z.infer<typeof listMovementsSchema>;
 export type CreateSaleInput = z.infer<typeof createSaleSchema>;
 export type ListSalesInput = z.infer<typeof listSalesSchema>;
 export type CreateReturnInput = z.infer<typeof createReturnSchema>;
+export type OpenShiftInput = z.infer<typeof openShiftSchema>;
+export type CashMovementInput = z.infer<typeof cashMovementSchema>;
+export type CloseShiftInput = z.infer<typeof closeShiftSchema>;
+export type ListShiftsInput = z.infer<typeof listShiftsSchema>;

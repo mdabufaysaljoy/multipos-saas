@@ -49,6 +49,7 @@ const ShiftsPage = lazyPage(() => import('@/pages/restaurant/ShiftsPage'), 'Shif
 const MedicinesPage = lazyPage(() => import('@/pages/pharmacy/MedicinesPage'), 'MedicinesPage');
 const StockPage = lazyPage(() => import('@/pages/pharmacy/StockPage'), 'StockPage');
 const PharmacySalesPage = lazyPage(() => import('@/pages/pharmacy/PharmacySalesPage'), 'PharmacySalesPage');
+const PharmacyShiftsPage = lazyPage(() => import('@/pages/pharmacy/PharmacyShiftsPage'), 'PharmacyShiftsPage');
 
 // Supershop POS
 const ShopProductsPage = lazyPage(() => import('@/pages/supershop/ShopProductsPage'), 'ShopProductsPage');
@@ -228,6 +229,10 @@ export function AppRoutes() {
               <PharmacySalesPage />
             </ProtectedRoute>
           }
+        />
+        <Route
+          path="/pharmacy-shifts"
+          element={<ProtectedRoute anyOf={['sales.create', 'reports.view']}><PharmacyShiftsPage /></ProtectedRoute>}
         />
         {/* Supershop POS screens. The layout keeps other verticals out. */}
         <Route

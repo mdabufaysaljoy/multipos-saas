@@ -8,7 +8,7 @@ import { asyncHandler } from '../../utils/asyncHandler';
 import { ApiError } from '../../utils/ApiError';
 import { MAX_IMPORT_BYTES, MAX_IMPORT_ROWS } from '../productImports/import.limits';
 import { posImportService } from '../../services/import/posImport.service';
-import type { CommitImportInput } from '../productImports/import.validators';
+import type { CommitImportInput, PosImportPreviewInput } from '../productImports/import.validators';
 
 /**
  * Bulk import for Super Shop, Pharmacy and Restaurant. Mounted by each of those
@@ -30,7 +30,13 @@ export const importColumns = asyncHandler(async (req: Request, res: Response) =>
 export const previewImport = asyncHandler(async (req: Request, res: Response) => {
   if (!req.file) throw ApiError.badRequest('Choose an Excel (.xlsx) or CSV (.csv) file to import.');
   const ctx = getContext(req);
-  ok(res, await posImportService.preview(ctx, ctx.vertical, req.file));
+  const input = body<PosImportPreviewInput>(req);
+  ok(res, await posImportService.preview(ctx, ctx.vertical, req.file, input.sheetName));
+});
+
+export const importSheets = asyncHandler(async (req: Request, res: Response) => {
+  if (!req.file) throw ApiError.badRequest('Choose an Excel (.xlsx) file first.');
+  ok(res, await posImportService.sheets(req.file));
 });
 
 export const commitImport = asyncHandler(async (req: Request, res: Response) => {

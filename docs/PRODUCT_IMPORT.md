@@ -253,17 +253,23 @@ attributes, SKUs) stay where they were.
 - **Super Shop** — `Product`*, `Price`*, Barcode, Department, Brand, Sold by (Piece/Weight), VAT
   rate, Reorder level, Opening stock, Cost price, Active. Opening stock is received into the current
   branch as a movement, and needs a cost price — without one the shop could not report profit.
-- **Pharmacy** — `Medicine`*, `Price`*, Generic name, Strength, Form, Manufacturer, Category,
-  Barcode, Prescription, Reorder level, Batch, Expiry, Quantity, Cost price, Active. Opening stock
-  is **all-or-nothing**: units must be attributable to a real, dated, unexpired batch, exactly as the
-  Receive stock form insists, so a row with a batch but no expiry is an error rather than a silent
-  medicine with no stock.
+- **Pharmacy** — Brand id (ignored), `Medicine`*, Category (ignored), slug (ignored), `Form`*, Generic
+  name, Strength, Manufacturer, Container Type, `Price`*, Pack Quantity, Total Pack Price (BDT),
+  Package Size. Form accepts any non-empty value and automatically creates/uses its matching category;
+  Manufacturer is imported and is available as a POS filter. The same medicine name may appear more
+  than once when its strength or Form differs. Blank Pack Quantity defaults to 1. Blank Total
+  Pack Price defaults to Price × Pack Quantity; an entered total is preserved even when it differs
+  from that calculation. Catalogue import does not create stock; stock is received into dated batches
+  separately.
 - **Restaurant** — `Dish`*, `Price`*, Section, Description, Order, Available.
 
 (* required.)
 
+For a Pharmacy `.xlsx` workbook, the upload is inspected first and the user chooses which worksheet
+to validate. Only that worksheet is imported. CSV files continue to contain one table.
+
 A category the file names that the workspace does not have is created with the item, through the
-shared catalogue (`docs/CATEGORIES.md`) — which is why task 11 waited for task 10. A hidden category
+shared catalogue (`docs/CATEGORIES.md`) — except Pharmacy, whose category is the dosage form. A hidden category
 is refused, as it is everywhere else.
 
 ### Errors belong to rows

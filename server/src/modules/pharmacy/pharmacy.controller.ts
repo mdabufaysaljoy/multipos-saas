@@ -10,6 +10,7 @@ import { pharmacySaleReturnAdapter } from '../../services/returns/adapters/pharm
 import { recordAudit } from '../../services/audit/audit.service';
 import { pharmacyService } from './pharmacy.service';
 import { pharmacyReportsService } from './pharmacyReports.service';
+import { pharmacyShiftsService } from './pharmacyShifts.service';
 import { streamReportPdf } from '../../services/reports/reportPrint';
 import { pharmacyReportView } from '../../services/reports/reportViews';
 import { storeCurrency } from '../../services/reports/storeCurrency';
@@ -25,6 +26,10 @@ import type {
   ReceiveBatchInput,
   UpdateMedicineInput,
   CreateReturnInput,
+  CashMovementInput,
+  CloseShiftInput,
+  ListShiftsInput,
+  OpenShiftInput,
 } from './pharmacy.validators';
 
 type IdParams = { id: Types.ObjectId };
@@ -148,6 +153,45 @@ export const listReturns = asyncHandler(async (req: Request, res: Response) => {
   const ctx = getContext(req);
   const result = await listPosReturns(ctx, 'pharmacy', query<{ page?: number; limit?: number; search?: string }>(req));
   paginated(res, result.items, buildPageMeta(result.page, result.limit, result.total));
+});
+
+export const medicineFilters = asyncHandler(async (req: Request, res: Response) => {
+  ok(res, await pharmacyService.medicineFilters(getContext(req)));
+});
+
+export const currentShift = asyncHandler(async (req: Request, res: Response) => {
+  ok(res, await pharmacyShiftsService.current(getContext(req)));
+});
+
+export const openShift = asyncHandler(async (req: Request, res: Response) => {
+  const ctx = getContext(req);
+  const result = await pharmacyShiftsService.open(ctx, body<OpenShiftInput>(req));
+  await recordAudit(req, { action: 'pharmacy.shift.opened', targetTenantId: ctx.tenantId, targetStoreId: ctx.storeId, targetLabel: result.shift.shiftNumber, newValue: { openingFloatMinor: result.shift.openingFloatMinor } });
+  created(res, result);
+});
+
+export const addCashMovement = asyncHandler(async (req: Request, res: Response) => {
+  const ctx = getContext(req);
+  const input = body<CashMovementInput>(req);
+  const result = await pharmacyShiftsService.addCashMovement(ctx, params<IdParams>(req).id, input);
+  await recordAudit(req, { action: `pharmacy.shift.${input.type}`, targetTenantId: ctx.tenantId, targetStoreId: ctx.storeId, targetLabel: result.shift.shiftNumber, newValue: { amountMinor: input.amountMinor, reason: input.reason } });
+  ok(res, result);
+});
+
+export const closeShift = asyncHandler(async (req: Request, res: Response) => {
+  const ctx = getContext(req);
+  const result = await pharmacyShiftsService.close(ctx, params<IdParams>(req).id, body<CloseShiftInput>(req));
+  await recordAudit(req, { action: 'pharmacy.shift.closed', targetTenantId: ctx.tenantId, targetStoreId: ctx.storeId, targetLabel: result.shift.shiftNumber, newValue: { expectedCashMinor: result.shift.expectedCashMinor, countedCashMinor: result.shift.countedCashMinor, varianceMinor: result.shift.varianceMinor } });
+  ok(res, result);
+});
+
+export const listShifts = asyncHandler(async (req: Request, res: Response) => {
+  const result = await pharmacyShiftsService.list(getContext(req), query<ListShiftsInput>(req));
+  paginated(res, result.items, buildPageMeta(result.page, result.limit, result.total));
+});
+
+export const getShift = asyncHandler(async (req: Request, res: Response) => {
+  ok(res, await pharmacyShiftsService.get(getContext(req), params<IdParams>(req).id));
 });
 
 export const dashboard = asyncHandler(async (req: Request, res: Response) => {

@@ -22,6 +22,10 @@ import {
   updateMedicineSchema,
   createReturnSchema,
   voidSaleSchema,
+  cashMovementSchema,
+  closeShiftSchema,
+  listShiftsSchema,
+  openShiftSchema,
 } from './pharmacy.validators';
 import { posLedgerQuerySchema } from '../../services/inventory/posLedger';
 import { stockLedger } from '../inventory/stockLedger.controller';
@@ -68,6 +72,7 @@ router.delete(
 );
 
 router.get('/medicines', requirePermission(PERMISSIONS.PRODUCTS_VIEW), validate({ query: listMedicinesSchema }), controller.listMedicines);
+router.get('/medicine-filters', requirePermission(PERMISSIONS.PRODUCTS_VIEW), controller.medicineFilters);
 router.post('/medicines', requireActiveSubscription, requirePermission(PERMISSIONS.PRODUCTS_CREATE), validate({ body: createMedicineSchema }), controller.createMedicine);
 router.get('/medicines/:id', requirePermission(PERMISSIONS.PRODUCTS_VIEW), validate({ params: idParam }), controller.getMedicine);
 router.patch('/medicines/:id', requireActiveSubscription, requirePermission(PERMISSIONS.PRODUCTS_EDIT), validate({ params: idParam, body: updateMedicineSchema }), controller.updateMedicine);
@@ -97,6 +102,13 @@ router.post(
   controller.createReturn,
 );
 router.get('/returns', requirePermission(PERMISSIONS.RETURNS_VIEW), validate({ query: listSalesSchema }), controller.listReturns);
+
+router.get('/shifts/current', requirePermission(PERMISSIONS.SALES_CREATE), controller.currentShift);
+router.post('/shifts', requireActiveSubscription, requirePermission(PERMISSIONS.SALES_CREATE), validate({ body: openShiftSchema }), controller.openShift);
+router.post('/shifts/:id/cash-movements', requireActiveSubscription, requirePermission(PERMISSIONS.SALES_CREATE), validate({ params: idParam, body: cashMovementSchema }), controller.addCashMovement);
+router.post('/shifts/:id/close', requireActiveSubscription, requirePermission(PERMISSIONS.SALES_CREATE), validate({ params: idParam, body: closeShiftSchema }), controller.closeShift);
+router.get('/shifts', requirePermission(PERMISSIONS.REPORTS_VIEW), validate({ query: listShiftsSchema }), controller.listShifts);
+router.get('/shifts/:id', requirePermission(PERMISSIONS.REPORTS_VIEW), validate({ params: idParam }), controller.getShift);
 
 // The Pharmacy dashboard: on every plan, like the other verticals' dashboards.
 router.get('/dashboard', requirePermission(PERMISSIONS.REPORTS_VIEW), validate({ query: dashboardRangeSchema }), controller.dashboard);

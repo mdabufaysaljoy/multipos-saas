@@ -5391,7 +5391,8 @@ async function main() {
   check('The same brand in another strength is a different medicine', (await phMedicine({ name: 'Napa', strength: '120 mg/5 ml', dosageForm: 'syrup', sellingPriceMinor: 4500 })).status === 201);
   check('Unknown medicine fields are rejected', (await phMedicine({ name: 'Sneaky', sellingPriceMinor: 1, tenantId: admin.session.tenant.id })).status === 422);
   check('A negative price is rejected', (await phMedicine({ name: 'Bad', sellingPriceMinor: -5 })).status === 422);
-  check('An unknown dosage form is rejected', (await phMedicine({ name: 'Odd', sellingPriceMinor: 5, dosageForm: 'lollipop' })).status === 422);
+  const customFormMedicine = await phMedicine({ name: 'Odd', sellingPriceMinor: 5, dosageForm: 'lollipop' });
+  check('Any non-empty dosage form is accepted and becomes its category', customFormMedicine.status === 201 && customFormMedicine.data?.dosageForm === 'lollipop' && customFormMedicine.data?.category === 'Lollipop', customFormMedicine.data ?? customFormMedicine.error);
 
   const phReceive = (id, body) => phApi(`/medicines/${id}/batches`, { method: 'POST', body });
   const napaOld = await phReceive(napa.data._id, { batchNumber: 'np-old', expiryDate: phDay(10), quantity: 30, costPriceMinor: 80, supplierName: 'Beximco Depot' });
@@ -5469,8 +5470,16 @@ async function main() {
   check('The prescription is recorded on the sale', rxSale?.prescription?.patientName === 'Rahim Uddin' && rxSale?.prescription?.prescriptionNumber === 'RX-7781');
   check('Sales can be filtered to prescription sales', ((await phApi('/sales?prescriptionOnly=true')).data ?? []).length === 3);
 
+  const phShift = await phApi('/shifts', { method: 'POST', body: { openingFloatMinor: 1000, note: 'Morning drawer' } });
+  check('Pharmacy: a cash drawer shift opens', phShift.status === 201 && phShift.data?.shift?.status === 'open', phShift.error);
   const discounted = await phSale({ items: [{ medicineId: napa.data._id, quantity: 10 }], payments: [{ method: 'bkash', amountMinor: 1100 }], discountMinor: 100 });
   check('An owner can give a discount', discounted.status === 201 && discounted.data?.totalMinor === 1100, discounted.error);
+  check('Pharmacy: a sale joins the open shift', discounted.data?.shiftId === phShift.data?.shift?._id, discounted.data);
+  check('Pharmacy: the X-report is live', (await phApi('/shifts/current')).data?.report?.sales?.salesCount === 1);
+  await phApi(`/shifts/${phShift.data.shift._id}/cash-movements`, { method: 'POST', body: { type: 'pay_in', amountMinor: 200, reason: 'More change' } });
+  await phApi(`/shifts/${phShift.data.shift._id}/cash-movements`, { method: 'POST', body: { type: 'pay_out', amountMinor: 100, reason: 'Courier payment' } });
+  const phClosed = await phApi(`/shifts/${phShift.data.shift._id}/close`, { method: 'POST', body: { countedCashMinor: 1100, note: 'Balanced' } });
+  check('Pharmacy: closing freezes a balanced Z-report', phClosed.status === 200 && phClosed.data?.report?.cash?.varianceMinor === 0, phClosed.data ?? phClosed.error);
   check('A discount cannot exceed the subtotal', (await phSale({ items: [{ medicineId: napa.data._id, quantity: 1 }], payments: [{ method: 'cash', amountMinor: 0 }], discountMinor: 500 })).status === 400);
 
   const phVoid = (id, reason) => phApi(`/sales/${id}/void`, { method: 'POST', body: { reason } });
@@ -5536,7 +5545,7 @@ async function main() {
   for (let i = 0; i < 3; i += 1) await phApi(`/sales/${rxSale._id}/receipt`);
   check('Reprinting a Pharmacy receipt three times dispenses nothing and creates no sale', (await phApi('/sales?limit=1')).meta?.total === phSalesBeforeReprint);
   check('A medicine with stock cannot be removed', (await phApi(`/medicines/${napa.data._id}`, { method: 'DELETE' })).status === 409);
-  check("Plan meters count this pharmacy's medicines and sales", (await api(`/platform/tenants/${phCreated.data?.workspace?.id}`, { token: platform2.token })).data?.usage?.products === 3);
+  check("Plan meters count this pharmacy's medicines and sales", (await api(`/platform/tenants/${phCreated.data?.workspace?.id}`, { token: platform2.token })).data?.usage?.products === 4);
   check('Customers still work in a Pharmacy workspace', (await api('/customers', { token: phToken })).status === 200);
 
   // --- Pharmacy Advanced Analytics ------------------------------------------------
@@ -10174,8 +10183,8 @@ async function main() {
   check('Pharmacy: the same routes are there', phCat.status === 201, phCat.error);
   const phCatMed = await phMedicine({ name: `Vita C ${catStamp}`, strength: '500 mg', dosageForm: 'tablet', sellingPriceMinor: 2_000, category: `Vitamins ${catStamp}` });
   await api(`/pharmacy/categories/${phCat.data._id}`, { method: 'PATCH', token: phToken, body: { name: `Supplements ${catStamp}` } });
-  check('Pharmacy: renaming moves the medicines', (await phApi(`/medicines/${phCatMed.data._id}`)).data?.medicine?.category === `Supplements ${catStamp}`, (await phApi(`/medicines/${phCatMed.data._id}`)).data?.medicine?.category);
-  check('Pharmacy: the till can filter its list by category', ((await phApi(`/medicines?category=Supplements ${catStamp}`)).data ?? []).every((row) => row.category === `Supplements ${catStamp}`));
+  check('Pharmacy: medicine category is derived from form', (await phApi(`/medicines/${phCatMed.data._id}`)).data?.medicine?.category === 'Tablet');
+  check('Pharmacy: the till filters by derived category', ((await phApi('/medicines?category=Tablet')).data ?? []).some((row) => row._id === phCatMed.data._id));
 
   const rvCat = await api('/restaurant/categories', { method: 'POST', token: rvToken, body: { name: `Desserts ${catStamp}`, sortOrder: 3 } });
   check('Restaurant: the same routes are there', rvCat.status === 201, rvCat.error);
@@ -11418,27 +11427,49 @@ async function main() {
   });
   check('Super Shop: the same name twice in one file is caught at preview', ssImpTwice.data?.summary?.invalidRows === 1 && (ssImpTwice.data?.errors ?? []).some((e) => e.message.includes('already on row')), ssImpTwice.data?.errors);
 
-  // ---- Pharmacy: batches make opening stock all-or-nothing ----
-  const phHeaders = ['Medicine', 'Price', 'Generic name', 'Strength', 'Form', 'Category', 'Prescription', 'Batch', 'Expiry', 'Quantity', 'Cost price'];
+  // ---- Pharmacy catalogue with pack pricing; stock is received separately ----
+  const phHeaders = ['brand id', 'Medicine', 'Category', 'slug', 'Form', 'Generic name', 'Strength', 'Manufacturer', 'Container Type', 'Price', 'Pack Quantity', 'Total Pack Price (BDT)', 'Package Size'];
   const phImpPreview = await uploadSheet('/pharmacy/imports/preview', {
     token: phToken,
     bytes: sheetFor(phHeaders, [
-      [`Imp Napa ${impStamp}`, '12', 'Paracetamol', '500 mg', 'tablet', `Imported ${impStamp}`, 'No', `IMP-${impStamp}`, '2030-01-31', '100', '8'],
-      [`Imp Amox ${impStamp}`, '30', 'Amoxicillin', '250 mg', 'capsule', '', 'Yes', '', '', '', ''],
-      [`Imp Bad ${impStamp}`, '10', '', '', 'tablet', '', 'No', `IMPX-${impStamp}`, '', '50', '5'],
-      [`Imp Old ${impStamp}`, '10', '', '', 'tablet', '', 'No', `IMPO-${impStamp}`, '2020-01-01', '5', '5'],
+      ['101', `Imp Napa ${impStamp}`, 'Wrong category', 'imp-napa', 'tablet', 'Paracetamol', '500 mg', 'Beximco', 'Blister', '12', '10', '115', '10 tablets'],
+      ['102', `Imp Amox ${impStamp}`, '', 'imp-amox', 'capsule', 'Amoxicillin', '250 mg', 'Square', 'Strip', '30', '', '', '1 capsule'],
+      ['103', `Imp Calculated ${impStamp}`, '', 'imp-calculated', 'tablet', '', '', '', '', '10', '5', '', ''],
+      ['104', `Imp Custom Pack ${impStamp}`, 'Capsule', 'imp-custom-pack', 'tablet', '', '', '', '', '10', '5', '49', ''],
+      ['105', `Imp Same Name ${impStamp}`, '', 'imp-same-1', 'oral film', 'Example', '10 mg', 'Acme Labs', 'Sachet', '20', '1', '', ''],
+      ['106', `Imp Same Name ${impStamp}`, '', 'imp-same-2', 'softgel capsule', 'Example', '10 mg', 'Acme Labs', 'Blister', '25', '1', '', ''],
     ]),
   });
-  check('Pharmacy: rows with a batch, an expiry and a quantity are ready', phImpPreview.status === 200 && phImpPreview.data?.summary?.validRows === 2, phImpPreview.data?.summary ?? phImpPreview.error);
-  check('Pharmacy: a batch without an expiry is refused', (phImpPreview.data?.errors ?? []).some((e) => e.field === 'expiryDate' && /expiry/i.test(e.message)), phImpPreview.data?.errors);
-  check('Pharmacy: an already expired batch is refused', (phImpPreview.data?.errors ?? []).some((e) => /already expired/i.test(e.message)), phImpPreview.data?.errors);
+  check('Pharmacy: optional pack fields, arbitrary forms and repeated names validate', phImpPreview.status === 200 && phImpPreview.data?.summary?.validRows === 6 && phImpPreview.data?.summary?.invalidRows === 0, phImpPreview.data?.summary ?? phImpPreview.error);
   const phImpRun = await api(`/pharmacy/imports/${phImpPreview.data.importId}/commit`, { method: 'POST', token: phToken, body: { skipInvalidRows: true } });
-  check('Pharmacy: the medicines are created', phImpRun.status === 200 && phImpRun.data?.summary?.itemsCreated === 2, phImpRun.data?.summary ?? phImpRun.error);
+  check('Pharmacy: the medicines are created', phImpRun.status === 200 && phImpRun.data?.summary?.itemsCreated === 6, phImpRun.data?.summary ?? phImpRun.error);
   const phImported = ((await phApi(`/medicines?search=Imp Napa ${impStamp}`)).data ?? [])[0];
-  check('Pharmacy: the medicine carries what the file said', phImported?.sellingPriceMinor === 1_200 && phImported?.genericName === 'Paracetamol' && phImported?.strength === '500 mg', phImported);
-  check('Pharmacy: the opening batch was received with its expiry', (phImported?.stock?.sellable ?? 0) === 100, phImported?.stock);
-  check('Pharmacy: a row with no batch creates the medicine with no stock', (((await phApi(`/medicines?search=Imp Amox ${impStamp}`)).data ?? [])[0]?.stock?.sellable ?? 0) === 0);
-  check('Pharmacy: a prescription-only row is marked as such', ((await phApi(`/medicines?search=Imp Amox ${impStamp}`)).data ?? [])[0]?.requiresPrescription === true);
+  check('Pharmacy: supplied pack total is independent and Form sets category', phImported?.sellingPriceMinor === 1_200 && phImported?.packQuantity === 10 && phImported?.packPriceMinor === 11_500 && phImported?.category === 'Tablet', phImported);
+  const phImportedDefaults = ((await phApi(`/medicines?search=Imp Amox ${impStamp}`)).data ?? [])[0];
+  check('Pharmacy: blank pack fields default to one unit at unit price', phImportedDefaults?.sellingPriceMinor === 3_000 && phImportedDefaults?.packQuantity === 1 && phImportedDefaults?.packPriceMinor === 3_000 && phImportedDefaults?.category === 'Capsule', phImportedDefaults);
+  const phImportedCalculated = ((await phApi(`/medicines?search=Imp Calculated ${impStamp}`)).data ?? [])[0];
+  check('Pharmacy: blank pack total is calculated from quantity', phImportedCalculated?.sellingPriceMinor === 1_000 && phImportedCalculated?.packQuantity === 5 && phImportedCalculated?.packPriceMinor === 5_000, phImportedCalculated);
+  const phSameName = (await phApi(`/medicines?search=Imp Same Name ${impStamp}&limit=10`)).data ?? [];
+  check('Pharmacy: the same name may be imported for different dosage forms', phSameName.length === 2 && new Set(phSameName.map((row) => row.dosageForm)).size === 2, phSameName);
+  check('Pharmacy: arbitrary forms create matching categories', phSameName.some((row) => row.dosageForm === 'oral film' && row.category === 'Oral Film'), phSameName);
+  check('Pharmacy: bulk import preserves and exposes manufacturer', phSameName.every((row) => row.manufacturer === 'Acme Labs') && ((await phApi('/medicine-filters')).data?.manufacturers ?? []).includes('Acme Labs'));
+  check('Pharmacy: POS filtering accepts manufacturer and dosage-form category together', (await phApi('/medicines?manufacturer=Acme%20Labs&category=Oral%20Film&limit=10')).data?.length === 1);
+  check('Pharmacy: catalogue import creates no batch stock', (phImported?.stock?.sellable ?? 0) === 0, phImported?.stock);
+
+  const PharmacyExcelJS = (await import('exceljs')).default;
+  const phWorkbook = new PharmacyExcelJS.Workbook();
+  phWorkbook.addWorksheet('Instructions').addRow(['Choose the Medicines sheet']);
+  const phWorksheet = phWorkbook.addWorksheet('Medicines 2026');
+  phWorksheet.addRow(phHeaders);
+  phWorksheet.addRow(['107', `Imp Spray ${impStamp}`, '', 'imp-spray', 'metered nasal spray', 'Example', '5 mg', 'Spray Maker', 'Bottle', '75', '', '', '']);
+  const phWorkbookBytes = Buffer.from(await phWorkbook.xlsx.writeBuffer());
+  const phSheets = await uploadSheet('/pharmacy/imports/sheets', { token: phToken, bytes: phWorkbookBytes, filename: 'medicines.xlsx', type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+  check('Pharmacy: an XLSX upload lists its worksheets before preview', phSheets.status === 200 && phSheets.data?.sheets?.map((sheet) => sheet.name).join('|') === 'Instructions|Medicines 2026', phSheets.data);
+  const phSelectedSheet = await uploadSheet('/pharmacy/imports/preview', { token: phToken, bytes: phWorkbookBytes, filename: 'medicines.xlsx', type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', fields: { sheetName: 'Medicines 2026' } });
+  check('Pharmacy: only the selected worksheet is previewed', phSelectedSheet.status === 200 && phSelectedSheet.data?.sheetName === 'Medicines 2026' && phSelectedSheet.data?.summary?.validRows === 1, phSelectedSheet.data ?? phSelectedSheet.error);
+  const phSelectedRun = await api(`/pharmacy/imports/${phSelectedSheet.data?.importId}/commit`, { method: 'POST', token: phToken, body: { skipInvalidRows: false } });
+  const phSpray = ((await phApi(`/medicines?search=Imp Spray ${impStamp}`)).data ?? [])[0];
+  check('Pharmacy: selected-sheet medicine keeps free form and manufacturer', phSelectedRun.status === 200 && phSpray?.dosageForm === 'metered nasal spray' && phSpray?.category === 'Metered Nasal Spray' && phSpray?.manufacturer === 'Spray Maker', phSpray);
 
   // ---- Restaurant ----
   const rvHeaders = ['Dish', 'Price', 'Section', 'Description', 'Order', 'Available'];

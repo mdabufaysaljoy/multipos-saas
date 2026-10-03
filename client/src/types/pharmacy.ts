@@ -1,18 +1,8 @@
 import type { ReceiptStore } from './receipt';
 import type { PosReturnSummary } from './domain';
 
-export type DosageForm =
-  | 'tablet'
-  | 'capsule'
-  | 'syrup'
-  | 'suspension'
-  | 'injection'
-  | 'cream'
-  | 'ointment'
-  | 'drops'
-  | 'inhaler'
-  | 'powder'
-  | 'other';
+/** Free-text medicine form; the server normalises it and derives its category. */
+export type DosageForm = string;
 
 export interface MedicineStock {
   onHand: number;
@@ -29,9 +19,13 @@ export interface Medicine {
   strength: string;
   dosageForm: DosageForm;
   manufacturer: string;
+  containerType: string;
+  packageSize: string;
   category: string;
   barcode: string;
   sellingPriceMinor: number;
+  packQuantity: number;
+  packPriceMinor: number;
   requiresPrescription: boolean;
   reorderLevel: number;
   isActive: boolean;
@@ -46,9 +40,13 @@ export interface MedicineInput {
   strength: string;
   dosageForm: DosageForm;
   manufacturer: string;
-  category: string;
+  category?: string;
+  containerType: string;
+  packageSize: string;
   barcode: string;
   sellingPriceMinor: number;
+  packQuantity: number;
+  packPriceMinor: number;
   requiresPrescription: boolean;
   reorderLevel: number;
   isActive: boolean;
@@ -125,6 +123,38 @@ export interface PharmacySale {
   voidedAt: string | null;
   voidedByNameSnapshot: string;
   voidReason: string;
+}
+
+export interface PharmacyShiftReport {
+  generatedAt: string;
+  sales: { salesCount: number; itemsSold: number; grossSalesMinor: number; discountsMinor: number; netSalesMinor: number };
+  byPaymentMethod: { method: string; amountMinor: number; count: number }[];
+  returns: { count: number; amountMinor: number; cashMinor: number };
+  voids: { sales: number; valueMinor: number };
+  cash: { openingFloatMinor: number; cashSalesMinor: number; cashRefundsMinor: number; payInsMinor: number; payOutsMinor: number; expectedCashMinor: number; countedCashMinor: number | null; varianceMinor: number | null };
+}
+
+export interface PharmacyShift {
+  _id: string;
+  shiftNumber: string;
+  status: 'open' | 'closed';
+  openingFloatMinor: number;
+  openingNote: string;
+  openedAt: string;
+  openedByNameSnapshot: string;
+  cashMovements?: { _id: string; type: 'pay_in' | 'pay_out'; amountMinor: number; reason: string; at: string; byNameSnapshot: string }[];
+  closedAt: string | null;
+  closedByNameSnapshot: string;
+  closingNote: string;
+  countedCashMinor: number | null;
+  expectedCashMinor: number | null;
+  varianceMinor: number | null;
+}
+
+export interface PharmacyShiftDetail {
+  shift: PharmacyShift;
+  report: PharmacyShiftReport;
+  store: ReceiptStore | null;
 }
 
 export interface PharmacyReceipt {

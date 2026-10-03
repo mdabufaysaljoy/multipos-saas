@@ -8,6 +8,8 @@ import type {
   PharmacyReceipt,
   PharmacyReports,
   PharmacySale,
+  PharmacyShift,
+  PharmacyShiftDetail,
   StockMovement,
 } from '@/types/pharmacy';
 import type { SaleCustomerFields } from '@/features/customers/CustomerPicker';
@@ -33,6 +35,7 @@ export interface PharmacySaleInput extends SaleCustomerFields {
  */
 export const pharmacyApi = {
   medicines: (params?: Query) => getPaginated<Medicine>('/pharmacy/medicines', params),
+  medicineFilters: () => get<{ manufacturers: string[] }>('/pharmacy/medicine-filters'),
   medicine: (id: string) => get<MedicineDetail>(`/pharmacy/medicines/${id}`),
   createMedicine: (body: MedicineInput) => post<Medicine>('/pharmacy/medicines', body),
   updateMedicine: (id: string, body: Partial<MedicineInput>) => patch<Medicine>(`/pharmacy/medicines/${id}`, body),
@@ -55,6 +58,16 @@ export const pharmacyApi = {
   /** A return against a completed sale: the units go back to their own batches. */
   createReturn: (id: string, body: PosReturnInput) => post<PosReturn>(`/pharmacy/sales/${id}/return`, body),
   returns: (params?: Query) => getPaginated<PosReturn>('/pharmacy/returns', params),
+
+  currentShift: () => get<PharmacyShiftDetail | null>('/pharmacy/shifts/current'),
+  openShift: (body: { openingFloatMinor: number; note?: string }) =>
+    post<PharmacyShiftDetail>('/pharmacy/shifts', body),
+  addCashMovement: (id: string, body: { type: 'pay_in' | 'pay_out'; amountMinor: number; reason: string }) =>
+    post<PharmacyShiftDetail>(`/pharmacy/shifts/${id}/cash-movements`, body),
+  closeShift: (id: string, body: { countedCashMinor: number; note?: string }) =>
+    post<PharmacyShiftDetail>(`/pharmacy/shifts/${id}/close`, body),
+  shifts: (params?: Query) => getPaginated<PharmacyShift>('/pharmacy/shifts', params),
+  shift: (id: string) => get<PharmacyShiftDetail>(`/pharmacy/shifts/${id}`),
 
   dashboard: (params?: Query) => get<PharmacyDashboard>('/pharmacy/dashboard', params),
   /** Advanced Analytics; the server refuses it on plans without the feature. */

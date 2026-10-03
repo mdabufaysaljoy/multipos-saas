@@ -12,9 +12,8 @@ import { REPORT_PRESETS, RangePicker, isRangeReady, rangeParams, type RangeValue
 import { ApiError } from '@/api/client';
 import { pharmacyApi } from '@/api/pharmacy';
 import { formatMoney } from '@/lib/money';
-import { DOSAGE_FORM_LABELS } from '@/lib/pharmacy';
+import { dosageFormLabel } from '@/lib/pharmacy';
 import { useAuth } from '@/hooks/useAuth';
-import type { DosageForm } from '@/types/pharmacy';
 
 const isLocked = (error: unknown) => error instanceof ApiError && error.code === 'ADVANCED_ANALYTICS_REQUIRED';
 
@@ -178,7 +177,7 @@ export function PharmacyReportsPage() {
               <BarList
                 rows={data.dosageForms.map((row) => ({
                   key: row.dosageForm,
-                  label: DOSAGE_FORM_LABELS[row.dosageForm as DosageForm] ?? row.dosageForm,
+                  label: dosageFormLabel(row.dosageForm),
                   value: row.revenueMinor,
                   detail: `${row.quantity} unit(s)`,
                 }))}

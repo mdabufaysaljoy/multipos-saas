@@ -1,6 +1,4 @@
-import type { DosageForm } from '@/types/pharmacy';
-
-export const DOSAGE_FORM_LABELS: Record<DosageForm, string> = {
+const DOSAGE_FORM_LABELS: Record<string, string> = {
   tablet: 'Tablet',
   capsule: 'Capsule',
   syrup: 'Syrup',
@@ -12,6 +10,11 @@ export const DOSAGE_FORM_LABELS: Record<DosageForm, string> = {
   inhaler: 'Inhaler',
   powder: 'Powder',
   other: 'Other',
+};
+
+export const dosageFormLabel = (form: string): string => {
+  const clean = form.trim().replace(/\s+/g, ' ');
+  return DOSAGE_FORM_LABELS[clean.toLowerCase()] ?? clean.replace(/(^|[\s/-])\p{L}/gu, (letter) => letter.toLocaleUpperCase('en-US'));
 };
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
@@ -43,7 +46,7 @@ export function expiryTone(iso: string): { label: string; variant: 'destructive'
 
 /** "Napa 500 mg tablet" */
 export const medicineLabel = (medicine: { name: string; strength?: string; dosageForm?: string }) =>
-  [medicine.name, medicine.strength, medicine.dosageForm ? DOSAGE_FORM_LABELS[medicine.dosageForm as DosageForm]?.toLowerCase() : '']
+  [medicine.name, medicine.strength, medicine.dosageForm ? dosageFormLabel(medicine.dosageForm).toLowerCase() : '']
     .filter(Boolean)
     .join(' ');
 

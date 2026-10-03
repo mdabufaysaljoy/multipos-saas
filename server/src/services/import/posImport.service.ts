@@ -9,7 +9,7 @@ import type { TenantContext } from '../../types/express';
 import { posCategoryService } from '../catalogue/posCategories.service';
 import { MAX_IMPORT_ROWS, MAX_STORED_ERRORS, PENDING_IMPORT_TTL_MINUTES } from '../../modules/productImports/import.limits';
 import { importAdapterFor, type PosImportAdapter, type PreparedImportItem } from './posImport.adapters';
-import { formatFromFilename, parseSheet } from './sheet.parse';
+import { formatFromFilename, listImportSheets, parseSheet } from './sheet.parse';
 
 /**
  * Bulk import for the POS types whose catalogue is a flat list of items
@@ -65,16 +65,22 @@ class PosImportService {
     };
   }
 
+  async sheets(file: { originalname: string; buffer: Buffer }) {
+    const format = formatFromFilename(file.originalname);
+    if (!format) throw ApiError.badRequest('Only Excel (.xlsx) and CSV (.csv) files are supported.');
+    return { format, sheets: await listImportSheets(file.buffer, format) };
+  }
+
   /**
    * Parses and validates an uploaded file and stores the result as a PENDING
    * job. No item, category or stock movement is written here.
    */
-  async preview(ctx: TenantContext, vertical: PosVertical, file: { originalname: string; buffer: Buffer }) {
+  async preview(ctx: TenantContext, vertical: PosVertical, file: { originalname: string; buffer: Buffer }, sheetName?: string) {
     const adapter = this.adapter(vertical);
     const format = formatFromFilename(file.originalname);
     if (!format) throw ApiError.badRequest('Only Excel (.xlsx) and CSV (.csv) files are supported.');
 
-    const sheet = await parseSheet(file.buffer, format, adapter.registry);
+    const sheet = await parseSheet(file.buffer, format, adapter.registry, sheetName);
 
     const items: PreparedImportItem[] = [];
     const errors: ImportRowIssueDto[] = [];
@@ -83,10 +89,10 @@ class PosImportService {
 
     for (const row of sheet.rows) {
       const { item, issues } = adapter.prepare(row);
-      // The same name twice in one file would fail on the second one anyway;
-      // saying so here points at the row that caused it.
+      // Each vertical defines its real identity. Pharmacy, for example, may
+      // legitimately repeat a brand name when strength or form differs.
       if (item) {
-        const key = item.name.toLowerCase();
+        const key = item.duplicateKey ?? item.name.toLowerCase();
         const first = seen.get(key);
         if (first) {
           issues.push({ field: 'name', message: `The same name is already on row ${first} of this file` });
@@ -130,6 +136,7 @@ class PosImportService {
       importId: String(job._id),
       filename: job.filename,
       format,
+      sheetName: sheetName ?? null,
       noun: adapter.noun,
       headerRow: sheet.headerRowNumber,
       mapping: sheet.mapping,

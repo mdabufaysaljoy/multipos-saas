@@ -6,6 +6,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { EmptyState, LoadingState } from '@/components/states';
 import { MoneyInput } from '@/components/MoneyInput';
 import { LimitAlert } from '@/components/LimitAlert';
@@ -25,7 +26,7 @@ import { loyaltyApi, storeApi } from '@/api/endpoints';
 import { pharmacyApi } from '@/api/pharmacy';
 import { pharmacyCategoriesApi } from '@/api/posCategories';
 import { formatMoney } from '@/lib/money';
-import { DOSAGE_FORM_LABELS, formatExpiry } from '@/lib/pharmacy';
+import { dosageFormLabel, formatExpiry } from '@/lib/pharmacy';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/hooks/useAuth';
 import type { Medicine } from '@/types/pharmacy';
@@ -38,6 +39,13 @@ interface CartLine {
 }
 
 const EMPTY_RX = { patientName: '', prescriberName: '', prescriptionNumber: '' };
+const QUICK_QUANTITIES = [5, 10, 15, 20] as const;
+const percentToBps = (value: string): number | null => {
+  const clean = value.trim();
+  if (!/^\d{1,3}(\.\d{1,2})?$/.test(clean)) return null;
+  const bps = Math.round(Number(clean) * 100);
+  return bps <= 10_000 ? bps : null;
+};
 
 /**
  * Pharmacy point of sale. Totals shown here are previews: the server prices
@@ -53,6 +61,8 @@ export function PharmacyPosPage() {
   const search = useDebounced(term);
   const [cart, setCart] = React.useState<CartLine[]>([]);
   const [discount, setDiscount] = React.useState<number | null>(0);
+  const [discountMode, setDiscountMode] = React.useState<'amount' | 'percent'>('amount');
+  const [discountPercent, setDiscountPercent] = React.useState('');
   const [rx, setRx] = React.useState(EMPTY_RX);
   const [customer, setCustomer] = React.useState<SelectedCustomer | null>(null);
   // Only a scanned CARD earns or redeems - never a customer or a phone number.
@@ -69,16 +79,20 @@ export function PharmacyPosPage() {
   // The categories this pharmacy groups its shelves by, in the owner's order
   // and without the ones they hid.
   const { data: shelves } = useQuery({ queryKey: ['pharmacy', 'categories', 'filter'], queryFn: () => pharmacyCategoriesApi.list() });
+  const { data: medicineFilters } = useQuery({ queryKey: ['pharmacy', 'medicine-filters'], queryFn: pharmacyApi.medicineFilters });
   const [category, setCategory] = React.useState('all');
+  const [manufacturer, setManufacturer] = React.useState('all');
 
   const { data: results, isLoading } = useQuery({
-    queryKey: ['pharmacy', 'medicines', 'pos', search, category],
+    queryKey: ['pharmacy', 'medicines', 'pos', search, category, manufacturer],
     queryFn: () =>
-      pharmacyApi.medicines({ limit: 30, activeOnly: 'true', ...(search ? { search } : {}), ...(category !== 'all' ? { category } : {}) }),
+      pharmacyApi.medicines({ limit: 30, activeOnly: 'true', ...(search ? { search } : {}), ...(category !== 'all' ? { category } : {}), ...(manufacturer !== 'all' ? { manufacturer } : {}) }),
   });
 
   const subtotal = cart.reduce((sum, line) => sum + line.medicine.sellingPriceMinor * line.quantity, 0);
-  const discountMinor = Math.min(discount ?? 0, subtotal);
+  const discountBps = percentToBps(discountPercent || '0');
+  const discountValid = discountMode === 'amount' ? (discount ?? 0) <= subtotal : discountBps !== null;
+  const discountMinor = discountMode === 'amount' ? (discountValid ? discount ?? 0 : 0) : Math.floor((subtotal * (discountBps ?? 0)) / 10_000);
   const payableMinor = subtotal - discountMinor;
   // Points can pay for the medicines after the discount, never more than that
   // and never more than the card holds. The server checks all of it again.
@@ -105,24 +119,31 @@ export function PharmacyPosPage() {
   const needsRx = cart.some((line) => line.medicine.requiresPrescription);
   const rxComplete = rx.patientName.trim().length >= 2 && rx.prescriberName.trim().length >= 2;
 
-  const add = (medicine: Medicine) => {
+  const add = (medicine: Medicine, amount = 1) => {
     const sellable = medicine.stock?.sellable ?? 0;
     const existing = cart.find((line) => line.medicine._id === medicine._id);
+    const target = (existing?.quantity ?? 0) + amount;
     // Out of stock entirely is what the permission covers; having SOME but not
     // enough is refused for everyone, here and on the server.
-    if ((existing?.quantity ?? 0) >= sellable && !(sellable <= 0 && canSellOutOfStock)) {
+    if (target > sellable && !(sellable <= 0 && canSellOutOfStock)) {
       toast.error(sellable <= 0 ? `${medicine.name} is out of stock` : `Only ${sellable} of ${medicine.name} in stock`);
       return;
     }
     setCart(
       existing
-        ? cart.map((line) => (line.medicine._id === medicine._id ? { ...line, quantity: line.quantity + 1 } : line))
-        : [...cart, { medicine, quantity: 1 }],
+        ? cart.map((line) => (line.medicine._id === medicine._id ? { ...line, quantity: target } : line))
+        : [...cart, { medicine, quantity: amount }],
     );
   };
 
-  const setQuantity = (id: string, quantity: number) =>
-    setCart(cart.flatMap((line) => (line.medicine._id !== id ? [line] : quantity <= 0 ? [] : [{ ...line, quantity }])));
+  const setQuantity = (id: string, quantity: number) => {
+    const line = cart.find((entry) => entry.medicine._id === id);
+    if (!line) return;
+    const clean = Math.min(Math.max(Math.trunc(quantity), 0), 10_000);
+    const sellable = line.medicine.stock?.sellable ?? 0;
+    if (clean > sellable && !(sellable <= 0 && canSellOutOfStock)) { toast.error(`Only ${sellable} of ${line.medicine.name} in stock`); return; }
+    setCart(cart.flatMap((entry) => (entry.medicine._id !== id ? [entry] : clean <= 0 ? [] : [{ ...entry, quantity: clean }])));
+  };
 
   const attachCard = async (code: string): Promise<boolean> => {
     if (!loyaltyAvailable) return false;
@@ -153,6 +174,7 @@ export function PharmacyPosPage() {
   const reset = () => {
     setCart([]);
     setDiscount(0);
+    setDiscountPercent('');
     setRx(EMPTY_RX);
     setCustomer(null);
     removeCard();
@@ -187,7 +209,7 @@ export function PharmacyPosPage() {
     },
   });
 
-  const canComplete = cart.length > 0 && (!needsRx || rxComplete) && payments.isSettled && !complete.isPending;
+  const canComplete = cart.length > 0 && discountValid && (!needsRx || rxComplete) && payments.isSettled && !complete.isPending;
 
   return (
     <div className="grid h-full gap-4 p-4 lg:grid-cols-[1fr_24rem] lg:p-6">
@@ -213,7 +235,22 @@ export function PharmacyPosPage() {
               aria-label="Search medicines"
             />
           </div>
-          <CategoryFilter categories={(shelves ?? []).map((row) => row.name)} value={category} onChange={setCategory} />
+          <div className="space-y-1">
+            <span className="text-xs font-medium text-muted-foreground">Dosage form</span>
+            <CategoryFilter categories={(shelves ?? []).map((row) => row.name)} value={category} onChange={setCategory} />
+          </div>
+          <div className="max-w-xs space-y-1">
+            <span className="text-xs font-medium text-muted-foreground">Manufacturer</span>
+            <Select value={manufacturer} onValueChange={setManufacturer}>
+              <SelectTrigger className="h-9">
+                <SelectValue placeholder="All manufacturers" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All manufacturers</SelectItem>
+                {(medicineFilters?.manufacturers ?? []).map((name) => <SelectItem key={name} value={name}>{name}</SelectItem>)}
+              </SelectContent>
+            </Select>
+          </div>
           <LimitAlert resource="monthlySales" />
         </CardHeader>
         <CardContent className="scrollbar-thin min-h-0 flex-1 overflow-y-auto">
@@ -227,13 +264,13 @@ export function PharmacyPosPage() {
                 const sellable = medicine.stock?.sellable ?? 0;
                 const blocked = sellable <= 0 && !canSellOutOfStock;
                 return (
-                  <li key={medicine._id}>
+                  <li key={medicine._id} className="py-2.5">
                     <button
                       type="button"
                       disabled={blocked}
                       onClick={() => add(medicine)}
                       className={cn(
-                        'flex w-full items-center justify-between gap-3 px-1 py-2.5 text-left transition-colors hover:bg-muted/50',
+                        'flex w-full items-center justify-between gap-3 rounded px-1 py-1 text-left transition-colors hover:bg-muted/50',
                         blocked && 'cursor-not-allowed opacity-50',
                       )}
                     >
@@ -243,7 +280,8 @@ export function PharmacyPosPage() {
                           {medicine.requiresPrescription && <Badge variant="warning">Rx</Badge>}
                         </p>
                         <p className="truncate text-xs text-muted-foreground">
-                          {[medicine.genericName, DOSAGE_FORM_LABELS[medicine.dosageForm]].filter(Boolean).join(' · ')}
+                          {[medicine.genericName, dosageFormLabel(medicine.dosageForm), medicine.manufacturer].filter(Boolean).join(' · ')}
+                          {` · ${medicine.packQuantity ?? 1}/pack`}
                           {medicine.stock?.nearestExpiry ? ` · next exp ${formatExpiry(medicine.stock.nearestExpiry)}` : ''}
                         </p>
                       </div>
@@ -254,6 +292,12 @@ export function PharmacyPosPage() {
                         </p>
                       </div>
                     </button>
+                    <div className="mt-1 flex flex-wrap items-center gap-1 px-1" aria-label={`Quick quantities for ${medicine.name}`}>
+                      <span className="mr-1 text-[11px] text-muted-foreground">Add</span>
+                      {QUICK_QUANTITIES.map((quantity) => (
+                        <Button key={quantity} type="button" variant="outline" size="sm" className="h-6 px-2 text-xs" disabled={blocked || (sellable > 0 && (cart.find((line) => line.medicine._id === medicine._id)?.quantity ?? 0) + quantity > sellable)} onClick={() => add(medicine, quantity)}>{quantity}</Button>
+                      ))}
+                    </div>
                   </li>
                 );
               })}
@@ -267,7 +311,7 @@ export function PharmacyPosPage() {
         <CardHeader className="pb-2">
           <CardTitle className="text-base">Sale</CardTitle>
         </CardHeader>
-        <CardContent className="scrollbar-thin min-h-0 flex-1 space-y-4 overflow-y-auto">
+        <CardContent className="scrollbar-thin min-h-0 flex-1 space-y-4 overflow-y-auto pb-2">
           {cart.length === 0 ? (
             <p className="text-sm text-muted-foreground">Pick medicines on the left.</p>
           ) : (
@@ -283,7 +327,7 @@ export function PharmacyPosPage() {
                   <Button variant="outline" size="icon-sm" onClick={() => setQuantity(line.medicine._id, line.quantity - 1)} aria-label="One fewer">
                     <Minus />
                   </Button>
-                  <span className="w-8 text-center tabular">{line.quantity}</span>
+                  <Input className="h-8 w-16 px-1 text-center tabular" inputMode="numeric" min={1} max={10_000} value={line.quantity} onChange={(event) => { const value = event.target.value.replace(/\D/g, ''); if (value) setQuantity(line.medicine._id, Number(value)); }} aria-label={`Quantity of ${line.medicine.name}`} />
                   <Button variant="outline" size="icon-sm" onClick={() => add(line.medicine)} aria-label="One more">
                     <Plus />
                   </Button>
@@ -307,19 +351,24 @@ export function PharmacyPosPage() {
             </div>
           )}
 
+        </CardContent>
+        <div className="shrink-0 space-y-3 border-t bg-card px-4 py-3">
+
           <dl className="space-y-1 text-sm">
             <div className="flex justify-between">
               <dt>Subtotal</dt>
               <dd className="tabular">{formatMoney(subtotal, currency)}</dd>
             </div>
             {can('sales.discount') && (
-              <div className="flex items-center justify-between gap-3">
+              <div className="flex items-center justify-between gap-2">
                 <dt>Discount</dt>
-                <dd className="w-32">
-                  <MoneyInput value={discount} onChange={setDiscount} ariaLabel="Discount" />
+                <dd className="flex min-w-0 items-center gap-1">
+                  <div className="flex rounded-md border p-0.5"><Button type="button" variant={discountMode === 'amount' ? 'secondary' : 'ghost'} size="sm" className="h-7 px-2" onClick={() => setDiscountMode('amount')}>Amount</Button><Button type="button" variant={discountMode === 'percent' ? 'secondary' : 'ghost'} size="sm" className="h-7 px-2" onClick={() => setDiscountMode('percent')}>%</Button></div>
+                  <div className="w-28">{discountMode === 'amount' ? <MoneyInput value={discount} onChange={setDiscount} ariaLabel="Discount amount" /> : <div className="relative"><Input className="h-9 pr-7 text-right tabular" inputMode="decimal" value={discountPercent} onChange={(event) => setDiscountPercent(event.target.value.replace(/[^\d.]/g, '').slice(0, 6))} aria-label="Discount percent" /><span className="pointer-events-none absolute right-2 top-2 text-sm text-muted-foreground">%</span></div>}</div>
                 </dd>
               </div>
             )}
+            {!discountValid && <p className="text-right text-xs text-destructive">Enter a discount from 0–100%, or no more than the subtotal.</p>}
             {loyaltyDiscountMinor > 0 && (
               <div className="flex justify-between text-success">
                 <dt>Points ({redeeming})</dt>
@@ -373,7 +422,7 @@ export function PharmacyPosPage() {
             onAddRow={payments.addRow}
             onRemoveRow={payments.removeRow}
           />
-        </CardContent>
+        </div>
         <div className="flex gap-2 border-t p-3">
           <Button variant="outline" onClick={reset} disabled={cart.length === 0}>
             Clear

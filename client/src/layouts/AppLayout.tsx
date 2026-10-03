@@ -106,6 +106,7 @@ const NAV_SECTIONS: { heading: string; items: NavItem[] }[] = [
       { to: '/shifts', label: 'Shifts', icon: Calculator, anyOf: ['sales.create', 'reports.view'], verticals: ['restaurant'] },
       { to: '/pharmacy-sales', label: 'Sales', icon: Receipt, anyOf: ['sales.view'], verticals: ['pharmacy'] },
       { to: '/pharmacy-returns', label: 'Returns', icon: RotateCcw, anyOf: ['returns.view'], verticals: ['pharmacy'] },
+      { to: '/pharmacy-shifts', label: 'Shifts', icon: Calculator, anyOf: ['sales.create', 'reports.view'], verticals: ['pharmacy'] },
       { to: '/shop-sales', label: 'Sales', icon: Receipt, anyOf: ['sales.view'], verticals: ['supershop'] },
       { to: '/shop-returns', label: 'Returns', icon: RotateCcw, anyOf: ['returns.view'], verticals: ['supershop'] },
     ],

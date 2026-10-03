@@ -423,9 +423,13 @@ const pharmacyDatasets: ExportDataset[] = [
           { key: 'strength', label: 'Strength', type: 'text' },
           { key: 'dosageForm', label: 'Dosage form', type: 'text' },
           { key: 'manufacturer', label: 'Manufacturer', type: 'text' },
+          { key: 'containerType', label: 'Container type', type: 'text' },
+          { key: 'packageSize', label: 'Package size', type: 'text' },
           { key: 'category', label: 'Category', type: 'text' },
           { key: 'barcode', label: 'Barcode', type: 'text' },
           { key: 'sellingPriceMinor', label: 'Selling price', type: 'money' },
+          { key: 'packQuantity', label: 'Pack quantity', type: 'number' },
+          { key: 'packPriceMinor', label: 'Pack price', type: 'money' },
           { key: 'requiresPrescription', label: 'Prescription required', type: 'boolean' },
           { key: 'reorderLevel', label: 'Reorder level', type: 'number' },
           { key: 'isActive', label: 'Active', type: 'boolean' },
@@ -435,7 +439,7 @@ const pharmacyDatasets: ExportDataset[] = [
           cursorRows(
             () =>
               MedicineModel.find({ tenantId: scope.ctx.tenantId, deletedAt: null, ...dated('createdAt', scope) })
-                .select('name genericName strength dosageForm manufacturer category barcode sellingPriceMinor requiresPrescription reorderLevel isActive createdAt')
+                .select('name genericName strength dosageForm manufacturer containerType packageSize category barcode sellingPriceMinor packQuantity packPriceMinor requiresPrescription reorderLevel isActive createdAt')
                 .sort({ name: 1 })
                 .lean(),
             (medicine) => medicine,

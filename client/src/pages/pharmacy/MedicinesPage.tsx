@@ -8,7 +8,6 @@ import { Card } from '@/components/ui/card';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Switch } from '@/components/ui/switch';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { DataTable, type Column } from '@/components/DataTable';
@@ -21,12 +20,10 @@ import { LoadingState } from '@/components/states';
 import { ApiError } from '@/api/client';
 import { BarcodePrintDialog } from '@/features/barcode/BarcodePrintDialog';
 import { pharmacyApi } from '@/api/pharmacy';
-import { pharmacyCategoriesApi } from '@/api/posCategories';
-import { CategoryInput } from '@/features/catalogue/CategoryInput';
 import { formatMoney } from '@/lib/money';
-import { DOSAGE_FORM_LABELS, expiryTone, formatExpiry, todayInputValue } from '@/lib/pharmacy';
+import { dosageFormLabel, expiryTone, formatExpiry, todayInputValue } from '@/lib/pharmacy';
 import { useAuth } from '@/hooks/useAuth';
-import type { DosageForm, Medicine, MedicineInput } from '@/types/pharmacy';
+import type { Medicine, MedicineInput } from '@/types/pharmacy';
 
 const errorMessage = (err: unknown, fallback: string) => (err instanceof ApiError ? err.message : fallback);
 
@@ -71,7 +68,7 @@ export function MedicinesPage() {
             {row.name} <span className="text-muted-foreground">{row.strength}</span>
           </p>
           <p className="text-xs text-muted-foreground">
-            {[row.genericName, DOSAGE_FORM_LABELS[row.dosageForm], row.manufacturer].filter(Boolean).join(' · ')}
+            {[row.genericName, dosageFormLabel(row.dosageForm), row.manufacturer].filter(Boolean).join(' · ')}
           </p>
         </div>
       ),
@@ -81,7 +78,7 @@ export function MedicinesPage() {
       header: 'Price',
       className: 'text-right',
       headerClassName: 'text-right',
-      cell: (row) => <span className="tabular font-medium">{formatMoney(row.sellingPriceMinor, currency)}</span>,
+      cell: (row) => <div className="text-right"><p className="tabular font-medium">{formatMoney(row.sellingPriceMinor, currency)} / unit</p><p className="text-xs text-muted-foreground">{formatMoney(row.packPriceMinor ?? row.sellingPriceMinor * (row.packQuantity ?? 1), currency)} / pack of {row.packQuantity ?? 1}</p></div>,
     },
     {
       key: 'flags',
@@ -250,9 +247,13 @@ const EMPTY: MedicineInput = {
   strength: '',
   dosageForm: 'tablet',
   manufacturer: '',
-  category: 'General',
+  category: 'Tablet',
+  containerType: '',
+  packageSize: '',
   barcode: '',
   sellingPriceMinor: 0,
+  packQuantity: 1,
+  packPriceMinor: 0,
   requiresPrescription: false,
   reorderLevel: 0,
   isActive: true,
@@ -271,6 +272,8 @@ function MedicineDialog({
 }) {
   const [draft, setDraft] = React.useState<MedicineInput>(() => (medicine ? { ...EMPTY, ...medicine } : EMPTY));
   const [price, setPrice] = React.useState<number | null>(medicine ? medicine.sellingPriceMinor : null);
+  const initialPackQuantity = medicine?.packQuantity ?? 1;
+  const [packPrice, setPackPrice] = React.useState<number | null>(medicine ? medicine.packPriceMinor ?? medicine.sellingPriceMinor * initialPackQuantity : null);
   const set = <K extends keyof MedicineInput>(key: K, value: MedicineInput[K]) => setDraft((current) => ({ ...current, [key]: value }));
 
   const save = useMutation({
@@ -281,9 +284,13 @@ function MedicineDialog({
         strength: draft.strength.trim(),
         dosageForm: draft.dosageForm,
         manufacturer: draft.manufacturer.trim(),
-        category: draft.category.trim() || 'General',
+        category: dosageFormLabel(draft.dosageForm),
+        containerType: draft.containerType.trim(),
+        packageSize: draft.packageSize.trim(),
         barcode: draft.barcode.trim(),
         sellingPriceMinor: price ?? 0,
+        packQuantity: draft.packQuantity,
+        packPriceMinor: packPrice ?? 0,
         requiresPrescription: draft.requiresPrescription,
         reorderLevel: draft.reorderLevel,
         isActive: draft.isActive,
@@ -297,7 +304,8 @@ function MedicineDialog({
     onError: (err) => toast.error(errorMessage(err, 'Could not save the medicine')),
   });
 
-  const valid = draft.name.trim().length > 0 && price !== null;
+  const expectedPackPrice = price === null ? null : price * draft.packQuantity;
+  const valid = draft.name.trim().length > 0 && price !== null && draft.packQuantity >= 1 && packPrice !== null && packPrice === expectedPackPrice;
 
   return (
     <Dialog open onOpenChange={(open) => !open && onClose()}>
@@ -314,27 +322,24 @@ function MedicineDialog({
           <Field id="med-name" label="Brand name" value={draft.name} max={120} onChange={(v) => set('name', v)} placeholder="Napa" />
           <Field id="med-generic" label="Generic name" value={draft.genericName} max={120} onChange={(v) => set('genericName', v)} placeholder="Paracetamol" />
           <Field id="med-strength" label="Strength" value={draft.strength} max={40} onChange={(v) => set('strength', v)} placeholder="500 mg" />
-          <div className="space-y-1.5">
-            <Label>Form</Label>
-            <Select value={draft.dosageForm} onValueChange={(value) => set('dosageForm', value as DosageForm)}>
-              <SelectTrigger>
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {(Object.keys(DOSAGE_FORM_LABELS) as DosageForm[]).map((form) => (
-                  <SelectItem key={form} value={form}>
-                    {DOSAGE_FORM_LABELS[form]}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
+          <Field id="med-form" label="Form" value={draft.dosageForm} max={60} onChange={(value) => set('dosageForm', value)} placeholder="Tablet, syrup, softgel, sachet…" />
           <Field id="med-maker" label="Manufacturer" value={draft.manufacturer} max={120} onChange={(v) => set('manufacturer', v)} />
-          <CategoryInput id="med-category" label="Category" value={draft.category} onChange={(v) => set('category', v)} api={pharmacyCategoriesApi} queryKey="pharmacy" />
+          <div className="space-y-1.5"><Label>Category</Label><Input value={dosageFormLabel(draft.dosageForm)} readOnly aria-label="Category derived from form" /><p className="text-xs text-muted-foreground">Automatically follows the medicine form.</p></div>
+          <Field id="med-container" label="Container type" value={draft.containerType} max={60} onChange={(v) => set('containerType', v)} placeholder="Blister, bottle, tube…" />
+          <Field id="med-package-size" label="Package size" value={draft.packageSize} max={80} onChange={(v) => set('packageSize', v)} placeholder="10 x 10 tablets" />
           <Field id="med-barcode" label="Barcode" value={draft.barcode} max={64} onChange={(v) => set('barcode', v)} placeholder="Optional" />
           <div className="space-y-1.5">
             <Label>Selling price (per unit)</Label>
-            <MoneyInput value={price} onChange={setPrice} ariaLabel="Selling price" />
+            <MoneyInput value={price} onChange={(value) => { setPrice(value); setPackPrice(value === null ? null : value * draft.packQuantity); }} ariaLabel="Selling price" />
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="med-pack-qty">Units in one pack</Label>
+            <Input id="med-pack-qty" inputMode="numeric" value={String(draft.packQuantity)} onChange={(event) => { const quantity = Number(event.target.value.replace(/\D/g, '').slice(0, 6) || 0); set('packQuantity', quantity); setPackPrice(price === null ? null : price * quantity); }} />
+          </div>
+          <div className="space-y-1.5">
+            <Label>Total pack price</Label>
+            <MoneyInput value={packPrice} onChange={setPackPrice} ariaLabel="Total pack price" />
+            {packPrice !== expectedPackPrice && <p className="text-xs text-destructive">Must equal unit price × units per pack.</p>}
           </div>
           <div className="space-y-1.5">
             <Label htmlFor="med-reorder">Reorder level</Label>
