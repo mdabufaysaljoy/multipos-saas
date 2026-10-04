@@ -23,6 +23,8 @@ import { PageHeader } from '@/components/PageHeader';
 import { DataTable, type Column } from '@/components/DataTable';
 import { LoadingState } from '@/components/states';
 import { ReceiptPaper } from '@/features/receipt/ReceiptPaper';
+import { ReceiptPrintBar } from '@/features/receipt/ReceiptPrintBar';
+import { useReceiptPrint } from '@/features/receipt/useReceiptPrint';
 import { useAuth } from '@/hooks/useAuth';
 import { formatMoney } from '@/lib/money';
 import { cn } from '@/lib/utils';
@@ -413,6 +415,12 @@ function ReportDialog({
   currency: string;
   onClose: () => void;
 }) {
+  const receiptHost = React.useRef<HTMLDivElement>(null);
+  const print = useReceiptPrint({
+    host: receiptHost,
+    documentId: payload ? `${payload.shift._id}:${payload.shift.status}` : null,
+    ready: Boolean(payload),
+  });
   if (!payload) return null;
   const { shift, report } = payload;
   const money = (minor: number) => formatMoney(minor, currency);
@@ -422,6 +430,7 @@ function ReportDialog({
         <DialogHeader className="print:hidden">
           <DialogTitle>{shift.status === 'closed' ? 'Z-report' : 'X-report'}</DialogTitle>
         </DialogHeader>
+        <div ref={receiptHost} className="rounded-md bg-muted/30 p-2">
         <ReceiptPaper widthMm={payload.store?.receipt?.paperWidthMm}>
           <div className="r-center r-bold">{payload.store?.name ?? 'Pharmacy'}</div>
           <div className="r-center">{shift.status === 'closed' ? 'Z-REPORT' : 'X-REPORT'}</div>
@@ -501,13 +510,15 @@ function ReportDialog({
             </div>
           ))}
         </ReceiptPaper>
+        </div>
+        <ReceiptPrintBar print={print} />
         <DialogFooter className="print:hidden">
           <Button variant="outline" onClick={onClose}>
             Close
           </Button>
-          <Button onClick={() => window.print()}>
+          <Button onClick={print.print} loading={print.direct && print.status === 'printing'}>
             <Printer />
-            Print
+            {print.direct ? 'Print directly' : 'Print'}
           </Button>
         </DialogFooter>
       </DialogContent>

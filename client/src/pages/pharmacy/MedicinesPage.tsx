@@ -354,8 +354,8 @@ function MedicineDialog({
 
         <label className="flex items-center justify-between gap-3 rounded-md border p-3 text-sm">
           <span>
-            Prescription only
-            <span className="block text-xs text-muted-foreground">A sale must record the patient and prescriber.</span>
+            Rx medicine
+            <span className="block text-xs text-muted-foreground">Prescription details can be recorded at checkout but are optional.</span>
           </span>
           <Switch checked={draft.requiresPrescription} onCheckedChange={(value) => set('requiresPrescription', value)} />
         </label>

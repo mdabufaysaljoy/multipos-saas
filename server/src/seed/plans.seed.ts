@@ -58,7 +58,7 @@ export const PLAN_SEEDS = [
     // A pharmacy catalogue commonly carries thousands of dosage/strength
     // combinations. Keep every other POS on the shared Starter ceiling.
     verticalOverrides: [
-      { vertical: 'pharmacy' as const, isAvailable: true, features: {}, limits: { maxProducts: 3_000 } },
+      { vertical: 'pharmacy' as const, isAvailable: true, features: {}, limits: { maxProducts: 5_000 } },
     ],
   },
   {
@@ -97,7 +97,7 @@ export const PLAN_SEEDS = [
       maxSuppliers: 100,
     },
     verticalOverrides: [
-      { vertical: 'pharmacy' as const, isAvailable: true, features: {}, limits: { maxProducts: 30_000 } },
+      { vertical: 'pharmacy' as const, isAvailable: true, features: {}, limits: { maxProducts: 25_000 } },
     ],
   },
   {

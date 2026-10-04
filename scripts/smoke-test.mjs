@@ -5365,7 +5365,7 @@ async function main() {
   const phPlan = ((await api('/plans?vertical=pharmacy')).data ?? []).find((p) => p.code === 'starter-store-monthly');
   const phEnterprisePlan = ((await api('/plans?vertical=pharmacy')).data ?? []).find((p) => p.code === 'brand-monthly');
   const clothingStarterPlan = ((await api('/plans?vertical=clothing')).data ?? []).find((p) => p.code === 'starter-store-monthly');
-  check('Pharmacy Starter allows 3,000 medicines while Enterprise stays unlimited', phPlan?.limits?.maxProducts === 3_000 && phEnterprisePlan?.limits?.maxProducts === -1, { starter: phPlan?.limits, enterprise: phEnterprisePlan?.limits });
+  check('Pharmacy Starter allows 5,000 medicines while Enterprise stays unlimited', phPlan?.limits?.maxProducts === 5_000 && phEnterprisePlan?.limits?.maxProducts === -1, { starter: phPlan?.limits, enterprise: phEnterprisePlan?.limits });
   check('The Pharmacy expansion does not change the Clothing Starter limit', clothingStarterPlan?.limits?.maxProducts === 300, clothingStarterPlan?.limits);
   await api(`/platform/tenants/${phHomeId}/wallet/adjust`, {
     method: 'POST',
@@ -5375,7 +5375,7 @@ async function main() {
   const phBought = await api('/subscriptions/upgrade-request', { method: 'POST', token: phToken, body: { planId: phPlan._id, paymentMethod: 'wallet', amountMinor: phPlan.priceMinor } });
   check('It buys Starter from the account wallet', phBought.status < 300, phBought.error);
   check('Its entitlement is resolved for Pharmacy', (await api('/subscriptions/current', { token: phToken })).data?.entitlement?.vertical === 'pharmacy');
-  check('The bought Pharmacy Starter entitlement carries the 3,000 medicine ceiling', (await api('/subscriptions/current', { token: phToken })).data?.entitlement?.limits?.maxProducts === 3_000);
+  check('The bought Pharmacy Starter entitlement carries the 5,000 medicine ceiling', (await api('/subscriptions/current', { token: phToken })).data?.entitlement?.limits?.maxProducts === 5_000);
   check('Pharmacy data export is blocked on Starter', (await api('/exports/datasets', { token: phToken })).status === 403);
 
   for (const path of ['/products', '/sales', '/inventory', '/restaurant/menu']) {
@@ -5402,7 +5402,7 @@ async function main() {
   const phReceive = (id, body) => phApi(`/medicines/${id}/batches`, { method: 'POST', body });
   const napaOld = await phReceive(napa.data._id, { batchNumber: 'np-old', expiryDate: phDay(10), quantity: 30, costPriceMinor: 80, supplierName: 'Beximco Depot' });
   const napaNew = await phReceive(napa.data._id, { batchNumber: 'NP-NEW', expiryDate: phDay(300), quantity: 100, costPriceMinor: 85 });
-  const zimaxBatch = await phReceive(zimax.data._id, { batchNumber: 'ZX-1', expiryDate: phDay(200), quantity: 9, costPriceMinor: 2800 });
+  const zimaxBatch = await phReceive(zimax.data._id, { batchNumber: 'ZX-1', expiryDate: phDay(200), quantity: 10, costPriceMinor: 2800 });
   check('Stock is received into batches', [napaOld, napaNew, zimaxBatch].every((r) => r.status === 201), [napaOld.error, napaNew.error, zimaxBatch.error]);
   check('Batch numbers are stored in capitals', napaOld.data?.batchNumber === 'NP-OLD');
   check('An expired batch cannot be received', (await phReceive(napa.data._id, { batchNumber: 'NP-DEAD', expiryDate: phDay(-1), quantity: 5, costPriceMinor: 80 })).status === 400);
@@ -5440,7 +5440,7 @@ async function main() {
   check('A malformed payment method key is still rejected outright', (await phSale({ items: [{ medicineId: napa.data._id, quantity: 1 }], payments: [{ method: '!!', amountMinor: 120 }] })).status === 422);
 
   const noRx = await phSale({ items: [{ medicineId: zimax.data._id, quantity: 1 }], payments: [{ method: 'cash', amountMinor: 3500 }] });
-  check('A prescription-only medicine needs a prescription', noRx.status === 400 && noRx.error?.details?.reason === 'PRESCRIPTION_REQUIRED', noRx.error);
+  check('An Rx-marked medicine can be sold without prescription details', noRx.status === 201 && noRx.data?.prescription == null, noRx.data ?? noRx.error);
   const rxBody = { patientName: 'Rahim Uddin', prescriberName: 'Dr. Karim', prescriptionNumber: 'RX-7781' };
   check('A prescription needs a real patient and prescriber', (await phSale({ items: [{ medicineId: zimax.data._id, quantity: 1 }], payments: [{ method: 'cash', amountMinor: 3500 }], prescription: { patientName: 'R', prescriberName: '' } })).status === 422);
   // Five tills without stock-out notes: the first three may take the nine units;
@@ -5484,6 +5484,14 @@ async function main() {
   const phClosed = await phApi(`/shifts/${phShift.data.shift._id}/close`, { method: 'POST', body: { countedCashMinor: 1100, note: 'Balanced' } });
   check('Pharmacy: closing freezes a balanced Z-report', phClosed.status === 200 && phClosed.data?.report?.cash?.varianceMinor === 0, phClosed.data ?? phClosed.error);
   check('A discount cannot exceed the subtotal', (await phSale({ items: [{ medicineId: napa.data._id, quantity: 1 }], payments: [{ method: 'cash', amountMinor: 0 }], discountMinor: 500 })).status === 400);
+
+  const phHeld = await phApi('/held-sales', { method: 'POST', body: { items: [{ medicineId: napa.data._id, quantity: 2 }], customer: { name: 'Held Customer', phone: '01700001122' }, note: 'Collect this evening' } });
+  check('Pharmacy: a basket can be held without creating a sale', phHeld.status === 201 && /^HOLD-/.test(phHeld.data?.holdNumber ?? ''), phHeld.error);
+  const phHeldList = (await phApi('/held-sales')).data ?? [];
+  check('Pharmacy: the held queue shows the customer name', phHeldList.some((row) => row._id === phHeld.data?._id && row.customerName === 'Held Customer'), phHeldList);
+  const phResumed = await phApi(`/held-sales/${phHeld.data?._id}/resume`, { method: 'POST', body: {} });
+  check('Pharmacy: resuming restores the basket and customer', phResumed.status === 200 && phResumed.data?.items?.[0]?.quantity === 2 && phResumed.data?.customer?.name === 'Held Customer', phResumed.data ?? phResumed.error);
+  check('Pharmacy: a held basket is claimed only once', (await phApi(`/held-sales/${phHeld.data?._id}/resume`, { method: 'POST', body: {} })).status === 404);
 
   // A cashier without returns.create can exchange: five discounted Napa are
   // worth 550, five replacements cost 600, and the extra 50 is split tender.
@@ -5551,7 +5559,7 @@ async function main() {
   check(
     'The dashboard counts completed sales and flags expiry and low stock',
     phDash.status === 200 &&
-      phDash.data?.kpis?.salesCount === 5 &&
+      phDash.data?.kpis?.salesCount === 6 &&
       phDash.data?.kpis?.prescriptionSales === 3 &&
       phDash.data?.expiringSoon?.some((b) => b.batchNumber === 'NP-OLD') &&
       phDash.data?.lowStock?.some((row) => row.name === 'Napa' && row.sellable === 135),
@@ -5581,7 +5589,7 @@ async function main() {
     phYesterday.data?.expiringSoon?.some((b) => b.batchNumber === 'NP-OLD') && phYesterday.data?.lowStock?.some((row) => row.name === 'Napa'),
   );
   check('A 30-day range is bucketed by day', (await phApi('/dashboard?preset=last30')).data?.range?.bucket === 'day');
-  check('A 30-day range includes today\u2019s sales', (await phApi('/dashboard?preset=last30')).data?.kpis?.salesCount === 5);
+  check('A 30-day range includes today\u2019s sales', (await phApi('/dashboard?preset=last30')).data?.kpis?.salesCount === 6);
   check('An unknown preset is rejected', (await phApi('/dashboard?preset=forever')).status === 422);
   check('A custom range needs both dates', (await phApi('/dashboard?preset=custom&from=2026-01-01')).status === 422);
   check('A custom range cannot end before it starts', (await phApi('/dashboard?preset=custom&from=2026-02-01&to=2026-01-01')).status === 422);
@@ -5607,10 +5615,10 @@ async function main() {
   check('Pharmacy analytics are locked on Starter', phLocked.status === 403 && phLocked.error?.code === 'ADVANCED_ANALYTICS_REQUIRED' && phLocked.data == null, phLocked.error);
   check('Another vertical cannot reach pharmacy analytics', (await api('/pharmacy/reports', { token: admin.token })).error?.code === 'VERTICAL_NOT_SUPPORTED');
   const phPro = ((await api('/plans?vertical=pharmacy')).data ?? []).find((p) => p.code === 'showroom-monthly');
-  check('Pharmacy Professional allows 30,000 medicines', phPro?.limits?.maxProducts === 30_000, phPro?.limits);
+  check('Pharmacy Professional allows 25,000 medicines', phPro?.limits?.maxProducts === 25_000, phPro?.limits);
   const phUpgrade = await api('/platform/subscriptions', { method: 'POST', token: platform2.token, body: { tenantId: phCreated.data?.workspace?.id, planId: phPro?._id, periods: 1, status: 'active' } });
   check('The Pharmacy workspace moves to Professional', phUpgrade.status < 300, phUpgrade.error);
-  check('The active Pharmacy Professional entitlement carries the 30,000 medicine ceiling', (await api('/subscriptions/current', { token: phToken })).data?.entitlement?.limits?.maxProducts === 30_000);
+  check('The active Pharmacy Professional entitlement carries the 25,000 medicine ceiling', (await api('/subscriptions/current', { token: phToken })).data?.entitlement?.limits?.maxProducts === 25_000);
   const phExports = await api('/exports/datasets', { token: phToken });
   const phExportKeys = (phExports.data?.datasets ?? []).map((dataset) => dataset.key);
   check(
@@ -5625,12 +5633,12 @@ async function main() {
   check('Professional unlocks Pharmacy analytics', phRep.status === 200, phRep.error);
   check(
     'Totals come from completed sales only, with batch cost and profit',
-    phR?.totals?.salesCount === 5 && phR.totals.netSalesMinor === 32_650 && phR.totals.discountsMinor === 100 && phR.totals.costMinor === 26_050 && phR.totals.grossProfitMinor === 6600,
+    phR?.totals?.salesCount === 6 && phR.totals.netSalesMinor === 36_150 && phR.totals.discountsMinor === 100 && phR.totals.costMinor === 28_850 && phR.totals.grossProfitMinor === 7300,
     phR?.totals,
   );
   check('Prescription sales are totalled', phR?.totals?.prescriptionSales === 3 && phR.totals.prescriptionValueMinor === 31_500, phR?.totals);
-  check('Top medicines carry profit from the batches sold', phR?.medicines?.[0]?.name === 'Zimax' && phR.medicines[0].quantity === 9 && phR.medicines[0].profitMinor === 6300, phR?.medicines);
-  check('Payments are split by method, net of cash change', JSON.stringify(phR?.payments?.map((p) => [p.method, p.amountMinor])) === JSON.stringify([['cash', 31_520], ['bkash', 1100], ['card', 30]]), phR?.payments);
+  check('Top medicines carry profit from the batches sold', phR?.medicines?.[0]?.name === 'Zimax' && phR.medicines[0].quantity === 10 && phR.medicines[0].profitMinor === 7000, phR?.medicines);
+  check('Payments are split by method, net of cash change', JSON.stringify(phR?.payments?.map((p) => [p.method, p.amountMinor])) === JSON.stringify([['cash', 35_020], ['bkash', 1100], ['card', 30]]), phR?.payments);
   check(
     'Pharmacy analytics include staff, inventory valuation and batch-level expiry detail',
     phR?.staff?.some((row) => row.sales > 0 && typeof row.grossProfitMinor === 'number') &&
@@ -5642,7 +5650,7 @@ async function main() {
   check('Write-offs are valued at batch cost', phR?.writeOffs?.units === 5 && phR.writeOffs.costMinor === 400, phR?.writeOffs);
   check('Expiry exposure buckets stock by days left', phR?.expiry?.within30?.units === 25 && phR.expiry.within30.costMinor === 2000 && phR.expiry.expired.units === 0, phR?.expiry);
   check('A medicine that sold is not a slow mover', !(phR?.slowMovers ?? []).some((row) => row.name === 'Napa'), phR?.slowMovers);
-  check('The daily trend covers the period', phR?.trend?.length === 1 && phR.trend[0].netSalesMinor === 32_650, phR?.trend);
+  check('The daily trend covers the period', phR?.trend?.length === 1 && phR.trend[0].netSalesMinor === 36_150, phR?.trend);
   check('An invalid range preset is rejected', (await phApi('/reports?preset=forever')).status === 422);
   check('A custom range needs both dates', (await phApi('/reports?preset=custom&from=2026-01-01')).status === 422);
   check('Unknown report parameters are rejected', (await phApi('/reports?preset=today&branch=all')).status === 422);
@@ -9711,17 +9719,13 @@ async function main() {
   const phOosLedger = (await api(`/pharmacy/stock-ledger?itemId=${phOos.data._id}&limit=5`, { token: phToken })).data ?? [];
   check('Pharmacy: the stock ledger carries the required note', phOosLedger[0]?.reason?.includes(phOosNote), phOosLedger[0]);
 
-  // The rule that does not bend: expired stock is never dispensed. Both the
-  // batch lookup and the update that takes the units are filtered on
-  // `expiryDate >= today`, so the override cannot reach an expired batch. An
-  // expired batch cannot be built through the API (receiving one is refused),
-  // so what is checked here is the other half of the same rule: with no
-  // unexpired batch there is nothing to dispense against.
-  // A medicine that has never been received has no batch to dispense against.
+  // A catalogue/imported medicine may have no batch record yet. With a note it
+  // uses the auditable STOCK-OUT deficit bucket rather than failing at zero.
   const phNever = await phMedicine({ name: `Nevermed ${oosStamp}`, strength: '1 mg', dosageForm: 'tablet', sellingPriceMinor: 100 });
   const phNeverSold = await phSellAs(phTill.session.token, phNever.data._id, 1, 'Physical item found, batch record missing');
-  check('Pharmacy: with no batch at all there is still nothing safe to dispense against', phNeverSold.status === 400, phNeverSold.error?.message);
-  check('Pharmacy: and the refusal explains what is actually in stock', /unexpired unit/.test(phNeverSold.error?.message ?? ''), phNeverSold.error?.message);
+  check('Pharmacy: a never-received medicine can be sold with a note', phNeverSold.status === 201, phNeverSold.error);
+  check('Pharmacy: the synthetic dispensing record is explicit and flagged', phNeverSold.data?.items?.[0]?.outOfStockOverride === true && phNeverSold.data?.items?.[0]?.allocations?.[0]?.batchNumber === 'STOCK-OUT', phNeverSold.data?.items?.[0]);
+  check('Pharmacy: its stock deficit is recorded', ((await phApi(`/medicines/${phNever.data._id}`)).data?.medicine?.stock?.sellable ?? 0) === -1);
 
 
   // --- Tenders a workspace defines itself --------------------------------------

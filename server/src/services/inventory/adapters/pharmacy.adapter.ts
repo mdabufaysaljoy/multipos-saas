@@ -14,6 +14,9 @@ export const todayUtc = () => new Date(`${new Date().toISOString().slice(0, 10)}
 
 /** A pathological catalogue cannot spin the allocator forever. */
 const MAX_ALLOCATION_STEPS = 200;
+/** Audit bucket used only when a noted stock-out sale has no real batch. */
+export const STOCK_OUT_BATCH_NUMBER = 'STOCK-OUT';
+const STOCK_OUT_EXPIRY = new Date('9999-12-31T00:00:00.000Z');
 
 /** Which batches a line was drawn from - the dispensing record the sale keeps. */
 export interface PharmacyStockDetail {
@@ -70,7 +73,15 @@ class PharmacyInventoryAdapter implements InventoryAdapter<PharmacyStockDetail> 
   async reserve(ctx: TenantContext, request: StockRequest): Promise<PharmacyReservation> {
     const today = todayUtc();
     const allocations: PharmacyStockDetail['allocations'] = [];
-    let remaining = request.quantity;
+    // A virtual STOCK-OUT batch can carry a negative balance. Real receipts
+    // first pay that deficit at medicine level, so only the NET positive stock
+    // is allocatable even if a newly received physical batch itself is positive.
+    const netRows = await MedicineBatchModel.aggregate<{ quantity: number }>([
+      { $match: { tenantId: ctx.tenantId, storeId: ctx.storeId, medicineId: request.itemId, expiryDate: { $gte: today } } },
+      { $group: { _id: null, quantity: { $sum: '$quantityOnHand' } } },
+    ]);
+    const netSellable = Math.max(0, netRows[0]?.quantity ?? 0);
+    let remaining = Math.min(request.quantity, netSellable);
 
     for (let step = 0; remaining > 0 && step < MAX_ALLOCATION_STEPS; step += 1) {
       const batch = await MedicineBatchModel.findOne({
@@ -114,8 +125,10 @@ class PharmacyInventoryAdapter implements InventoryAdapter<PharmacyStockDetail> 
     // not enough": a partial shortfall is a counting error to fix, not a thing
     // to sell through. So it applies only when nothing sellable was found.
     let outOfStockOverride = false;
-    if (remaining === request.quantity && request.allowOutOfStock) {
-      const batch = await MedicineBatchModel.findOne({
+    const normallyAllocated = allocations.reduce((sum, row) => sum + row.quantity, 0);
+    const shortage = request.quantity - normallyAllocated;
+    if (shortage === request.quantity && request.allowOutOfStock) {
+      let batch = await MedicineBatchModel.findOne({
         tenantId: ctx.tenantId,
         storeId: ctx.storeId,
         medicineId: request.itemId,
@@ -124,11 +137,33 @@ class PharmacyInventoryAdapter implements InventoryAdapter<PharmacyStockDetail> 
         .sort({ expiryDate: -1, _id: -1 })
         .lean<BatchRecord>();
 
+      if (!batch) {
+        // Imported/catalogue-only medicines have no physical batch to attach a
+        // dispensing record to. Upsert one stable audit bucket atomically so
+        // concurrent tills cannot create duplicate synthetic batches.
+        batch = await MedicineBatchModel.findOneAndUpdate(
+          { tenantId: ctx.tenantId, storeId: ctx.storeId, medicineId: request.itemId, batchNumber: STOCK_OUT_BATCH_NUMBER },
+          {
+            $setOnInsert: {
+              expiryDate: STOCK_OUT_EXPIRY,
+              quantityReceived: 0,
+              quantityOnHand: 0,
+              costPriceMinor: 0,
+              supplierName: '',
+              receivedAt: new Date(),
+              receivedBy: null,
+              receivedByNameSnapshot: 'System stock-out override',
+            },
+          },
+          { upsert: true, new: true, setDefaultsOnInsert: true },
+        ).lean<BatchRecord>();
+      }
+
       if (batch) {
         // No guard on the quantity: this is the one path that may go below zero.
         const updated = await MedicineBatchModel.findOneAndUpdate(
           { _id: batch._id, tenantId: ctx.tenantId, storeId: ctx.storeId, expiryDate: { $gte: today } },
-          { $inc: { quantityOnHand: -remaining } },
+          { $inc: { quantityOnHand: -shortage } },
           { new: true },
         ).lean<BatchRecord>();
         if (updated) {
@@ -136,7 +171,7 @@ class PharmacyInventoryAdapter implements InventoryAdapter<PharmacyStockDetail> 
             batchId: batch._id,
             batchNumber: batch.batchNumber,
             expiryDate: batch.expiryDate,
-            quantity: remaining,
+            quantity: shortage,
             costPriceMinor: batch.costPriceMinor,
             balanceAfter: updated.quantityOnHand,
           });
@@ -146,10 +181,10 @@ class PharmacyInventoryAdapter implements InventoryAdapter<PharmacyStockDetail> 
       }
     }
 
-    if (remaining > 0) {
+    if (normallyAllocated + (outOfStockOverride ? shortage : 0) < request.quantity) {
       // Put back whatever this line already took before refusing it.
       await this.releaseAllocations(ctx, allocations);
-      const available = request.quantity - remaining;
+      const available = normallyAllocated;
       throw ApiError.badRequest(`Only ${available} unexpired unit(s) of ${request.label} are in stock in this branch.`, {
         medicineId: request.itemId,
         requested: request.quantity,

@@ -7,6 +7,8 @@ import type {
   PharmacyDashboard,
   PharmacyExchange,
   PharmacyExchangeInput,
+  PharmacyHeldSaleRow,
+  PharmacyResumedSale,
   PharmacyReceipt,
   PharmacyReports,
   PharmacySale,
@@ -27,6 +29,14 @@ export interface PharmacySaleInput extends SaleCustomerFields {
   /** The scanned card, and the points the cashier chose to redeem on it. */
   loyaltyMembershipId?: string;
   redeemPoints?: number;
+  note?: string;
+}
+
+export interface PharmacyHoldInput extends SaleCustomerFields {
+  items: { medicineId: string; quantity: number }[];
+  discountMinor?: number;
+  prescription?: { patientName: string; prescriberName: string; prescriptionNumber?: string; note?: string };
+  loyaltyCardNumber?: string;
   note?: string;
 }
 
@@ -62,6 +72,10 @@ export const pharmacyApi = {
   createExchange: (id: string, body: PharmacyExchangeInput) =>
     post<PharmacyExchange>(`/pharmacy/sales/${id}/exchange`, body),
   returns: (params?: Query) => getPaginated<PosReturn>('/pharmacy/returns', params),
+  hold: (body: PharmacyHoldInput) => post<{ _id: string; holdNumber: string }>('/pharmacy/held-sales', body),
+  heldSales: () => get<PharmacyHeldSaleRow[]>('/pharmacy/held-sales'),
+  resumeHold: (id: string) => post<PharmacyResumedSale>(`/pharmacy/held-sales/${id}/resume`, {}),
+  removeHold: (id: string) => del<{ id: string; holdNumber: string }>(`/pharmacy/held-sales/${id}`),
 
   currentShift: () => get<PharmacyShiftDetail | null>('/pharmacy/shifts/current'),
   openShift: (body: { openingFloatMinor: number; note?: string }) =>

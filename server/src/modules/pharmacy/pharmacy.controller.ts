@@ -17,6 +17,7 @@ import {
 } from '../../services/catalogue/pharmacyManufacturers.service';
 import { pharmacyReportsService } from './pharmacyReports.service';
 import { pharmacyShiftsService } from './pharmacyShifts.service';
+import { pharmacyHeldSalesService } from './pharmacyHeldSales.service';
 import { streamReportPdf } from '../../services/reports/reportPrint';
 import { pharmacyReportView } from '../../services/reports/reportViews';
 import { storeCurrency } from '../../services/reports/storeCurrency';
@@ -37,6 +38,7 @@ import type {
   CloseShiftInput,
   ListShiftsInput,
   OpenShiftInput,
+  HoldPharmacySaleInput,
 } from './pharmacy.validators';
 
 type IdParams = { id: Types.ObjectId };
@@ -183,6 +185,19 @@ export const listReturns = asyncHandler(async (req: Request, res: Response) => {
   const ctx = getContext(req);
   const result = await listPosReturns(ctx, 'pharmacy', query<{ page?: number; limit?: number; search?: string }>(req));
   paginated(res, result.items, buildPageMeta(result.page, result.limit, result.total));
+});
+
+export const holdSale = asyncHandler(async (req: Request, res: Response) => {
+  created(res, await pharmacyHeldSalesService.hold(getContext(req), body<HoldPharmacySaleInput>(req)));
+});
+export const listHeldSales = asyncHandler(async (req: Request, res: Response) => {
+  ok(res, await pharmacyHeldSalesService.list(getContext(req)));
+});
+export const resumeHeldSale = asyncHandler(async (req: Request, res: Response) => {
+  ok(res, await pharmacyHeldSalesService.resume(getContext(req), params<IdParams>(req).id));
+});
+export const removeHeldSale = asyncHandler(async (req: Request, res: Response) => {
+  ok(res, await pharmacyHeldSalesService.remove(getContext(req), params<IdParams>(req).id));
 });
 
 export const medicineFilters = asyncHandler(async (req: Request, res: Response) => {

@@ -75,7 +75,7 @@ const exactPackPrice = (unitPriceMinor: number, packQuantity: number) => {
  *   - a sale takes the earliest-expiring unexpired batches first (FEFO), each
  *     through an atomic guarded decrement, and records which batches it took;
  *   - expired stock is never sold;
- *   - a sale with a prescription-only medicine must record the prescription;
+ *   - prescription details may be recorded for an Rx medicine but are optional;
  *   - every stock change is written to an append-only movement ledger.
  */
 class PharmacyService {
@@ -345,14 +345,6 @@ class PharmacyService {
       if (!Number.isSafeInteger(lineTotalMinor)) throw ApiError.badRequest('That line is too large');
       return { medicine, quantity: item.quantity, lineTotalMinor };
     });
-
-    const prescriptionOnly = priced.filter((line) => line.medicine.requiresPrescription);
-    if (prescriptionOnly.length > 0 && !input.prescription) {
-      throw ApiError.badRequest(
-        `A prescription is required for ${prescriptionOnly.map((line) => line.medicine.name).join(', ')}.`,
-        { reason: 'PRESCRIPTION_REQUIRED', medicineIds: prescriptionOnly.map((line) => line.medicine._id) },
-      );
-    }
 
     // ---- money ----------------------------------------------------------
     const subtotalMinor = priced.reduce((sum, line) => sum + line.lineTotalMinor, 0);

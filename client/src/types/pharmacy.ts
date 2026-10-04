@@ -170,6 +170,29 @@ export interface PharmacyExchange {
   replayed?: boolean;
 }
 
+export interface PharmacyHeldSaleRow {
+  _id: string;
+  holdNumber: string;
+  itemCount: number;
+  estimatedTotalMinor: number;
+  customerName: string;
+  heldBy: string;
+  heldByNameSnapshot: string;
+  createdAt: string;
+  expiresAt: string;
+}
+
+export interface PharmacyResumedSale {
+  holdNumber: string;
+  items: { medicine: Medicine; quantity: number; priceChanged: boolean }[];
+  dropped: string[];
+  discountMinor: number;
+  prescription: { patientName: string; prescriberName: string; prescriptionNumber: string; note: string } | null;
+  loyaltyCardNumber: string;
+  note: string;
+  customer: { id?: string; name: string; phone: string; email?: string } | null;
+}
+
 export interface PharmacyShiftReport {
   generatedAt: string;
   sales: { salesCount: number; itemsSold: number; grossSalesMinor: number; discountsMinor: number; netSalesMinor: number };

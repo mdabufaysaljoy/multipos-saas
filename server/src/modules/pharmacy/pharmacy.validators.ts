@@ -223,6 +223,22 @@ export const createExchangeSchema = z
   })
   .strict();
 
+export const holdPharmacySaleSchema = z.object({
+  items: z.array(saleLine).min(1, 'There is nothing to hold').max(100)
+    .refine((items) => new Set(items.map((item) => String(item.medicineId))).size === items.length, 'List each medicine once'),
+  discountMinor: amount.default(0),
+  customerId: objectId.optional(),
+  customer: posCustomerSchema.optional(),
+  prescription: z.object({
+    patientName: z.string().trim().min(2).max(120),
+    prescriberName: z.string().trim().min(2).max(120),
+    prescriptionNumber: text(60).optional().default(''),
+    note: text(300).optional().default(''),
+  }).strict().optional(),
+  loyaltyCardNumber: text(64).optional().default(''),
+  note: text(300).optional().default(''),
+}).strict();
+
 export const voidSaleSchema = z.object({ reason: z.string().trim().min(3, 'Give a reason').max(200) }).strict();
 
 export const listSalesSchema = searchSchema.extend({
@@ -248,6 +264,7 @@ export type CreateSaleInput = z.infer<typeof createSaleSchema>;
 export type ListSalesInput = z.infer<typeof listSalesSchema>;
 export type CreateReturnInput = z.infer<typeof createReturnSchema>;
 export type CreateExchangeInput = z.infer<typeof createExchangeSchema>;
+export type HoldPharmacySaleInput = z.infer<typeof holdPharmacySaleSchema>;
 export type OpenShiftInput = z.infer<typeof openShiftSchema>;
 export type CashMovementInput = z.infer<typeof cashMovementSchema>;
 export type CloseShiftInput = z.infer<typeof closeShiftSchema>;

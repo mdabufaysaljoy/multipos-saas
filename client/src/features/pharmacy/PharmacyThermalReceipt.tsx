@@ -114,7 +114,7 @@ export function PharmacyThermalReceipt({ payload }: { payload: PharmacyReceipt }
               {line.allocations.length > 0 && (
                 <tr>
                   <td className="r-sm" colSpan={2}>
-                    Batch {line.allocations.map((a) => `${a.batchNumber} (exp ${formatExpiry(a.expiryDate)})`).join(', ')}
+                    Batch {line.allocations.map((a) => a.batchNumber === 'STOCK-OUT' ? 'STOCK-OUT (batch record pending)' : `${a.batchNumber} (exp ${formatExpiry(a.expiryDate)})`).join(', ')}
                   </td>
                 </tr>
               )}

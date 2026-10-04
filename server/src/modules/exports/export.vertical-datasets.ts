@@ -430,7 +430,7 @@ const pharmacyDatasets: ExportDataset[] = [
           { key: 'sellingPriceMinor', label: 'Selling price', type: 'money' },
           { key: 'packQuantity', label: 'Pack quantity', type: 'number' },
           { key: 'packPriceMinor', label: 'Pack price', type: 'money' },
-          { key: 'requiresPrescription', label: 'Prescription required', type: 'boolean' },
+          { key: 'requiresPrescription', label: 'Rx medicine', type: 'boolean' },
           { key: 'reorderLevel', label: 'Reorder level', type: 'number' },
           { key: 'isActive', label: 'Active', type: 'boolean' },
           { key: 'createdAt', label: 'Created', type: 'date' },

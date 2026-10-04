@@ -1,7 +1,7 @@
 /**
  * Expands only Pharmacy catalogue limits:
- *   Starter      300   -> 3,000
- *   Professional 3,000 -> 30,000
+ *   Starter      300   -> 5,000
+ *   Professional 3,000 -> 25,000
  *   Enterprise remains unlimited (-1)
  *
  * The shared plan limits are deliberately untouched, so Clothing, Restaurant
@@ -17,10 +17,10 @@ import { TenantModel } from '../models/Tenant';
 import { logger } from '../utils/logger';
 
 const LIMIT_BY_CODE: Record<string, number> = {
-  'starter-store-monthly': 3_000,
-  'starter-store-annual': 3_000,
-  'showroom-monthly': 30_000,
-  'showroom-annual': 30_000,
+  'starter-store-monthly': 5_000,
+  'starter-store-annual': 5_000,
+  'showroom-monthly': 25_000,
+  'showroom-annual': 25_000,
   'brand-monthly': -1,
   'brand-annual': -1,
 };

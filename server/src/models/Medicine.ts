@@ -54,7 +54,7 @@ export interface MedicineDoc extends BaseDoc {
   packQuantity: number;
   /** Exact pack total: sellingPriceMinor × packQuantity. */
   packPriceMinor: number;
-  /** A sale containing this medicine must record a prescription. */
+  /** Marks an Rx medicine; prescription details at checkout remain optional. */
   requiresPrescription: boolean;
   /** Sellable units at or below this appear as low stock (0 = no alert). */
   reorderLevel: number;

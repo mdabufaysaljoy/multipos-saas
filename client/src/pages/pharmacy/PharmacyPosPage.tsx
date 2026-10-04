@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { CreditCard, FileText, Minus, Plus, Search, Trash2 } from 'lucide-react';
+import { ChevronLeft, ChevronRight, CreditCard, FileText, Minus, PauseCircle, Plus, Search, ShoppingCart, Trash2, X } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -17,6 +17,7 @@ import { PaymentPanel } from '@/features/payments/PaymentPanel';
 import { tenderedRows } from '@/features/payments/paymentMath';
 import { usePayments } from '@/features/payments/usePayments';
 import { PharmacyReceiptDialog } from '@/features/pharmacy/PharmacyReceiptDialog';
+import { PharmacyHeldSalesDialog } from '@/features/pharmacy/PharmacyHeldSalesDialog';
 import { LoyaltyCardDialog } from '@/features/loyalty/LoyaltyCardDialog';
 import { LoyaltyStrip } from '@/features/loyalty/LoyaltyStrip';
 import { isLoyaltyCardCode, maxRedeemablePoints, pointsForSpend } from '@/features/loyalty/loyaltyMath';
@@ -29,13 +30,15 @@ import { formatMoney } from '@/lib/money';
 import { dosageFormLabel, formatExpiry } from '@/lib/pharmacy';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/hooks/useAuth';
-import type { Medicine } from '@/types/pharmacy';
+import type { Medicine, PharmacyResumedSale } from '@/types/pharmacy';
 import type { LoyaltyLookup } from '@/types/domain';
 import { tendersFromConfig } from '@/types/domain';
 
 interface CartLine {
   medicine: Medicine;
   quantity: number;
+  /** Captured from a real stock snapshot when the line enters the cart. */
+  requiresOutOfStockNote?: boolean;
 }
 
 const EMPTY_RX = { patientName: '', prescriberName: '', prescriptionNumber: '' };
@@ -50,28 +53,58 @@ const percentToBps = (value: string): number | null => {
 /**
  * Pharmacy point of sale. Totals shown here are previews: the server prices
  * every line from the catalogue, picks the batches (earliest expiry first,
- * never expired) and refuses a prescription-only medicine without a prescription.
+ * never expired) and can optionally record prescription details for Rx medicines.
  */
 export function PharmacyPosPage() {
-  const { activeStore, can } = useAuth();
+  const { activeStore, can, session } = useAuth();
   const currency = activeStore?.currency ?? 'BDT';
   const queryClient = useQueryClient();
+  const draftKey = `pharmacy-pos-draft:${session?.tenant?.id ?? 'none'}:${activeStore?.id ?? 'none'}`;
+  const initialDraft = React.useMemo(() => {
+    try { return JSON.parse(localStorage.getItem(draftKey) ?? 'null') as { cart?: CartLine[]; discount?: number | null; discountMode?: 'amount' | 'percent'; discountPercent?: string; rx?: typeof EMPTY_RX; note?: string; customer?: SelectedCustomer | null } | null; }
+    catch { return null; }
+  }, [draftKey]);
 
   const [term, setTerm] = React.useState('');
   const search = useDebounced(term);
-  const [cart, setCart] = React.useState<CartLine[]>([]);
-  const [discount, setDiscount] = React.useState<number | null>(0);
-  const [discountMode, setDiscountMode] = React.useState<'amount' | 'percent'>('amount');
-  const [discountPercent, setDiscountPercent] = React.useState('');
-  const [rx, setRx] = React.useState(EMPTY_RX);
-  const [note, setNote] = React.useState('');
-  const [customer, setCustomer] = React.useState<SelectedCustomer | null>(null);
+  const [cart, setCart] = React.useState<CartLine[]>(initialDraft?.cart ?? []);
+  const [discount, setDiscount] = React.useState<number | null>(initialDraft?.discount ?? 0);
+  const [discountMode, setDiscountMode] = React.useState<'amount' | 'percent'>(initialDraft?.discountMode ?? 'amount');
+  const [discountPercent, setDiscountPercent] = React.useState(initialDraft?.discountPercent ?? '');
+  const [rx, setRx] = React.useState(initialDraft?.rx ?? EMPTY_RX);
+  const [note, setNote] = React.useState(initialDraft?.note ?? '');
+  const [customer, setCustomer] = React.useState<SelectedCustomer | null>(initialDraft?.customer ?? null);
   // Only a scanned CARD earns or redeems - never a customer or a phone number.
   const [loyaltyMember, setLoyaltyMember] = React.useState<LoyaltyLookup | null>(null);
   const [redeemPoints, setRedeemPoints] = React.useState<number | null>(null);
   const [cardDialogOpen, setCardDialogOpen] = React.useState(false);
   const loyaltyAccess = useLoyaltyAccess();
   const [receiptFor, setReceiptFor] = React.useState<string | null>(null);
+  const [heldOpen, setHeldOpen] = React.useState(false);
+  const [mobilePanel, setMobilePanel] = React.useState<'cart' | 'payment' | null>(null);
+  const loadedDraftKey = React.useRef(draftKey);
+  const skipDraftSave = React.useRef(false);
+
+  React.useEffect(() => {
+    if (loadedDraftKey.current === draftKey) return;
+    loadedDraftKey.current = draftKey;
+    skipDraftSave.current = true;
+    try {
+      const saved = JSON.parse(localStorage.getItem(draftKey) ?? 'null') as typeof initialDraft;
+      setCart(saved?.cart ?? []); setDiscount(saved?.discount ?? 0);
+      setDiscountMode(saved?.discountMode ?? 'amount'); setDiscountPercent(saved?.discountPercent ?? '');
+      setRx(saved?.rx ?? EMPTY_RX); setNote(saved?.note ?? ''); setCustomer(saved?.customer ?? null);
+    } catch {
+      setCart([]); setDiscount(0); setDiscountMode('amount'); setDiscountPercent('');
+      setRx(EMPTY_RX); setNote(''); setCustomer(null);
+    }
+  }, [draftKey, initialDraft]);
+
+  React.useEffect(() => {
+    if (skipDraftSave.current) { skipDraftSave.current = false; return; }
+    if (cart.length === 0) { localStorage.removeItem(draftKey); return; }
+    localStorage.setItem(draftKey, JSON.stringify({ cart, discount, discountMode, discountPercent, rx, note, customer }));
+  }, [cart, customer, discount, discountMode, discountPercent, draftKey, note, rx]);
 
   // The categories this pharmacy groups its shelves by, in the owner's order
   // and without the ones they hid.
@@ -79,12 +112,23 @@ export function PharmacyPosPage() {
   const { data: medicineFilters } = useQuery({ queryKey: ['pharmacy', 'medicine-filters'], queryFn: pharmacyApi.medicineFilters });
   const [category, setCategory] = React.useState('all');
   const [manufacturer, setManufacturer] = React.useState('all');
+  const [medicinePage, setMedicinePage] = React.useState(1);
+  const medicineListRef = React.useRef<HTMLDivElement>(null);
+
+  React.useEffect(() => {
+    setMedicinePage(1);
+  }, [search, category, manufacturer]);
 
   const { data: results, isLoading } = useQuery({
-    queryKey: ['pharmacy', 'medicines', 'pos', search, category, manufacturer],
+    queryKey: ['pharmacy', 'medicines', 'pos', search, category, manufacturer, medicinePage],
     queryFn: () =>
-      pharmacyApi.medicines({ limit: 30, activeOnly: 'true', ...(search ? { search } : {}), ...(category !== 'all' ? { category } : {}), ...(manufacturer !== 'all' ? { manufacturer } : {}) }),
+      pharmacyApi.medicines({ page: medicinePage, limit: 20, activeOnly: 'true', ...(search ? { search } : {}), ...(category !== 'all' ? { category } : {}), ...(manufacturer !== 'all' ? { manufacturer } : {}) }),
   });
+
+  const changeMedicinePage = (page: number) => {
+    setMedicinePage(page);
+    medicineListRef.current?.scrollTo({ top: 0, behavior: 'smooth' });
+  };
 
   const subtotal = cart.reduce((sum, line) => sum + line.medicine.sellingPriceMinor * line.quantity, 0);
   const discountBps = percentToBps(discountPercent || '0');
@@ -115,7 +159,10 @@ export function PharmacyPosPage() {
   const payments = usePayments(cart.length > 0 ? total : 0);
   const needsRx = cart.some((line) => line.medicine.requiresPrescription);
   const rxComplete = rx.patientName.trim().length >= 2 && rx.prescriberName.trim().length >= 2;
-  const hasOutOfStockLine = cart.some((line) => (line.medicine.stock?.sellable ?? 0) <= 0);
+  const hasOutOfStockLine = cart.some((line) =>
+    line.requiresOutOfStockNote === true ||
+    (line.requiresOutOfStockNote === undefined && line.medicine.stock !== undefined && line.medicine.stock.sellable <= 0),
+  );
   const outOfStockNoteValid = !hasOutOfStockLine || note.trim().length >= 3;
 
   React.useEffect(() => {
@@ -134,8 +181,10 @@ export function PharmacyPosPage() {
     }
     setCart(
       existing
-        ? cart.map((line) => (line.medicine._id === medicine._id ? { ...line, quantity: target } : line))
-        : [...cart, { medicine, quantity: amount }],
+        ? cart.map((line) => (line.medicine._id === medicine._id
+          ? { ...line, quantity: target, requiresOutOfStockNote: line.requiresOutOfStockNote ?? (medicine.stock !== undefined && sellable <= 0) }
+          : line))
+        : [...cart, { medicine, quantity: amount, requiresOutOfStockNote: medicine.stock !== undefined && sellable <= 0 }],
     );
   };
 
@@ -183,6 +232,43 @@ export function PharmacyPosPage() {
     setCustomer(null);
     removeCard();
     payments.reset();
+    localStorage.removeItem(draftKey);
+  };
+
+  const { data: heldSales } = useQuery({ queryKey: ['pharmacy', 'held-sales'], queryFn: pharmacyApi.heldSales, staleTime: 10_000 });
+  const hold = useMutation({
+    mutationFn: () => pharmacyApi.hold({
+      items: cart.map((line) => ({ medicineId: line.medicine._id, quantity: line.quantity })),
+      discountMinor,
+      ...saleCustomerFields(customer),
+      ...(rxComplete ? { prescription: { patientName: rx.patientName.trim(), prescriberName: rx.prescriberName.trim(), prescriptionNumber: rx.prescriptionNumber.trim() } } : {}),
+      ...(loyaltyMember ? { loyaltyCardNumber: loyaltyMember.cardNumber } : {}),
+      note: hasOutOfStockLine ? note.trim() : '',
+    }),
+    onSuccess: (result) => {
+      toast.success(`${result.holdNumber} held`, { description: customer?.name ? `Customer: ${customer.name}` : 'Open it later from Held sales.' });
+      reset(); setMobilePanel(null);
+      void queryClient.invalidateQueries({ queryKey: ['pharmacy', 'held-sales'] });
+    },
+    onError: (error) => toast.error(error instanceof ApiError ? error.message : 'Could not hold this sale'),
+  });
+
+  const restore = async (sale: PharmacyResumedSale) => {
+    setCart(sale.items.map((line) => ({
+      medicine: line.medicine,
+      quantity: line.quantity,
+      requiresOutOfStockNote: line.medicine.stock !== undefined && line.medicine.stock.sellable <= 0,
+    })));
+    setDiscountMode('amount'); setDiscount(sale.discountMinor); setDiscountPercent('');
+    setRx(sale.prescription ? { patientName: sale.prescription.patientName, prescriberName: sale.prescription.prescriberName, prescriptionNumber: sale.prescription.prescriptionNumber } : EMPTY_RX);
+    setCustomer(sale.customer); setNote(sale.note); payments.reset();
+    if (sale.loyaltyCardNumber) await attachCard(sale.loyaltyCardNumber);
+    if (sale.dropped.length) toast.warning(`${sale.dropped.length} unavailable line(s) were removed`, { description: sale.dropped.join(', ') });
+    if (sale.items.some((line) => line.priceChanged)) toast.info('Some medicine prices changed while this sale was held');
+    toast.success(`${sale.holdNumber} reopened`);
+    // Desktop already shows Cart and Payment as permanent columns. Opening the
+    // responsive drawer there would cover the medicine catalogue until reload.
+    setMobilePanel(window.matchMedia('(max-width: 1279px)').matches ? 'cart' : null);
   };
 
   const complete = useMutation({
@@ -193,18 +279,19 @@ export function PharmacyPosPage() {
         payments: tenderedRows(payments),
         discountMinor,
         ...saleCustomerFields(customer),
-        ...(needsRx
+        ...(rxComplete
           ? { prescription: { patientName: rx.patientName.trim(), prescriberName: rx.prescriberName.trim(), prescriptionNumber: rx.prescriptionNumber.trim() } }
           : {}),
         // The card is what earns and redeems; the server re-checks both.
         ...(loyaltyMember ? { loyaltyMembershipId: loyaltyMember.id, redeemPoints: redeeming } : {}),
-        note,
+        note: hasOutOfStockLine ? note.trim() : '',
       }),
     onSuccess: (sale) => {
       toast.success(`${sale.saleNumber} completed`, {
         description: sale.changeMinor > 0 ? `Change due: ${formatMoney(sale.changeMinor, currency)}` : undefined,
       });
       reset();
+      setMobilePanel(null);
       setReceiptFor(sale._id);
       void queryClient.invalidateQueries({ queryKey: ['pharmacy'] });
     },
@@ -214,14 +301,20 @@ export function PharmacyPosPage() {
     },
   });
 
-  const canComplete = cart.length > 0 && discountValid && outOfStockNoteValid && (!needsRx || rxComplete) && payments.isSettled && !complete.isPending;
+  const canComplete = cart.length > 0 && discountValid && outOfStockNoteValid && payments.isSettled && !complete.isPending;
 
   return (
-    <div className="grid h-full gap-4 p-4 lg:grid-cols-[1fr_24rem] lg:p-6">
+    <div className="grid h-full min-w-0 gap-4 bg-muted/20 p-3 pb-24 sm:p-4 sm:pb-24 xl:grid-cols-[minmax(0,1fr)_minmax(18rem,20rem)_minmax(20rem,22rem)] xl:overflow-hidden xl:p-5">
       {/* ------------------------------------------------------ search */}
-      <Card className="flex min-h-0 flex-col">
-        <CardHeader className="space-y-3 pb-2">
-          <CardTitle className="text-base">Medicines</CardTitle>
+      <Card className="flex min-h-0 min-w-0 flex-col overflow-hidden border-border/70 shadow-sm">
+        <CardHeader className="space-y-2.5 border-b bg-card px-3 py-3 sm:px-4">
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <CardTitle className="text-base">Medicines</CardTitle>
+              <p className="mt-0.5 text-xs text-muted-foreground">Search, scan, then choose a quantity</p>
+            </div>
+            <Badge variant="secondary" className="shrink-0">{results?.meta.total ?? 0} found</Badge>
+          </div>
           <div className="relative">
             <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
             <Input
@@ -240,7 +333,7 @@ export function PharmacyPosPage() {
               aria-label="Search medicines"
             />
           </div>
-          <div className="grid grid-cols-2 gap-2">
+          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
             <div className="min-w-0 space-y-1">
               <span className="text-xs font-medium text-muted-foreground">Dosage form</span>
               <Select value={category} onValueChange={setCategory}>
@@ -268,44 +361,43 @@ export function PharmacyPosPage() {
           </div>
           <LimitAlert resource="monthlySales" />
         </CardHeader>
-        <CardContent className="scrollbar-thin min-h-0 flex-1 overflow-y-auto">
+        <CardContent ref={medicineListRef} className="scrollbar-thin min-h-0 min-w-0 flex-1 overflow-y-auto bg-muted/10 p-2.5 sm:p-3">
           {isLoading ? (
             <LoadingState label="Searching…" />
           ) : (results?.items ?? []).length === 0 ? (
             <EmptyState title="No medicines found" description="Try the generic name, or add it on the Medicines page." />
           ) : (
-            <ul className="divide-y">
+            <ul className="grid grid-cols-1 gap-2">
               {(results?.items ?? []).map((medicine) => {
                 const sellable = medicine.stock?.sellable ?? 0;
                 return (
-                  <li key={medicine._id} className="py-2.5">
+                  <li key={medicine._id} className="rounded-lg border border-border/70 bg-card p-2 shadow-sm transition-all hover:border-primary/35 hover:shadow-md">
                     <button
                       type="button"
                       onClick={() => add(medicine)}
-                      className="flex w-full items-center justify-between gap-3 rounded px-1 py-1 text-left transition-colors hover:bg-muted/50"
+                      className="flex w-full min-w-0 items-start justify-between gap-2 rounded-md px-1 py-0.5 text-left outline-none transition-colors hover:bg-muted/50 focus-visible:ring-2 focus-visible:ring-ring"
                     >
                       <div className="min-w-0">
-                        <p className="font-medium">
+                        <p className="truncate text-sm font-semibold">
                           {medicine.name} <span className="text-muted-foreground">{medicine.strength}</span>{' '}
                           {medicine.requiresPrescription && <Badge variant="warning">Rx</Badge>}
                         </p>
-                        <p className="truncate text-xs text-muted-foreground">
+                        <p className="truncate text-[11px] leading-4 text-muted-foreground">
                           {[medicine.genericName, dosageFormLabel(medicine.dosageForm), medicine.manufacturer].filter(Boolean).join(' · ')}
                           {` · ${medicine.packQuantity ?? 1}/pack`}
                           {medicine.stock?.nearestExpiry ? ` · next exp ${formatExpiry(medicine.stock.nearestExpiry)}` : ''}
                         </p>
                       </div>
                       <div className="shrink-0 text-right">
-                        <p className="tabular font-semibold">{formatMoney(medicine.sellingPriceMinor, currency)}</p>
-                        <p className={cn('text-xs', sellable <= 0 ? 'text-destructive' : 'text-muted-foreground')}>
+                        <p className="tabular text-sm font-bold">{formatMoney(medicine.sellingPriceMinor, currency)}</p>
+                        <p className={cn('text-[11px]', sellable <= 0 ? 'font-medium text-destructive' : 'text-muted-foreground')}>
                           {sellable > 0 ? `${sellable} in stock` : 'Out of stock · note required'}
                         </p>
                       </div>
                     </button>
-                    <div className="mt-1 flex flex-wrap items-center gap-1 px-1" aria-label={`Quick quantities for ${medicine.name}`}>
-                      <span className="mr-1 text-[11px] text-muted-foreground">Add</span>
+                    <div className="mt-1.5 grid grid-cols-4 gap-1 px-1" aria-label={`Quick quantities for ${medicine.name}`}>
                       {QUICK_QUANTITIES.map((quantity) => (
-                        <Button key={quantity} type="button" variant="outline" size="sm" className="h-6 px-2 text-xs" disabled={sellable > 0 && (cart.find((line) => line.medicine._id === medicine._id)?.quantity ?? 0) + quantity > sellable} onClick={() => add(medicine, quantity)}>{quantity}</Button>
+                        <Button key={quantity} type="button" variant="outline" size="sm" className="h-7 px-2 text-xs hover:border-primary/50 hover:bg-primary/5" disabled={sellable > 0 && (cart.find((line) => line.medicine._id === medicine._id)?.quantity ?? 0) + quantity > sellable} onClick={() => add(medicine, quantity)}>+{quantity}</Button>
                       ))}
                     </div>
                   </li>
@@ -314,20 +406,48 @@ export function PharmacyPosPage() {
             </ul>
           )}
         </CardContent>
+        <div className="flex shrink-0 items-center justify-between gap-3 border-t bg-card px-3 py-2 sm:px-4">
+          <p className="min-w-0 truncate text-xs text-muted-foreground">
+            {results?.meta.total
+              ? `Showing ${(results.meta.page - 1) * results.meta.limit + 1}–${Math.min(results.meta.page * results.meta.limit, results.meta.total)} of ${results.meta.total}`
+              : 'No medicines'}
+          </p>
+          <div className="flex shrink-0 items-center gap-1.5">
+            <Button type="button" variant="outline" size="icon-sm" disabled={isLoading || medicinePage <= 1} onClick={() => changeMedicinePage(medicinePage - 1)} aria-label="Previous medicine page">
+              <ChevronLeft />
+            </Button>
+            <span className="min-w-16 text-center text-xs font-medium">
+              {results ? `${results.meta.page} / ${Math.max(1, results.meta.totalPages)}` : '1 / 1'}
+            </span>
+            <Button type="button" variant="outline" size="icon-sm" disabled={isLoading || medicinePage >= (results?.meta.totalPages ?? 1)} onClick={() => changeMedicinePage(medicinePage + 1)} aria-label="Next medicine page">
+              <ChevronRight />
+            </Button>
+          </div>
+        </div>
       </Card>
 
-      {/* -------------------------------------------------------- cart */}
-      <Card className="flex min-h-0 flex-col">
-        <CardHeader className="pb-2">
-          <CardTitle className="text-base">Sale</CardTitle>
-        </CardHeader>
-        <CardContent className="scrollbar-thin min-h-0 flex-1 space-y-4 overflow-y-auto pb-2">
+      {/* ------------------------------------------- cart + payment workspace */}
+      <div className={cn('min-h-0 overflow-hidden bg-background shadow-2xl xl:static xl:inset-auto xl:z-auto xl:col-span-2 xl:grid xl:h-full xl:grid-cols-[minmax(18rem,20rem)_minmax(20rem,22rem)] xl:gap-4 xl:overflow-visible xl:bg-transparent xl:shadow-none', mobilePanel ? 'fixed inset-0 z-50 flex h-[100dvh] flex-col' : 'hidden xl:grid')}>
+        <Card className={cn('min-h-24 flex-1 flex-col overflow-hidden rounded-none border-0 shadow-none xl:flex xl:h-full xl:min-h-0 xl:rounded-lg xl:border xl:shadow-sm', mobilePanel === 'payment' ? 'hidden' : 'flex')}>
+          <CardHeader className="border-b bg-muted/20 px-3 py-2.5">
+            <div className="flex items-center gap-2">
+              <CardTitle className="mr-auto flex items-center gap-2 text-base"><ShoppingCart className="h-4 w-4" /> Cart</CardTitle>
+              <Badge variant="secondary">{cart.reduce((sum, line) => sum + line.quantity, 0)} item{cart.reduce((sum, line) => sum + line.quantity, 0) === 1 ? '' : 's'}</Badge>
+              <Button type="button" variant="outline" size="sm" className="h-8 shrink-0" onClick={() => setHeldOpen(true)}><PauseCircle /> Held{heldSales?.length ? ` (${heldSales.length})` : ''}</Button>
+              <Button type="button" variant="ghost" size="icon-sm" className="shrink-0 xl:hidden" onClick={() => setMobilePanel(null)} aria-label="Close cart"><X /></Button>
+            </div>
+          </CardHeader>
+          <CardContent className="scrollbar-thin min-h-24 flex-1 space-y-3 overflow-y-auto bg-muted/10 p-3">
           {cart.length === 0 ? (
-            <p className="text-sm text-muted-foreground">Pick medicines on the left.</p>
+            <div className="flex h-full min-h-24 flex-col items-center justify-center rounded-lg border border-dashed bg-card/70 p-4 text-center">
+              <ShoppingCart className="mb-2 h-7 w-7 text-muted-foreground/60" />
+              <p className="text-sm font-medium">Your cart is empty</p>
+              <p className="text-xs text-muted-foreground">Select a medicine or scan its barcode.</p>
+            </div>
           ) : (
-            <ul className="divide-y">
+            <ul className="space-y-1.5">
               {cart.map((line) => (
-                <li key={line.medicine._id} className="flex items-center gap-2 py-2">
+                <li key={line.medicine._id} className="flex items-center gap-1.5 rounded-lg border bg-card p-2 shadow-sm">
                   <div className="min-w-0 flex-1">
                     <p className="truncate text-sm font-medium">
                       {line.medicine.name} {line.medicine.strength}
@@ -353,16 +473,29 @@ export function PharmacyPosPage() {
             <div className="space-y-2 rounded-md border border-warning/50 bg-warning/5 p-3">
               <p className="flex items-center gap-1.5 text-sm font-medium">
                 <FileText className="h-4 w-4" />
-                Prescription required
+                Prescription details <span className="font-normal text-muted-foreground">(optional)</span>
               </p>
-              <Input value={rx.patientName} maxLength={120} placeholder="Patient name" onChange={(event) => setRx({ ...rx, patientName: event.target.value })} aria-label="Patient name" />
-              <Input value={rx.prescriberName} maxLength={120} placeholder="Prescribing doctor" onChange={(event) => setRx({ ...rx, prescriberName: event.target.value })} aria-label="Prescriber" />
+              <p className="text-xs text-muted-foreground">Enter both names to save prescription details, or leave them blank to continue without one.</p>
+              <Input value={rx.patientName} maxLength={120} placeholder="Patient name (optional)" onChange={(event) => setRx({ ...rx, patientName: event.target.value })} aria-label="Patient name" />
+              <Input value={rx.prescriberName} maxLength={120} placeholder="Prescribing doctor (optional)" onChange={(event) => setRx({ ...rx, prescriberName: event.target.value })} aria-label="Prescriber" />
               <Input value={rx.prescriptionNumber} maxLength={60} placeholder="Prescription number (optional)" onChange={(event) => setRx({ ...rx, prescriptionNumber: event.target.value })} aria-label="Prescription number" />
             </div>
           )}
 
-        </CardContent>
-        <div className="shrink-0 space-y-3 border-t bg-card px-4 py-3">
+          </CardContent>
+        </Card>
+
+        <Card className={cn('min-h-0 flex-1 flex-col overflow-hidden rounded-none border-0 shadow-none xl:flex xl:h-full xl:rounded-lg xl:border xl:shadow-sm', mobilePanel === 'cart' ? 'hidden' : 'flex')}>
+          <CardHeader className="border-b bg-muted/20 px-3 py-2.5">
+            <div className="flex items-center justify-between gap-3">
+              <CardTitle className="flex items-center gap-2 text-base"><CreditCard className="h-4 w-4" /> Payment</CardTitle>
+              <div className="ml-auto flex items-center gap-2">
+                <span className="tabular text-sm font-bold">{formatMoney(total, currency)}</span>
+                <Button type="button" variant="ghost" size="icon-sm" className="shrink-0 xl:hidden" onClick={() => setMobilePanel(null)} aria-label="Close payment"><X /></Button>
+              </div>
+            </div>
+          </CardHeader>
+          <div className="scrollbar-thin min-h-0 flex-1 space-y-2 overflow-y-auto bg-card px-3 py-2.5 xl:overflow-visible">
 
           <dl className="space-y-1 text-sm">
             <div className="flex justify-between">
@@ -436,7 +569,7 @@ export function PharmacyPosPage() {
             </div>
           )}
 
-          <PaymentPanel
+            <PaymentPanel
             rows={payments.rows}
             availableMethods={availableMethods}
             totalMinor={total}
@@ -451,23 +584,40 @@ export function PharmacyPosPage() {
             onMethodChange={payments.setMethod}
             onAddRow={payments.addRow}
             onRemoveRow={payments.removeRow}
-          />
-        </div>
-        <div className="flex gap-2 border-t p-3">
-          <Button variant="outline" onClick={reset} disabled={cart.length === 0}>
-            Clear
+              compact
+            />
+          </div>
+          <div className="shrink-0 space-y-2 border-t bg-muted/20 p-3">
+            <Button size="lg" className="w-full min-w-0 whitespace-normal shadow-md" disabled={!canComplete} loading={complete.isPending} onClick={() => complete.mutate()}>
+              Complete sale · {formatMoney(total, currency)}
+            </Button>
+            <div className="grid grid-cols-2 gap-2">
+              <Button className="w-full" variant="outline" onClick={reset} disabled={cart.length === 0}>Clear</Button>
+              <Button className="w-full" variant="outline" disabled={cart.length === 0 || !discountValid} loading={hold.isPending} onClick={() => hold.mutate()}><PauseCircle /> Hold</Button>
+            </div>
+          </div>
+        </Card>
+      </div>
+
+      <div className="fixed inset-x-0 bottom-0 z-40 border-t bg-background/95 p-3 shadow-[0_-4px_16px_rgba(0,0,0,0.08)] backdrop-blur xl:hidden">
+        <div className="grid grid-cols-2 gap-2">
+          <Button variant="outline" className="h-12 min-w-0 px-3" onClick={() => setMobilePanel('cart')}>
+            <ShoppingCart />
+            <span className="truncate">Cart ({cart.reduce((sum, line) => sum + line.quantity, 0)})</span>
           </Button>
-          <Button className="flex-1" disabled={!canComplete} loading={complete.isPending} onClick={() => complete.mutate()}>
-            Complete sale · {formatMoney(total, currency)}
+          <Button className="h-12 min-w-0 px-3" onClick={() => setMobilePanel('payment')}>
+            <CreditCard />
+            <span className="truncate">Payment · {formatMoney(total, currency)}</span>
           </Button>
         </div>
-      </Card>
+      </div>
 
       {/* Opened only by a completed sale, so it prints itself - no dialog, no
           printer picker. The sale is already saved; printing cannot undo it. */}
       <PharmacyReceiptDialog saleId={receiptFor} onClose={() => setReceiptFor(null)} onNewSale={() => setReceiptFor(null)} autoPrint />
 
       <LoyaltyCardDialog open={cardDialogOpen} onOpenChange={setCardDialogOpen} onSubmit={(code) => attachCard(code)} />
+      {heldOpen && <PharmacyHeldSalesDialog currency={currency} onClose={() => setHeldOpen(false)} onResumed={(sale) => void restore(sale)} />}
     </div>
   );
 }

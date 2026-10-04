@@ -22,6 +22,7 @@ import {
   updateMedicineSchema,
   createReturnSchema,
   createExchangeSchema,
+  holdPharmacySaleSchema,
   voidSaleSchema,
   cashMovementSchema,
   closeShiftSchema,
@@ -126,6 +127,10 @@ router.get('/sales', requirePermission(PERMISSIONS.SALES_VIEW), validate({ query
 router.get('/sales/:id', requirePermission(PERMISSIONS.SALES_VIEW), validate({ params: idParam }), controller.getSale);
 router.get('/sales/:id/receipt', requirePermission(PERMISSIONS.SALES_VIEW), validate({ params: idParam }), controller.receipt);
 router.post('/sales/:id/void', requireActiveSubscription, requirePermission(PERMISSIONS.SALES_CANCEL), validate({ params: idParam, body: voidSaleSchema }), controller.voidSale);
+router.post('/held-sales', requireActiveSubscription, requirePermission(PERMISSIONS.SALES_CREATE), validate({ body: holdPharmacySaleSchema }), controller.holdSale);
+router.get('/held-sales', requirePermission(PERMISSIONS.SALES_VIEW), controller.listHeldSales);
+router.post('/held-sales/:id/resume', requireActiveSubscription, requirePermission(PERMISSIONS.SALES_CREATE), validate({ params: idParam }), controller.resumeHeldSale);
+router.delete('/held-sales/:id', requireActiveSubscription, validate({ params: idParam }), controller.removeHeldSale);
 // A return against a completed sale: partial or whole, refunded on a tender
 // the branch takes, with the goods restocked unless the till says otherwise.
 router.post(
