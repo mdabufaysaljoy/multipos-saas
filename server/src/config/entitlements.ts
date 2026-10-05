@@ -33,7 +33,7 @@ interface FeatureDefinition {
 
 interface LimitDefinition {
   label: string;
-  /** Plural noun for messages: "up to 300 products". */
+  /** Plural noun for messages such as "up to 3,000 products". */
   noun: string;
   planLimit: keyof PlanLimits;
   unit: 'count';

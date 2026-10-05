@@ -1,4 +1,5 @@
 import { SubscriptionPlanModel } from '../models/SubscriptionPlan';
+import { PRODUCT_LIMITS } from '../config/productLimits';
 import { TRIAL_LENGTH_DAYS } from '../services/subscription/trialPolicy';
 
 /**
@@ -49,17 +50,13 @@ export const PLAN_SEEDS = [
     // Starter is a single-shop plan.
     limits: {
       maxStaff: 2,
-      maxProducts: 300,
+      maxProducts: PRODUCT_LIMITS.starter,
       maxStores: 1,
       maxMonthlySales: 2_500,
       maxCustomers: 500,
       maxSuppliers: 0,
     },
-    // A pharmacy catalogue commonly carries thousands of dosage/strength
-    // combinations. Keep every other POS on the shared Starter ceiling.
-    verticalOverrides: [
-      { vertical: 'pharmacy' as const, isAvailable: true, features: {}, limits: { maxProducts: 5_000 } },
-    ],
+    verticalOverrides: [],
   },
   {
     code: 'showroom-monthly',
@@ -90,15 +87,13 @@ export const PLAN_SEEDS = [
     },
     limits: {
       maxStaff: 6,
-      maxProducts: 3_000,
+      maxProducts: PRODUCT_LIMITS.professional,
       maxStores: 2,
       maxMonthlySales: 30_000,
       maxCustomers: 10_000,
       maxSuppliers: 100,
     },
-    verticalOverrides: [
-      { vertical: 'pharmacy' as const, isAvailable: true, features: {}, limits: { maxProducts: 25_000 } },
-    ],
+    verticalOverrides: [],
   },
   {
     code: 'brand-monthly',
@@ -128,7 +123,7 @@ export const PLAN_SEEDS = [
     },
     limits: {
       maxStaff: -1,
-      maxProducts: -1,
+      maxProducts: PRODUCT_LIMITS.enterprise,
       maxStores: 10,
       maxMonthlySales: -1,
       maxCustomers: -1,

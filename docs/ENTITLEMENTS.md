@@ -35,8 +35,10 @@ workspace has uploaded images resized, compressed and converted to WebP before s
 
 ## Limit entitlements
 
-`products`, `staff`, `branches`, `customers`, `monthlySales`, `suppliers` (Clothing, Super Shop and Pharmacy: Starter 0,
-Professional 100, Enterprise unlimited) — see `ENTITLEMENT_LIMITS`.
+`products`, `staff`, `branches`, `customers`, `monthlySales`, `suppliers` — see `ENTITLEMENT_LIMITS`.
+The product ceiling is universal across Clothing, Restaurant, Super Shop, Pharmacy and future POS
+verticals: Starter 3,000, Professional 30,000 and Enterprise unlimited. Supplier limits remain
+vertical-scoped and are unchanged.
 `-1` means unlimited and is reported as `{ limit: null, unlimited: true }`.
 
 ## Missing keys in an old snapshot

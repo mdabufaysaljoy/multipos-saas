@@ -21,8 +21,7 @@
  */
 import { spawn } from 'node:child_process';
 import { mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
 import mongoose from 'mongoose';
@@ -93,7 +92,13 @@ if (unsafeReasons.length > 0) {
 const PORT = process.env.TEST_PORT ?? '4101';
 const API_BASE = `http://localhost:${PORT}/api`;
 const KEEP = process.env.KEEP_TEST_DB === 'true';
-const testUploadDir = mkdtempSync(join(tmpdir(), 'multipos-saas-test-uploads-'));
+// STORAGE_LOCAL_DIR is both a filesystem setting and part of the Express URL
+// mount. An absolute Windows path contains `:` and `\\`, which path-to-regexp
+// correctly refuses as a route. Keep the isolated directory under the checkout
+// so the server receives a safe relative name; cleanup still uses its absolute
+// path. The directory is removed in `teardown`, including failed test runs.
+const testUploadDir = mkdtempSync(join(ROOT, '.multipos-saas-test-uploads-'));
+const testUploadSetting = basename(testUploadDir);
 
 // A local stand-in for the bKash API, so the real adapter and the full
 // checkout -> callback -> activation path run on every test run with no network
@@ -105,7 +110,7 @@ const childEnv = {
   MONGODB_URI: testUri,
   PORT,
   NODE_ENV: 'test',
-  STORAGE_LOCAL_DIR: testUploadDir,
+  STORAGE_LOCAL_DIR: testUploadSetting,
   SMS_MOCK_ENABLED: 'true',
   BKASH_APP_KEY: mockBkash.credentials.appKey,
   BKASH_APP_SECRET: mockBkash.credentials.appSecret,

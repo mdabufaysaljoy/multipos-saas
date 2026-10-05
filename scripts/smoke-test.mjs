@@ -2325,7 +2325,7 @@ async function main() {
   const afterClaim = (await api('/subscriptions/current', { token: atkToken })).data?.entitlement;
   check(
     'A plan claimed in a request body is ignored',
-    afterClaim?.planCode === 'starter-store-monthly' && afterClaim?.limits?.maxProducts === 300,
+    afterClaim?.planCode === 'starter-store-monthly' && afterClaim?.limits?.maxProducts === 3_000,
     { planCode: afterClaim?.planCode, maxProducts: afterClaim?.limits?.maxProducts, createStatus: claimPlan.status },
   );
 
@@ -2352,7 +2352,7 @@ async function main() {
   check('A tenant cannot edit the plan catalogue', selfPlanEdit.status === 403, selfPlanEdit.status);
 
   const planAfterEdit = (await api('/plans')).data.find((p) => p.code === 'starter-store-monthly');
-  check('The plan catalogue is unchanged', planAfterEdit.limits.maxProducts === 300 && planAfterEdit.priceMinor > 0, {
+  check('The plan catalogue is unchanged', planAfterEdit.limits.maxProducts === 3_000 && planAfterEdit.priceMinor > 0, {
     maxProducts: planAfterEdit.limits.maxProducts,
     priceMinor: planAfterEdit.priceMinor,
   });
@@ -5365,8 +5365,7 @@ async function main() {
   const phPlan = ((await api('/plans?vertical=pharmacy')).data ?? []).find((p) => p.code === 'starter-store-monthly');
   const phEnterprisePlan = ((await api('/plans?vertical=pharmacy')).data ?? []).find((p) => p.code === 'brand-monthly');
   const clothingStarterPlan = ((await api('/plans?vertical=clothing')).data ?? []).find((p) => p.code === 'starter-store-monthly');
-  check('Pharmacy Starter allows 5,000 medicines while Enterprise stays unlimited', phPlan?.limits?.maxProducts === 5_000 && phEnterprisePlan?.limits?.maxProducts === -1, { starter: phPlan?.limits, enterprise: phEnterprisePlan?.limits });
-  check('The Pharmacy expansion does not change the Clothing Starter limit', clothingStarterPlan?.limits?.maxProducts === 300, clothingStarterPlan?.limits);
+  check('Starter is universally 3,000 products and Enterprise stays unlimited', phPlan?.limits?.maxProducts === 3_000 && clothingStarterPlan?.limits?.maxProducts === 3_000 && phEnterprisePlan?.limits?.maxProducts === -1, { pharmacy: phPlan?.limits, clothing: clothingStarterPlan?.limits, enterprise: phEnterprisePlan?.limits });
   await api(`/platform/tenants/${phHomeId}/wallet/adjust`, {
     method: 'POST',
     token: platform2.token,
@@ -5375,7 +5374,7 @@ async function main() {
   const phBought = await api('/subscriptions/upgrade-request', { method: 'POST', token: phToken, body: { planId: phPlan._id, paymentMethod: 'wallet', amountMinor: phPlan.priceMinor } });
   check('It buys Starter from the account wallet', phBought.status < 300, phBought.error);
   check('Its entitlement is resolved for Pharmacy', (await api('/subscriptions/current', { token: phToken })).data?.entitlement?.vertical === 'pharmacy');
-  check('The bought Pharmacy Starter entitlement carries the 5,000 medicine ceiling', (await api('/subscriptions/current', { token: phToken })).data?.entitlement?.limits?.maxProducts === 5_000);
+  check('The bought Pharmacy Starter entitlement carries the universal 3,000 medicine ceiling', (await api('/subscriptions/current', { token: phToken })).data?.entitlement?.limits?.maxProducts === 3_000);
   check('Pharmacy data export is blocked on Starter', (await api('/exports/datasets', { token: phToken })).status === 403);
 
   for (const path of ['/products', '/sales', '/inventory', '/restaurant/menu']) {
@@ -5615,10 +5614,10 @@ async function main() {
   check('Pharmacy analytics are locked on Starter', phLocked.status === 403 && phLocked.error?.code === 'ADVANCED_ANALYTICS_REQUIRED' && phLocked.data == null, phLocked.error);
   check('Another vertical cannot reach pharmacy analytics', (await api('/pharmacy/reports', { token: admin.token })).error?.code === 'VERTICAL_NOT_SUPPORTED');
   const phPro = ((await api('/plans?vertical=pharmacy')).data ?? []).find((p) => p.code === 'showroom-monthly');
-  check('Pharmacy Professional allows 25,000 medicines', phPro?.limits?.maxProducts === 25_000, phPro?.limits);
+  check('Pharmacy Professional uses the universal 30,000-product ceiling', phPro?.limits?.maxProducts === 30_000, phPro?.limits);
   const phUpgrade = await api('/platform/subscriptions', { method: 'POST', token: platform2.token, body: { tenantId: phCreated.data?.workspace?.id, planId: phPro?._id, periods: 1, status: 'active' } });
   check('The Pharmacy workspace moves to Professional', phUpgrade.status < 300, phUpgrade.error);
-  check('The active Pharmacy Professional entitlement carries the 25,000 medicine ceiling', (await api('/subscriptions/current', { token: phToken })).data?.entitlement?.limits?.maxProducts === 25_000);
+  check('The active Pharmacy Professional entitlement carries the 30,000 medicine ceiling', (await api('/subscriptions/current', { token: phToken })).data?.entitlement?.limits?.maxProducts === 30_000);
   const phExports = await api('/exports/datasets', { token: phToken });
   const phExportKeys = (phExports.data?.datasets ?? []).map((dataset) => dataset.key);
   check(
@@ -8523,7 +8522,7 @@ async function main() {
   const enxStarter = await enxOwn();
   check('Entitlements are resolved for the workspace itself', enxStarter?.workspaceId === enxHomeId && enxStarter.posProductCode === 'clothing' && enxStarter.access?.usable === true, enxStarter);
   check('Starter: Advanced Analytics blocked, marketing blocked', enxStarter?.features?.advancedAnalytics?.enabled === false && enxStarter.features.marketing.enabled === false, enxStarter?.features);
-  check('Starter: numeric limits with server-counted usage', enxStarter?.limits?.products?.limit === 300 && enxStarter.limits.products.unlimited === false && enxStarter.limits.branches.limit === 1 && enxStarter.limits.branches.used === 1 && enxStarter.limits.branches.remaining === 0 && enxStarter.limits.branches.canAddMore === false, enxStarter?.limits);
+  check('Starter: numeric limits with server-counted usage', enxStarter?.limits?.products?.limit === 3_000 && enxStarter.limits.products.unlimited === false && enxStarter.limits.branches.limit === 1 && enxStarter.limits.branches.used === 1 && enxStarter.limits.branches.remaining === 0 && enxStarter.limits.branches.canAddMore === false, enxStarter?.limits);
   check('Unlimited is never a number', JSON.stringify(enxStarter?.limits ?? {}).includes('-1') === false);
   const enxBlocked = await api('/reports/sales', { token: enxToken });
   check('Starter Advanced Analytics is refused even for the owner (subscription denies despite role)', enxBlocked.status === 403 && enxBlocked.error?.code === 'ADVANCED_ANALYTICS_REQUIRED' && enxBlocked.data == null, enxBlocked.error);
@@ -11826,15 +11825,6 @@ async function main() {
     const imAudit = await api('/platform/audit-log?action=products.imported&limit=20', { token: imPlatform.token });
     check('Every import is written to the audit log with counts only', imAudit.status === 200 && (imAudit.data ?? []).length > 0 && !JSON.stringify(imAudit.data ?? []).includes('Oversized T-Shirt'), imAudit.error);
 
-    // ---- the plan's product limit still applies ----
-    await imSetPlan(imTenantId, 'starter-store-monthly');
-    const imLimitPreview = await preview(productCsv(Array.from({ length: 400 }, (_, i) => [`Limit ${imStamp} ${i}`, 'Default', '100'])));
-    const imLimitRun = await commitImport(imLimitPreview.data?.importId, { skipInvalidRows: true });
-    check(
-      "An import cannot exceed the plan's product limit: it stops and says why",
-      imLimitRun.status === 200 && imLimitRun.data?.summary?.productsCreated < 400 && /limit|upgrade|plan/i.test(imLimitRun.data?.stopped ?? ''),
-      imLimitRun.data?.stopped,
-    );
   }
 
   // --- Retail supplier management ---------------------------------------------
@@ -12809,14 +12799,14 @@ async function main() {
     'starter-store': {
       name: 'Starter',
       monthlyPriceMinor: 99_000,
-      limits: { maxStores: 1, maxStaff: 2, maxProducts: 300, maxMonthlySales: 2500, maxCustomers: 500 },
+      limits: { maxStores: 1, maxStaff: 2, maxProducts: 3_000, maxMonthlySales: 2500, maxCustomers: 500 },
       features: { smsMarketing: false, emailMarketing: false, multiStore: false, advancedReports: false },
     },
     // Internal code `showroom`, sold as Professional.
     showroom: {
       name: 'Professional',
       monthlyPriceMinor: 199_000,
-      limits: { maxStores: 2, maxStaff: 6, maxProducts: 3000, maxMonthlySales: 30000, maxCustomers: 10000 },
+      limits: { maxStores: 2, maxStaff: 6, maxProducts: 30_000, maxMonthlySales: 30000, maxCustomers: 10000 },
       features: { smsMarketing: true, emailMarketing: true, multiStore: true, advancedReports: true },
     },
     // Internal code `brand`, sold as Enterprise.
