@@ -268,7 +268,7 @@ export function RestaurantPosPage() {
             New takeaway
           </Button>
 
-          <div className="grid grid-cols-3 gap-2 lg:grid-cols-2">
+          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2 lg:grid-cols-2">
             {(tables ?? [])
               .filter((table) => table.isActive)
               .map((table) => {
@@ -336,7 +336,7 @@ export function RestaurantPosPage() {
           {!menuLoading && visibleMenu.length === 0 && <EmptyState title="Nothing to show" description="Add dishes on the Menu page." />}
           {/* Two columns at every width: fewer, bigger targets for a till
               that is usually touched rather than clicked. */}
-          <div className="grid grid-cols-2 gap-2">
+          <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-2">
             {visibleMenu.map((item) => (
               <button
                 key={item._id}
@@ -769,19 +769,22 @@ function BillingPanel({
       </div>
 
       {/* Pinned: the cashier never scrolls to find Complete sale. */}
-      <div className="flex shrink-0 gap-2 border-t p-2.5 pb-[max(0.625rem,env(safe-area-inset-bottom))] lg:pb-2.5">
-        {canCancel && (
-          <Button variant="outline" size="lg" onClick={onCancel} aria-label="Cancel order">
-            <Trash2 />
-          </Button>
-        )}
-        <Button variant="outline" size="lg" onClick={onPrintBill} aria-label="Print bill">
-          <Printer />
-        </Button>
-        <Button className="flex-1" size="lg" disabled={!valid} loading={pay.isPending} onClick={completeSale}>
+      <div className="flex flex-col shrink-0 gap-2 border-t p-2.5 pb-[max(0.625rem,env(safe-area-inset-bottom))] lg:pb-2.5">
+         <Button  size="lg" disabled={!valid} loading={pay.isPending} onClick={completeSale}>
           <CreditCard />
           Complete sale
         </Button>
+        <div className="flex gap-2">
+          {canCancel && (
+          <Button variant="outline" size="lg" onClick={onCancel} aria-label="Cancel order" className='flex-1'>
+            <Trash2 />
+          </Button>
+        )}
+        <Button variant="outline" size="lg" onClick={onPrintBill} aria-label="Print bill" className='flex-1'>
+          <Printer />
+        </Button>
+        </div>
+       
       </div>
 
       <LoyaltyCardDialog open={cardDialogOpen} onOpenChange={setCardDialogOpen} onSubmit={(code) => attachCard(code)} />

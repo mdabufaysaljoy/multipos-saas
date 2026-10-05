@@ -31,7 +31,7 @@ export function PharmacyDashboardPage() {
     {isLoading && <LoadingState label="Loading your numbers…" />}
     {isError && <EmptyState title="Could not load the dashboard" description="Please try again." />}
     {data && <>
-      <div className="grid grid-cols-2 gap-3 xl:grid-cols-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 xl:grid-cols-4">
         <DashboardKpi icon={<Banknote className="h-4 w-4" />} label="Net sales" value={money(data.kpis.netSalesMinor)} hint={`${data.kpis.salesCount} sales · ${data.kpis.refundCount} refunds`} now={data.kpis.netSalesMinor} before={data.previous.totalMinor} />
         <DashboardKpi icon={<TrendingUp className="h-4 w-4" />} label="Gross profit" value={money(data.kpis.grossProfitMinor)} hint={`Cost ${money(data.kpis.costMinor)}`} tone={data.kpis.grossProfitMinor < 0 ? 'danger' : undefined} />
         <DashboardKpi icon={<Wallet className="h-4 w-4" />} label="Refunds" value={money(data.kpis.refundedMinor)} hint={`${data.kpis.refundCount} return(s)`} tone={data.kpis.refundedMinor > 0 ? 'danger' : undefined} />

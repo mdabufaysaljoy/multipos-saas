@@ -129,7 +129,7 @@ export function PharmacyShiftsPage() {
           <CardContent>
             {isLoading && <LoadingState label="Checking the drawer…" />}
             {!isLoading && !current && (
-              <div className="flex items-center justify-between gap-3">
+              <div className="flex flex-col sm:flex-row items-center justify-between gap-3">
                 <p className="text-sm text-muted-foreground">Count the opening float before the first sale.</p>
                 <Button onClick={() => setOpening(true)}>
                   <Unlock />

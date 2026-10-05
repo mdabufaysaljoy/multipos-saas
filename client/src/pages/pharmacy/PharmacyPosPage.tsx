@@ -367,15 +367,15 @@ export function PharmacyPosPage() {
           ) : (results?.items ?? []).length === 0 ? (
             <EmptyState title="No medicines found" description="Try the generic name, or add it on the Medicines page." />
           ) : (
-            <ul className="grid grid-cols-1 gap-2">
+            <ul className="grid grid-cols-1 md:grid-cols-2  2xl:grid-cols-3  gap-2">
               {(results?.items ?? []).map((medicine) => {
                 const sellable = medicine.stock?.sellable ?? 0;
                 return (
-                  <li key={medicine._id} className="rounded-lg border border-border/70 bg-card p-2 shadow-sm transition-all hover:border-primary/35 hover:shadow-md">
+                  <li key={medicine._id} className="rounded-lg border border-border/70 bg-card p-2 shadow-sm transition-all hover:border-primary/35 hover:shadow-md flex">
                     <button
                       type="button"
                       onClick={() => add(medicine)}
-                      className="flex w-full min-w-0 items-start justify-between gap-2 rounded-md px-1 py-0.5 text-left outline-none transition-colors hover:bg-muted/50 focus-visible:ring-2 focus-visible:ring-ring"
+                      className="flex flex-col w-full min-w-0 items-start justify-between gap-2 rounded-md px-1 py-0.5 text-left outline-none transition-colors hover:bg-muted/50 focus-visible:ring-2 focus-visible:ring-ring"
                     >
                       <div className="min-w-0">
                         <p className="truncate text-sm font-semibold">
@@ -383,19 +383,23 @@ export function PharmacyPosPage() {
                           {medicine.requiresPrescription && <Badge variant="warning">Rx</Badge>}
                         </p>
                         <p className="truncate text-[11px] leading-4 text-muted-foreground">
-                          {[medicine.genericName, dosageFormLabel(medicine.dosageForm), medicine.manufacturer].filter(Boolean).join(' · ')}
-                          {` · ${medicine.packQuantity ?? 1}/pack`}
+                          {medicine.genericName} <br />
+                          {dosageFormLabel(medicine.dosageForm)} <br />
+                          {medicine.manufacturer} 
+                          <br />
+                          {`${medicine.packQuantity ?? 1}/pack`}
+                        <br />
                           {medicine.stock?.nearestExpiry ? ` · next exp ${formatExpiry(medicine.stock.nearestExpiry)}` : ''}
                         </p>
                       </div>
                       <div className="shrink-0 text-right">
-                        <p className="tabular text-sm font-bold">{formatMoney(medicine.sellingPriceMinor, currency)}</p>
+                        <p className="tabular text-sm font-bold">Price: {formatMoney(medicine.sellingPriceMinor, currency)}</p>
                         <p className={cn('text-[11px]', sellable <= 0 ? 'font-medium text-destructive' : 'text-muted-foreground')}>
                           {sellable > 0 ? `${sellable} in stock` : 'Out of stock · note required'}
                         </p>
                       </div>
                     </button>
-                    <div className="mt-1.5 grid grid-cols-4 gap-1 px-1" aria-label={`Quick quantities for ${medicine.name}`}>
+                    <div className="mt-1.5 grid grid-cols-1 gap-1 px-1" aria-label={`Quick quantities for ${medicine.name}`}>
                       {QUICK_QUANTITIES.map((quantity) => (
                         <Button key={quantity} type="button" variant="outline" size="sm" className="h-7 px-2 text-xs hover:border-primary/50 hover:bg-primary/5" disabled={sellable > 0 && (cart.find((line) => line.medicine._id === medicine._id)?.quantity ?? 0) + quantity > sellable} onClick={() => add(medicine, quantity)}>+{quantity}</Button>
                       ))}

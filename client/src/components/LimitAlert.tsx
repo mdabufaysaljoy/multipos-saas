@@ -26,7 +26,7 @@ export function LimitAlert({ resource, className }: { resource: string; classNam
     <div
       role="status"
       className={cn(
-        'flex flex-wrap items-center gap-3 rounded-lg border p-3 text-sm',
+        'flex flex-col sm:flex-row flex-wrap items-center gap-3 rounded-lg border p-3 text-sm',
         blocked ? 'border-destructive/30 bg-destructive/5' : 'border-warning/30 bg-warning/5',
         className,
       )}

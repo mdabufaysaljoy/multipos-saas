@@ -82,7 +82,7 @@ export function MarketingPage() {
         </CardContent>
       </Card>
 
-      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 lg:grid-cols-4">
         <Stat icon={<Wallet className="h-4 w-4" />} label="Marketing budget (wallet)" value={formatMoney(wallet?.balanceMinor ?? 0, currency)} />
         <Stat icon={<Send className="h-4 w-4" />} label="Messages sent" value={String(status.usage.sent)} />
         <Stat

@@ -575,7 +575,7 @@ export function SupershopPosPage() {
                     <button
                       type="button"
                       onClick={() => add(product)}
-                      className="flex w-full items-center justify-between gap-3 px-1 py-2.5 text-left hover:bg-muted/50"
+                      className="flex flex-col sm:flex-row w-full items-start justify-between gap-3 px-1 py-2.5 text-left hover:bg-muted/50"
                     >
                       <div className="min-w-0">
                         <p className="font-medium">
@@ -585,7 +585,7 @@ export function SupershopPosPage() {
                           {[product.brand, product.category, product.barcode].filter(Boolean).join(' · ')}
                         </p>
                       </div>
-                      <div className="shrink-0 text-right">
+                      <div className="shrink-0 text-left">
                         <p className="tabular font-semibold">
                           {formatMoney(product.priceMinor, currency)}
                           {product.unitType === 'weight' ? '/kg' : ''}
@@ -918,20 +918,8 @@ export function SupershopPosPage() {
             />
           </div>
         </CardContent>
-        <div className="flex shrink-0 gap-2 border-t p-2.5 pb-[max(0.625rem,env(safe-area-inset-bottom))] lg:pb-2.5">
-          <Button variant="outline" onClick={reset} disabled={cart.length === 0}>
-            Clear
-          </Button>
-          <Button
-            variant="outline"
-            disabled={cart.length === 0 || !discountIsValid || hold.isPending}
-            loading={hold.isPending}
-            onClick={() => hold.mutate()}
-          >
-            <PauseCircle />
-            Hold
-          </Button>
-          <Button
+        <div className="flex flex-col shrink-0 gap-2 border-t p-2.5 pb-[max(0.625rem,env(safe-area-inset-bottom))] lg:pb-2.5">
+         <Button
             className="flex-1"
             disabled={!canComplete}
             loading={complete.isPending}
@@ -939,6 +927,22 @@ export function SupershopPosPage() {
           >
             Complete sale · {formatMoney(total, currency)}
           </Button>
+         <div className='flex gap-2 w-full'>
+           <Button variant="outline" onClick={reset} disabled={cart.length === 0} className='flex-1'>
+            Clear
+          </Button>
+          <Button
+            variant="outline"
+            disabled={cart.length === 0 || !discountIsValid || hold.isPending}
+            loading={hold.isPending}
+            onClick={() => hold.mutate()}
+            className='flex-1'
+          >
+            <PauseCircle />
+            Hold
+          </Button>
+         </div>
+         
         </div>
       </Card>
 
