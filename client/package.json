@@ -31,7 +31,7 @@
     "html-to-image": "^1.11.13",
     "isomorphic-dompurify": "^4.4.0",
     "jsbarcode": "^3.12.3",
-    "lucide-react": "^0.469.0",
+    "lucide-react": "^1.50.0",
     "qrcode": "^1.5.4",
     "qz-tray": "^2.3.0",
     "react": "^19.3.0",
