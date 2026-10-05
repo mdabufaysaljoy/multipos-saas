@@ -17,6 +17,7 @@ const matches = (pathname: string, prefix: string) => pathname === prefix || pat
 
 export function isPathAllowedForVertical(pathname: string, vertical: string | null | undefined): boolean {
   const current = vertical ?? 'clothing';
+  if (matches(pathname, '/pos-shifts')) return current === 'clothing' || current === 'supershop';
   return Object.entries(VERTICAL_ONLY_PATHS).every(
     ([owner, prefixes]) => owner === current || !prefixes.some((prefix) => matches(pathname, prefix)),
   );

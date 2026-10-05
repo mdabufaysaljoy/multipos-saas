@@ -31,6 +31,7 @@ import accountRoutes from '../modules/account/account.routes';
 import restaurantRoutes from '../modules/restaurant/restaurant.routes';
 import pharmacyRoutes from '../modules/pharmacy/pharmacy.routes';
 import supershopRoutes from '../modules/supershop/supershop.routes';
+import posShiftsRoutes from '../modules/posShifts/posShifts.routes';
 
 const router = Router();
 
@@ -85,6 +86,7 @@ router.use('/restaurant', restaurantRoutes);
 router.use('/pharmacy', pharmacyRoutes);
 // Supershop POS vertical (guarded to Supershop workspaces inside the router)
 router.use('/supershop', supershopRoutes);
+router.use('/pos-shifts', posShiftsRoutes);
 
 // Billing
 router.use('/plans', planRoutes);

@@ -2,6 +2,7 @@ import { Types } from 'mongoose';
 import dayjs from 'dayjs';
 import { PERMISSIONS } from '../../config/permissions';
 import { ShopProductModel, type ShopProductDoc, type ShopUnitType } from '../../models/ShopProduct';
+import { PosShiftModel } from '../../models/PosShift';
 import { ShopSaleModel } from '../../models/ShopSale';
 import { ShopStockModel, type ShopStockDoc } from '../../models/ShopStock';
 import { ShopStockMovementModel } from '../../models/ShopStockMovement';
@@ -588,6 +589,12 @@ class SupershopService {
       const seq = await nextSequence(ctx.tenantId, ctx.storeId, 'supershop-sale');
       const saleNumber = formatDocumentNumber(store.invoicePrefix || 'SS-', seq);
       const soldAt = new Date();
+      const openShift = await PosShiftModel.findOne({
+        tenantId: ctx.tenantId,
+        storeId: ctx.storeId,
+        vertical: 'supershop',
+        status: 'open',
+      }).select('_id').lean();
       const items = priced.map((line) => {
         const stockTaken = taken.find((entry) => entry.itemId.equals(line.product._id))!;
         return {
@@ -659,6 +666,7 @@ class SupershopService {
         soldAt,
         cashierId: ctx.userId,
         cashierNameSnapshot: ctx.userName,
+        shiftId: openShift?._id ?? null,
       });
       saved = true;
 

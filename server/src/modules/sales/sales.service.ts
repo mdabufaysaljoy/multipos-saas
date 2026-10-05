@@ -3,6 +3,7 @@ import dayjs from 'dayjs';
 import { INVENTORY_TX_TYPES, SALE_STATUS } from '../../config/constants';
 import { PERMISSIONS } from '../../config/permissions';
 import { ProductModel } from '../../models/Product';
+import { PosShiftModel } from '../../models/PosShift';
 import { ProductVariantModel } from '../../models/ProductVariant';
 import { ReturnModel } from '../../models/Return';
 import { SaleModel, type SaleExchange, type SaleItemDoc } from '../../models/Sale';
@@ -163,6 +164,12 @@ class SaleService {
       const seq = await nextSequence(ctx.tenantId, ctx.storeId, 'sale');
       const saleNumber = formatDocumentNumber(store.invoicePrefix, seq);
       const soldAt = new Date();
+      const openShift = await PosShiftModel.findOne({
+        tenantId: ctx.tenantId,
+        storeId: ctx.storeId,
+        vertical: 'clothing',
+        status: 'open',
+      }).select('_id').lean();
       const qualifyingMinor = totals.subtotalMinor - totals.discountMinor - loyaltyDiscountMinor;
 
       saleDoc = await SaleModel.create({
@@ -220,6 +227,7 @@ class SaleService {
         status: SALE_STATUS.COMPLETED,
         note: input.note,
         soldAt,
+        shiftId: openShift?._id ?? null,
       });
       const sale = saleDoc;
 

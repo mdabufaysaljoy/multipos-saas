@@ -84,6 +84,7 @@ export interface SaleDoc extends BaseDoc {
   loyalty: SaleLoyalty | null;
   /** Client-supplied request key: a retried checkout returns the first sale instead of creating another. */
   idempotencyKey: string | null;
+  shiftId: Types.ObjectId | null;
 }
 
 export interface SaleLoyalty {
@@ -242,6 +243,7 @@ const saleSchema = new Schema<SaleDoc>(
       default: null,
     },
     idempotencyKey: { type: String, default: null, maxlength: 100 },
+    shiftId: { type: Schema.Types.ObjectId, ref: 'PosShift', default: null },
   },
   { timestamps: true },
 );
@@ -259,5 +261,6 @@ saleSchema.index({ tenantId: 1, 'customerSnapshot.phone': 1 });
 // indexes above all lead with storeId, so none of them can serve a count
 // across every branch.
 saleSchema.index({ tenantId: 1, soldAt: -1, status: 1 });
+saleSchema.index({ tenantId: 1, storeId: 1, shiftId: 1, status: 1 });
 
 export const SaleModel = model<SaleDoc>('Sale', saleSchema);

@@ -101,6 +101,7 @@ const NAV_SECTIONS: { heading: string; items: NavItem[] }[] = [
     items: [
       { to: '/pos', label: 'Point of sale', icon: ShoppingCart, anyOf: ['sales.create'] },
       { to: '/sales', label: 'Sales', icon: Receipt, anyOf: ['sales.view'], verticals: ['clothing'] },
+      { to: '/pos-shifts', label: 'Shifts', icon: Calculator, anyOf: ['sales.create', 'reports.view'], verticals: ['clothing'] },
       { to: '/returns', label: 'Returns', icon: RotateCcw, anyOf: ['returns.view'], verticals: ['clothing'] },
       { to: '/orders', label: 'Orders', icon: Receipt, anyOf: ['sales.view'], verticals: ['restaurant'] },
       { to: '/shifts', label: 'Shifts', icon: Calculator, anyOf: ['sales.create', 'reports.view'], verticals: ['restaurant'] },
@@ -108,6 +109,7 @@ const NAV_SECTIONS: { heading: string; items: NavItem[] }[] = [
       { to: '/pharmacy-returns', label: 'Returns', icon: RotateCcw, anyOf: ['returns.view'], verticals: ['pharmacy'] },
       { to: '/pharmacy-shifts', label: 'Shifts', icon: Calculator, anyOf: ['sales.create', 'reports.view'], verticals: ['pharmacy'] },
       { to: '/shop-sales', label: 'Sales', icon: Receipt, anyOf: ['sales.view'], verticals: ['supershop'] },
+      { to: '/pos-shifts', label: 'Shifts', icon: Calculator, anyOf: ['sales.create', 'reports.view'], verticals: ['supershop'] },
       { to: '/shop-returns', label: 'Returns', icon: RotateCcw, anyOf: ['returns.view'], verticals: ['supershop'] },
     ],
   },

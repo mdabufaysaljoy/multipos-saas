@@ -379,6 +379,14 @@ async function main() {
 
   // ------------------------------------------------------------- the sale
   section('Completing a sale');
+  const clothingShift = await api('/pos-shifts', {
+    method: 'POST',
+    token: admin.token,
+    body: { openingFloatMinor: 20_000, note: 'Clothing morning drawer' },
+  });
+  check('Clothing: a cash drawer shift opens', clothingShift.status === 201 && clothingShift.data?.shift?.vertical === 'clothing', clothingShift.data ?? clothingShift.error);
+  check('Clothing: a second open shift is refused', (await api('/pos-shifts', { method: 'POST', token: admin.token, body: { openingFloatMinor: 0 } })).status === 409);
+  check('Clothing: clients cannot set shift state', (await api('/pos-shifts', { method: 'POST', token: admin.token, body: { openingFloatMinor: 0, status: 'closed' } })).status === 422);
   const SALE_QTY = 3;
   const sale = await api('/sales', {
     method: 'POST',
@@ -398,6 +406,18 @@ async function main() {
   check('Customer attached', sale.data?.customerSnapshot?.phone === '01999000111');
   check('Item carries a product-name snapshot', Boolean(sale.data?.items?.[0]?.productNameSnapshot));
   check('Item carries a SKU snapshot', Boolean(sale.data?.items?.[0]?.skuSnapshot));
+  check('Clothing: the completed sale joins the active shift', sale.data?.shiftId === clothingShift.data?.shift?._id, sale.data?.shiftId);
+  const clothingLiveShift = await api('/pos-shifts/current', { token: admin.token });
+  check('Clothing: the X-report is live', clothingLiveShift.data?.report?.sales?.salesCount === 1, clothingLiveShift.data?.report);
+  await api(`/pos-shifts/${clothingShift.data.shift._id}/cash-movements`, { method: 'POST', token: admin.token, body: { type: 'pay_in', amountMinor: 500, reason: 'More change' } });
+  const clothingClosedShift = await api(`/pos-shifts/${clothingShift.data.shift._id}/close`, {
+    method: 'POST', token: admin.token,
+    body: { countedCashMinor: clothingLiveShift.data.report.cash.expectedCashMinor + 500, note: 'Counted' },
+  });
+  check('Clothing: closing freezes a balanced Z-report', clothingClosedShift.status === 200 && clothingClosedShift.data?.report?.cash?.varianceMinor === 0, clothingClosedShift.data ?? clothingClosedShift.error);
+  check('Clothing: shift history contains the closed shift', ((await api('/pos-shifts', { token: admin.token })).data ?? []).some((row) => row._id === clothingShift.data.shift._id));
+  check('Clothing: a closed shift cannot be changed', (await api(`/pos-shifts/${clothingShift.data.shift._id}/cash-movements`, { method: 'POST', token: admin.token, body: { type: 'pay_in', amountMinor: 1, reason: 'Too late' } })).status === 409);
+  check('Retail shifts require a session', (await api('/pos-shifts/current')).status === 401);
 
   const afterSale = await api(`/products/pos-search?q=${encodeURIComponent(variant.sku)}`, { token: admin.token });
   // 1 (cashier) + 1 (senior) + 3 (this sale) = 5 units gone
@@ -930,6 +950,8 @@ async function main() {
   // A branch starts empty: stock and sales are per-branch.
   const branchProducts = await api('/products', { token: admin.token, storeId: branchB.data._id });
   check('New branch has its own (empty) catalogue', branchProducts.data?.length === 0);
+  check('Another branch does not inherit the main branch shift', (await api('/pos-shifts/current', { token: admin.token, storeId: branchB.data._id })).data === null);
+  check('Another branch cannot read the main branch Z-report', (await api(`/pos-shifts/${clothingShift.data.shift._id}`, { token: admin.token, storeId: branchB.data._id })).status === 404);
 
   const mainProducts = await api('/products?limit=5', { token: admin.token, storeId: mainStore._id });
   check('Original branch still has its catalogue', mainProducts.data?.length > 0);
@@ -5882,6 +5904,9 @@ async function main() {
   check('...while the brand itself stays in the catalogue, now carrying nothing', ((await ssApi('/brands')).data ?? []).find((row) => row.name === 'Fresh')?.productCount === 0);
 
   const ssSale = (body) => ssApi('/sales', { method: 'POST', body });
+  const ssShift = await api('/pos-shifts', { method: 'POST', token: ssToken, body: { openingFloatMinor: 10_000, note: 'Shop morning drawer' } });
+  check('Super Shop: a cash drawer shift opens', ssShift.status === 201 && ssShift.data?.shift?.vertical === 'supershop', ssShift.data ?? ssShift.error);
+  check('Pharmacy cannot reach the shared retail shift engine', (await api('/pos-shifts/current', { token: phToken })).status === 403);
   const basket = await ssSale({ items: [{ productId: soap.data._id, quantity: 3 }, { productId: rice.data._id, quantity: 1500 }], payments: [{ method: 'cash', amountMinor: 30_000 }] });
   check(
     'A mixed basket is priced by piece and by weight',
@@ -5890,6 +5915,13 @@ async function main() {
   );
   check('VAT included in the price is worked out per line', basket.data?.items?.[0]?.vatMinor === 1761 && basket.data?.vatMinor === 1761, basket.data?.items);
   check('The cost of goods comes from the average cost', basket.data?.costMinor === 3 * 3150 + 10_500, basket.data?.costMinor);
+  check('Super Shop: the completed sale joins the active shift', basket.data?.shiftId === ssShift.data?.shift?._id, basket.data?.shiftId);
+  const ssShiftLive = await api('/pos-shifts/current', { token: ssToken });
+  check('Super Shop: the X-report includes the sale and cash net of change', ssShiftLive.data?.report?.sales?.salesCount === 1 && ssShiftLive.data?.report?.cash?.cashSalesMinor === 27_800, ssShiftLive.data?.report);
+  await api(`/pos-shifts/${ssShift.data.shift._id}/cash-movements`, { method: 'POST', token: ssToken, body: { type: 'pay_out', amountMinor: 800, reason: 'Petty cash' } });
+  const ssShiftAfterMovement = await api('/pos-shifts/current', { token: ssToken });
+  const ssShiftClosed = await api(`/pos-shifts/${ssShift.data.shift._id}/close`, { method: 'POST', token: ssToken, body: { countedCashMinor: ssShiftAfterMovement.data.report.cash.expectedCashMinor } });
+  check('Super Shop: closing freezes a balanced Z-report', ssShiftClosed.status === 200 && ssShiftClosed.data?.report?.cash?.varianceMinor === 0, ssShiftClosed.data ?? ssShiftClosed.error);
   const ssOnHand = async (id) => (await ssApi(`/products/${id}`)).data?.product?.stock?.quantityOnHand;
   check('Stock is taken in pieces and grams', (await ssOnHand(soap.data._id)) === 37 && (await ssOnHand(rice.data._id)) === 23_500);
 

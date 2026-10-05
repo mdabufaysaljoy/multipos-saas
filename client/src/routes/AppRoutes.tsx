@@ -38,6 +38,7 @@ const CreateReturnPage = lazyPage(() => import('@/pages/CreateReturnPage'), 'Cre
 const ProductsPage = lazyPage(() => import('@/pages/ProductsPage'), 'ProductsPage');
 const CategoriesPage = lazyPage(() => import('@/pages/CategoriesPage'), 'CategoriesPage');
 const InventoryPage = lazyPage(() => import('@/pages/InventoryPage'), 'InventoryPage');
+const PosShiftsPage = lazyPage(() => import('@/pages/PosShiftsPage'), 'PosShiftsPage');
 
 // Restaurant POS
 const MenuPage = lazyPage(() => import('@/pages/restaurant/MenuPage'), 'MenuPage');
@@ -203,6 +204,14 @@ export function AppRoutes() {
           element={
             <ProtectedRoute anyOf={['sales.create', 'reports.view']}>
               <ShiftsPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/pos-shifts"
+          element={
+            <ProtectedRoute anyOf={['sales.create', 'reports.view']}>
+              <PosShiftsPage />
             </ProtectedRoute>
           }
         />

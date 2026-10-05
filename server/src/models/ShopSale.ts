@@ -95,6 +95,7 @@ export interface ShopSaleDoc extends BaseDoc {
   voidedBy: Types.ObjectId | null;
   voidedByNameSnapshot: string;
   voidReason: string;
+  shiftId: Types.ObjectId | null;
 }
 
 const minor = {
@@ -197,6 +198,7 @@ const shopSaleSchema = new Schema<ShopSaleDoc>(
     voidedBy: { type: Schema.Types.ObjectId, ref: 'User', default: null },
     voidedByNameSnapshot: { type: String, default: '' },
     voidReason: { type: String, default: '' },
+    shiftId: { type: Schema.Types.ObjectId, ref: 'PosShift', default: null },
   },
   { timestamps: true },
 );
@@ -211,5 +213,6 @@ shopSaleSchema.index({ tenantId: 1, status: 1, soldAt: 1 });
  * `(tenantId, status, soldAt)` one spans every branch.
  */
 shopSaleSchema.index({ tenantId: 1, storeId: 1, status: 1, soldAt: -1 });
+shopSaleSchema.index({ tenantId: 1, storeId: 1, shiftId: 1, status: 1 });
 
 export const ShopSaleModel = model<ShopSaleDoc>('ShopSale', shopSaleSchema);
