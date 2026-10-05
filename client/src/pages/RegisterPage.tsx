@@ -6,7 +6,6 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { toast } from 'sonner';
-import { Store } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -14,6 +13,7 @@ import { Label } from '@/components/ui/label';
 import { ApiError } from '@/api/client';
 import { useAuth } from '@/hooks/useAuth';
 import { useTrialOffer } from '@/hooks/useTrialDays';
+import { AuthShell } from '@/features/public/AuthShell';
 
 const schema = z
   .object({
@@ -36,7 +36,11 @@ export function RegisterPage() {
   const navigate = useNavigate();
   const { days: trialDays, planName: trialPlanName } = useTrialOffer();
   // The POS types come from the platform catalog: active products only.
-  const { data: posTypes, isLoading: posTypesLoading } = useQuery({ queryKey: ['public-pos-types'], queryFn: onboardingApi.publicPosTypes, staleTime: 5 * 60 * 1000 });
+  const { data: posTypes, isLoading: posTypesLoading } = useQuery({
+    queryKey: ['public-pos-types'],
+    queryFn: onboardingApi.publicPosTypes,
+    staleTime: 5 * 60 * 1000,
+  });
   const available = (posTypes ?? []).filter((option) => option.available);
   const [searchParams] = useSearchParams();
   const requestedPos = searchParams.get('pos');
@@ -83,20 +87,21 @@ export function RegisterPage() {
   );
 
   return (
-    <div className="flex min-h-full items-center justify-center bg-muted/40 p-4">
-      <div className="w-full max-w-md space-y-6 py-8">
-        <div className="flex flex-col items-center gap-2 text-center">
-          <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-primary text-primary-foreground">
-            <Store className="h-5 w-5" />
-          </div>
-          <h1 className="text-xl font-semibold tracking-tight">Create your workspace</h1>
-          <p className="text-sm text-muted-foreground">
+    <AuthShell
+      title="Your business deserves a better control room."
+      copy="Choose the workflow that fits, invite the right people and start with a clear view of every day."
+    >
+      <div className="w-full space-y-6 py-4">
+        <div>
+          <p className="text-xs font-bold uppercase tracking-[.2em] text-primary">Get started</p>
+          <h1 className="mt-3 text-3xl font-bold tracking-[-.04em] text-slate-950">Create your workspace</h1>
+          <p className="mt-2 text-sm text-muted-foreground">
             {trialDays ? `Start with a ${trialDays}-day free trial of ${trialPlanName}.` : 'Start with a free trial.'}{' '}
             No card required.
           </p>
         </div>
 
-        <Card>
+        <Card className="rounded-2xl border-slate-200 shadow-xl shadow-slate-900/5">
           <CardHeader className="pb-3">
             <CardTitle className="text-base">Business details</CardTitle>
             <CardDescription>You can change any of this later</CardDescription>
@@ -114,9 +119,18 @@ export function RegisterPage() {
                         key={option.vertical}
                         className={`cursor-pointer rounded-md border p-3 text-sm ${vertical === option.vertical ? 'border-primary ring-1 ring-primary' : ''}`}
                       >
-                        <input type="radio" name="vertical" className="sr-only" value={option.vertical} checked={vertical === option.vertical} onChange={() => setVertical(option.vertical)} />
+                        <input
+                          type="radio"
+                          name="vertical"
+                          className="sr-only"
+                          value={option.vertical}
+                          checked={vertical === option.vertical}
+                          onChange={() => setVertical(option.vertical)}
+                        />
                         <span className="font-medium">{option.label}</span>
-                        {option.description && <span className="mt-0.5 block text-xs text-muted-foreground">{option.description}</span>}
+                        {option.description && (
+                          <span className="mt-0.5 block text-xs text-muted-foreground">{option.description}</span>
+                        )}
                       </label>
                     ))}
                   </div>
@@ -143,6 +157,6 @@ export function RegisterPage() {
           </Link>
         </p>
       </div>
-    </div>
+    </AuthShell>
   );
 }

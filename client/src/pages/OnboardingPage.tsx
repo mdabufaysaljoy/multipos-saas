@@ -3,7 +3,6 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import { useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
-import { Store } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -15,6 +14,7 @@ import { storeApi } from '@/api/endpoints';
 import { useAuth } from '@/hooks/useAuth';
 import { VerifyContactCard } from '@/features/verification/VerifyContactCard';
 import { homePathForVertical } from '@/lib/verticalRoutes';
+import { AuthShell } from '@/features/public/AuthShell';
 
 const schema = z.object({
   name: z.string().trim().min(2, 'Store name is required'),
@@ -57,14 +57,15 @@ export function OnboardingPage() {
   };
 
   return (
-    <div className="flex min-h-full items-center justify-center bg-muted/40 p-4">
-      <div className="w-full max-w-lg space-y-6 py-8">
-        <div className="flex flex-col items-center gap-2 text-center">
-          <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-primary text-primary-foreground">
-            <Store className="h-5 w-5" />
-          </div>
-          <h1 className="text-xl font-semibold tracking-tight">Set up your store</h1>
-          <p className="text-sm text-muted-foreground">
+    <AuthShell
+      title="A strong operating day starts with a clean setup."
+      copy="Add the details your team and customers will see. You can refine them later as the business grows."
+    >
+      <div className="w-full space-y-6 py-4">
+        <div>
+          <p className="text-xs font-bold uppercase tracking-[.2em] text-primary">Final setup</p>
+          <h1 className="mt-3 text-3xl font-bold tracking-[-.04em] text-slate-950">Set up your store</h1>
+          <p className="mt-2 text-sm text-muted-foreground">
             This is the shop your sales, stock and receipts belong to.
           </p>
         </div>
@@ -72,7 +73,7 @@ export function OnboardingPage() {
         {/* One proven contact is what a subscription, an invoice and a renewal
             reminder all depend on, so it is asked for here rather than at the
             till. It is not a wall: the store can be set up either way. */}
-        <Card>
+        <Card className="rounded-2xl border-slate-200 shadow-lg shadow-slate-900/5">
           <CardHeader className="pb-3">
             <CardTitle className="text-base">Verify your contact</CardTitle>
             <CardDescription>
@@ -86,7 +87,7 @@ export function OnboardingPage() {
           </CardContent>
         </Card>
 
-        <Card>
+        <Card className="rounded-2xl border-slate-200 shadow-lg shadow-slate-900/5">
           <CardHeader className="pb-3">
             <CardTitle className="text-base">Store details</CardTitle>
             <CardDescription>These appear on your printed receipts</CardDescription>
@@ -120,10 +121,7 @@ export function OnboardingPage() {
               <div className="grid gap-4 sm:grid-cols-2">
                 <div className="space-y-1.5">
                   <Label htmlFor="currency">Currency</Label>
-                  <Select
-                    value={form.watch('currency')}
-                    onValueChange={(value) => form.setValue('currency', value)}
-                  >
+                  <Select value={form.watch('currency')} onValueChange={(value) => form.setValue('currency', value)}>
                     <SelectTrigger id="currency">
                       <SelectValue />
                     </SelectTrigger>
@@ -155,6 +153,6 @@ export function OnboardingPage() {
           </button>
         </p>
       </div>
-    </div>
+    </AuthShell>
   );
 }

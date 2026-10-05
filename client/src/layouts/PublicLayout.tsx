@@ -1,39 +1,33 @@
-import { Link, NavLink, Outlet, useLocation } from 'react-router-dom';
 import * as React from 'react';
-import { Menu, Store, X } from 'lucide-react';
+import { Link, NavLink, Outlet, useLocation } from 'react-router-dom';
+import { ArrowUpRight, Menu, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { BrandMark } from '@/features/public/BrandMark';
 import { useAuth } from '@/hooks/useAuth';
 import { cn } from '@/lib/utils';
 import { PageFallback } from '@/lib/lazyPage';
 
 const NAV = [
   { to: '/', label: 'Home', end: true },
-  { to: '/products', label: 'Products' },
+  { to: '/products', label: 'Solutions' },
+  { to: '/features', label: 'Platform' },
   { to: '/pricing', label: 'Pricing' },
-  { to: '/features', label: 'Features' },
-  { to: '/contact', label: 'Contact' },
+  { to: '/contact', label: 'Company' },
 ];
 
-/** Marketing shell. Kept entirely separate from the signed-in app chrome. */
 export function PublicLayout() {
   const { session } = useAuth();
   const location = useLocation();
   const [open, setOpen] = React.useState(false);
-
   React.useEffect(() => setOpen(false), [location.pathname]);
+  const destination = session?.user.role === 'platform_admin' ? '/platform' : '/pos';
 
   return (
-    <div className="flex min-h-full flex-col bg-background">
-      <header className="sticky top-0 z-40 border-b bg-background/85 backdrop-blur">
-        <div className="mx-auto flex h-16 max-w-6xl items-center gap-6 px-4 lg:px-6">
-          <Link to="/" className="flex items-center gap-2 font-semibold">
-            <span className="flex h-8 w-8 items-center justify-center rounded-md bg-primary text-primary-foreground">
-              <Store className="h-4 w-4" />
-            </span>
-            RetailSuite
-          </Link>
-
-          <nav className="hidden flex-1 items-center gap-1 md:flex">
+    <div className="public-shell flex min-h-full flex-col bg-white text-slate-950">
+      <header className="sticky top-0 z-50 border-b border-slate-200/70 bg-white/80 backdrop-blur-xl">
+        <div className="mx-auto flex h-[4.5rem] max-w-7xl items-center gap-7 px-4 sm:px-6 lg:px-8">
+          <BrandMark />
+          <nav className="hidden flex-1 items-center justify-center gap-1 lg:flex" aria-label="Primary navigation">
             {NAV.map((item) => (
               <NavLink
                 key={item.to}
@@ -41,8 +35,10 @@ export function PublicLayout() {
                 end={item.end}
                 className={({ isActive }) =>
                   cn(
-                    'rounded-md px-3 py-1.5 text-sm font-medium transition-colors',
-                    isActive ? 'bg-accent text-foreground' : 'text-muted-foreground hover:text-foreground',
+                    'rounded-full px-3.5 py-2 text-sm font-medium transition',
+                    isActive
+                      ? 'bg-slate-950 text-white shadow-sm'
+                      : 'text-slate-600 hover:bg-slate-100 hover:text-slate-950',
                   )
                 }
               >
@@ -50,42 +46,77 @@ export function PublicLayout() {
               </NavLink>
             ))}
           </nav>
-
-          <div className="ml-auto hidden items-center gap-2 md:flex">
+          <div className="ml-auto hidden items-center gap-2 lg:flex">
             {session ? (
-              <Button asChild>
-                <Link to={session.user.role === 'platform_admin' ? '/platform' : '/pos'}>Open dashboard</Link>
+              <Button className="rounded-full px-5" asChild>
+                <Link to={destination}>
+                  Open dashboard <ArrowUpRight />
+                </Link>
               </Button>
             ) : (
               <>
-                <Button variant="ghost" asChild>
+                <Button variant="ghost" className="rounded-full" asChild>
                   <Link to="/login">Sign in</Link>
                 </Button>
-                <Button asChild>
-                  <Link to="/register">Start free trial</Link>
+                <Button className="rounded-full px-5 shadow-lg shadow-primary/15" asChild>
+                  <Link to="/register">
+                    Start free <ArrowUpRight />
+                  </Link>
                 </Button>
               </>
             )}
           </div>
-
-          <Button variant="ghost" size="icon-sm" className="ml-auto md:hidden" onClick={() => setOpen((v) => !v)} aria-label="Menu">
+          <Button
+            variant="ghost"
+            size="icon"
+            className="ml-auto rounded-full lg:hidden"
+            onClick={() => setOpen((value) => !value)}
+            aria-label={open ? 'Close menu' : 'Open menu'}
+            aria-expanded={open}
+            aria-controls="mobile-public-navigation"
+          >
             {open ? <X /> : <Menu />}
           </Button>
         </div>
-
         {open && (
-          <div className="border-t px-4 py-3 md:hidden">
-            <nav className="flex flex-col gap-1">
-              {NAV.map((item) => (
-                <NavLink key={item.to} to={item.to} end={item.end} className="rounded-md px-3 py-2 text-sm hover:bg-accent">
-                  {item.label}
-                </NavLink>
-              ))}
-              <div className="mt-2 flex gap-2">
-                <Button variant="outline" className="flex-1" asChild><Link to="/login">Sign in</Link></Button>
-                <Button className="flex-1" asChild><Link to="/register">Start free</Link></Button>
-              </div>
-            </nav>
+          <div id="mobile-public-navigation" className="animate-in slide-in-from-top-2 duration-200 lg:hidden">
+            <div>
+              <nav className="border-t border-slate-200/70 bg-white px-4 py-4 shadow-xl" aria-label="Mobile navigation">
+                <div className="space-y-1">
+                  {NAV.map((item) => (
+                    <NavLink
+                      key={item.to}
+                      to={item.to}
+                      end={item.end}
+                      className={({ isActive }) =>
+                        cn(
+                          'block rounded-xl px-4 py-3 text-sm font-medium',
+                          isActive ? 'bg-slate-950 text-white' : 'text-slate-600 hover:bg-slate-100',
+                        )
+                      }
+                    >
+                      {item.label}
+                    </NavLink>
+                  ))}
+                </div>
+                <div className="mt-4 grid grid-cols-2 gap-2">
+                  {session ? (
+                    <Button className="col-span-2 rounded-xl" asChild>
+                      <Link to={destination}>Open dashboard</Link>
+                    </Button>
+                  ) : (
+                    <>
+                      <Button variant="outline" className="rounded-xl" asChild>
+                        <Link to="/login">Sign in</Link>
+                      </Button>
+                      <Button className="rounded-xl" asChild>
+                        <Link to="/register">Start free</Link>
+                      </Button>
+                    </>
+                  )}
+                </div>
+              </nav>
+            </div>
           </div>
         )}
       </header>
@@ -96,36 +127,47 @@ export function PublicLayout() {
         </React.Suspense>
       </main>
 
-      <footer className="border-t bg-muted/30">
-        <div className="mx-auto grid max-w-6xl gap-8 px-4 py-10 sm:grid-cols-2 lg:grid-cols-4 lg:px-6">
-          <div className="space-y-2">
-            <div className="flex items-center gap-2 font-semibold">
-              <span className="flex h-7 w-7 items-center justify-center rounded-md bg-primary text-primary-foreground">
-                <Store className="h-3.5 w-3.5" />
-              </span>
-              RetailSuite
+      <footer className="relative overflow-hidden border-t border-slate-800 bg-slate-950 text-white">
+        <div className="absolute inset-0 bg-[radial-gradient(circle_at_20%_0%,rgba(59,130,246,.15),transparent_30%),radial-gradient(circle_at_90%_70%,rgba(139,92,246,.12),transparent_30%)]" />
+        <div className="relative mx-auto max-w-7xl px-4 py-12 sm:px-6 lg:px-8 lg:py-16">
+          <div className="grid gap-10 sm:grid-cols-2 lg:grid-cols-[1.5fr_1fr_1fr_1fr]">
+            <div className="max-w-sm space-y-4">
+              <BrandMark className="text-white" />
+              <p className="text-sm leading-6 text-slate-400">
+                Purpose-built point of sale, inventory and insight tools for modern businesses—connected in one calm
+                workspace.
+              </p>
+              <p className="text-xs font-medium text-cyan-300">Made for growing businesses in Bangladesh and beyond.</p>
             </div>
-            <p className="text-sm text-muted-foreground">
-              Point-of-sale software for retailers in Bangladesh and beyond.
-            </p>
+            <FooterCol
+              title="Solutions"
+              links={[
+                ['Clothing', '/products/clothing-pos'],
+                ['Restaurant', '/products/restaurant-pos'],
+                ['Super Shop', '/products/super-shop-pos'],
+                ['Pharmacy', '/products/pharmacy-pos'],
+              ]}
+            />
+            <FooterCol
+              title="Explore"
+              links={[
+                ['All features', '/features'],
+                ['Pricing', '/pricing'],
+                ['Contact', '/contact'],
+              ]}
+            />
+            <FooterCol
+              title="Account"
+              links={[
+                ['Sign in', '/login'],
+                ['Create workspace', '/register'],
+              ]}
+            />
           </div>
-
-          <FooterCol
-            title="Products"
-            links={[
-              ['Clothing POS', '/products/clothing-pos'],
-              ['Supershop POS', '/products/super-shop-pos'],
-              ['Restaurant POS', '/products/restaurant-pos'],
-              ['Pharmacy POS', '/products/pharmacy-pos'],
-              ['Pricing', '/pricing'],
-              ['Features', '/features'],
-            ]}
-          />
-          <FooterCol title="Company" links={[['About', '/contact'], ['Contact', '/contact']]} />
-          <FooterCol title="Account" links={[['Sign in', '/login'], ['Create account', '/register']]} />
-        </div>
-        <div className="border-t px-4 py-4 text-center text-xs text-muted-foreground lg:px-6">
-          © {new Date().getFullYear()} RetailSuite. All rights reserved.
+          <div className="mt-12 flex flex-col gap-3 border-t border-white/10 pt-6 text-xs text-slate-500 sm:flex-row sm:items-center sm:justify-between">
+            <p>© {new Date().getFullYear()} RetailerSWs. All rights reserved.</p>
+            <p>One account · Multiple businesses · Real-time control</p>
+          </div>
         </div>
       </footer>
     </div>
@@ -134,12 +176,12 @@ export function PublicLayout() {
 
 function FooterCol({ title, links }: { title: string; links: [string, string][] }) {
   return (
-    <div className="space-y-2">
-      <p className="text-sm font-semibold">{title}</p>
-      <ul className="space-y-1.5">
+    <div>
+      <p className="mb-4 text-xs font-bold uppercase tracking-[.18em] text-slate-500">{title}</p>
+      <ul className="space-y-3">
         {links.map(([label, to]) => (
           <li key={label}>
-            <Link to={to} className="text-sm text-muted-foreground hover:text-foreground">
+            <Link to={to} className="text-sm text-slate-300 transition hover:text-cyan-300">
               {label}
             </Link>
           </li>

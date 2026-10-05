@@ -1,57 +1,116 @@
 import { useQuery } from '@tanstack/react-query';
-import { Mail, MapPin, Phone } from 'lucide-react';
-import { Card, CardContent } from '@/components/ui/card';
+import { Link } from 'react-router-dom';
+import { ArrowRight, Mail, MessageCircle, Phone, Store } from 'lucide-react';
 import { get } from '@/api/client';
+import { Button } from '@/components/ui/button';
+import { Reveal } from '@/features/public/Reveal';
 
-/** Contact details come from platform settings, so support can change them. */
 export function ContactPage() {
   const { data } = useQuery({
     queryKey: ['public', 'contact'],
     queryFn: () => get<{ supportEmail: string; supportPhone: string }>('/public/contact'),
     retry: false,
   });
-
   return (
-    <div className="mx-auto max-w-4xl px-4 py-16 lg:px-6">
-      <div className="text-center">
-        <h1 className="text-4xl font-bold tracking-tight">Talk to us</h1>
-        <p className="mx-auto mt-3 max-w-xl text-muted-foreground">
-          Questions about a plan, a migration or a trade we do not cover yet? We answer every message.
-        </p>
-      </div>
-
-      <div className="mt-10 grid gap-4 sm:grid-cols-3">
-        <Card>
-          <CardContent className="space-y-2 p-5 text-center">
-            <Mail className="mx-auto h-6 w-6 text-primary" />
-            <p className="text-sm font-semibold">Email</p>
-            <p className="break-all text-sm text-muted-foreground">{data?.supportEmail || 'support@retailsuite.dev'}</p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="space-y-2 p-5 text-center">
-            <Phone className="mx-auto h-6 w-6 text-primary" />
-            <p className="text-sm font-semibold">Phone</p>
-            <p className="text-sm text-muted-foreground">{data?.supportPhone || '+880 1700-000000'}</p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="space-y-2 p-5 text-center">
-            <MapPin className="mx-auto h-6 w-6 text-primary" />
-            <p className="text-sm font-semibold">Office</p>
-            <p className="text-sm text-muted-foreground">Dhanmondi, Dhaka</p>
-          </CardContent>
-        </Card>
-      </div>
-
-      <div className="mt-10 rounded-lg border bg-muted/40 p-6">
-        <h2 className="font-semibold">About RetailSuite</h2>
-        <p className="mt-2 text-sm text-muted-foreground">
-          We build point-of-sale software for independent retailers. Rather than one system that half-fits every shop,
-          we build a focused product per trade on shared foundations — one account, one wallet, one place to manage
-          billing. Clothing POS is live today; the rest are in development.
-        </p>
-      </div>
+    <div className="bg-white">
+      <section className="relative overflow-hidden bg-slate-950 px-4 py-20 text-white sm:px-6 lg:px-8 lg:py-28">
+        <div className="absolute right-0 top-0 h-96 w-96 rounded-full bg-indigo-500/20 blur-3xl" />
+        <div className="relative mx-auto max-w-7xl">
+          <p className="text-xs font-bold uppercase tracking-[.22em] text-cyan-300">Real help, when it matters</p>
+          <h1 className="mt-5 max-w-3xl text-balance text-4xl font-bold tracking-[-.05em] sm:text-6xl">
+            Let’s find the right setup for your business.
+          </h1>
+          <p className="mt-6 max-w-2xl text-lg leading-8 text-slate-300">
+            Questions about a plan, moving your operation or choosing the right POS? Start with the channel that works
+            for you.
+          </p>
+        </div>
+      </section>
+      <section className="px-4 py-20 sm:px-6 lg:px-8 lg:py-28">
+        <div className="mx-auto grid max-w-7xl gap-10 lg:grid-cols-[.85fr_1.15fr]">
+          <Reveal>
+            <div className="rounded-[2rem] bg-gradient-to-br from-indigo-50 to-cyan-50 p-8 sm:p-10">
+              <span className="flex h-12 w-12 items-center justify-center rounded-2xl bg-slate-950 text-cyan-300">
+                <MessageCircle className="h-5 w-5" />
+              </span>
+              <h2 className="mt-7 text-3xl font-bold tracking-[-.04em]">A conversation, not a sales script.</h2>
+              <p className="mt-4 leading-7 text-slate-600">
+                Tell us what you sell, how many locations you run and what slows the team down today. We’ll help you
+                understand where RetailerSWs fits.
+              </p>
+              <div className="mt-8 flex items-center gap-3 text-sm font-medium text-slate-700">
+                <Store className="h-4 w-4 text-indigo-600" /> Clothing · Restaurant · Super Shop · Pharmacy
+              </div>
+            </div>
+          </Reveal>
+          <div className="grid gap-4 sm:grid-cols-2">
+            <ContactCard
+              icon={Mail}
+              label="Email support"
+              value={data?.supportEmail || 'Support email is being configured'}
+              href={data?.supportEmail ? `mailto:${data.supportEmail}` : undefined}
+            />
+            <ContactCard
+              icon={Phone}
+              label="Call support"
+              value={data?.supportPhone || 'Support phone is being configured'}
+              href={data?.supportPhone ? `tel:${data.supportPhone}` : undefined}
+            />
+            <div className="rounded-2xl border border-slate-200 p-7 sm:col-span-2">
+              <p className="text-xs font-bold uppercase tracking-[.18em] text-slate-400">
+                Ready to explore on your own?
+              </p>
+              <h3 className="mt-3 text-xl font-bold">See exactly what each solution includes.</h3>
+              <p className="mt-2 text-sm leading-6 text-slate-600">
+                Product pages use the live plan catalogue, so prices and available limits stay aligned with the
+                platform.
+              </p>
+              <Button className="mt-6 rounded-xl" asChild>
+                <Link to="/products">
+                  Explore solutions <ArrowRight />
+                </Link>
+              </Button>
+            </div>
+          </div>
+        </div>
+      </section>
     </div>
+  );
+}
+
+function ContactCard({
+  icon: Icon,
+  label,
+  value,
+  href,
+}: {
+  icon: typeof Mail;
+  label: string;
+  value: string;
+  href?: string;
+}) {
+  const content = (
+    <>
+      <span className="flex h-11 w-11 items-center justify-center rounded-xl bg-slate-100 text-indigo-600">
+        <Icon className="h-5 w-5" />
+      </span>
+      <p className="mt-6 text-xs font-bold uppercase tracking-[.16em] text-slate-400">{label}</p>
+      <p className="mt-2 break-words font-semibold text-slate-900">{value}</p>
+      {href && (
+        <span className="mt-5 inline-flex items-center gap-1 text-sm font-semibold text-indigo-600">
+          Contact now <ArrowRight className="h-4 w-4" />
+        </span>
+      )}
+    </>
+  );
+  return href ? (
+    <a
+      href={href}
+      className="rounded-2xl border border-slate-200 p-7 transition hover:-translate-y-1 hover:shadow-xl hover:shadow-slate-900/5"
+    >
+      {content}
+    </a>
+  ) : (
+    <div className="rounded-2xl border border-slate-200 p-7">{content}</div>
   );
 }

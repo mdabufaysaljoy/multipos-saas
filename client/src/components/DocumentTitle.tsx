@@ -3,7 +3,7 @@ import { useLocation } from 'react-router-dom';
 import { navLabelFor } from '@/layouts/AppLayout';
 import { useAuth } from '@/hooks/useAuth';
 
-const BRAND = 'RetailSuite';
+const BRAND = 'RetailerSWs';
 const TAGLINE = 'Point of sale for your business';
 
 /**

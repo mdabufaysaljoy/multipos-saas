@@ -111,6 +111,116 @@
   }
 }
 
+/* Public SaaS surface. Kept scoped so the authenticated POS design remains unchanged. */
+.public-shell {
+  --public-ink: #0f172a;
+  font-feature-settings:
+    'ss01' 1,
+    'cv02' 1,
+    'cv03' 1;
+}
+
+.text-balance {
+  text-wrap: balance;
+}
+.text-pretty {
+  text-wrap: pretty;
+}
+
+.public-reveal {
+  opacity: 0;
+  transform: translateY(22px);
+  transition:
+    opacity 700ms cubic-bezier(0.22, 1, 0.36, 1),
+    transform 700ms cubic-bezier(0.22, 1, 0.36, 1);
+  transition-delay: var(--reveal-delay, 0ms);
+}
+
+.public-reveal.is-visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.public-orb {
+  position: absolute;
+  pointer-events: none;
+  border-radius: 9999px;
+  filter: blur(2px);
+  opacity: 0.8;
+  animation: public-drift 14s ease-in-out infinite alternate;
+}
+
+.public-orb-one {
+  width: 32rem;
+  height: 32rem;
+  right: -10rem;
+  top: -12rem;
+  background: radial-gradient(circle, rgba(99, 102, 241, 0.22), transparent 68%);
+}
+
+.public-orb-two {
+  width: 26rem;
+  height: 26rem;
+  left: 28%;
+  bottom: -15rem;
+  background: radial-gradient(circle, rgba(34, 211, 238, 0.19), transparent 68%);
+  animation-delay: -6s;
+}
+
+.public-float {
+  animation: public-float 5s ease-in-out infinite;
+}
+.public-preview {
+  transition:
+    transform 500ms cubic-bezier(0.22, 1, 0.36, 1),
+    box-shadow 500ms ease;
+}
+.public-preview:hover {
+  transform: translateY(-3px) rotateX(1deg);
+  box-shadow: 0 36px 90px -32px rgba(15, 23, 42, 0.38);
+}
+
+@keyframes public-drift {
+  from {
+    transform: translate3d(-2%, -2%, 0) scale(0.96);
+  }
+  to {
+    transform: translate3d(4%, 5%, 0) scale(1.08);
+  }
+}
+
+@keyframes public-float {
+  0%,
+  100% {
+    transform: translateY(0) rotate(-1deg);
+  }
+  50% {
+    transform: translateY(-8px) rotate(1deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .public-reveal {
+    opacity: 1;
+    transform: none;
+    transition: none;
+  }
+  .public-orb,
+  .public-float {
+    animation: none;
+  }
+  .public-preview,
+  .public-preview:hover {
+    transform: none;
+    transition: none;
+  }
+  .public-shell *,
+  .public-shell *::before,
+  .public-shell *::after {
+    scroll-behavior: auto !important;
+  }
+}
+
 /* --------------------------------------------------------------------------
    Thermal receipt (48mm / 58mm / 78mm / 80mm)
 
@@ -150,13 +260,30 @@
   padding: 3mm;
 }
 
-.receipt-paper .r-center { text-align: center; }
-.receipt-paper .r-right { text-align: right; }
-.receipt-paper .r-bold { font-weight: 700; }
-.receipt-paper .r-sm { font-size: var(--receipt-font-sm); }
-.receipt-paper .r-rule { border-top: 1px dashed #000; margin: 1.5mm 0; }
-.receipt-paper table { width: 100%; border-collapse: collapse; }
-.receipt-paper td { vertical-align: top; padding: 0.3mm 0; }
+.receipt-paper .r-center {
+  text-align: center;
+}
+.receipt-paper .r-right {
+  text-align: right;
+}
+.receipt-paper .r-bold {
+  font-weight: 700;
+}
+.receipt-paper .r-sm {
+  font-size: var(--receipt-font-sm);
+}
+.receipt-paper .r-rule {
+  border-top: 1px dashed #000;
+  margin: 1.5mm 0;
+}
+.receipt-paper table {
+  width: 100%;
+  border-collapse: collapse;
+}
+.receipt-paper td {
+  vertical-align: top;
+  padding: 0.3mm 0;
+}
 .receipt-paper .r-logo {
   max-width: 55%;
   max-height: 20mm;
@@ -287,11 +414,21 @@
 }
 
 /* Wider labels get slightly larger type. */
-.barcode-label[data-width='48'] .bl-name { font-size: 8.5pt; }
-.barcode-label[data-width='48'] .bl-price { font-size: 10pt; }
-.barcode-label[data-width='58'] .bl-name { font-size: 9.5pt; }
-.barcode-label[data-width='58'] .bl-store { font-size: 7pt; }
-.barcode-label[data-width='58'] .bl-price { font-size: 11pt; }
+.barcode-label[data-width='48'] .bl-name {
+  font-size: 8.5pt;
+}
+.barcode-label[data-width='48'] .bl-price {
+  font-size: 10pt;
+}
+.barcode-label[data-width='58'] .bl-name {
+  font-size: 9.5pt;
+}
+.barcode-label[data-width='58'] .bl-store {
+  font-size: 7pt;
+}
+.barcode-label[data-width='58'] .bl-price {
+  font-size: 11pt;
+}
 
 /* Label-printer roll: one label per row, the page is one label wide. */
 .barcode-sheet[data-paper='roll'] {
@@ -347,17 +484,68 @@
   flex-direction: column;
   align-items: center;
   text-align: center;
-  font-family: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;
+  font-family:
+    ui-sans-serif,
+    system-ui,
+    -apple-system,
+    'Segoe UI',
+    Roboto,
+    Arial,
+    sans-serif;
 }
-.loyalty-card .lc-head { display: flex; align-items: center; gap: 2mm; max-width: 100%; }
-.loyalty-card .lc-logo { max-height: 8mm; max-width: 20mm; object-fit: contain; }
-.loyalty-card .lc-store { font-size: 9pt; font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.loyalty-card .lc-title { margin-top: 1mm; font-size: 7pt; font-weight: 700; letter-spacing: 0.18em; }
-.loyalty-card .lc-name { margin-top: 1mm; font-size: 10pt; font-weight: 600; line-height: 1.2; overflow-wrap: anywhere; }
-.loyalty-card .lc-contact { font-size: 7.5pt; line-height: 1.25; overflow-wrap: anywhere; }
-.loyalty-card .lc-barcode { display: block; width: 62mm; max-width: 100%; height: auto; margin-top: 1.5mm; }
-.loyalty-card .lc-number { font-size: 8pt; font-weight: 600; letter-spacing: 0.08em; }
-.loyalty-card .lc-error { font-size: 7pt; color: #b91c1c; padding: 3mm 0; }
+.loyalty-card .lc-head {
+  display: flex;
+  align-items: center;
+  gap: 2mm;
+  max-width: 100%;
+}
+.loyalty-card .lc-logo {
+  max-height: 8mm;
+  max-width: 20mm;
+  object-fit: contain;
+}
+.loyalty-card .lc-store {
+  font-size: 9pt;
+  font-weight: 700;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.loyalty-card .lc-title {
+  margin-top: 1mm;
+  font-size: 7pt;
+  font-weight: 700;
+  letter-spacing: 0.18em;
+}
+.loyalty-card .lc-name {
+  margin-top: 1mm;
+  font-size: 10pt;
+  font-weight: 600;
+  line-height: 1.2;
+  overflow-wrap: anywhere;
+}
+.loyalty-card .lc-contact {
+  font-size: 7.5pt;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+}
+.loyalty-card .lc-barcode {
+  display: block;
+  width: 62mm;
+  max-width: 100%;
+  height: auto;
+  margin-top: 1.5mm;
+}
+.loyalty-card .lc-number {
+  font-size: 8pt;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+}
+.loyalty-card .lc-error {
+  font-size: 7pt;
+  color: #b91c1c;
+  padding: 3mm 0;
+}
 
 /* Narrow stickers (48 / 58 mm label rolls): same content, tighter layout. The
    barcode takes almost the full width so its bars stay large enough to scan. */
@@ -368,17 +556,31 @@
   border-radius: 1.5mm;
 }
 .loyalty-card[data-width='48'] .lc-barcode,
-.loyalty-card[data-width='58'] .lc-barcode { width: 100%; }
-.loyalty-card[data-width='48'] .lc-store { font-size: 7.5pt; }
-.loyalty-card[data-width='48'] .lc-name { font-size: 8.5pt; }
-.loyalty-card[data-width='48'] .lc-contact { font-size: 6.5pt; }
-.loyalty-card[data-width='48'] .lc-number { font-size: 7pt; }
-.loyalty-card[data-width='48'] .lc-logo { max-height: 6mm; max-width: 14mm; }
-
-@media print {
-  .loyalty-card { border: none; }
+.loyalty-card[data-width='58'] .lc-barcode {
+  width: 100%;
+}
+.loyalty-card[data-width='48'] .lc-store {
+  font-size: 7.5pt;
+}
+.loyalty-card[data-width='48'] .lc-name {
+  font-size: 8.5pt;
+}
+.loyalty-card[data-width='48'] .lc-contact {
+  font-size: 6.5pt;
+}
+.loyalty-card[data-width='48'] .lc-number {
+  font-size: 7pt;
+}
+.loyalty-card[data-width='48'] .lc-logo {
+  max-height: 6mm;
+  max-width: 14mm;
 }
 
+@media print {
+  .loyalty-card {
+    border: none;
+  }
+}
 
 /* --------------------------------------------------------------------------
    Email preview
@@ -386,18 +588,54 @@
    typography that Tailwind's reset removes - otherwise headings and lists look
    nothing like the delivered email.
    -------------------------------------------------------------------------- */
-.email-preview h1 { font-size: 1.5rem; font-weight: 700; margin: 0 0 0.5rem; }
-.email-preview h2 { font-size: 1.25rem; font-weight: 700; margin: 0 0 0.5rem; }
-.email-preview h3 { font-size: 1.1rem; font-weight: 600; margin: 0 0 0.5rem; }
-.email-preview p { margin: 0 0 0.75rem; line-height: 1.5; }
-.email-preview ul, .email-preview ol { margin: 0 0 0.75rem 1.25rem; list-style: disc; }
-.email-preview ol { list-style: decimal; }
-.email-preview li { margin-bottom: 0.25rem; }
-.email-preview a { color: #2563eb; text-decoration: underline; }
-.email-preview strong { font-weight: 700; }
-.email-preview em { font-style: italic; }
-.email-preview img { max-width: 100%; height: auto; }
-.email-preview hr { margin: 1rem 0; border-top: 1px solid #e5e7eb; }
+.email-preview h1 {
+  font-size: 1.5rem;
+  font-weight: 700;
+  margin: 0 0 0.5rem;
+}
+.email-preview h2 {
+  font-size: 1.25rem;
+  font-weight: 700;
+  margin: 0 0 0.5rem;
+}
+.email-preview h3 {
+  font-size: 1.1rem;
+  font-weight: 600;
+  margin: 0 0 0.5rem;
+}
+.email-preview p {
+  margin: 0 0 0.75rem;
+  line-height: 1.5;
+}
+.email-preview ul,
+.email-preview ol {
+  margin: 0 0 0.75rem 1.25rem;
+  list-style: disc;
+}
+.email-preview ol {
+  list-style: decimal;
+}
+.email-preview li {
+  margin-bottom: 0.25rem;
+}
+.email-preview a {
+  color: #2563eb;
+  text-decoration: underline;
+}
+.email-preview strong {
+  font-weight: 700;
+}
+.email-preview em {
+  font-style: italic;
+}
+.email-preview img {
+  max-width: 100%;
+  height: auto;
+}
+.email-preview hr {
+  margin: 1rem 0;
+  border-top: 1px solid #e5e7eb;
+}
 
 /* --------------------------------------------------------------------------
    Subscription invoice

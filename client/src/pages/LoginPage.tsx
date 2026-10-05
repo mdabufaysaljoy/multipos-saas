@@ -4,7 +4,7 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import { Link, useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
-import { ArrowLeft, ChevronRight, Store } from 'lucide-react';
+import { ArrowLeft, ChevronRight } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -13,6 +13,7 @@ import { ApiError } from '@/api/client';
 import type { LoginChoice, LoginSelection } from '@/api/endpoints';
 import { useAuth } from '@/hooks/useAuth';
 import type { Session } from '@/types/api';
+import { AuthShell } from '@/features/public/AuthShell';
 
 const schema = z.object({
   email: z.string().min(1, 'Email is required').email('Enter a valid email address'),
@@ -21,7 +22,12 @@ const schema = z.object({
 
 type FormValues = z.infer<typeof schema>;
 
-const VERTICAL_LABEL: Record<string, string> = { clothing: 'Clothing POS', restaurant: 'Restaurant POS' };
+const VERTICAL_LABEL: Record<string, string> = {
+  clothing: 'Clothing POS',
+  restaurant: 'Restaurant POS',
+  supershop: 'Super Shop POS',
+  pharmacy: 'Pharmacy POS',
+};
 
 export function LoginPage() {
   const { login, completeLogin } = useAuth();
@@ -71,18 +77,19 @@ export function LoginPage() {
   };
 
   return (
-    <div className="flex min-h-full items-center justify-center bg-muted/40 p-4">
-      <div className="w-full max-w-sm space-y-6">
-        <div className="flex flex-col items-center gap-2 text-center">
-          <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-primary text-primary-foreground">
-            <Store className="h-5 w-5" />
-          </div>
-          <h1 className="text-xl font-semibold tracking-tight">Sign in to your store</h1>
-          <p className="text-sm text-muted-foreground">Point of sale for your business</p>
+    <AuthShell
+      title="Welcome back to a clearer workday."
+      copy="Your point of sale, inventory, team and reports are ready where you left them."
+    >
+      <div className="w-full space-y-6">
+        <div>
+          <p className="text-xs font-bold uppercase tracking-[.2em] text-primary">Welcome back</p>
+          <h1 className="mt-3 text-3xl font-bold tracking-[-.04em] text-slate-950">Sign in to your workspace</h1>
+          <p className="mt-2 text-sm text-slate-500">Continue to your business dashboard.</p>
         </div>
 
         {selection ? (
-          <Card>
+          <Card className="rounded-2xl border-slate-200 shadow-xl shadow-slate-900/5">
             <CardHeader className="pb-3">
               <CardTitle className="text-base">Choose where to sign in</CardTitle>
               <CardDescription>This email has more than one login. Pick the one you want to use.</CardDescription>
@@ -106,14 +113,19 @@ export function LoginPage() {
                   <ChevronRight className="h-4 w-4 text-muted-foreground" />
                 </button>
               ))}
-              <Button variant="ghost" className="w-full" onClick={() => setSelection(null)} disabled={Boolean(choosing)}>
+              <Button
+                variant="ghost"
+                className="w-full"
+                onClick={() => setSelection(null)}
+                disabled={Boolean(choosing)}
+              >
                 <ArrowLeft />
                 Use a different account
               </Button>
             </CardContent>
           </Card>
         ) : (
-          <Card>
+          <Card className="rounded-2xl border-slate-200 shadow-xl shadow-slate-900/5">
             <CardHeader className="pb-3">
               <CardTitle className="text-base">Welcome back</CardTitle>
               <CardDescription>Enter your credentials to continue</CardDescription>
@@ -157,13 +169,13 @@ export function LoginPage() {
           </Card>
         )}
 
-        <p className="text-center text-sm text-muted-foreground">
+        <p className="text-center text-sm text-slate-500">
           New here?{' '}
           <Link to="/register" className="font-medium text-primary hover:underline">
             Create a workspace
           </Link>
         </p>
       </div>
-    </div>
+    </AuthShell>
   );
 }

@@ -1,73 +1,119 @@
 import { Link } from 'react-router-dom';
-import { ArrowRight, BarChart3, Building2, Layers, Receipt, ShieldCheck, Users, Wallet } from 'lucide-react';
+import { ArrowRight, BarChart3, Building2, Layers, Receipt, Users, Wallet } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent } from '@/components/ui/card';
+import { AnalyticsPreview } from '@/features/public/ProductPreview';
+import { Reveal, SectionHeading } from '@/features/public/Reveal';
 import { SAAS_PRODUCTS } from './products.data';
 
-const PLATFORM_FEATURES = [
-  { icon: Layers, title: 'Several POS on one account', text: 'Run a clothing shop, a supershop, a restaurant and a pharmacy from one login. Each is its own workspace with its own stock, staff and subscription.' },
-  { icon: Wallet, title: 'One wallet for everything', text: 'Top up once and pay every workspace subscription and service from the same balance, with a full statement of every movement.' },
-  { icon: BarChart3, title: 'Dashboard and analytics', text: 'A sales dashboard on every plan. Advanced Analytics - profit, products, customers and staff - on Professional and Enterprise.' },
-  { icon: Building2, title: 'Branches', text: 'Separate stock, staff and sales per branch, with an owner view across all of them. The number of branches depends on the plan.' },
-  { icon: Users, title: 'Staff and roles', text: 'Give each person exactly the access they need. Permissions are enforced on the server, not just hidden in the app.' },
-  { icon: Receipt, title: 'Receipts and invoices', text: 'Thermal receipts at the till, and invoices for every subscription payment you make.' },
-  { icon: ShieldCheck, title: 'Your data stays yours', text: 'Every workspace is isolated. Staff of one business never see another business, and past sales never change when you re-price today.' },
-];
+const FEATURES = [
+  [
+    Layers,
+    'Several POS. One account.',
+    'Run different business types from one identity while every workspace keeps its own stock, team and subscription.',
+  ],
+  [
+    Wallet,
+    'One wallet for everything',
+    'Fund once, pay for workspaces and services, and keep a transparent record of every movement.',
+  ],
+  [
+    BarChart3,
+    'Insight that stays useful',
+    'Move from daily sales to profit, product, customer and staff analysis as your plan grows.',
+  ],
+  [
+    Building2,
+    'Branches without blind spots',
+    'Separate operational data by branch, then bring it together for owners who need the complete picture.',
+  ],
+  [
+    Users,
+    'Access with intention',
+    'Give each staff member the permissions their role needs, protected beyond the interface.',
+  ],
+  [
+    Receipt,
+    'A clean paper trail',
+    'Print receipts at the counter and keep subscription invoices ready when the business needs them.',
+  ],
+] as const;
 
-/** What the platform does across every POS, with a way into each POS's own page. */
 export function FeaturesPage() {
   return (
-    <div className="mx-auto max-w-6xl px-4 py-12 lg:px-6 lg:py-16">
-      <header className="text-center">
-        <h1 className="text-3xl font-bold tracking-tight sm:text-4xl">Features</h1>
-        <p className="mx-auto mt-3 max-w-2xl text-muted-foreground">
-          The platform every POS runs on, and what each one adds for its trade.
-        </p>
-      </header>
-
-      <section className="mt-12 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-        {PLATFORM_FEATURES.map((feature) => (
-          <Card key={feature.title}>
-            <CardContent className="space-y-2 p-5">
-              <span className="flex h-10 w-10 items-center justify-center rounded-lg bg-primary/10 text-primary">
-                <feature.icon className="h-5 w-5" />
-              </span>
-              <h2 className="font-semibold">{feature.title}</h2>
-              <p className="text-sm text-muted-foreground">{feature.text}</p>
-            </CardContent>
-          </Card>
-        ))}
+    <div className="bg-white">
+      <section className="px-4 py-20 sm:px-6 lg:px-8 lg:py-28">
+        <Reveal>
+          <SectionHeading
+            eyebrow="The platform underneath"
+            title="Powerful where it matters. Quiet everywhere else."
+            copy="RetailerSWs connects the work at the counter to the control behind it—without forcing every business into the same workflow."
+          />
+        </Reveal>
+        <div className="mx-auto mt-14 grid max-w-7xl gap-px overflow-hidden rounded-[2rem] bg-slate-200 ring-1 ring-slate-200 sm:grid-cols-2 lg:grid-cols-3">
+          {FEATURES.map(([Icon, title, copy], index) => (
+            <Reveal key={title} delay={(index % 3) * 60} className="bg-white">
+              <article className="h-full p-7 lg:p-8">
+                <span className="flex h-11 w-11 items-center justify-center rounded-xl bg-slate-950 text-cyan-300">
+                  <Icon className="h-5 w-5" />
+                </span>
+                <h2 className="mt-6 text-lg font-bold">{title}</h2>
+                <p className="mt-2 text-sm leading-6 text-slate-600">{copy}</p>
+              </article>
+            </Reveal>
+          ))}
+        </div>
       </section>
-
-      <section className="mt-16">
-        <h2 className="text-center text-2xl font-bold tracking-tight">Features by POS</h2>
-        <p className="mt-2 text-center text-sm text-muted-foreground">See each system in detail, with what every plan includes.</p>
-        <div className="mt-8 grid gap-4 sm:grid-cols-2">
+      <section className="bg-slate-950 px-4 py-20 text-white sm:px-6 lg:px-8 lg:py-28">
+        <div className="mx-auto grid max-w-7xl gap-12 lg:grid-cols-[.82fr_1.18fr] lg:items-center">
+          <Reveal>
+            <p className="text-xs font-bold uppercase tracking-[.22em] text-cyan-300">See what changed today</p>
+            <h2 className="mt-4 text-balance text-4xl font-bold tracking-[-.045em]">
+              Decisions move faster when the picture is clear.
+            </h2>
+            <p className="mt-5 text-lg leading-8 text-slate-400">
+              Sales, inventory, payments and profitability belong in the same conversation. Your available analytics
+              follow the plan catalogue already enforced by the platform.
+            </p>
+            <Button
+              variant="outline"
+              className="mt-8 rounded-xl border-white/15 bg-white/5 text-white hover:bg-white/10 hover:text-white"
+              asChild
+            >
+              <Link to="/pricing">
+                Compare plans <ArrowRight />
+              </Link>
+            </Button>
+          </Reveal>
+          <Reveal delay={120}>
+            <AnalyticsPreview />
+          </Reveal>
+        </div>
+      </section>
+      <section className="px-4 py-20 sm:px-6 lg:px-8 lg:py-28">
+        <SectionHeading
+          eyebrow="Trade-specific depth"
+          title="Shared foundations. Specialist detail."
+          copy="The platform remains consistent while each POS adds the tools its business type genuinely needs."
+        />
+        <div className="mx-auto mt-12 grid max-w-7xl gap-4 sm:grid-cols-2">
           {SAAS_PRODUCTS.map((product) => (
-            <Card key={product.slug} className="flex flex-col">
-              <CardContent className="flex flex-1 flex-col gap-3 p-5">
-                <div className="flex items-center gap-3">
-                  <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
-                    <product.icon className="h-5 w-5" />
-                  </span>
-                  <div className="min-w-0">
-                    <h3 className="font-semibold">{product.name}</h3>
-                    <p className="text-xs text-muted-foreground">{product.tagline}</p>
-                  </div>
-                </div>
-                <ul className="flex-1 space-y-1 text-sm text-muted-foreground">
-                  {product.highlights.map((line) => (
-                    <li key={line}>• {line}</li>
-                  ))}
-                </ul>
-                <Button variant="outline" size="sm" className="w-full sm:w-auto sm:self-start" asChild>
-                  <Link to={`/products/${product.slug}`}>
-                    {product.name} features and plans
-                    <ArrowRight />
-                  </Link>
-                </Button>
-              </CardContent>
-            </Card>
+            <Link
+              key={product.slug}
+              to={`/products/${product.slug}`}
+              className="group flex gap-5 rounded-2xl border border-slate-200 p-6 transition hover:-translate-y-1 hover:border-indigo-200 hover:shadow-xl hover:shadow-slate-900/5"
+            >
+              <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-slate-100 text-slate-700 transition group-hover:bg-slate-950 group-hover:text-cyan-300">
+                <product.icon className="h-5 w-5" />
+              </span>
+              <span className="min-w-0">
+                <span className="flex items-center gap-2 font-bold">
+                  {product.name}
+                  <ArrowRight className="h-4 w-4 transition group-hover:translate-x-1" />
+                </span>
+                <span className="mt-1 block text-sm text-slate-500">{product.tagline}</span>
+                <span className="mt-3 line-clamp-2 block text-sm leading-6 text-slate-600">{product.description}</span>
+              </span>
+            </Link>
           ))}
         </div>
       </section>
