@@ -1,290 +1,186 @@
-import * as React from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { Link, useParams } from 'react-router-dom';
-import { ArrowLeft, ArrowRight, Check, Lock } from 'lucide-react';
-import { Badge } from '@/components/ui/badge';
-import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { EmptyState, LoadingState } from '@/components/states';
+import { Link, Navigate, useParams } from 'react-router-dom';
+import { ArrowLeft, Check } from 'lucide-react';
 import { billingApi } from '@/api/endpoints';
 import { formatPlanPrice } from '@/lib/money';
-import { availableOn, formatLimit } from '@/lib/planCatalog';
-import { PlanComparisonTable } from '@/features/billing/PlanComparisonTable';
+import { formatLimit } from '@/lib/planCatalog';
 import { cn } from '@/lib/utils';
-import { SAAS_PRODUCTS, SHARED_FEATURES, productBySlug } from './products.data';
-import { ProductPreview } from '@/features/public/ProductPreview';
-import { SectionHeading } from '@/features/public/Reveal';
+import { Reveal, Stagger } from '@/features/public/motion';
+import { Container, CtaButton, DarkSection, Eyebrow, SectionHeading } from '@/features/public/primitives';
+import { PosTerminal, type TerminalVertical } from '@/features/public/PosTerminal';
+import { productBySlug } from './products.data';
+
+const ACCENT: Record<string, string> = {
+  clothing: 'from-violet-500 to-fuchsia-500',
+  restaurant: 'from-orange-500 to-rose-500',
+  supershop: 'from-emerald-500 to-teal-500',
+  pharmacy: 'from-cyan-500 to-blue-500',
+};
 
 const HEADLINE_LIMITS: { key: string; label: string }[] = [
   { key: 'maxStores', label: 'Branches' },
   { key: 'maxStaff', label: 'Staff' },
   { key: 'maxProducts', label: 'Products' },
-  { key: 'maxMonthlySales', label: 'Sales / month' },
-  { key: 'maxCustomers', label: 'Customers' },
 ];
 
-const tierName = (name: string) => name.replace(/ Annual$/, '');
-
 /**
- * One POS system in detail: what it does, and what each subscription plan
- * includes FOR THIS POS TYPE. Plans, prices, limits and feature ticks are read
- * from the API resolved for this vertical, so the page matches what the
- * backend enforces.
+ * One POS, in full.
+ *
+ * The capability lists come from the shared product data; the plans come from
+ * the API for THIS POS type, so a page can never promise a price or a limit the
+ * backend would refuse.
  */
 export function PosProductPage() {
   const { slug } = useParams();
   const product = productBySlug(slug);
-  const [interval, setInterval] = React.useState<'monthly' | 'yearly'>('monthly');
 
-  const {
-    data: plans,
-    isLoading,
-    isError,
-  } = useQuery({
+  const { data: plans } = useQuery({
     queryKey: ['public', 'plans', product?.vertical],
     queryFn: () => billingApi.plansFor(product!.vertical),
     enabled: Boolean(product),
   });
 
-  if (!product) {
-    return (
-      <div className="mx-auto max-w-3xl px-4 py-16 lg:px-6">
-        <EmptyState title="We couldn't find that POS" description="It may have moved. See all our POS systems." />
-        <div className="mt-6 text-center">
-          <Button asChild variant="outline">
-            <Link to="/products">
-              <ArrowLeft />
+  if (!product) return <Navigate to="/products" replace />;
+
+  const monthly = (plans ?? [])
+    .filter((plan) => plan.interval === 'monthly')
+    .sort((a, b) => a.sortOrder - b.sortOrder)
+    .slice(0, 3);
+  const accent = ACCENT[product.vertical];
+
+  return (
+    <>
+      <DarkSection grid className="py-16 sm:py-24">
+        <Container>
+          <Reveal>
+            <Link
+              to="/products"
+              className="group inline-flex items-center gap-1.5 rounded text-[0.8125rem] font-medium text-slate-400 outline-none transition-colors hover:text-white focus-visible:ring-2 focus-visible:ring-indigo-400"
+            >
+              <ArrowLeft className="h-3.5 w-3.5 transition-transform duration-300 group-hover:-translate-x-0.5" aria-hidden />
               All POS systems
             </Link>
-          </Button>
-        </div>
-      </div>
-    );
-  }
+          </Reveal>
 
-  const visible = (plans ?? []).filter((plan) => plan.interval === interval).sort((a, b) => a.sortOrder - b.sortOrder);
-  const monthlyByTier = new Map(
-    (plans ?? []).filter((plan) => plan.interval === 'monthly').map((plan) => [plan.tier, plan]),
-  );
-  const others = SAAS_PRODUCTS.filter((other) => other.slug !== product.slug);
-  const registerLink = `/register?pos=${product.vertical}`;
-
-  return (
-    <div className="bg-white">
-      {/* ---------------------------------------------------------- hero */}
-      <section className="relative overflow-hidden bg-[linear-gradient(to_bottom_right,#f8fafc,#eef2ff,#ecfeff)]">
-        <div className="mx-auto max-w-7xl px-4 py-16 sm:px-6 lg:px-8 lg:py-24">
-          <Link
-            to="/products"
-            className="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground"
-          >
-            <ArrowLeft className="h-4 w-4" />
-            All POS systems
-          </Link>
-          <div className="mt-8 grid gap-12 lg:grid-cols-[.82fr_1.18fr] lg:items-center">
-            <div className="min-w-0">
-              <span className="flex h-14 w-14 items-center justify-center rounded-2xl bg-slate-950 text-cyan-300 shadow-xl">
-                <product.icon className="h-7 w-7" />
-              </span>
-              <div className="flex flex-wrap items-center gap-2">
-                <h1 className="mt-5 text-4xl font-bold tracking-[-.05em] text-slate-950 sm:text-6xl">{product.name}</h1>
-                <Badge variant="success">Available now</Badge>
-              </div>
-              <p className="mt-3 font-semibold text-indigo-600">{product.tagline}</p>
-              <p className="mt-4 max-w-xl text-lg leading-8 text-slate-600">{product.description}</p>
-              <div className="mt-7 flex flex-col gap-2 sm:flex-row">
-                <Button size="lg" className="rounded-xl" asChild>
-                  <Link to={registerLink}>
-                    Start free trial
-                    <ArrowRight />
-                  </Link>
-                </Button>
-                <Button size="lg" variant="outline" className="rounded-xl bg-white/70" asChild>
-                  <a href="#plans">See plans</a>
-                </Button>
-              </div>
+          <div className="mt-10 grid items-center gap-14 lg:grid-cols-[1fr_1.05fr]">
+            <div>
+              <Reveal delay={60}>
+                <Eyebrow>
+                  <span className={cn('h-2 w-2 rounded-full bg-gradient-to-br', accent)} />
+                  {product.tagline}
+                </Eyebrow>
+              </Reveal>
+              <Reveal delay={120}>
+                <h1 className="rs-display mt-6 text-[2.5rem] font-bold text-white sm:text-[3.25rem]">{product.name}</h1>
+              </Reveal>
+              <Reveal delay={180}>
+                <p className="mt-6 max-w-lg text-pretty text-[1.0625rem] leading-8 text-slate-400">{product.description}</p>
+              </Reveal>
+              <Reveal delay={240}>
+                <div className="mt-9 flex flex-wrap gap-3">
+                  <CtaButton to="/register">Start free</CtaButton>
+                  <CtaButton to="/pricing" variant="ghost">
+                    See pricing
+                  </CtaButton>
+                </div>
+              </Reveal>
             </div>
-            <ProductPreview kind={product.vertical} />
+
+            <Reveal delay={200} from="none" scale={0.96}>
+              <PosTerminal vertical={product.vertical as TerminalVertical} />
+            </Reveal>
           </div>
-        </div>
+        </Container>
+      </DarkSection>
+
+      {/* ------------------------------------------------- what it does */}
+      <section className="bg-white py-20 sm:py-28">
+        <Container>
+          <SectionHeading eyebrow="Capabilities" title={<>What {product.name} does.</>} />
+          <Stagger className="mt-14 grid gap-5 lg:grid-cols-3" step={90}>
+            {product.features.map((group) => (
+              <div key={group.title} className="rs-lift h-full rounded-2xl border border-slate-200 bg-white p-7">
+                <h3 className="text-[1.0625rem] font-semibold text-slate-950">{group.title}</h3>
+                <ul className="mt-5 space-y-3">
+                  {group.items.map((item) => (
+                    <li key={item} className="flex items-start gap-2.5 text-[0.875rem] leading-6 text-slate-600">
+                      <Check className={cn('mt-0.5 h-4 w-4 shrink-0 text-indigo-600')} aria-hidden />
+                      {item}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ))}
+          </Stagger>
+        </Container>
       </section>
 
-      {/* ------------------------------------------------------ features */}
-      <section className="mx-auto max-w-7xl px-4 py-20 sm:px-6 lg:px-8 lg:py-28">
-        <SectionHeading
-          eyebrow="Built for the work"
-          title={`What ${product.name} does`}
-          copy="Focused tools for the counter, the stockroom and the decisions that happen after closing."
-        />
-        <div className="mt-12 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          {product.features.map((group) => (
-            <FeatureGroupCard key={group.title} title={group.title} items={group.items} />
-          ))}
-        </div>
-
-        <h3 className="mt-14 text-center text-lg font-semibold">Shared platform foundations</h3>
-        <div className="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          {SHARED_FEATURES.map((group) => (
-            <FeatureGroupCard key={group.title} title={group.title} items={group.items} muted />
-          ))}
-        </div>
-      </section>
-
-      {/* --------------------------------------------------------- plans */}
-      <section id="plans" className="scroll-mt-20 border-t border-slate-200 bg-slate-50">
-        <div className="mx-auto max-w-7xl px-4 py-20 sm:px-6 lg:px-8 lg:py-24">
-          <div className="text-center">
-            <h2 className="text-2xl font-bold tracking-tight sm:text-3xl">{product.name} plans</h2>
-            <p className="mx-auto mt-2 max-w-2xl text-muted-foreground">
-              What each subscription includes for a {product.name} workspace.
-            </p>
-          </div>
-
-          <div className="mt-6 flex justify-center">
-            <div className="inline-flex rounded-lg border bg-background p-1">
-              {(['monthly', 'yearly'] as const).map((value) => (
-                <button
-                  key={value}
-                  type="button"
-                  onClick={() => setInterval(value)}
-                  className={cn(
-                    'flex items-center gap-2 rounded-md px-4 py-1.5 text-sm font-medium transition-colors',
-                    interval === value ? 'bg-muted shadow-sm' : 'text-muted-foreground hover:text-foreground',
-                  )}
-                >
-                  {value === 'monthly' ? 'Monthly' : 'Yearly'}
-                  {value === 'yearly' && <Badge variant="success">2 months free</Badge>}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          {isLoading && <LoadingState label="Loading plans…" />}
-          {!isLoading && (isError || visible.length === 0) && <EmptyState title="Plans are not available right now" />}
-
-          <div className="mt-8 grid gap-6 md:grid-cols-3">
-            {visible.map((plan, index) => {
-              const featured = index === 1;
-              const monthlyTwin = monthlyByTier.get(plan.tier);
-              const offersTrial = (monthlyTwin?.trialDays ?? plan.trialDays) > 0;
-              return (
-                <Card
-                  key={plan._id}
-                  className={cn(
-                    'flex flex-col rounded-2xl border-slate-200 bg-white shadow-sm',
-                    featured && 'border-primary shadow-xl ring-1 ring-primary',
-                  )}
-                >
-                  <CardHeader className="pb-3">
-                    <div className="flex items-center justify-between gap-2">
-                      <CardTitle>{tierName(plan.name)}</CardTitle>
-                      {offersTrial ? (
-                        <Badge variant="success">Free trial</Badge>
-                      ) : featured ? (
-                        <Badge>Most popular</Badge>
-                      ) : null}
-                    </div>
-                    <CardDescription>
-                      {plan.description.replace(/ Billed yearly - two months free\.$/, '')}
-                    </CardDescription>
-                  </CardHeader>
-                  <CardContent className="flex flex-1 flex-col gap-4">
-                    <p className="tabular text-3xl font-bold">
+      {/* ------------------------------------------------- plans for this POS */}
+      {monthly.length > 0 && (
+        <section className="border-t border-slate-200 bg-slate-50 py-20 sm:py-24">
+          <Container>
+            <SectionHeading
+              eyebrow="Plans"
+              title={<>Pricing for {product.name}.</>}
+              copy="Read live from the platform, so what you see here is what the system charges."
+            />
+            <Stagger className="mt-12 grid gap-5 lg:grid-cols-3" step={90}>
+              {monthly.map((plan) => (
+                <div key={plan._id} className="rs-lift h-full rounded-[1.4rem] border border-slate-200 bg-white p-7">
+                  <h3 className="text-[1.0625rem] font-semibold text-slate-950">{plan.name.replace(/ Annual$/, '')}</h3>
+                  <p className="mt-5 flex items-baseline gap-1.5">
+                    <span className="text-[2rem] font-bold tracking-tight text-slate-950">
                       {formatPlanPrice(plan.priceMinor, plan.currency)}
-                      <span className="text-base font-normal text-muted-foreground">
-                        {' '}
-                        / {plan.interval === 'yearly' ? 'year' : 'month'}
-                      </span>
+                    </span>
+                    <span className="text-[0.8125rem] text-slate-400">/mo</span>
+                  </p>
+                  <dl className="mt-6 space-y-2.5 border-t border-slate-100 pt-5 text-[0.875rem]">
+                    {HEADLINE_LIMITS.map((limit) => (
+                      <div key={limit.key} className="flex items-center justify-between gap-3">
+                        <dt className="text-slate-500">{limit.label}</dt>
+                        <dd className="font-mono font-semibold text-slate-900">{formatLimit(plan.limits[limit.key])}</dd>
+                      </div>
+                    ))}
+                  </dl>
+                  {plan.trialDays > 0 && (
+                    <p className="mt-5 flex items-center gap-1.5 text-[0.8125rem] font-medium text-emerald-600">
+                      <Check className="h-3.5 w-3.5" aria-hidden />
+                      {plan.trialDays}-day free trial
                     </p>
-                    <dl className="grid grid-cols-2 gap-x-3 gap-y-2 border-t pt-4 text-sm">
-                      {HEADLINE_LIMITS.map((limit) => (
-                        <div key={limit.key}>
-                          <dt className="text-xs text-muted-foreground">{limit.label}</dt>
-                          <dd className="tabular font-semibold">{formatLimit(plan.limits[limit.key])}</dd>
-                        </div>
-                      ))}
-                    </dl>
-                    <div className="flex items-start gap-2 border-t pt-3 text-sm">
-                      {plan.features.advancedReports ? (
-                        <>
-                          <Check className="mt-0.5 h-4 w-4 shrink-0 text-success" />
-                          <span className="font-medium">Advanced Analytics</span>
-                        </>
-                      ) : (
-                        <>
-                          <Lock className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
-                          <span>
-                            <span className="font-medium">Advanced Analytics</span>
-                            <span className="block text-xs text-muted-foreground">
-                              Available on {availableOn(visible, 'advancedReports')}
-                            </span>
-                          </span>
-                        </>
-                      )}
-                    </div>
-                    <div className="flex-1" />
-                    <Button className="w-full" variant={featured ? 'default' : 'outline'} asChild>
-                      <Link to={registerLink}>
-                        {offersTrial ? 'Start free trial' : `Choose ${tierName(plan.name)}`}
-                        <ArrowRight />
-                      </Link>
-                    </Button>
-                  </CardContent>
-                </Card>
-              );
-            })}
-          </div>
-
-          {visible.length > 0 && (
-            <div className="mt-12">
-              <h3 className="text-center text-xl font-bold tracking-tight">Compare {product.name} plans</h3>
-              <p className="mt-1 text-center text-sm text-muted-foreground">
-                Everything each plan includes, and everything it does not.
-              </p>
-              <div className="mt-6">
-                <PlanComparisonTable plans={visible} />
+                  )}
+                </div>
+              ))}
+            </Stagger>
+            <Reveal delay={150}>
+              <div className="mt-11 text-center">
+                <CtaButton to="/pricing" variant="light" className="ring-1 ring-slate-200">
+                  Compare every plan
+                </CtaButton>
               </div>
-            </div>
-          )}
-        </div>
-      </section>
+            </Reveal>
+          </Container>
+        </section>
+      )}
 
-      {/* ---------------------------------------------------- other POS */}
-      <section className="mx-auto max-w-7xl px-4 py-16 sm:px-6 lg:px-8">
-        <h2 className="text-xl font-semibold">Other POS systems</h2>
-        <p className="mt-1 text-sm text-muted-foreground">One account and one wallet can run several.</p>
-        <div className="mt-4 grid gap-4 sm:grid-cols-3">
-          {others.map((other) => (
-            <Link
-              key={other.slug}
-              to={`/products/${other.slug}`}
-              className="rounded-2xl border border-slate-200 p-5 transition hover:-translate-y-1 hover:shadow-lg"
-            >
-              <other.icon className="h-5 w-5 text-primary" />
-              <p className="mt-2 font-medium">{other.name}</p>
-              <p className="text-xs text-muted-foreground">{other.tagline}</p>
-            </Link>
-          ))}
-        </div>
-      </section>
-    </div>
-  );
-}
-
-function FeatureGroupCard({ title, items, muted }: { title: string; items: string[]; muted?: boolean }) {
-  return (
-    <Card className={cn('rounded-2xl border-slate-200 shadow-sm', muted && 'bg-slate-50')}>
-      <CardContent className="space-y-3 p-5">
-        <h3 className="font-semibold">{title}</h3>
-        <ul className="space-y-1.5">
-          {items.map((item) => (
-            <li key={item} className="flex items-start gap-2 text-sm">
-              <Check className="mt-0.5 h-4 w-4 shrink-0 text-success" />
-              {item}
-            </li>
-          ))}
-        </ul>
-      </CardContent>
-    </Card>
+      <DarkSection className="py-20 sm:py-24">
+        <Container>
+          <div className="mx-auto max-w-2xl text-center">
+            <Reveal>
+              <h2 className="rs-h2 text-[2rem] font-bold text-white sm:text-[2.5rem]">
+                Open your <span className="rs-gradient-text">{product.name}</span> today.
+              </h2>
+            </Reveal>
+            <Reveal delay={120}>
+              <div className="mt-9 flex flex-wrap justify-center gap-3">
+                <CtaButton to="/register">Create a workspace</CtaButton>
+                <CtaButton to="/contact" variant="ghost">
+                  Talk to us
+                </CtaButton>
+              </div>
+            </Reveal>
+          </div>
+        </Container>
+      </DarkSection>
+    </>
   );
 }

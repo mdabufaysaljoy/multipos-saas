@@ -1,17 +1,16 @@
 import * as React from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
-import { ArrowRight, Check, Lock, Sparkles } from 'lucide-react';
-import { Badge } from '@/components/ui/badge';
+import { ArrowRight, Check, Lock, Sparkles, Wallet } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { LoadingState, EmptyState } from '@/components/states';
+import { EmptyState } from '@/components/states';
 import { billingApi } from '@/api/endpoints';
 import { formatPlanPrice } from '@/lib/money';
 import { availableOn, formatLimit, upgradeHighlights } from '@/lib/planCatalog';
 import { PlanComparisonTable } from '@/features/billing/PlanComparisonTable';
 import { cn } from '@/lib/utils';
-import { Reveal } from '@/features/public/Reveal';
+import { Reveal, Stagger } from '@/features/public/motion';
+import { Container, CtaButton, DarkSection, SectionHeading } from '@/features/public/primitives';
 
 /** The numbers that actually decide which plan someone needs. */
 const HEADLINE_LIMITS: { key: string; label: string }[] = [
@@ -25,9 +24,9 @@ const HEADLINE_LIMITS: { key: string; label: string }[] = [
 /**
  * Public pricing.
  *
- * Every price, limit and tick is read live from the API and rendered through
- * the shared catalogue, so this page cannot advertise something the backend
- * does not enforce.
+ * Every price, limit and tick is read live from the API, so the page cannot
+ * advertise something the backend does not enforce. The visual language is the
+ * website's; the data and the rules are the platform's.
  */
 export function PricingPage() {
   const [interval, setInterval] = React.useState<'monthly' | 'yearly'>('monthly');
@@ -36,203 +35,240 @@ export function PricingPage() {
   const visible = (plans ?? []).filter((plan) => plan.interval === interval).sort((a, b) => a.sortOrder - b.sortOrder);
 
   // The trial belongs to ONE plan. `trialDays > 0` is the same rule the server
-  // uses to decide eligibility, so the page and the backend cannot disagree
-  // about who gets a free trial.
+  // uses, so the page and the backend cannot disagree about who gets one.
   const trialPlan = (plans ?? []).filter((plan) => plan.trialDays > 0).sort((a, b) => a.tier - b.tier)[0] ?? null;
   const trialDays = trialPlan?.trialDays ?? null;
   const trialPlanName = trialPlan?.name.replace(/ Annual$/, '') ?? null;
 
-  // Monthly equivalents, so the yearly view can show what a year of paying
-  // monthly would have cost.
-  const monthlyByTier = new Map(
-    (plans ?? []).filter((plan) => plan.interval === 'monthly').map((plan) => [plan.tier, plan]),
-  );
+  // Monthly equivalents, so the yearly view can show what paying monthly costs.
+  const monthlyByTier = new Map((plans ?? []).filter((plan) => plan.interval === 'monthly').map((plan) => [plan.tier, plan]));
 
   return (
-    <div className="bg-[linear-gradient(to_bottom,#f8fafc_0,#fff_32rem)] px-4 py-20 sm:px-6 lg:px-8 lg:py-28">
-      <header className="mx-auto max-w-3xl text-center">
-        <p className="text-xs font-bold uppercase tracking-[.22em] text-primary">Simple by design</p>
-        <h1 className="mt-4 text-balance text-4xl font-bold tracking-[-.05em] text-slate-950 sm:text-6xl">
-          Pricing that grows with the work.
-        </h1>
-        <p className="mx-auto mt-5 max-w-2xl text-lg leading-8 text-slate-600">
-          Every plan includes the complete point of sale. You pay for scale — more products, more staff, more branches —
-          not for the basics.
-        </p>
-      </header>
+    <>
+      <DarkSection grid className="py-20 sm:py-28">
+        <Container>
+          <SectionHeading
+            tone="dark"
+            eyebrow="Pricing"
+            title={<>Pay for scale, not for the basics.</>}
+            copy="Every plan includes the complete point of sale. You pay for more products, more staff and more branches — never for the till itself."
+          />
 
-      <div className="mt-10 flex flex-col items-center gap-2">
-        <div className="inline-flex rounded-full border border-slate-200 bg-white p-1.5 shadow-sm">
-          <button
-            type="button"
-            onClick={() => setInterval('monthly')}
-            className={cn(
-              'rounded-full px-5 py-2 text-sm font-medium transition-colors',
-              interval === 'monthly' ? 'bg-slate-950 text-white shadow-sm' : 'text-slate-500 hover:text-slate-950',
-            )}
-          >
-            Monthly
-          </button>
-          <button
-            type="button"
-            onClick={() => setInterval('yearly')}
-            className={cn(
-              'flex items-center gap-2 rounded-full px-5 py-2 text-sm font-medium transition-colors',
-              interval === 'yearly' ? 'bg-slate-950 text-white shadow-sm' : 'text-slate-500 hover:text-slate-950',
-            )}
-          >
-            Yearly
-            <Badge variant="success">2 months free</Badge>
-          </button>
-        </div>
-        <p className="text-xs text-muted-foreground">Annual billing charges ten months for twelve months of service.</p>
-      </div>
+          <Reveal delay={180}>
+            <div className="mt-10 flex justify-center">
+              <div role="radiogroup" aria-label="Billing interval" className="inline-flex rounded-full border border-white/10 bg-white/[0.04] p-1.5 backdrop-blur">
+                {(['monthly', 'yearly'] as const).map((value) => (
+                  <button
+                    key={value}
+                    type="button"
+                    role="radio"
+                    aria-checked={interval === value}
+                    onClick={() => setInterval(value)}
+                    className={cn(
+                      'rounded-full px-6 py-2 text-sm font-semibold capitalize outline-none transition-all duration-300 focus-visible:ring-2 focus-visible:ring-indigo-400',
+                      interval === value ? 'bg-white text-slate-950 shadow-sm' : 'text-slate-400 hover:text-white',
+                    )}
+                  >
+                    {value}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </Reveal>
+        </Container>
+      </DarkSection>
 
-      {isLoading && <LoadingState label="Loading plans…" />}
-      {!isLoading && visible.length === 0 && <EmptyState title="No plans available" />}
+      <section className="bg-white py-20 sm:py-24">
+        <Container>
+          {isLoading && (
+            <div className="grid gap-5 md:grid-cols-3">
+              {[0, 1, 2].map((key) => (
+                <div key={key} className="h-[30rem] animate-pulse rounded-[1.4rem] border border-slate-200 bg-slate-50" />
+              ))}
+            </div>
+          )}
+          {!isLoading && visible.length === 0 && <EmptyState title="No plans available" />}
 
-      {/* ---------------------------------------------------------- cards */}
-      <div className="mx-auto mt-12 grid max-w-7xl gap-6 md:grid-cols-3">
-        {visible.map((plan, index) => {
-          const featured = index === 1;
-          const monthlyTwin = monthlyByTier.get(plan.tier);
-          // Annual plans carry no trial, so ask the tier's monthly twin.
-          const offersTrial = (monthlyTwin?.trialDays ?? plan.trialDays) > 0;
-          const yearOfMonthly = monthlyTwin ? monthlyTwin.priceMinor * 12 : null;
-          const saving = interval === 'yearly' && yearOfMonthly ? yearOfMonthly - plan.priceMinor : null;
+          {visible.length > 0 && (
+            <Stagger className="grid items-start gap-5 md:grid-cols-3" step={90}>
+              {visible.map((plan, index) => {
+                const featured = index === 1;
+                const monthlyTwin = monthlyByTier.get(plan.tier);
+                // Annual plans carry no trial, so ask the tier's monthly twin.
+                const offersTrial = (monthlyTwin?.trialDays ?? plan.trialDays) > 0;
+                const yearOfMonthly = monthlyTwin ? monthlyTwin.priceMinor * 12 : null;
+                const saving = interval === 'yearly' && yearOfMonthly ? yearOfMonthly - plan.priceMinor : null;
 
-          return (
-            <Reveal key={plan._id} delay={index * 70} className="h-full">
-              <Card
-                className={cn(
-                  'flex h-full flex-col rounded-2xl border-slate-200 bg-white shadow-sm transition hover:-translate-y-1 hover:shadow-xl',
-                  featured && 'border-slate-950 bg-slate-950 text-white shadow-2xl shadow-slate-950/20 ring-0',
-                )}
-              >
-                <CardHeader className="pb-3">
-                  <div className="flex items-center justify-between gap-2">
-                    <CardTitle>{plan.name.replace(/ Annual$/, '')}</CardTitle>
-                    {offersTrial && <Badge variant="success">Free trial</Badge>}
-                    {featured && !offersTrial && <Badge>Most popular</Badge>}
-                  </div>
-                  <CardDescription className={featured ? 'text-slate-400' : undefined}>
-                    {plan.description.replace(/ Billed yearly - two months free\.$/, '')}
-                  </CardDescription>
-                </CardHeader>
+                return (
+                  <div
+                    key={plan._id}
+                    className={cn(
+                      'rs-lift relative flex h-full flex-col rounded-[1.4rem] border p-7',
+                      featured
+                        ? 'border-transparent bg-slate-950 text-white shadow-[0_40px_90px_-45px_rgba(15,23,42,0.9)] md:-my-4 md:py-11'
+                        : 'border-slate-200 bg-white',
+                    )}
+                  >
+                    {featured && (
+                      <span className="absolute -top-3 left-7 inline-flex items-center gap-1 rounded-full bg-gradient-to-r from-indigo-500 to-cyan-400 px-3 py-1 text-[11px] font-bold uppercase tracking-wider text-slate-950">
+                        <Sparkles className="h-3 w-3" aria-hidden />
+                        Most popular
+                      </span>
+                    )}
 
-                <CardContent className="flex flex-1 flex-col gap-4">
-                  <div>
-                    <p className="tabular text-3xl font-bold">
-                      {formatPlanPrice(plan.priceMinor, plan.currency)}
-                      <span className="text-base font-normal text-muted-foreground">
-                        {' '}
+                    <div className="flex items-start justify-between gap-3">
+                      <h2 className={cn('text-[1.125rem] font-semibold', featured ? 'text-white' : 'text-slate-950')}>
+                        {plan.name.replace(/ Annual$/, '')}
+                      </h2>
+                      {offersTrial && (
+                        <span className={cn('shrink-0 rounded-full px-2.5 py-1 text-[11px] font-semibold', featured ? 'bg-emerald-400/15 text-emerald-300' : 'bg-emerald-50 text-emerald-700')}>
+                          Free trial
+                        </span>
+                      )}
+                    </div>
+                    <p className={cn('mt-2 text-[0.8125rem] leading-5', featured ? 'text-slate-400' : 'text-slate-500')}>
+                      {plan.description.replace(/ Billed yearly - two months free\.$/, '')}
+                    </p>
+
+                    <p className="mt-7 flex items-baseline gap-1.5">
+                      <span className={cn('text-[2.25rem] font-bold tracking-tight', featured ? 'text-white' : 'text-slate-950')}>
+                        {formatPlanPrice(plan.priceMinor, plan.currency)}
+                      </span>
+                      <span className={cn('text-[0.8125rem]', featured ? 'text-slate-500' : 'text-slate-400')}>
                         / {plan.interval === 'yearly' ? 'year' : 'month'}
                       </span>
                     </p>
                     {saving !== null && saving > 0 && (
-                      <p className="mt-1 text-xs font-medium text-success">
+                      <p className={cn('mt-1.5 text-[0.8125rem] font-medium', featured ? 'text-emerald-300' : 'text-emerald-600')}>
                         Saves {formatPlanPrice(saving, plan.currency)} a year
                       </p>
                     )}
-                  </div>
 
-                  <dl className="grid grid-cols-2 gap-x-3 gap-y-2 border-t pt-4 text-sm">
-                    {HEADLINE_LIMITS.map((limit) => (
-                      <div key={limit.key}>
-                        <dt className="text-xs text-muted-foreground">{limit.label}</dt>
-                        <dd className="tabular font-semibold">{formatLimit(plan.limits[limit.key])}</dd>
-                      </div>
-                    ))}
-                  </dl>
+                    <dl className={cn('mt-7 space-y-2.5 border-t pt-6 text-[0.875rem]', featured ? 'border-white/10' : 'border-slate-100')}>
+                      {HEADLINE_LIMITS.map((limit) => (
+                        <div key={limit.key} className="flex items-center justify-between gap-3">
+                          <dt className={featured ? 'text-slate-400' : 'text-slate-500'}>{limit.label}</dt>
+                          <dd className={cn('font-mono font-semibold', featured ? 'text-white' : 'text-slate-900')}>
+                            {formatLimit(plan.limits[limit.key])}
+                          </dd>
+                        </div>
+                      ))}
+                    </dl>
 
-                  {/* The analytics line is read from the plan's own flag, so the
-                    card cannot promise what the backend will refuse. */}
-                  <div className="flex items-start gap-2 border-t pt-3 text-sm">
-                    {plan.features.advancedReports ? (
-                      <>
-                        <Check className="mt-0.5 h-4 w-4 shrink-0 text-success" />
-                        <span className="font-medium">Advanced Analytics</span>
-                      </>
-                    ) : (
-                      <>
-                        <Lock className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
-                        <span>
-                          <span className="font-medium">Advanced Analytics</span>
-                          <span className="block text-xs text-muted-foreground">
-                            Available on {availableOn(visible, 'advancedReports')}
+                    {/* Read from the plan's own flag, so the card cannot promise
+                        what the backend will refuse. */}
+                    <div className={cn('mt-6 flex items-start gap-2 border-t pt-5 text-[0.875rem]', featured ? 'border-white/10' : 'border-slate-100')}>
+                      {plan.features.advancedReports ? (
+                        <>
+                          <Check className={cn('mt-0.5 h-4 w-4 shrink-0', featured ? 'text-emerald-300' : 'text-emerald-600')} aria-hidden />
+                          <span className={cn('font-medium', featured ? 'text-white' : 'text-slate-900')}>Advanced Analytics</span>
+                        </>
+                      ) : (
+                        <>
+                          <Lock className="mt-0.5 h-4 w-4 shrink-0 text-slate-400" aria-hidden />
+                          <span>
+                            <span className={cn('font-medium', featured ? 'text-white' : 'text-slate-900')}>Advanced Analytics</span>
+                            <span className="block text-[0.75rem] text-slate-500">
+                              Available on {availableOn(visible, 'advancedReports')}
+                            </span>
                           </span>
-                        </span>
-                      </>
+                        </>
+                      )}
+                    </div>
+
+                    <div className="flex-1" />
+
+                    <Button
+                      asChild
+                      className={cn(
+                        'mt-7 h-11 w-full rounded-full font-semibold',
+                        featured
+                          ? 'bg-gradient-to-r from-indigo-500 to-cyan-400 text-slate-950 hover:brightness-110'
+                          : 'bg-slate-950 text-white hover:bg-slate-800',
+                      )}
+                    >
+                      <Link to="/register">
+                        {offersTrial ? 'Start free trial' : `Choose ${plan.name.replace(/ Annual$/, '')}`}
+                        <ArrowRight />
+                      </Link>
+                    </Button>
+                    {!offersTrial && trialPlanName && (
+                      <p className={cn('mt-3 text-center text-[0.75rem]', featured ? 'text-slate-500' : 'text-slate-400')}>
+                        Trials run on {trialPlanName}. Upgrade whenever you are ready.
+                      </p>
                     )}
                   </div>
+                );
+              })}
+            </Stagger>
+          )}
 
-                  <div className="flex-1" />
-
-                  <Button
-                    className={cn('w-full rounded-xl', featured && 'bg-white text-slate-950 hover:bg-slate-100')}
-                    variant={featured ? 'default' : 'outline'}
-                    asChild
-                  >
-                    <Link to="/register">
-                      {offersTrial ? 'Start free trial' : `Choose ${plan.name.replace(/ Annual$/, '')}`}
-                      <ArrowRight />
-                    </Link>
-                  </Button>
-                  {!offersTrial && trialPlanName && (
-                    <p className="text-center text-xs text-muted-foreground">
-                      Trials run on {trialPlanName}. Upgrade whenever you are ready.
+          {/* ----------------------------------------------- upgrade paths */}
+          {visible.length > 1 && (
+            <Stagger className="mt-14 grid gap-4 sm:grid-cols-2" step={90}>
+              {visible.slice(0, -1).map((plan, index) => {
+                const next = visible[index + 1];
+                const gains = upgradeHighlights(plan, next);
+                if (gains.length === 0) return <span key={plan._id} className="hidden" />;
+                return (
+                  <div key={plan._id} className="rounded-2xl border border-slate-200 bg-slate-50 p-6">
+                    <p className="flex items-center gap-2 text-[0.9375rem] font-semibold text-slate-950">
+                      <Sparkles className="h-4 w-4 text-indigo-600" aria-hidden />
+                      {plan.name.replace(/ Annual$/, '')} → {next.name.replace(/ Annual$/, '')}
                     </p>
-                  )}
-                </CardContent>
-              </Card>
-            </Reveal>
-          );
-        })}
-      </div>
-
-      {/* ------------------------------------------------- upgrade paths */}
-      {visible.length > 1 && (
-        <div className="mt-10 grid gap-4 sm:grid-cols-2">
-          {visible.slice(0, -1).map((plan, index) => {
-            const next = visible[index + 1];
-            const gains = upgradeHighlights(plan, next);
-            if (gains.length === 0) return null;
-            return (
-              <div key={plan._id} className="rounded-lg border bg-muted/30 p-4">
-                <p className="flex items-center gap-2 text-sm font-semibold">
-                  <Sparkles className="h-4 w-4 text-primary" />
-                  {plan.name.replace(/ Annual$/, '')} → {next.name.replace(/ Annual$/, '')}
-                </p>
-                <p className="mt-1 text-sm text-muted-foreground">Adds {gains.join(' · ')}.</p>
-              </div>
-            );
-          })}
-        </div>
-      )}
+                    <p className="mt-2 text-[0.875rem] leading-6 text-slate-600">Adds {gains.join(' · ')}.</p>
+                  </div>
+                );
+              })}
+            </Stagger>
+          )}
+        </Container>
+      </section>
 
       {/* ------------------------------------------------ comparison table */}
       {visible.length > 0 && (
-        <section className="mx-auto mt-20 max-w-7xl">
-          <h2 className="text-center text-2xl font-bold tracking-tight">Compare every plan</h2>
-          <p className="mt-2 text-center text-sm text-muted-foreground">
-            Everything each plan includes, and everything it does not.
-          </p>
-
-          <div className="mt-6">
-            <PlanComparisonTable plans={visible} />
-          </div>
+        <section className="border-y border-slate-200 bg-slate-50 py-20 sm:py-24">
+          <Container>
+            <SectionHeading
+              eyebrow="Side by side"
+              title={<>Compare every plan.</>}
+              copy="Everything each plan includes, and everything it does not."
+            />
+            <Reveal delay={140}>
+              <div className="mt-12 overflow-hidden rounded-[1.4rem] border border-slate-200 bg-white p-2 sm:p-4">
+                <PlanComparisonTable plans={visible} />
+              </div>
+            </Reveal>
+          </Container>
         </section>
       )}
 
-      <div className="mx-auto mt-14 max-w-3xl rounded-2xl border border-slate-200 bg-slate-50 p-6 text-sm">
-        <p className="font-semibold">How payment works</p>
-        <p className="mt-1 text-muted-foreground">
-          Every new workspace starts on a {trialDays ?? 7}-day free trial of {trialPlanName ?? 'Starter'} — no card
-          required. When you are ready, pay by bKash, Nagad or bank transfer and submit the transaction ID; our team
-          verifies it and your plan activates. You can also keep a prepaid balance in your wallet and upgrade instantly
-          from it.
-        </p>
-      </div>
-    </div>
+      <DarkSection className="py-20 sm:py-24">
+        <Container>
+          <div className="mx-auto max-w-3xl">
+            <Reveal>
+              <div className="rs-ring rs-glass rounded-[1.4rem] p-8 sm:p-10">
+                <p className="flex items-center gap-2 text-[0.9375rem] font-semibold text-white">
+                  <Wallet className="h-4 w-4 text-indigo-400" aria-hidden />
+                  How payment works
+                </p>
+                <p className="mt-4 text-[0.9375rem] leading-7 text-slate-400">
+                  Every new workspace starts on a {trialDays ?? 7}-day free trial of {trialPlanName ?? 'Starter'} — no
+                  card required. When you are ready, pay by bKash, Nagad or bank transfer and submit the transaction ID;
+                  our team verifies it and your plan activates. You can also keep a prepaid balance in your wallet and
+                  upgrade instantly from it.
+                </p>
+              </div>
+            </Reveal>
+
+            <Reveal delay={140}>
+              <div className="mt-12 text-center">
+                <CtaButton to="/register">Start free</CtaButton>
+              </div>
+            </Reveal>
+          </div>
+        </Container>
+      </DarkSection>
+    </>
   );
 }
