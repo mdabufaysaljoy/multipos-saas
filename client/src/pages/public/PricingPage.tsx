@@ -103,10 +103,13 @@ export function PricingPage() {
                   <div
                     key={plan._id}
                     className={cn(
-                      'rs-lift relative flex h-full flex-col rounded-[1.4rem] border p-7',
+                      // The featured plan is the same card as the others, lifted
+                      // by an accent ring rather than inverted to a dark slab -
+                      // the three read as one set that way.
+                      'rs-lift relative flex h-full flex-col rounded-[1.4rem] bg-white p-7',
                       featured
-                        ? 'border-transparent bg-slate-950 text-white shadow-[0_40px_90px_-45px_rgba(15,23,42,0.9)] md:-my-4 md:py-11'
-                        : 'border-slate-200 bg-white',
+                        ? 'border-2 border-indigo-500 shadow-[0_32px_80px_-40px_rgba(79,70,229,0.45)] md:-my-4 md:py-11'
+                        : 'border border-slate-200',
                     )}
                   >
                     {featured && (
@@ -117,57 +120,53 @@ export function PricingPage() {
                     )}
 
                     <div className="flex items-start justify-between gap-3">
-                      <h2 className={cn('text-[1.125rem] font-semibold', featured ? 'text-white' : 'text-slate-950')}>
-                        {plan.name.replace(/ Annual$/, '')}
-                      </h2>
+                      <h2 className="text-[1.125rem] font-semibold text-slate-950">{plan.name.replace(/ Annual$/, '')}</h2>
                       {offersTrial && (
-                        <span className={cn('shrink-0 rounded-full px-2.5 py-1 text-[11px] font-semibold', featured ? 'bg-emerald-400/15 text-emerald-300' : 'bg-emerald-50 text-emerald-700')}>
+                        <span className="shrink-0 rounded-full bg-emerald-50 px-2.5 py-1 text-[11px] font-semibold text-emerald-700">
                           Free trial
                         </span>
                       )}
                     </div>
-                    <p className={cn('mt-2 text-[0.8125rem] leading-5', featured ? 'text-slate-400' : 'text-slate-500')}>
+                    <p className="mt-2 text-[0.8125rem] leading-5 text-slate-500">
                       {plan.description.replace(/ Billed yearly - two months free\.$/, '')}
                     </p>
 
                     <p className="mt-7 flex items-baseline gap-1.5">
-                      <span className={cn('text-[2.25rem] font-bold tracking-tight', featured ? 'text-white' : 'text-slate-950')}>
+                      <span className="text-[2.25rem] font-bold tracking-tight text-slate-950">
                         {formatPlanPrice(plan.priceMinor, plan.currency)}
                       </span>
-                      <span className={cn('text-[0.8125rem]', featured ? 'text-slate-500' : 'text-slate-400')}>
+                      <span className="text-[0.8125rem] text-slate-400">
                         / {plan.interval === 'yearly' ? 'year' : 'month'}
                       </span>
                     </p>
                     {saving !== null && saving > 0 && (
-                      <p className={cn('mt-1.5 text-[0.8125rem] font-medium', featured ? 'text-emerald-300' : 'text-emerald-600')}>
+                      <p className="mt-1.5 text-[0.8125rem] font-medium text-emerald-600">
                         Saves {formatPlanPrice(saving, plan.currency)} a year
                       </p>
                     )}
 
-                    <dl className={cn('mt-7 space-y-2.5 border-t pt-6 text-[0.875rem]', featured ? 'border-white/10' : 'border-slate-100')}>
+                    <dl className="mt-7 space-y-2.5 border-t border-slate-100 pt-6 text-[0.875rem]">
                       {HEADLINE_LIMITS.map((limit) => (
                         <div key={limit.key} className="flex items-center justify-between gap-3">
-                          <dt className={featured ? 'text-slate-400' : 'text-slate-500'}>{limit.label}</dt>
-                          <dd className={cn('font-mono font-semibold', featured ? 'text-white' : 'text-slate-900')}>
-                            {formatLimit(plan.limits[limit.key])}
-                          </dd>
+                          <dt className="text-slate-500">{limit.label}</dt>
+                          <dd className="font-mono font-semibold text-slate-900">{formatLimit(plan.limits[limit.key])}</dd>
                         </div>
                       ))}
                     </dl>
 
                     {/* Read from the plan's own flag, so the card cannot promise
                         what the backend will refuse. */}
-                    <div className={cn('mt-6 flex items-start gap-2 border-t pt-5 text-[0.875rem]', featured ? 'border-white/10' : 'border-slate-100')}>
+                    <div className="mt-6 flex items-start gap-2 border-t border-slate-100 pt-5 text-[0.875rem]">
                       {plan.features.advancedReports ? (
                         <>
-                          <Check className={cn('mt-0.5 h-4 w-4 shrink-0', featured ? 'text-emerald-300' : 'text-emerald-600')} aria-hidden />
-                          <span className={cn('font-medium', featured ? 'text-white' : 'text-slate-900')}>Advanced Analytics</span>
+                          <Check className="mt-0.5 h-4 w-4 shrink-0 text-emerald-600" aria-hidden />
+                          <span className="font-medium text-slate-900">Advanced Analytics</span>
                         </>
                       ) : (
                         <>
                           <Lock className="mt-0.5 h-4 w-4 shrink-0 text-slate-400" aria-hidden />
                           <span>
-                            <span className={cn('font-medium', featured ? 'text-white' : 'text-slate-900')}>Advanced Analytics</span>
+                            <span className="font-medium text-slate-900">Advanced Analytics</span>
                             <span className="block text-[0.75rem] text-slate-500">
                               Available on {availableOn(visible, 'advancedReports')}
                             </span>
@@ -193,7 +192,7 @@ export function PricingPage() {
                       </Link>
                     </Button>
                     {!offersTrial && trialPlanName && (
-                      <p className={cn('mt-3 text-center text-[0.75rem]', featured ? 'text-slate-500' : 'text-slate-400')}>
+                      <p className="mt-3 text-center text-[0.75rem] text-slate-400">
                         Trials run on {trialPlanName}. Upgrade whenever you are ready.
                       </p>
                     )}

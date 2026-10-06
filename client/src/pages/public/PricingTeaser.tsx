@@ -78,10 +78,13 @@ export function PricingTeaser() {
                 <div
                   key={plan._id}
                   className={cn(
-                    'rs-lift relative h-full rounded-[1.4rem] border p-7',
+                    // The featured plan is the same card as the others, lifted
+                    // by an accent ring rather than inverted to a dark slab -
+                    // the three read as one set that way.
+                    'rs-lift relative h-full rounded-[1.4rem] bg-white p-7',
                     featured
-                      ? 'border-transparent bg-slate-950 text-white shadow-[0_40px_90px_-45px_rgba(15,23,42,0.9)] lg:-my-3 lg:py-10'
-                      : 'border-slate-200 bg-white',
+                      ? 'border-2 border-indigo-500 shadow-[0_32px_80px_-40px_rgba(79,70,229,0.45)] lg:-my-3 lg:py-10'
+                      : 'border border-slate-200',
                   )}
                 >
                   {featured && (
@@ -91,35 +94,27 @@ export function PricingTeaser() {
                     </span>
                   )}
 
-                  <h3 className={cn('text-[1.125rem] font-semibold', featured ? 'text-white' : 'text-slate-950')}>
-                    {plan.name.replace(/ Annual$/, '')}
-                  </h3>
-                  <p className={cn('mt-1.5 text-[0.8125rem] leading-5', featured ? 'text-slate-400' : 'text-slate-500')}>
-                    {plan.description}
-                  </p>
+                  <h3 className="text-[1.125rem] font-semibold text-slate-950">{plan.name.replace(/ Annual$/, '')}</h3>
+                  <p className="mt-1.5 text-[0.8125rem] leading-5 text-slate-500">{plan.description}</p>
 
                   <p className="mt-6 flex items-baseline gap-1.5">
-                    <span className={cn('text-[2.25rem] font-bold tracking-tight', featured ? 'text-white' : 'text-slate-950')}>
+                    <span className="text-[2.25rem] font-bold tracking-tight text-slate-950">
                       {formatPlanPrice(plan.priceMinor, plan.currency)}
                     </span>
-                    <span className={cn('text-[0.8125rem]', featured ? 'text-slate-500' : 'text-slate-400')}>
-                      /{interval === 'monthly' ? 'mo' : 'yr'}
-                    </span>
+                    <span className="text-[0.8125rem] text-slate-400">/{interval === 'monthly' ? 'mo' : 'yr'}</span>
                   </p>
 
-                  <dl className={cn('mt-7 space-y-2.5 border-t pt-6 text-[0.875rem]', featured ? 'border-white/10' : 'border-slate-100')}>
+                  <dl className="mt-7 space-y-2.5 border-t border-slate-100 pt-6 text-[0.875rem]">
                     {HEADLINE_LIMITS.map((limit) => (
                       <div key={limit.key} className="flex items-center justify-between gap-3">
-                        <dt className={featured ? 'text-slate-400' : 'text-slate-500'}>{limit.label}</dt>
-                        <dd className={cn('font-mono font-semibold', featured ? 'text-white' : 'text-slate-900')}>
-                          {formatLimit(plan.limits[limit.key])}
-                        </dd>
+                        <dt className="text-slate-500">{limit.label}</dt>
+                        <dd className="font-mono font-semibold text-slate-900">{formatLimit(plan.limits[limit.key])}</dd>
                       </div>
                     ))}
                   </dl>
 
                   {plan.trialDays > 0 && (
-                    <p className={cn('mt-5 flex items-center gap-1.5 text-[0.8125rem] font-medium', featured ? 'text-emerald-300' : 'text-emerald-600')}>
+                    <p className="mt-5 flex items-center gap-1.5 text-[0.8125rem] font-medium text-emerald-600">
                       <Check className="h-3.5 w-3.5" aria-hidden />
                       {plan.trialDays}-day free trial
                     </p>
