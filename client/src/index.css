@@ -408,29 +408,41 @@
 }
 
 /* --------------------------------------------------------------------------
-   Authentication scanner
+   Authentication scene
 
-   The login visual: a handheld scanner reading a Retailer Suites card. It has
-   four states and the page drives them from the REAL auth result, so the beam
-   runs while the request is in flight and the tick is only ever drawn after the
-   server has said yes.
+   The login visual: an operator at the counter ringing up a sale and printing
+   the receipt. It has four states and the page drives them from the REAL auth
+   result, so the paper only finishes feeding once the server has said yes.
    -------------------------------------------------------------------------- */
-.rs-scan-beam {
-  animation: rs-beam 1.5s cubic-bezier(0.45, 0, 0.55, 1) infinite;
+.rs-pos-bob {
+  animation: rs-pos-bob 4.5s ease-in-out infinite;
+  transform-origin: 50% 100%;
 }
-.rs-scan-mote {
-  animation: rs-mote 1.5s ease-out infinite;
+.rs-pos-type {
+  animation: rs-pos-type 0.9s ease-in-out infinite;
+  transform-origin: 50% 0%;
 }
-.rs-bar-idle {
-  animation: rs-bar-idle 3.2s ease-in-out infinite;
+.rs-pos-row {
+  animation: rs-pos-row 2.4s ease-out infinite both;
 }
-.rs-scan-shake {
+.rs-pos-caret {
+  animation: rs-pos-caret 1.05s steps(1) infinite;
+}
+.rs-paper-feed {
+  animation: rs-paper-feed 2.1s cubic-bezier(0.33, 1, 0.68, 1) infinite;
+  transform-origin: 50% 0%;
+}
+.rs-paper-done {
+  animation: rs-paper-done 620ms cubic-bezier(0.22, 1, 0.36, 1) both;
+  transform-origin: 50% 0%;
+}
+.rs-pos-shake {
   animation: rs-shake 520ms cubic-bezier(0.36, 0.07, 0.19, 0.97);
 }
-.rs-scan-pop {
+.rs-pos-pop {
   animation: rs-pop 520ms var(--rs-ease) both;
 }
-.rs-scan-burst {
+.rs-pos-burst {
   animation: rs-burst 900ms var(--rs-ease) both;
 }
 .rs-check-draw {
@@ -439,42 +451,76 @@
   animation: rs-check 480ms var(--rs-ease) 120ms forwards;
 }
 
-@keyframes rs-beam {
-  0% {
-    transform: translateY(-6%);
-    opacity: 0;
-  }
-  12% {
-    opacity: 1;
-  }
-  88% {
-    opacity: 1;
-  }
-  100% {
-    transform: translateY(106%);
-    opacity: 0;
-  }
-}
-@keyframes rs-mote {
-  0% {
-    transform: translateY(0) scale(0.6);
-    opacity: 0;
-  }
-  30% {
-    opacity: 0.9;
-  }
-  100% {
-    transform: translateY(-26px) scale(0.2);
-    opacity: 0;
-  }
-}
-@keyframes rs-bar-idle {
+@keyframes rs-pos-bob {
   0%,
   100% {
-    opacity: 0.55;
+    transform: translateY(0) scaleY(1);
   }
   50% {
-    opacity: 0.85;
+    transform: translateY(-1.5px) scaleY(1.012);
+  }
+}
+@keyframes rs-pos-type {
+  0%,
+  100% {
+    transform: translateY(0) rotate(0deg);
+  }
+  50% {
+    transform: translateY(2px) rotate(-3deg);
+  }
+}
+@keyframes rs-pos-row {
+  0% {
+    opacity: 0;
+    transform: translateX(-5px);
+  }
+  18%,
+  86% {
+    opacity: 1;
+    transform: translateX(0);
+  }
+  100% {
+    opacity: 0;
+    transform: translateX(0);
+  }
+}
+@keyframes rs-pos-caret {
+  0%,
+  49% {
+    opacity: 1;
+  }
+  50%,
+  100% {
+    opacity: 0;
+  }
+}
+/* The paper leaves the printer, then the loop resets for the next sale. */
+@keyframes rs-paper-feed {
+  0% {
+    transform: scaleY(0.04);
+    opacity: 0;
+  }
+  14% {
+    opacity: 1;
+  }
+  70%,
+  92% {
+    transform: scaleY(1);
+    opacity: 1;
+  }
+  100% {
+    transform: scaleY(1);
+    opacity: 0;
+  }
+}
+@keyframes rs-paper-done {
+  from {
+    transform: scaleY(0.12);
+    opacity: 0;
+  }
+  to {
+    transform: scaleY(1);
+    opacity: 1;
   }
 }
 @keyframes rs-shake {
@@ -562,21 +608,21 @@
     transform: none;
   }
   /*
-    The scanner still has to say which state it is in - that is the whole point
-    of it - so the beam and motes stop, but the tick is drawn complete and the
-    success and error frames simply appear.
+    The scene still has to say which state it is in - that is the whole point of
+    it - so the idling stops, but the receipt is shown printed and the tick is
+    drawn complete rather than never arriving.
   */
-  .public-shell .rs-scan-mote,
-  .public-shell .rs-bar-idle,
-  .public-shell .rs-scan-shake,
-  .public-shell .rs-scan-burst {
+  .public-shell .rs-pos-bob,
+  .public-shell .rs-pos-type,
+  .public-shell .rs-pos-caret,
+  .public-shell .rs-pos-shake,
+  .public-shell .rs-pos-burst {
     animation: none;
   }
-  .public-shell .rs-scan-beam {
-    animation: none;
-    opacity: 0.5;
-  }
-  .public-shell .rs-scan-pop {
+  .public-shell .rs-pos-row,
+  .public-shell .rs-paper-feed,
+  .public-shell .rs-paper-done,
+  .public-shell .rs-pos-pop {
     animation: none;
     opacity: 1;
     transform: none;

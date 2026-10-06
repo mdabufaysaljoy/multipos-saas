@@ -12,7 +12,7 @@ import { onboardingApi } from '@/api/endpoints';
 import { useAuth } from '@/hooks/useAuth';
 import { useTrialOffer } from '@/hooks/useTrialDays';
 import { AuthField, AuthHeading, AuthShell } from '@/features/public/AuthShell';
-import type { ScannerState } from '@/features/public/AuthScanner';
+import type { SceneState } from '@/features/public/AuthScene';
 import { cn } from '@/lib/utils';
 
 /**
@@ -59,7 +59,7 @@ export function RegisterPage() {
 
   const [vertical, setVertical] = React.useState('');
   const [showPassword, setShowPassword] = React.useState(false);
-  const [scanner, setScanner] = React.useState<ScannerState>('idle');
+  const [scene, setScene] = React.useState<SceneState>('idle');
   const [formError, setFormError] = React.useState<string | null>(null);
 
   // The POS types come from the platform catalog: active products only.
@@ -87,7 +87,7 @@ export function RegisterPage() {
 
   const onSubmit = async (values: FormValues) => {
     setFormError(null);
-    setScanner('scanning');
+    setScene('scanning');
     try {
       await signUp({
         businessName: values.businessName,
@@ -98,28 +98,28 @@ export function RegisterPage() {
         vertical: vertical || undefined,
       });
       // Only after the server has created the workspace.
-      setScanner('success');
+      setScene('success');
       window.setTimeout(() => {
         toast.success('Workspace created. Let’s set up your store.');
         navigate('/onboarding', { replace: true });
       }, 620);
     } catch (error) {
       const message = error instanceof ApiError ? error.message : 'Could not create your workspace. Check your connection and try again.';
-      setScanner('error');
+      setScene('error');
       setFormError(message);
       form.setError('email', { message: '' });
       form.setFocus('email');
     }
   };
 
-  const busy = form.formState.isSubmitting || scanner === 'scanning' || scanner === 'success';
+  const busy = form.formState.isSubmitting || scene === 'scanning' || scene === 'success';
 
   return (
     <AuthShell
       eyebrow="Get started"
-      title="One scan from your first sale."
+      title="Minutes from your first receipt."
       copy={trialDays ? `Start with a ${trialDays}-day free trial of ${trialPlanName}. No card required.` : 'Start free. No card required.'}
-      scannerState={scanner}
+      sceneState={scene}
     >
       <AuthHeading
         title="Create your workspace"
@@ -269,11 +269,11 @@ export function RegisterPage() {
         <Button
           type="submit"
           disabled={busy}
-          loading={scanner === 'scanning'}
+          loading={scene === 'scanning'}
           className="h-12 w-full rounded-full bg-gradient-to-r from-indigo-500 to-cyan-400 font-semibold text-slate-950 shadow-[0_14px_40px_-12px_rgba(79,70,229,0.8)] transition hover:brightness-110"
         >
-          {scanner === 'success' ? 'Workspace created' : 'Create workspace'}
-          {scanner !== 'success' && <ArrowRight />}
+          {scene === 'success' ? 'Workspace created' : 'Create workspace'}
+          {scene !== 'success' && <ArrowRight />}
         </Button>
       </form>
 

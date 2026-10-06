@@ -170,20 +170,22 @@ adds is scoped under `.public-shell` so the authenticated POS is untouched.
 
 ## Signing in
 
-`/login` and `/register` share `AuthShell`: the scanner on one side, the form on
-the other, reflowing on a phone to branding, visual, form.
+`/login` and `/register` share `AuthShell`: the counter scene on one side, the
+form on the other, reflowing on a phone to branding, visual, form.
 
-**`AuthScanner` takes one prop — which of `idle | scanning | success | error` to
-show — and nothing else.** It never sees an email, a password or an error
-message, and it is not on a timer. The pages drive it from the real request:
-the beam runs while the call is in flight, and the tick is drawn only after the
-server has returned a session. There is no path where the animation can claim a
-success the backend did not give.
+The visual is `AuthScene`: an operator at the counter ringing up a sale while
+the printer feeds the receipt.
+
+**It takes one prop — which of `idle | scanning | success | error` to show — and
+nothing else.** It never sees an email, a password or an error message, and it
+is not on a timer. The pages drive it from the real request: the till works
+while the call is in flight, and the receipt finishes and the tick is drawn only
+after the server has returned a session. There is no path where the animation
+can claim a success the backend did not give.
 
 It is inline SVG animated by the keyframes in `index.css` rather than a Lottie
 player, for the same reason the marketing site has no animation runtime — and
-because a scanner reading a Retailer Suites card is specific to this product in
-a way a stock animation would not be.
+because this product's own counter says more than a stock illustration would.
 
 `OnboardingPage` shares the shell too, since it is the step straight after
 registering; its own form and logic are untouched.

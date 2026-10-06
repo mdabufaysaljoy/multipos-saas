@@ -11,7 +11,7 @@ import type { LoginChoice, LoginSelection } from '@/api/endpoints';
 import { useAuth } from '@/hooks/useAuth';
 import type { Session } from '@/types/api';
 import { AuthField as Field, AuthHeading, AuthShell } from '@/features/public/AuthShell';
-import type { ScannerState } from '@/features/public/AuthScanner';
+import type { SceneState } from '@/features/public/AuthScene';
 
 const schema = z.object({
   email: z.string().min(1, 'Email is required').email('Enter a valid email address'),
@@ -35,14 +35,14 @@ export function LoginPage() {
   const [showPassword, setShowPassword] = React.useState(false);
 
   /**
-   * What the scanner is showing.
+   * What the counter scene is showing.
    *
    * It follows the REAL request: `scanning` while the call is in flight,
    * `success` only once the server has returned a session, `error` only on an
-   * actual failure. Nothing here is on a timer, and the scanner is never told
+   * actual failure. Nothing here is on a timer, and the scene is never told
    * what was typed.
    */
-  const [scanner, setScanner] = React.useState<ScannerState>('idle');
+  const [scene, setScene] = React.useState<SceneState>('idle');
   const [formError, setFormError] = React.useState<string | null>(null);
 
   const form = useForm<FormValues>({
@@ -61,23 +61,23 @@ export function LoginPage() {
 
   const onSubmit = async (values: FormValues) => {
     setFormError(null);
-    setScanner('scanning');
+    setScene('scanning');
     try {
       const result = await login(values.email, values.password);
       if ('requiresWorkspaceSelection' in result) {
         // Credentials were right; the account just has more than one login.
-        setScanner('success');
+        setScene('success');
         settleThen(() => {
           setSelection(result);
-          setScanner('idle');
+          setScene('idle');
         });
         return;
       }
-      setScanner('success');
+      setScene('success');
       settleThen(() => enter(result));
     } catch (error) {
       const message = error instanceof ApiError ? error.message : 'Could not sign in. Check your connection and try again.';
-      setScanner('error');
+      setScene('error');
       setFormError(message);
       form.setError('password', { message: '' });
       form.setFocus('password');
@@ -87,14 +87,14 @@ export function LoginPage() {
   const choose = async (choice: LoginChoice) => {
     if (!selection) return;
     setChoosing(choice.userId);
-    setScanner('scanning');
+    setScene('scanning');
     try {
       const session = await completeLogin(selection.selectionToken, choice.userId);
-      setScanner('success');
+      setScene('success');
       settleThen(() => enter(session));
     } catch (error) {
       const message = error instanceof ApiError ? error.message : 'Could not sign in';
-      setScanner('error');
+      setScene('error');
       setFormError(message);
       toast.error(message);
       // An expired or invalidated choice means the password must be typed again.
@@ -106,14 +106,14 @@ export function LoginPage() {
   };
 
   // One flag for every path that must not be submitted twice.
-  const busy = form.formState.isSubmitting || scanner === 'scanning' || scanner === 'success' || Boolean(choosing);
+  const busy = form.formState.isSubmitting || scene === 'scanning' || scene === 'success' || Boolean(choosing);
 
   return (
     <AuthShell
       eyebrow="Secure sign in"
-      title="Scan in, and pick up where you left off."
-      copy="Your counter, stock, team and reports are exactly as you left them."
-      scannerState={scanner}
+      title="Your counter is open and waiting."
+      copy="Stock, team, sales and reports are exactly as you left them."
+      sceneState={scene}
     >
       {selection ? (
         <>
@@ -142,7 +142,7 @@ export function LoginPage() {
               className="w-full rounded-xl text-slate-400 hover:bg-white/5 hover:text-white"
               onClick={() => {
                 setSelection(null);
-                setScanner('idle');
+                setScene('idle');
               }}
               disabled={busy}
             >
@@ -207,11 +207,11 @@ export function LoginPage() {
             <Button
               type="submit"
               disabled={busy}
-              loading={scanner === 'scanning'}
+              loading={scene === 'scanning'}
               className="h-12 w-full rounded-full bg-gradient-to-r from-indigo-500 to-cyan-400 font-semibold text-slate-950 shadow-[0_14px_40px_-12px_rgba(79,70,229,0.8)] transition hover:brightness-110"
             >
-              {scanner === 'success' ? 'Verified' : 'Sign in'}
-              {scanner !== 'success' && <ArrowRight />}
+              {scene === 'success' ? 'Verified' : 'Sign in'}
+              {scene !== 'success' && <ArrowRight />}
             </Button>
           </form>
         </>

@@ -5,17 +5,17 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { cn } from '@/lib/utils';
 import { BrandMark } from './BrandMark';
-import { AuthScanner, type ScannerState } from './AuthScanner';
+import { AuthScene, type SceneState } from './AuthScene';
 
 /**
  * The shell both authentication pages share.
  *
- * A split composition on desktop - the scanner on the left, the form on the
- * right - that reflows on a phone to branding, then the visual, then the form,
+ * A split composition on desktop - the counter scene on the left, the form on
+ * the right - reflowing on a phone to branding, then the visual, then the form,
  * with the visual shrunk so the fields are not pushed below the fold.
  *
  * `.public-shell` is deliberate: it brings the website's design tokens and,
- * more importantly, its `prefers-reduced-motion` rules, so the scanner respects
+ * more importantly, its `prefers-reduced-motion` rules, so the scene respects
  * them without a second implementation.
  */
 export function AuthShell({
@@ -23,14 +23,14 @@ export function AuthShell({
   eyebrow,
   title,
   copy,
-  scannerState = 'idle',
+  sceneState = 'idle',
 }: {
   children: ReactNode;
   eyebrow: string;
   title: string;
   copy: string;
-  /** Drives the scanner. The page passes the REAL request state. */
-  scannerState?: ScannerState;
+  /** Drives the scene. The page passes the REAL request state. */
+  sceneState?: SceneState;
 }) {
   return (
     <div className="public-shell relative min-h-full bg-[#050915] text-white">
@@ -54,7 +54,7 @@ export function AuthShell({
 
           <div className="my-auto w-full py-8 lg:py-14">
             {/* Smaller on a phone: the visual sets the tone, the form does the work. */}
-            <AuthScanner state={scannerState} className="mx-auto max-w-[16rem] sm:max-w-[20rem] lg:max-w-[22rem]" />
+            <AuthScene state={sceneState} className="mx-auto max-w-[19rem] sm:max-w-[24rem] lg:max-w-[27rem]" />
 
             <div className="mx-auto mt-10 hidden max-w-md text-center lg:block">
               <p className="text-[11px] font-bold uppercase tracking-[0.2em] text-indigo-300">{eyebrow}</p>

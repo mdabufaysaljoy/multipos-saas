@@ -62,7 +62,7 @@ export function OnboardingPage() {
       title="A clean setup, once."
       copy="Add the details your team and customers will see. You can refine them later as the business grows."
       // The visitor is already authenticated by the time they reach this step.
-      scannerState="success"
+      sceneState="success"
     >
       <div className="w-full space-y-6 py-4">
         {/* Only the bare heading needs light-on-dark; everything below sits on
