@@ -408,6 +408,122 @@
 }
 
 /* --------------------------------------------------------------------------
+   Authentication scanner
+
+   The login visual: a handheld scanner reading a Retailer Suites card. It has
+   four states and the page drives them from the REAL auth result, so the beam
+   runs while the request is in flight and the tick is only ever drawn after the
+   server has said yes.
+   -------------------------------------------------------------------------- */
+.rs-scan-beam {
+  animation: rs-beam 1.5s cubic-bezier(0.45, 0, 0.55, 1) infinite;
+}
+.rs-scan-mote {
+  animation: rs-mote 1.5s ease-out infinite;
+}
+.rs-bar-idle {
+  animation: rs-bar-idle 3.2s ease-in-out infinite;
+}
+.rs-scan-shake {
+  animation: rs-shake 520ms cubic-bezier(0.36, 0.07, 0.19, 0.97);
+}
+.rs-scan-pop {
+  animation: rs-pop 520ms var(--rs-ease) both;
+}
+.rs-scan-burst {
+  animation: rs-burst 900ms var(--rs-ease) both;
+}
+.rs-check-draw {
+  stroke-dasharray: 26;
+  stroke-dashoffset: 26;
+  animation: rs-check 480ms var(--rs-ease) 120ms forwards;
+}
+
+@keyframes rs-beam {
+  0% {
+    transform: translateY(-6%);
+    opacity: 0;
+  }
+  12% {
+    opacity: 1;
+  }
+  88% {
+    opacity: 1;
+  }
+  100% {
+    transform: translateY(106%);
+    opacity: 0;
+  }
+}
+@keyframes rs-mote {
+  0% {
+    transform: translateY(0) scale(0.6);
+    opacity: 0;
+  }
+  30% {
+    opacity: 0.9;
+  }
+  100% {
+    transform: translateY(-26px) scale(0.2);
+    opacity: 0;
+  }
+}
+@keyframes rs-bar-idle {
+  0%,
+  100% {
+    opacity: 0.55;
+  }
+  50% {
+    opacity: 0.85;
+  }
+}
+@keyframes rs-shake {
+  0%,
+  100% {
+    transform: translateX(0);
+  }
+  15%,
+  55% {
+    transform: translateX(-7px);
+  }
+  35%,
+  75% {
+    transform: translateX(7px);
+  }
+  90% {
+    transform: translateX(-3px);
+  }
+}
+@keyframes rs-pop {
+  0% {
+    transform: scale(0.86);
+    opacity: 0;
+  }
+  60% {
+    transform: scale(1.04);
+  }
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+@keyframes rs-burst {
+  0% {
+    transform: scale(0.7);
+    opacity: 0.75;
+  }
+  100% {
+    transform: scale(1.9);
+    opacity: 0;
+  }
+}
+@keyframes rs-check {
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+
+/* --------------------------------------------------------------------------
    Reduced motion
 
    Everything decorative stops. Nothing that carries meaning is hidden: the
@@ -444,6 +560,30 @@
   }
   .public-shell .rs-lift:hover {
     transform: none;
+  }
+  /*
+    The scanner still has to say which state it is in - that is the whole point
+    of it - so the beam and motes stop, but the tick is drawn complete and the
+    success and error frames simply appear.
+  */
+  .public-shell .rs-scan-mote,
+  .public-shell .rs-bar-idle,
+  .public-shell .rs-scan-shake,
+  .public-shell .rs-scan-burst {
+    animation: none;
+  }
+  .public-shell .rs-scan-beam {
+    animation: none;
+    opacity: 0.5;
+  }
+  .public-shell .rs-scan-pop {
+    animation: none;
+    opacity: 1;
+    transform: none;
+  }
+  .public-shell .rs-check-draw {
+    animation: none;
+    stroke-dashoffset: 0;
   }
 }
 
