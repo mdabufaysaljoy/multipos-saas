@@ -2699,6 +2699,85 @@ async function main() {
 
   await api(`/plans/${race2Plan.data._id}`, { method: 'DELETE', token: platform2.token });
 
+  // The product ceiling is UNIVERSAL, so the guard has to hold on every POS -
+  // not just Clothing, whose catalogue is the one the race above exercises.
+  // Each vertical keeps its own collection, so each needs its own proof.
+  for (const pos of [
+    { vertical: 'supershop', label: 'Super Shop', path: '/supershop/products', importPath: '/supershop/imports', body: (i, stamp) => ({ name: `RSP${i}`, barcode: `RSP${stamp}${i}`, unitType: 'each', priceMinor: 1000, category: 'General' }) },
+    { vertical: 'pharmacy', label: 'Pharmacy', path: '/pharmacy/medicines', body: (i, stamp) => ({ name: `RMD${i}`, genericName: `Gen${i}`, strength: `${i + 1}mg`, dosageForm: 'tablet', manufacturer: `M${stamp}`, sellingPriceMinor: 1000, category: 'General' }) },
+    { vertical: 'restaurant', label: 'Restaurant', path: '/restaurant/menu', body: (i) => ({ name: `RMI${i}`, category: 'Mains', priceMinor: 1000 }) },
+  ]) {
+    const stamp = `${raceStamp}${pos.vertical.slice(0, 2)}`;
+    const reg = await api('/auth/register', {
+      method: 'POST',
+      body: {
+        businessName: `Race ${pos.label} ${stamp}`,
+        name: 'Racer',
+        email: `race.${pos.vertical}.${stamp}@example.com`,
+        password: 'Password@123',
+        vertical: pos.vertical,
+      },
+    });
+    const token = reg.data?.tokens?.accessToken;
+    await api('/stores', { method: 'POST', token, body: { name: `Race ${pos.label} Store`, currency: 'BDT' } });
+
+    const plan = await api('/plans', {
+      method: 'POST',
+      token: platform2.token,
+      body: {
+        code: `race-${pos.vertical}-${stamp}`,
+        name: `Race ${pos.label} Plan`,
+        interval: 'monthly',
+        priceMinor: 1000,
+        tier: 1,
+        isPublic: false,
+        posProductCode: pos.vertical,
+        limits: { maxProducts: 2, maxStaff: 1, maxStores: 1, maxCustomers: 2, maxMonthlySales: 2 },
+        features: { salesReports: true },
+      },
+    });
+    await api('/platform/subscriptions', {
+      method: 'POST',
+      token: platform2.token,
+      body: { tenantId: reg.data?.tenant?.id, planId: plan.data?._id, periods: 1, status: 'active' },
+    });
+
+    const fired = await Promise.all(
+      [...Array(6)].map((_, i) => api(pos.path, { method: 'POST', token, body: pos.body(i, stamp) })),
+    );
+    const after = (await api('/subscriptions/current', { token })).data?.usage?.products;
+    check(`${pos.label}: concurrent creates cannot exceed the product limit`, after <= 2, {
+      limit: 2,
+      after,
+      accepted: fired.filter((r) => r.status < 300).length,
+      statuses: fired.map((r) => r.status),
+    });
+    check(`${pos.label}: nothing that fitted was rejected`, after === 2, { expected: 2, after });
+
+    // Bulk import goes through the same create service, so a workspace already
+    // at its ceiling cannot bring more in through a file either.
+    if (pos.importPath) {
+      const sheet = await uploadSheet(`${pos.importPath}/preview`, {
+        token,
+        bytes: productCsv(
+          [[`Over ${stamp}A`, '250', '', '', '', 'Piece', '0', '0', '', ''], [`Over ${stamp}B`, '250', '', '', '', 'Piece', '0', '0', '', '']],
+          { headers: ['Product', 'Price', 'Barcode', 'Department', 'Brand', 'Sold by', 'VAT rate', 'Reorder level', 'Opening stock', 'Cost price'] },
+        ),
+      });
+      const confirmed = sheet.data?.importId
+        ? await api(`${pos.importPath}/${sheet.data.importId}/confirm`, { method: 'POST', token })
+        : { status: 0 };
+      const afterImport = (await api('/subscriptions/current', { token })).data?.usage?.products;
+      check(`${pos.label}: an import cannot push past the product limit`, afterImport <= 2, {
+        limit: 2,
+        afterImport,
+        confirmStatus: confirmed.status,
+      });
+    }
+
+    await api(`/plans/${plan.data?._id}`, { method: 'DELETE', token: platform2.token });
+  }
+
   // --- 7. storage tricks ---------------------------------------------------
   section('Anti-bypass: upload abuse');
 

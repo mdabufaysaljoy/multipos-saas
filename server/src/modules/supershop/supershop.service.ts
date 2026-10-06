@@ -11,7 +11,7 @@ import { loadReceiptStore } from '../../services/receipt/receiptStore';
 import { ApiError } from '../../utils/ApiError';
 import { formatDocumentNumber, nextSequence } from '../../utils/counters';
 import { resolvePage, searchRegex } from '../../utils/pagination';
-import { entitlementService } from '../../services/subscription/entitlement.service';
+import { entitlementService, type Entitlement } from '../../services/subscription/entitlement.service';
 import { customerService } from '../customers/customers.service';
 import { posCategoryService } from '../../services/catalogue/posCategories.service';
 import { shopBrandService } from '../../services/catalogue/shopBrands.service';
@@ -171,12 +171,39 @@ class SupershopService {
     await shopBrandService.assertUsable(ctx, values.brand);
     try {
       const product = await ShopProductModel.create({ tenantId: ctx.tenantId, ...values, createdBy: ctx.userId });
+      // The check above is not atomic, so two tills creating at once can both
+      // pass it. Confirm by ORDINAL - how many products exist at or before this
+      // one - which is stable under concurrency because ObjectIds are
+      // monotonic, and undo the one that landed beyond the ceiling. The same
+      // guard Clothing and Restaurant use.
+      await this.assertOrdinalOrRollback(ctx, entitlement, product._id);
       return product.toObject();
     } catch (error) {
       // Two identical creates at the same instant: the index caught what the
       // check above could not. Same refusal, so a till cannot tell the
       // difference between losing that race and being second in line.
       if (isDuplicateKey(error)) throw ApiError.conflict('Another product already uses this barcode');
+      throw error;
+    }
+  }
+
+  /**
+   * Confirms the new product fits the plan, and removes it if it does not.
+   *
+   * A hard delete, not a soft one: the product never legitimately existed, so
+   * leaving a tombstone would both mislead the catalogue and keep consuming the
+   * slot it was refused for.
+   */
+  private async assertOrdinalOrRollback(ctx: TenantContext, entitlement: Entitlement, productId: Types.ObjectId) {
+    const ordinal = await ShopProductModel.countDocuments({
+      tenantId: ctx.tenantId,
+      deletedAt: null,
+      _id: { $lte: productId },
+    });
+    try {
+      entitlementService.assertOrdinalWithinLimit(entitlement, 'maxProducts', ordinal, 'products');
+    } catch (error) {
+      await ShopProductModel.deleteOne({ _id: productId, tenantId: ctx.tenantId });
       throw error;
     }
   }

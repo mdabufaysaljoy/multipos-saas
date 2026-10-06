@@ -153,6 +153,24 @@ class PharmacyService {
     await posCategoryService.assertUsable(ctx, 'pharmacy', values.category);
     await pharmacyManufacturerService.assertUsable(ctx, values.manufacturer);
     const medicine = await MedicineModel.create({ tenantId: ctx.tenantId, ...values, createdBy: ctx.userId });
+    // The check above is not atomic, so two users creating at once can both
+    // pass it. Confirm by ORDINAL - how many medicines exist at or before this
+    // one - which is stable under concurrency because ObjectIds are monotonic,
+    // and undo the one that landed beyond the ceiling. The same guard Clothing
+    // and Restaurant use.
+    const ordinal = await MedicineModel.countDocuments({
+      tenantId: ctx.tenantId,
+      deletedAt: null,
+      _id: { $lte: medicine._id },
+    });
+    try {
+      entitlementService.assertOrdinalWithinLimit(entitlement, 'maxProducts', ordinal, 'medicines');
+    } catch (error) {
+      // A hard delete: the medicine never legitimately existed, so a tombstone
+      // would both mislead the catalogue and keep consuming the refused slot.
+      await MedicineModel.deleteOne({ _id: medicine._id, tenantId: ctx.tenantId });
+      throw error;
+    }
     return medicine.toObject();
   }
 
