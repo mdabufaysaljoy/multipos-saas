@@ -159,8 +159,17 @@ export function QuickCreateDialog({
 
           <div className="space-y-1.5">
             <Label htmlFor="qc-vat">VAT rate (%)</Label>
-            <Input id="qc-vat" value={vat} maxLength={6} onChange={(event) => setVat(event.target.value)} placeholder="0" />
-            {vat.trim() !== '' && vatBps === null && <p className="text-xs text-destructive">Enter a rate like 0, 5 or 15</p>}
+            <Input
+              id="qc-vat"
+              value={vat}
+              maxLength={6}
+              inputMode="decimal"
+              onChange={(event) => setVat(event.target.value)}
+              placeholder="0"
+            />
+            {vat.trim() !== '' && vatBps === null && (
+              <p className="text-xs text-destructive">Enter a rate like 0, 5, 7.5 or 15.75</p>
+            )}
           </div>
 
           <CategoryInput id="qc-category" label="Department" value={category} onChange={setCategory} api={shopCategoriesApi} queryKey="supershop" />

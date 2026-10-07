@@ -21,6 +21,18 @@ export interface StockRequest {
    * stock whatever this says.
    */
   allowOutOfStock?: boolean;
+  /**
+   * Whether `quantity` is a MEASUREMENT rather than a count.
+   *
+   * A counted item lands on exactly zero, so "at or below zero" is a state a
+   * shelf actually reaches. A measured one - grams of rice, of loose sugar -
+   * almost never does: a sack sold in 300 g and 750 g scoops leaves a
+   * remainder, and a shelf holding that remainder is empty to everyone except
+   * an equality test. An adapter that offers the out-of-stock override uses
+   * this to decide what "empty" means for the line in front of it; one that
+   * does not, ignores it. Set by the CALLER from the product's own unit.
+   */
+  measured?: boolean;
 }
 
 /**

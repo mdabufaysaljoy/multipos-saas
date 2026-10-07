@@ -582,9 +582,14 @@ class SupershopService {
     };
 
     // ---- take stock ----------------------------------------------------------
-    // Super Shop may sell a product only when it is completely out of stock;
-    // the inventory adapter still refuses "some stock, but not enough". This is
-    // available to every cashier, but an explanatory sale note is mandatory.
+    // Super Shop's override is the mandatory sale NOTE, not a permission: a
+    // branch runs tills that must be able to serve a customer standing at the
+    // counter, and the note plus the `outOfStockOverride` ledger stamp is what
+    // makes that auditable. (Clothing gates the same capability on
+    // `sales.sellOutOfStock`; the two verticals differ here deliberately.)
+    //
+    // `measured` tells the adapter what empty means for the line: pieces are
+    // counted and reach exactly zero, grams are weighed and almost never do.
     const taken: ShopReservation[] = [];
     try {
       for (const line of priced) {
@@ -593,6 +598,7 @@ class SupershopService {
           quantity: line.quantity,
           label: line.product.name,
           allowOutOfStock: true,
+          measured: line.product.unitType === 'weight',
         });
         reservation.detail.unitType = line.product.unitType;
         taken.push(reservation);

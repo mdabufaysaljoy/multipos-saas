@@ -523,7 +523,7 @@ function ProductDialog({
             <Label>Price {unitType === 'weight' ? 'per kg' : 'per piece'} (incl. VAT)</Label>
             <MoneyInput value={price} onChange={setPrice} ariaLabel="Price" />
           </div>
-          <TextField id="shop-vat" label="VAT rate (%)" value={vat} max={6} onChange={setVat} />
+          <TextField id="shop-vat" label="VAT rate (%)" value={vat} max={6} inputMode="decimal" placeholder="7.5" onChange={setVat} />
           <TextField
             id="shop-reorder"
             label={`Reorder level${unitType === 'weight' ? ' (kg)' : ''}`}
@@ -539,7 +539,9 @@ function ProductDialog({
           </span>
           <Switch checked={isActive} onCheckedChange={setIsActive} />
         </label>
-        {vatBps === null && <p className="text-sm text-destructive">VAT: a percentage from 0 to 100.</p>}
+        {vatBps === null && (
+          <p className="text-sm text-destructive">VAT: a percentage from 0 to 100, with up to two decimals (7.5, 15.75).</p>
+        )}
         <p className="text-xs text-muted-foreground">Prices are in {currency}.</p>
 
         <DialogFooter>
