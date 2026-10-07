@@ -2098,10 +2098,25 @@ async function main() {
   // record and saving it would wipe the number. The field strips it to digits
   // on the way in instead of blanking it.
   const phoneInput = readFileSync(new URL('../client/src/components/NumericInputs.tsx', import.meta.url), 'utf8');
-  check('Phone fields are number inputs', phoneInput.includes('type="number"'));
+  // `type="tel"`, not `type="number"`: browsers refuse to autofill a saved
+  // telephone number into a number input, and the filter already makes a
+  // letter impossible to type.
+  check('Phone fields ask for a telephone keypad', phoneInput.includes('type="tel"'));
   check('...keeping digits only', phoneInput.includes("raw.replace(/\\D/g, '')"));
   check('...normalising a stored number rather than blanking it', phoneInput.includes('if (digits !== value) onChange(digits)'));
   check('...and ignoring the scroll wheel, which would silently change it', phoneInput.includes('onWheel'));
+
+  // Browser autofill matches on `name` + `autocomplete`. The phone field had
+  // lost its `name`, so there was nothing for the browser to fill.
+  const registerScreen = readFileSync(new URL('../client/src/pages/RegisterPage.tsx', import.meta.url), 'utf8');
+  for (const [field, token] of [
+    ['business name', "autoComplete: 'organization'"],
+    ['email', "autoComplete: 'email'"],
+    ['phone', "name: 'phone', autoComplete: 'tel'"],
+  ]) {
+    check(`Registration lets the browser autofill the ${field}`, registerScreen.includes(token), token);
+  }
+  check('...and every field it asks to autofill has a name', !/inputProps=\{\{ placeholder: '01700000000' \}\}/.test(registerScreen));
 
   // A business name is NOT a person's name: "A1 Traders" is a real trading
   // name and refusing it would be refusing the truth.

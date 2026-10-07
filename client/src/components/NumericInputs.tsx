@@ -10,9 +10,11 @@ import { cn } from '@/lib/utils';
  * dropped as it is typed, and a paste is filtered the same way, so there is
  * nothing to correct afterwards and no error to read.
  *
- * Phone fields are `type="number"` and digits only, by product decision: no
- * +, brackets, dashes or spaces. Three things that choice drags in, handled
- * here rather than left to bite:
+ * Phone fields hold digits and nothing else - no +, brackets, dashes or
+ * spaces. `type="tel"` rather than `type="number"`: browsers will not autofill
+ * a saved telephone number into a number input, because a phone number is not
+ * arithmetic, and the filter already makes a letter impossible to type. Three
+ * things this still drags in, handled rather than left to bite:
  *
  *  - A stored number that still has formatting - "+8801741918615" - renders as
  *    EMPTY in a number input, so opening a record and saving it would silently
@@ -68,7 +70,7 @@ export function PhoneInput({ value, onChange, ...rest }: FilteredProps) {
   return (
     <Input
       {...rest}
-      type="number"
+      type="tel"
       inputMode="numeric"
       autoComplete="tel"
       value={digits}
