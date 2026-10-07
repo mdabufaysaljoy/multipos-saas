@@ -2022,6 +2022,16 @@ async function main() {
   const titleComponent = readFileSync(new URL('../client/src/components/DocumentTitle.tsx', import.meta.url), 'utf8');
   check('The tab title uses the admin title template', /titleTemplate/.test(titleComponent) && /replace\('%s'/.test(titleComponent));
   check('...and the favicon follows the settings', /link\[rel='icon'\]/.test(titleComponent));
+  // The home title was unreachable: every known route resolved a page name
+  // first, so the one field labelled "home page title" did nothing at all.
+  check('The home page can use its own title, whole', /home && defaultTitle/.test(titleComponent));
+  check('...and the home page is not ALSO in the per-page editor', !/\{ path: '\/', label:/.test(readFileSync(new URL('../client/src/types/site.ts', import.meta.url), 'utf8')));
+
+  // A logo does not replace the brand name: plenty of logos are a glyph with
+  // no wordmark, and a header showing only a glyph says nothing to a first
+  // time visitor.
+  const brandMark = readFileSync(new URL('../client/src/features/public/BrandMark.tsx', import.meta.url), 'utf8');
+  check('The header shows the name beside the logo, not instead of it', /\{!compact && <span className="truncate/.test(brandMark));
 
   // ---- a few days of access, granted by hand -------------------------------
   // The shop whose payment has not cleared, or who rang up at closing time with

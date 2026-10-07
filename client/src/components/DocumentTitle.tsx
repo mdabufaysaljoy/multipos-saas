@@ -68,22 +68,39 @@ export function DocumentTitle() {
   React.useEffect(() => {
     const shop = activeStore?.name?.trim();
     const brand = site?.name?.trim() || BRAND;
-    // A per-page title the platform admin wrote wins over the built-in one.
+    const appPage = navLabelFor(pathname);
+
+    // Signed in, inside the app, and the session knows which shop: lead with
+    // the shop. Deliberately NOT branded - someone with three branches open in
+    // three tabs needs to tell them apart, and the brand is the same in all
+    // three.
+    if (session && shop && appPage) {
+      document.title = `${shop} — ${appPage}`;
+      return;
+    }
+    if (session && shop && !publicTitleFor(pathname)) {
+      document.title = shop;
+      return;
+    }
+
+    // A public page. The admin's own text wins, then the built-in name.
     const configured = site?.seo.pages.find((page) => page.path === pathname)?.title?.trim();
-    const page = navLabelFor(pathname) ?? (configured || publicTitleFor(pathname));
+    const home = pathname === '/';
+    const template = site?.seo.titleTemplate?.includes('%s') ? site.seo.titleTemplate : `%s — ${brand}`;
+    const defaultTitle = site?.seo.defaultTitle?.trim();
 
     let title: string;
-    if (session && shop) {
-      // Signed in, and the session knows which shop: lead with the shop.
-      // Deliberately NOT branded - someone with three branches open in three
-      // tabs needs to tell them apart, and the brand is the same in all three.
-      title = page ? `${shop} — ${page}` : shop;
-    } else if (page) {
-      // The admin's template, with the page's own title in place of %s.
-      const template = site?.seo.titleTemplate?.includes('%s') ? site.seo.titleTemplate : `%s — ${brand}`;
-      title = template.replace('%s', page);
+    if (configured) {
+      title = template.replace('%s', configured);
+    } else if (home && defaultTitle) {
+      // The home title is used WHOLE. It already names the brand, and running
+      // it through the template produced "Brand — thing | Brand". This was
+      // unreachable before: every known route resolved a page name first, so
+      // the one field labelled "home page title" did nothing at all.
+      title = defaultTitle;
     } else {
-      title = site?.seo.defaultTitle?.trim() || `${brand} — ${TAGLINE}`;
+      const builtIn = publicTitleFor(pathname);
+      title = builtIn ? template.replace('%s', builtIn) : (defaultTitle || `${brand} — ${TAGLINE}`);
     }
 
     document.title = title;

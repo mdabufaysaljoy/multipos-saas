@@ -348,6 +348,7 @@ function SeoSection({ stored, effective, onSaved }: SectionProps) {
             label="Home page title"
             value={form.defaultTitle}
             fallback={effective?.seo.defaultTitle}
+            hint="Used whole, without the template — it already names the brand."
             onChange={(defaultTitle) => set({ defaultTitle })}
           />
         </div>
@@ -405,7 +406,7 @@ function SeoSection({ stored, effective, onSaved }: SectionProps) {
 
       <SectionCard
         title="Page by page"
-        description="Each public page's own title and description. Leave a page empty to use the defaults above."
+        description="Each public page's own title and description. Leave a page empty to use the defaults above. The home page is set above."
         saving={save.isPending}
         onSave={() => save.mutate(payload())}
       >

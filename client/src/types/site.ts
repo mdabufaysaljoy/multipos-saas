@@ -66,9 +66,14 @@ export interface SiteSettings {
   };
 }
 
-/** The public routes an admin can give their own title and description. */
+/**
+ * The public routes an admin can give their own title and description.
+ *
+ * The home page is deliberately NOT here: it has its own pair of fields on the
+ * same screen ("home page title" and the default description), and offering
+ * two controls for one page meant whichever was filled last quietly won.
+ */
 export const SEO_PAGES: { path: string; label: string }[] = [
-  { path: '/', label: 'Home' },
   { path: '/products', label: 'POS systems' },
   { path: '/pricing', label: 'Pricing' },
   { path: '/features', label: 'Platform' },

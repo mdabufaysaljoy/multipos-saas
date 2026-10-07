@@ -32,12 +32,11 @@ export function BrandMark({
         className,
       )}
     >
-      {/* An uploaded logo replaces the built-in glyph entirely rather than
-          sitting on the gradient tile, which would box somebody else's mark
-          inside our brand colour. `object-contain` so a wide logo is not
-          cropped to a square. */}
+      {/* An uploaded logo replaces the built-in glyph rather than sitting on the
+          gradient tile, which would box somebody else's mark inside our brand
+          colour. `object-contain` so a wide logo is not cropped to a square. */}
       {logo ? (
-        <img src={logo} alt="" className="h-9 w-auto max-w-[10rem] object-contain" />
+        <img src={logo} alt="" className="h-9 w-auto max-w-[9rem] shrink-0 object-contain" />
       ) : (
         <span className="relative flex h-9 w-9 items-center justify-center overflow-hidden rounded-[0.65rem] bg-gradient-to-br from-indigo-500 via-indigo-500 to-cyan-400 shadow-[0_8px_24px_-8px_rgba(79,70,229,0.9)] transition-transform duration-300 group-hover:scale-[1.04]">
           <svg viewBox="0 0 24 24" className="h-[18px] w-[18px]" fill="none" aria-hidden="true">
@@ -47,10 +46,13 @@ export function BrandMark({
           </svg>
         </span>
       )}
-      {/* The wordmark is dropped when a logo is supplied: an uploaded logo
-          almost always contains the name already. */}
-      {!compact && !logo && <span className="text-[15px] sm:text-[1.0625rem]">{name}</span>}
-      <span className="sr-only">{name} home</span>
+      {/* The name sits beside the mark whether the mark is ours or an uploaded
+          logo. It was dropped for uploaded logos on the assumption that a logo
+          contains its own wordmark; plenty do not, and a header showing only a
+          glyph tells a first-time visitor nothing about who they are reading. */}
+      {!compact && <span className="truncate text-[15px] sm:text-[1.0625rem]">{name}</span>}
+      {/* `compact` hides the visible name, so it still needs an accessible one. */}
+      {compact && <span className="sr-only">{name} home</span>}
     </Link>
   );
 }
