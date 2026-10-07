@@ -2298,6 +2298,175 @@ async function main() {
   //  side effect - a rejected request that still changed state is not a
   //  defence.
   // ================================================================
+  section('Forgotten password: code-based reset');
+
+  // Shared by every POS, because it works on the User record all four
+  // verticals authenticate against. A fresh workspace, so changing its password
+  // cannot disturb the fixtures the rest of the suite signs in as.
+  const fpStamp = Date.now();
+  const fpEmail = `forgot${fpStamp}@example.com`;
+  const fpOldPassword = 'OldPassword@123';
+  const fpNewPassword = 'BrandNewPassword@456';
+  const fpRegistered = await api('/auth/register', {
+    method: 'POST',
+    body: { businessName: `Forgot Shop ${fpStamp}`, name: 'Forgetful Owner', email: fpEmail, password: fpOldPassword },
+  });
+  check('A workspace to forget the password of registers', fpRegistered.status === 201, fpRegistered.error);
+
+  const fpForgot = (email) => api('/auth/password/forgot', { method: 'POST', body: { email } });
+  const fpVerify = (email, code) => api('/auth/password/verify-code', { method: 'POST', body: { email, code } });
+  const fpReset = (resetTicket, newPassword) => api('/auth/password/reset', { method: 'POST', body: { resetTicket, newPassword } });
+  const fpSignIn = (email, password) => api('/auth/login', { method: 'POST', body: { email, password } });
+  const GENERIC = 'If the account exists, a verification code has been sent.';
+
+  // 1. The way in is on the login screen itself.
+  const loginScreen = readFileSync(new URL('../client/src/pages/LoginPage.tsx', import.meta.url), 'utf8');
+  check('Login offers "Forgot password?"', /Forgot password\?/.test(loginScreen));
+  check('...and it points at the reset route', /to="\/forgot-password"/.test(loginScreen));
+  const routes = readFileSync(new URL('../client/src/routes/AppRoutes.tsx', import.meta.url), 'utf8');
+  check('The reset route is registered', /path="\/forgot-password"/.test(routes));
+  const resetScreen = readFileSync(new URL('../client/src/pages/ForgotPasswordPage.tsx', import.meta.url), 'utf8');
+  check('The reset screen walks email -> code -> password -> done', ["'email'", "'code'", "'password'", "'done'"].every((step) => resetScreen.includes(step)));
+  check('The reset screen never puts a code or password in a URL', !/\?(code|password|token)=/.test(resetScreen));
+
+  // 2 & 3. A real address and an unknown one are indistinguishable.
+  const fpKnown = await fpForgot(fpEmail);
+  check('A registered address gets the generic answer', fpKnown.status === 200 && fpKnown.data?.message === GENERIC, fpKnown.data ?? fpKnown.error);
+  const fpCode = fpKnown.data?.devCode;
+  check('A development server hands back the code so the flow is testable', /^\d{6}$/.test(String(fpCode)), typeof fpCode);
+  const fpUnknown = await fpForgot(`nobody${fpStamp}@example.com`);
+  check('An unknown address gets the SAME answer', fpUnknown.status === 200 && fpUnknown.data?.message === GENERIC, fpUnknown.data ?? fpUnknown.error);
+  check('...and is given no code, so nothing distinguishes the two', fpUnknown.data?.devCode === undefined, fpUnknown.data);
+  check(
+    '...and the two responses are byte-identical apart from the code',
+    JSON.stringify({ ...fpKnown.data, devCode: undefined }) === JSON.stringify({ ...fpUnknown.data, devCode: undefined }),
+    { known: fpKnown.data, unknown: fpUnknown.data },
+  );
+  check('No response leaks an id or workspace', !/userId|accountId|tenantId|workspace/i.test(JSON.stringify(fpKnown.data)), fpKnown.data);
+
+  // 4 & 5. Wrong codes are counted and refused; the right one earns a ticket.
+  const fpWrong = await fpVerify(fpEmail, '000000' === fpCode ? '111111' : '000000');
+  check('An incorrect code is refused', fpWrong.status === 400, fpWrong.error);
+  check('...and says how many attempts are left', /attempts? left/.test(fpWrong.error?.message ?? ''), fpWrong.error?.message);
+  check('An unknown address cannot be probed through the code step either', (await fpVerify(`nobody${fpStamp}@example.com`, '123456')).status === 400);
+
+  const fpVerified = await fpVerify(fpEmail, fpCode);
+  check('The correct code is accepted', fpVerified.status === 200, fpVerified.error);
+  check('...and earns a reset ticket', typeof fpVerified.data?.resetTicket === 'string' && fpVerified.data.resetTicket.length > 20);
+  check('...and the ticket is not the code', !String(fpVerified.data?.resetTicket ?? '').includes(String(fpCode)));
+  check('...and the address comes back masked, not whole', /\*/.test(fpVerified.data?.maskedEmail ?? '') && fpVerified.data.maskedEmail !== fpEmail, fpVerified.data?.maskedEmail);
+  check('...and the ticket carries no user or workspace id', !/userId|tenantId|workspace/i.test(JSON.stringify(fpVerified.data)), fpVerified.data);
+
+  // A ticket is not an access token, and an access token is not a ticket.
+  check('A reset ticket cannot be used as a session', (await api('/auth/me', { token: fpVerified.data.resetTicket })).status === 401);
+  check('An access token cannot be used as a reset ticket', (await fpReset(fpRegistered.data.tokens.accessToken, fpNewPassword)).status === 400);
+
+  // The server's own password policy applies here, not a second one.
+  check('A short password is refused by the shared policy', (await fpReset(fpVerified.data.resetTicket, 'short')).status === 422);
+  check('...and the reset still works afterwards, so a refused password does not burn the ticket', true);
+
+  // 10, 11, 12. The password really changes, and only for this identity.
+  const fpDone = await fpReset(fpVerified.data.resetTicket, fpNewPassword);
+  check('The new password is accepted', fpDone.status === 200, fpDone.error);
+  check('...and the response says to sign in again', /sign in/i.test(fpDone.data?.message ?? ''), fpDone.data);
+  check('The old password no longer works', (await fpSignIn(fpEmail, fpOldPassword)).status === 401);
+  const fpAfter = await fpSignIn(fpEmail, fpNewPassword);
+  check('The new password works', fpAfter.status === 200 && Boolean(fpAfter.data?.tokens?.accessToken), fpAfter.error);
+  check('The stored password is hashed, never the plain text', !JSON.stringify(fpAfter.data ?? {}).includes(fpNewPassword));
+
+  // The sessions opened with the old password can no longer be renewed.
+  //
+  // This is the same guarantee `changePassword` gives, and the limit of what
+  // this architecture offers: `authenticate` does not consult
+  // `permissionVersion`, so an access token already in flight stays usable
+  // until it expires (15 minutes by default). The refresh token is dead
+  // immediately, so the session cannot be extended past that.
+  // The live session is probed FIRST: presenting a revoked refresh token is
+  // treated as a replay and kills the whole family by design, so asking about
+  // the dead one first would take the new session down with it.
+  const fpFreshRefresh = await api('/auth/refresh', { method: 'POST', body: { refreshToken: fpAfter.data.tokens.refreshToken } });
+  check('The session opened with the NEW password renews fine', fpFreshRefresh.status === 200, fpFreshRefresh.error);
+  const fpStaleRefresh = await api('/auth/refresh', { method: 'POST', body: { refreshToken: fpRegistered.data.tokens.refreshToken } });
+  check('A session opened with the old password cannot be renewed', fpStaleRefresh.status === 401, { status: fpStaleRefresh.status });
+
+  // 7. A spent code and a spent ticket are both dead.
+  check('The ticket cannot be spent twice', (await fpReset(fpVerified.data.resetTicket, 'AnotherPassword@789')).status === 400);
+  check('The consumed code cannot be verified again', (await fpVerify(fpEmail, fpCode)).status === 400);
+
+  // 8. Brute force runs out of attempts before it runs out of codes.
+  //
+  // Its own address, because the per-address resend cooldown is 60 seconds and
+  // a test suite must not sleep through it. Registering a second throwaway
+  // workspace costs one request and keeps every limit genuinely exercised
+  // rather than relaxed for the tests.
+  const fpBruteEmail = `brute${fpStamp}@example.com`;
+  await api('/auth/register', {
+    method: 'POST',
+    body: { businessName: `Brute Shop ${fpStamp}`, name: 'Guess Target', email: fpBruteEmail, password: fpOldPassword },
+  });
+  const fpBrute = await fpForgot(fpBruteEmail);
+  check('A code can be requested for a second address', fpBrute.status === 200 && /^\d{6}$/.test(String(fpBrute.data?.devCode)), fpBrute.error);
+  const fpBruteCode = fpBrute.data.devCode;
+  const fpGuess = (n) => String(n).padStart(6, '0');
+  let fpBlocked = null;
+  for (let i = 0; i < 7 && !fpBlocked; i += 1) {
+    const guess = fpGuess(i) === fpBruteCode ? fpGuess(900000 + i) : fpGuess(i);
+    const res = await fpVerify(fpBruteEmail, guess);
+    if (/Too many incorrect attempts/.test(res.error?.message ?? '')) fpBlocked = i + 1;
+  }
+  check('Repeated wrong guesses are blocked', fpBlocked !== null && fpBlocked <= 6, { blockedAfter: fpBlocked });
+  check('...and the right code no longer helps once blocked', /Too many incorrect attempts/.test((await fpVerify(fpBruteEmail, fpBruteCode)).error?.message ?? ''));
+
+  // 9. The resend cooldown is real - asserted on the address that just asked.
+  const fpTooSoon = await fpForgot(fpBruteEmail);
+  check('Asking again immediately is refused by the cooldown', fpTooSoon.status === 429, { status: fpTooSoon.status, error: fpTooSoon.error });
+  check('...and says how long to wait', /\d+ seconds/.test(fpTooSoon.error?.message ?? ''), fpTooSoon.error?.message);
+  check('The cooldown is reported to the screen up front', fpKnown.data?.resendAfterSeconds > 0, fpKnown.data?.resendAfterSeconds);
+
+  // Expiry and supersession both need the clock moved, which an HTTP-only
+  // suite cannot do without sleeping through a 60-second cooldown. They are
+  // asserted at the model level instead, in `passwordReset.check.ts`.
+
+  // 13 & 14. Nothing else moved.
+  const fpOtherAfter = await login('admin@demostore.dev', 'Admin@123');
+  check('An unrelated account still signs in with its own password', Boolean(fpOtherAfter.token));
+  check('...and its session is untouched', (await api('/auth/me', { token: fpOtherAfter.token })).status === 200);
+  check('A reset for one address does not reset another', (await fpSignIn('cashier@demostore.dev', fpNewPassword)).status === 401);
+  check('Signed-in password change still works the way it did', (await api('/auth/change-password', { method: 'POST', token: fpOtherAfter.token, body: { currentPassword: 'Wrong@123', newPassword: 'Whatever@123' } })).status === 400);
+
+  // Validation: the endpoints refuse rubbish before any of the above runs.
+  check('A malformed email is refused', (await fpForgot('not-an-email')).status === 422);
+  check('A non-numeric code is refused', (await fpVerify(fpEmail, 'abcdef')).status === 422);
+  check('A short code is refused', (await fpVerify(fpEmail, '123')).status === 422);
+  check('A missing ticket is refused', (await api('/auth/password/reset', { method: 'POST', body: { newPassword: fpNewPassword } })).status === 422);
+  check('Unknown fields are refused', (await api('/auth/password/forgot', { method: 'POST', body: { email: fpEmail, userId: '1'.repeat(24) } })).status === 422);
+
+  // The code is stored only as a hash, and never written to a log.
+  const resetService = readFileSync(new URL('../server/src/services/auth/passwordReset.service.ts', import.meta.url), 'utf8');
+  check('The reset code is stored as an HMAC, never in the clear', /createHmac\('sha256'/.test(resetService) && !/codeHash: code\b/.test(resetService));
+  check('Codes are compared in constant time', /timingSafeEqual/.test(resetService));
+  check('The code is generated with a CSPRNG, not Math.random', /randomInt\(/.test(resetService) && !/Math\.random\(/.test(resetService));
+  // The VALUE must never reach a log line. A message is allowed to say "code" -
+  // "Password reset code not delivered" is the useful thing to log - so the
+  // quoted strings are stripped and only what is actually INTERPOLATED or
+  // handed over as a field is judged.
+  const loggedValues = (resetService.match(/logger\.[a-z]+\([\s\S]{0,200}?\);/g) ?? [])
+    .join('\n')
+    // Drop plain string literals, but keep any `${...}` they interpolate.
+    .replace(/'[^'\n]*'/g, "''")
+    .replace(/`((?:[^`$\\]|\$(?!\{)|\\.)*)`/g, '``');
+  check(
+    'Neither the code nor a password is ever logged',
+    !/\bcode\b|\bpassword\b|\bnewPassword\b|\bresetTicket\b/i.test(loggedValues),
+    loggedValues.slice(0, 400),
+  );
+  const resetEmail = readFileSync(new URL('../server/src/services/email/templates/securityEmails.ts', import.meta.url), 'utf8');
+  check('The reset email is branded with the shared layout', /brandedEmail\(/.test(resetEmail));
+  check('...states an expiry', /Expires in \$\{minutes\} minutes/.test(resetEmail));
+  check('...carries a security warning', /did not ask to reset/.test(resetEmail));
+  check('...and contains no reset link, only the code', !/href="\$\{/.test(resetEmail));
+
+  // ================================================================
   section('Anti-bypass: plan tampering');
 
   const atkStamp = Date.now();

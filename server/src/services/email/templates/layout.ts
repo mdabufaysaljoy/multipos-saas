@@ -19,6 +19,12 @@ export interface BrandedEmailInput {
   bodyHtml: string;
   buttons?: EmailButton[];
   supportEmail?: string;
+  /**
+   * The line above the support address. Defaults to the billing wording every
+   * existing email already sends, so this shell is also usable for mail that
+   * has nothing to do with billing - a security notice, say.
+   */
+  footerNote?: string;
 }
 
 const FONT = "-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif";
@@ -107,7 +113,7 @@ export function brandedEmail(input: BrandedEmailInput) {
       </table>
     </td></tr>
     <tr><td style="padding:20px 8px 0 8px;font-family:${FONT};font-size:12px;line-height:18px;color:#6b7280;text-align:center;">
-      <p style="margin:0 0 6px 0;">Subscription &amp; Billing Notification from ${brand}</p>
+      <p style="margin:0 0 6px 0;">${escapeHtml(input.footerNote ?? `Subscription & Billing Notification from ${BRANDING.productName}`)}</p>
       ${input.supportEmail ? `<p style="margin:0 0 6px 0;">Questions? Contact <a href="mailto:${escapeHtml(input.supportEmail)}" style="color:${primary};text-decoration:none;">${escapeHtml(input.supportEmail)}</a></p>` : ''}
       <p style="margin:0 0 6px 0;"><a href="${website}" style="color:${primary};text-decoration:none;">${website.replace(/^https?:\/\//, '')}</a></p>
       <p style="margin:0;">&copy; ${year} ${brand}</p>

@@ -96,6 +96,7 @@ export function AuthField({
   hint,
   inputProps,
   trailing,
+  labelAside,
 }: {
   id: string;
   label: string;
@@ -104,14 +105,19 @@ export function AuthField({
   hint?: string;
   inputProps: ComponentProps<typeof Input>;
   trailing?: ReactNode;
+  /** Sits opposite the label, for a secondary action like "Forgot password?". */
+  labelAside?: ReactNode;
 }) {
   const describedBy = [error ? `${id}-error` : null, hint ? `${id}-hint` : null].filter(Boolean).join(' ') || undefined;
 
   return (
     <div className="space-y-2">
-      <Label htmlFor={id} className="text-[0.8125rem] font-medium text-slate-300">
-        {label}
-      </Label>
+      <div className="flex items-baseline justify-between gap-3">
+        <Label htmlFor={id} className="text-[0.8125rem] font-medium text-slate-300">
+          {label}
+        </Label>
+        {labelAside}
+      </div>
       <div className="relative">
         {Icon && (
           <Icon className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-500" />

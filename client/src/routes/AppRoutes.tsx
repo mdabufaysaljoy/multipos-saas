@@ -19,6 +19,7 @@ const FeaturesPage = lazyPage(() => import('@/pages/public/FeaturesPage'), 'Feat
 // Sign-in and setup
 const LoginPage = lazyPage(() => import('@/pages/LoginPage'), 'LoginPage');
 const RegisterPage = lazyPage(() => import('@/pages/RegisterPage'), 'RegisterPage');
+const ForgotPasswordPage = lazyPage(() => import('@/pages/ForgotPasswordPage'), 'ForgotPasswordPage');
 const OnboardingPage = lazyPage(() => import('@/pages/OnboardingPage'), 'OnboardingPage');
 
 // Platform administration
@@ -115,6 +116,16 @@ export function AppRoutes() {
         element={
           <PublicOnlyRoute>
             <RegisterPage />
+          </PublicOnlyRoute>
+        }
+      />
+      {/* Recovery is for somebody who cannot sign in, so it is public-only too:
+          a signed-in person changes their password in Settings instead. */}
+      <Route
+        path="/forgot-password"
+        element={
+          <PublicOnlyRoute>
+            <ForgotPasswordPage />
           </PublicOnlyRoute>
         }
       />

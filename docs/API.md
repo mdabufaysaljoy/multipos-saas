@@ -48,6 +48,9 @@ Base URL: `/api` · All responses use one envelope.
 | POST | `/logout` | — | Revokes the presented session. |
 | GET | `/me` | auth | Session, permissions, stores, entitlement. |
 | POST | `/change-password` | auth | Revokes every other session. |
+| POST | `/password/forgot` | — | Sends a reset code. Always answers the same, registered or not. Rate limited. |
+| POST | `/password/verify-code` | — | Exchanges a correct code for a short-lived reset ticket. |
+| POST | `/password/reset` | — | Spends the ticket, sets the password, revokes every session on the address. |
 
 <details><summary><code>POST /auth/login</code></summary>
 

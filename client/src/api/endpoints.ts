@@ -100,6 +100,24 @@ export const authApi = {
   logout: () => post<{ message: string }>('/auth/logout'),
   changePassword: (body: { currentPassword: string; newPassword: string }) =>
     post<{ message: string }>('/auth/change-password', body),
+
+  // --- Forgotten password: three public steps, shared by every POS ---
+  /**
+   * Always resolves the same way for a registered and an unregistered address.
+   * `devCode` is present only outside production, so a machine without SMTP
+   * can still complete the flow.
+   */
+  forgotPassword: (body: { email: string }) =>
+    post<{ message: string; expiresInMinutes: number; resendAfterSeconds: number; codeLength: number; devCode?: string }>(
+      '/auth/password/forgot',
+      body,
+    ),
+  /** Exchanges a correct code for a short-lived ticket. */
+  verifyPasswordResetCode: (body: { email: string; code: string }) =>
+    post<{ resetTicket: string; expiresInSeconds: number; maskedEmail: string }>('/auth/password/verify-code', body),
+  /** Spends the ticket. The password never travels with the code, nor in a URL. */
+  resetPassword: (body: { resetTicket: string; newPassword: string }) =>
+    post<{ message: string }>('/auth/password/reset', body),
 };
 
 export interface WorkspaceVerticalOption {
