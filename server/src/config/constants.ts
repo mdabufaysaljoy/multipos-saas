@@ -39,6 +39,8 @@ export const PAYMENT_PROVIDERS = {
   BANK: 'bank',
   /** Hosted checkout aggregator (bKash, Nagad, Rocket, Upay, card) - see uddoktapay.provider.ts. */
   UDDOKTAPAY: 'uddoktapay',
+  /** Hosted checkout - see zinipay.provider.ts. */
+  ZINIPAY: 'zinipay',
   /** Out-of-band Send Money, proven by a payment SMS reported by a registered device. */
   SMS_VERIFIED: 'sms_verified',
 } as const;

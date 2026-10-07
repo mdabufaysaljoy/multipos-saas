@@ -41,6 +41,12 @@ export interface WebhookRequest {
   /** Raw body bytes - required for signature verification. */
   rawBody: Buffer | string;
   parsedBody: unknown;
+  /**
+   * The query string, for gateways that send their callback there instead of
+   * in a body. ZiniPay documents both shapes; a provider that only ever
+   * receives a body ignores this.
+   */
+  query?: Record<string, unknown>;
 }
 
 export interface WebhookResult {

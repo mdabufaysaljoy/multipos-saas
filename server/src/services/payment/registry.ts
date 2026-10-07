@@ -6,6 +6,7 @@ import { BkashPaymentProvider } from './providers/bkash.provider';
 import { NagadPaymentProvider } from './providers/nagad.provider';
 import { BankPaymentProvider } from './providers/bank.provider';
 import { UddoktaPayProvider } from './providers/uddoktapay.provider';
+import { ZiniPayProvider } from './providers/zinipay.provider';
 
 /**
  * Provider lookup. Application code depends on the PaymentProvider interface
@@ -67,6 +68,11 @@ export const paymentRegistry = new PaymentProviderRegistry([
     apiKey: process.env.UDDOKTAPAY_API_KEY ?? '',
     // Sandbox: https://sandbox.uddoktapay.com - production is the merchant's own installation.
     baseUrl: process.env.UDDOKTAPAY_BASE_URL ?? '',
+  }),
+  new ZiniPayProvider({
+    apiKey: process.env.ZINIPAY_API_KEY ?? '',
+    // https://api.zinipay.com for both sandbox and live; the key decides which.
+    baseUrl: process.env.ZINIPAY_BASE_URL ?? 'https://api.zinipay.com',
   }),
   new BankPaymentProvider(),
 ]);

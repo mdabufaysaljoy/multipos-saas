@@ -168,6 +168,8 @@ export const webhook = asyncHandler(async (req: Request, res: Response) => {
     headers: req.headers as Record<string, string | string[] | undefined>,
     rawBody,
     parsedBody: req.body,
+    // Some gateways put the callback in the query string rather than a body.
+    query: req.query as Record<string, unknown>,
   });
 
   if (!result.verified) {

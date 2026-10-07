@@ -287,6 +287,10 @@ try {
   // resend cooldown all need the clock moved, which over HTTP would mean
   // sleeping through a minute per assertion.
   await run(process.execPath, [TSX_CLI, 'server/src/seed/passwordReset.check.ts']);
+  // Nor this one: reaching ZiniPay for real would need live credentials, move
+  // real money, and still could not be asked to produce a FAILED payment on
+  // demand. It runs against a stub of their documented API instead.
+  await run(process.execPath, [TSX_CLI, 'server/src/seed/zinipay.check.ts']);
 } catch (error) {
   testFailure = error;
 } finally {
