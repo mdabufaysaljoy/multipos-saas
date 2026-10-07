@@ -20,6 +20,7 @@ import { formatMoney, formatMoneyCompact } from '@/lib/money';
 import { useAuth } from '@/hooks/useAuth';
 import { cn } from '@/lib/utils';
 import type { BreakdownRow } from '@/types/domain';
+import { useTabParam } from '@/hooks/useTabParam';
 
 /**
  * Advanced Analytics = detailed analysis, deliberately distinct from the
@@ -31,6 +32,7 @@ import type { BreakdownRow } from '@/types/domain';
  * cost is changed today.
  */
 export function ReportsPage() {
+  const [tab, setTab] = useTabParam('tab', 'sales', ['sales', 'products', 'variants', 'categories', 'staff', 'payments', 'returns', 'inventory', 'customers', 'branches']);
   const { activeStore, session } = useAuth();
   const currency = activeStore?.currency ?? 'BDT';
   const [range, setRange] = React.useState<RangeValue>({ preset: 'last30', from: '', to: '' });
@@ -92,7 +94,7 @@ export function ReportsPage() {
       {!ready && <EmptyState title="Pick a start and end date" description="Choose both dates to run the report." />}
 
       {ready && (
-        <Tabs defaultValue="sales">
+        <Tabs value={tab} onValueChange={setTab}>
           <TabsList className="h-auto flex-wrap justify-start gap-1">
             <TabsTrigger value="sales">Sales &amp; profit</TabsTrigger>
             <TabsTrigger value="products">Products</TabsTrigger>

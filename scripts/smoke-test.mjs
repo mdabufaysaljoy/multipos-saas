@@ -1935,6 +1935,179 @@ async function main() {
   check('An unknown POS type is refused', bogusPos.status === 422, { status: bogusPos.status, error: bogusPos.error });
   check('...and no workspace is left behind', (await api('/auth/login', { method: 'POST', body: { email: `bogus${runId}@example.com`, password: 'Password@123' } })).status === 401);
 
+  // ---- the public website's own settings -----------------------------------
+  // Branding, SEO text, contact details and the policy pages live on the
+  // settings singleton so an operator can change them without a deploy.
+  const siteBefore = await api('/public/site');
+  check('The public site settings are readable without a session', siteBefore.status === 200, siteBefore.status);
+  check('...and fall back to the deployment branding when nothing is set', Boolean(siteBefore.data?.name), siteBefore.data?.name);
+  check('...carrying no credentials from the settings document', !/smtp|apiKey|password|senderId/i.test(JSON.stringify(siteBefore.data)), Object.keys(siteBefore.data ?? {}));
+
+  const siteSaved = await api('/platform/site', {
+    method: 'PATCH',
+    token: padmin.token,
+    body: {
+      name: `Smoke Suites ${runId}`,
+      tagline: 'Tills that fit the shop',
+      contact: { addressLine1: '12 Test Road', city: 'Dhaka', country: 'Bangladesh' },
+      seo: { defaultDescription: 'POS for clothing, supershop, restaurant and pharmacy.', indexable: true },
+      content: { faq: [{ question: 'Is there a trial?', answer: 'Yes, and no card is needed.' }] },
+    },
+  });
+  check('Platform admin saves the site settings', siteSaved.status === 200, siteSaved.error);
+
+  const siteAfter = await api('/public/site');
+  check('The public site reflects the save immediately', siteAfter.data?.name === `Smoke Suites ${runId}`, siteAfter.data?.name);
+  check('...including the address', siteAfter.data?.contact?.city === 'Dhaka', siteAfter.data?.contact);
+  check('...and the FAQ', siteAfter.data?.content?.faq?.[0]?.question === 'Is there a trial?', siteAfter.data?.content?.faq);
+
+  // Saving one section must not blank the others.
+  await api('/platform/site', { method: 'PATCH', token: padmin.token, body: { tagline: 'Changed tagline only' } });
+  const sitePartial = await api('/public/site');
+  check('Saving one section leaves the rest alone', sitePartial.data?.contact?.city === 'Dhaka' && sitePartial.data?.name === `Smoke Suites ${runId}`, sitePartial.data?.contact);
+  check('...and applies the one that changed', sitePartial.data?.tagline === 'Changed tagline only', sitePartial.data?.tagline);
+
+  // These values are rendered into href/src on a page served to anonymous
+  // people, so a URL field that accepted a script would be stored XSS.
+  for (const [label, payload] of [
+    ['a javascript: logo', { logoUrl: 'javascript:alert(1)' }],
+    ['a data: logo', { logoUrl: 'data:text/html,<script>alert(1)</script>' }],
+    ['a colour smuggling a declaration', { primaryColor: 'red; background:url(x)' }],
+    ['a malformed contact email', { contact: { email: 'not-an-email' } }],
+    ['an unknown field', { unknownField: 'x' }],
+  ]) {
+    check(`Site settings refuse ${label}`, (await api('/platform/site', { method: 'PATCH', token: padmin.token, body: payload })).status === 422);
+  }
+  check('...while a real https logo is accepted', (await api('/platform/site', { method: 'PATCH', token: padmin.token, body: { logoUrl: 'https://cdn.example.com/logo.svg' } })).status === 200);
+  check('...and a same-origin path is too', (await api('/platform/site', { method: 'PATCH', token: padmin.token, body: { logoUrl: '/uploads/logo.webp' } })).status === 200);
+
+  check('Only a platform admin may change the site', (await api('/platform/site', { method: 'PATCH', token: admin.token, body: { name: 'Nope' } })).status === 403);
+  check('...and an anonymous request certainly may not', (await api('/platform/site', { method: 'PATCH', body: { name: 'Nope' } })).status === 401);
+
+  // robots.txt is generated, because whether this deployment may be indexed at
+  // all is a setting - a staging site out-ranking production is a real failure.
+  const robotsOn = await fetch(`${BASE}/public/robots.txt`).then((r) => r.text());
+  check('robots.txt allows crawling when the site is indexable', /Allow: \//.test(robotsOn) && /Sitemap:/.test(robotsOn), robotsOn.slice(0, 80));
+  check('...and keeps the signed-in app out of the index', /Disallow: \/pos/.test(robotsOn) && /Disallow: \/platform/.test(robotsOn));
+  await api('/platform/site', { method: 'PATCH', token: padmin.token, body: { seo: { indexable: false } } });
+  const robotsOff = await fetch(`${BASE}/public/robots.txt`).then((r) => r.text());
+  check('Turning indexing off disallows everything', /Disallow: \/$/m.test(robotsOff.trim()) && !/Allow:/.test(robotsOff), robotsOff.trim());
+  await api('/platform/site', { method: 'PATCH', token: padmin.token, body: { seo: { indexable: true } } });
+
+  // The policy pages and FAQ are rendered by the site from these settings.
+  const markdownRenderer = readFileSync(new URL('../client/src/features/public/Markdown.tsx', import.meta.url), 'utf8');
+  // The ATTRIBUTE, not the word: the file's own comment explains why it does
+  // not use one, and prose must not fail a test about code.
+  check('Admin-written content is rendered to React nodes, never to an HTML string', !/dangerouslySetInnerHTML\s*=/.test(markdownRenderer));
+  check('...and link schemes are allow-listed, so javascript: cannot survive', /\^https\?:/.test(markdownRenderer) && /safeHref/.test(markdownRenderer));
+  for (const file of ['client/src/pages/public/PolicyPage.tsx', 'client/src/pages/public/FaqPage.tsx']) {
+    const source = readFileSync(new URL(`../${file}`, import.meta.url), 'utf8');
+    check(`${file.split('/').pop()} never injects raw HTML`, !/dangerouslySetInnerHTML\s*=/.test(source));
+  }
+  const faqScreen = readFileSync(new URL('../client/src/pages/public/FaqPage.tsx', import.meta.url), 'utf8');
+  // A scripted accordion that mounts its answer on click hides the content
+  // from exactly the audience an FAQ page exists for.
+  check('The FAQ uses <details>, so every answer is in the HTML a crawler reads', /<details/.test(faqScreen));
+
+  const publicLayout = readFileSync(new URL('../client/src/layouts/PublicLayout.tsx', import.meta.url), 'utf8');
+  check('The footer reads its contact details from the settings', /site\?\.contact\.email/.test(publicLayout));
+  check('...links the policy pages', /'\/privacy'/.test(publicLayout) && /'\/terms'/.test(publicLayout));
+  check('...and marks social profiles rel="me" so they can be tied to the brand', /rel="me noopener noreferrer"/.test(publicLayout));
+
+  const routesFile = readFileSync(new URL('../client/src/routes/AppRoutes.tsx', import.meta.url), 'utf8');
+  for (const path of ['/faq', '/privacy', '/terms', '/refunds']) {
+    check(`${path} is a real route`, new RegExp(`path="${path}"`).test(routesFile));
+  }
+
+  const titleComponent = readFileSync(new URL('../client/src/components/DocumentTitle.tsx', import.meta.url), 'utf8');
+  check('The tab title uses the admin title template', /titleTemplate/.test(titleComponent) && /replace\('%s'/.test(titleComponent));
+  check('...and the favicon follows the settings', /link\[rel='icon'\]/.test(titleComponent));
+  // The home title was unreachable: every known route resolved a page name
+  // first, so the one field labelled "home page title" did nothing at all.
+  check('The home page can use its own title, whole', /home && defaultTitle/.test(titleComponent));
+  check('...and the home page is not ALSO in the per-page editor', !/\{ path: '\/', label:/.test(readFileSync(new URL('../client/src/types/site.ts', import.meta.url), 'utf8')));
+
+  // A logo does not replace the brand name: plenty of logos are a glyph with
+  // no wordmark, and a header showing only a glyph says nothing to a first
+  // time visitor.
+  const brandMark = readFileSync(new URL('../client/src/features/public/BrandMark.tsx', import.meta.url), 'utf8');
+  check('The header shows the name beside the logo, not instead of it', /\{!compact && <span className="truncate/.test(brandMark));
+
+  // ---- tabs survive a reload ------------------------------------------------
+  // Every tabbed screen used to snap back to its first tab on reload, which is
+  // exactly when you least want it: a reload usually follows saving something
+  // on the tab you were looking at.
+  const tabHook = readFileSync(new URL('../client/src/hooks/useTabParam.ts', import.meta.url), 'utf8');
+  check('A tab selection is kept in the URL', /useSearchParams/.test(tabHook));
+  check('...replacing history rather than pushing, so Back still leaves the page', /replace: true/.test(tabHook));
+  check('...writing no parameter for the default tab, so clean URLs stay clean', /next === fallback\) updated\.delete/.test(tabHook));
+  check('...and falling back when the value is not a real tab', /allowed\.includes\(raw\)/.test(tabHook));
+
+  const tabbedScreens = [
+    'client/src/pages/PlatformPage.tsx',
+    'client/src/pages/SettingsPage.tsx',
+    'client/src/pages/ReportsPage.tsx',
+    'client/src/pages/WorkspacePage.tsx',
+    'client/src/pages/WalletPage.tsx',
+    'client/src/pages/MarketingPage.tsx',
+    'client/src/pages/SubscriptionPage.tsx',
+    'client/src/pages/PlatformAccountPage.tsx',
+    'client/src/pages/pharmacy/PharmacyReportsPage.tsx',
+    'client/src/pages/supershop/SupershopReportsPage.tsx',
+    'client/src/features/platform/SiteSettingsTab.tsx',
+  ];
+  for (const file of tabbedScreens) {
+    const source = readFileSync(new URL(`../${file}`, import.meta.url), 'utf8');
+    check(`${file.split('/').pop()} keeps its tab in the URL`, /useTabParam/.test(source) && !/<Tabs defaultValue/.test(source), file);
+  }
+  // The platform panel nests three levels, each with its own key.
+  const platformScreen2 = readFileSync(new URL('../client/src/pages/PlatformPage.tsx', import.meta.url), 'utf8');
+  check('Nested platform tabs each get their own key', ["useTabParam('tab'", "useTabParam('billing'", "useTabParam('settings'"].every((call) => platformScreen2.includes(call)));
+
+  // ---- search engines and share cards --------------------------------------
+  // The site is a client-rendered SPA, and the social crawlers do not run
+  // JavaScript. Tags added at runtime are tags Facebook, WhatsApp and LinkedIn
+  // never see, so the build writes a real HTML file per route with the tags
+  // already in it. These assert the generator, not a built artifact, because
+  // the suite must not require a prior `npm run build`.
+  const prerender = readFileSync(new URL('../client/scripts/prerender.mjs', import.meta.url), 'utf8');
+  const seoLib = readFileSync(new URL('../client/src/lib/seo.ts', import.meta.url), 'utf8');
+
+  check('The build writes a page per public route', /writeFile\(resolve\(dir, 'index.html'\)/.test(prerender));
+  for (const tag of ['og:title', 'og:description', 'og:url', 'og:image', 'twitter:card', 'canonical']) {
+    check(`...carrying ${tag}`, prerender.includes(tag));
+  }
+  check('...and structured data', /application\/ld\+json/.test(prerender) && /Organization/.test(prerender) && /FAQPage/.test(prerender) && /BreadcrumbList/.test(prerender));
+  check('JSON-LD cannot break out of its own script tag', /replace\(\/<\/g, '\\\\u003c'\)/.test(prerender), 'jsonLd must escape <');
+  check('Injected values are HTML-escaped', /escapeHtml/.test(prerender));
+
+  check('robots.txt is written to the SITE root, not the API host', /writeFile\(resolve\(DIST, 'robots\.txt'\)/.test(prerender));
+  check('...and a sitemap beside it', /writeFile\(resolve\(DIST, 'sitemap\.xml'\)/.test(prerender));
+  check('Turning indexing off empties the sitemap and blocks crawlers', /indexable\s*\?/.test(prerender) && /'Disallow: \/'/.test(prerender));
+  check('...and marks every page noindex', /noindex,nofollow/.test(prerender));
+  check('The signed-in app is never offered to crawlers', /Disallow: \/pos/.test(prerender) && /Disallow: \/platform/.test(prerender));
+
+  // A build must not fail because a marketing description could not be fetched.
+  check('An unreachable settings API falls back to built-in copy', /using built-in copy/.test(prerender));
+
+  // The generator parses the route table out of the TypeScript module, so the
+  // two must agree. This runs the generator's OWN parse against the real file:
+  // if somebody reformats the table and the regex stops matching, the build
+  // would quietly emit fewer pages, and this is what notices.
+  const seoBlock = seoLib.slice(seoLib.indexOf('export const PUBLIC_ROUTES'), seoLib.indexOf('export const PRODUCT_SLUGS'));
+  const declared = [...seoBlock.matchAll(/path:\s*'([^']+)'/g)].map((m) => m[1]).sort();
+  const flat = seoBlock.replace(/\s+/g, ' ');
+  const parsed = [...flat.matchAll(/\{ path: '([^']+)', title: '([^']*)', description: '([^']*)',? \}/g)].map((m) => m[1]).sort();
+  check(
+    'The generator parses every route the app declares',
+    declared.length > 0 && parsed.join('|') === declared.join('|'),
+    { declared, parsedByGenerator: parsed },
+  );
+
+  const titleSource = readFileSync(new URL('../client/src/components/DocumentTitle.tsx', import.meta.url), 'utf8');
+  check('Canonical and Open Graph are kept current as the visitor navigates', /link\[rel='canonical'\]/.test(titleSource) && /og:url/.test(titleSource));
+  check('...and the signed-in app is left out of it', /isPublicPath/.test(titleSource));
+
   // ---- a few days of access, granted by hand -------------------------------
   // The shop whose payment has not cleared, or who rang up at closing time with
   // an expired plan. A grant carries a PLAN, because entitlements come entirely

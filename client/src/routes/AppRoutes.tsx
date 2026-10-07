@@ -20,6 +20,10 @@ const FeaturesPage = lazyPage(() => import('@/pages/public/FeaturesPage'), 'Feat
 const LoginPage = lazyPage(() => import('@/pages/LoginPage'), 'LoginPage');
 const RegisterPage = lazyPage(() => import('@/pages/RegisterPage'), 'RegisterPage');
 const ForgotPasswordPage = lazyPage(() => import('@/pages/ForgotPasswordPage'), 'ForgotPasswordPage');
+const FaqPage = lazyPage(() => import('@/pages/public/FaqPage'), 'FaqPage');
+const PrivacyPage = lazyPage(() => import('@/pages/public/PolicyPage'), 'PrivacyPage');
+const TermsPage = lazyPage(() => import('@/pages/public/PolicyPage'), 'TermsPage');
+const RefundPage = lazyPage(() => import('@/pages/public/PolicyPage'), 'RefundPage');
 const OnboardingPage = lazyPage(() => import('@/pages/OnboardingPage'), 'OnboardingPage');
 
 // Platform administration
@@ -100,6 +104,12 @@ export function AppRoutes() {
         {/* Features live on the home page; keep the nav link meaningful. */}
         <Route path="/features" element={<FeaturesPage />} />
         <Route path="/contact" element={<ContactPage />} />
+        {/* Written by the platform admin rather than built in, so they can be
+            corrected without a deploy. */}
+        <Route path="/faq" element={<FaqPage />} />
+        <Route path="/privacy" element={<PrivacyPage />} />
+        <Route path="/terms" element={<TermsPage />} />
+        <Route path="/refunds" element={<RefundPage />} />
       </Route>
 
       {/* ---------------------------------------------------------- public */}

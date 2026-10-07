@@ -54,6 +54,7 @@ import type {
   WalletBreakdown,
   WalletTransaction,
 } from '@/types/domain';
+import type { SiteSettings } from '@/types/site';
 import type { AuthTokens, Session, VerificationSendResult, VerificationStatus } from '@/types/api';
 
 type Query = Record<string, unknown>;
@@ -654,6 +655,17 @@ export const platformApi = {
     ),
   sendPaymentAlerts: () => post<PaymentAlertResult>('/platform/payments/alerts/send-now', {}),
   posProducts: () => get<PosProduct[]>('/platform/pos-products'),
+
+  // --- the public website ---
+  /** Stored values (blanks and all) plus the resolved view visitors see. */
+  site: () => get<{ stored: Partial<SiteSettings>; effective: SiteSettings }>('/platform/site'),
+  updateSite: (body: Partial<SiteSettings>) =>
+    patch<{ stored: Partial<SiteSettings>; effective: SiteSettings; changed: number }>('/platform/site', body),
+  uploadSiteImage: (file: File) => {
+    const form = new FormData();
+    form.append('file', file);
+    return post<{ url: string; key: string }>('/platform/site/image', form);
+  },
   posProduct: (code: string) => get<PosProduct>(`/platform/pos-products/${encodeURIComponent(code)}`),
   setPosProductStatus: (code: string, status: PosProduct['status']) =>
     patch<PosProduct>(`/platform/pos-products/${encodeURIComponent(code)}`, { status }),

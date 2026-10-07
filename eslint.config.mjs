@@ -43,7 +43,7 @@ export default defineConfig(
 
   // Node code: the API, its scripts, and build tooling config files.
   {
-    files: ['server/**/*.ts', 'scripts/**/*.{js,mjs}', '*.{js,mjs}', 'client/*.{js,mjs,ts,cjs}'],
+    files: ['server/**/*.ts', 'scripts/**/*.{js,mjs}', 'client/scripts/**/*.{js,mjs}', '*.{js,mjs}', 'client/*.{js,mjs,ts,cjs}'],
     languageOptions: { globals: globals.node },
   },
 

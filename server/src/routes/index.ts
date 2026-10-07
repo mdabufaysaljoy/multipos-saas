@@ -1,4 +1,5 @@
 import paymentProviderRoutes from '../modules/paymentProviders/paymentProviders.routes';
+import siteRoutes from '../modules/site/site.routes';
 import { Router } from 'express';
 import authRoutes from '../modules/auth/auth.routes';
 import storeRoutes from '../modules/stores/stores.routes';
@@ -52,6 +53,10 @@ router.get('/public/contact', async (_req, res, next) => {
 router.get('/health', (_req, res) => {
   res.json({ success: true, data: { status: 'ok', time: new Date().toISOString() } });
 });
+
+// The public website's own settings and robots.txt. Unauthenticated by
+// design: anonymous visitors and the pre-render build step both read it.
+router.use('/public', siteRoutes);
 
 // Tenant-facing POS API
 router.use('/auth', authRoutes);

@@ -97,6 +97,7 @@ export function AuthField({
   inputProps,
   trailing,
   labelAside,
+  render,
 }: {
   id: string;
   label: string;
@@ -105,6 +106,13 @@ export function AuthField({
   hint?: string;
   inputProps: ComponentProps<typeof Input>;
   trailing?: ReactNode;
+  /**
+   * Renders the control itself, for fields that are not a plain text input -
+   * a phone field that refuses letters, say. It receives the same props the
+   * default input would, so the label, icon, error and focus ring are
+   * unchanged and only the control differs.
+   */
+  render?: (props: ComponentProps<typeof Input>) => ReactNode;
   /** Sits opposite the label, for a secondary action like "Forgot password?". */
   labelAside?: ReactNode;
 }) {
@@ -122,19 +130,19 @@ export function AuthField({
         {Icon && (
           <Icon className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-500" />
         )}
-        <Input
-          id={id}
-          aria-invalid={Boolean(error)}
-          aria-describedby={describedBy}
-          className={cn(
+        {(render ?? ((props) => <Input {...props} />))({
+          id,
+          'aria-invalid': Boolean(error),
+          'aria-describedby': describedBy,
+          className: cn(
             'h-12 rounded-xl border-white/10 bg-white/[0.04] text-white placeholder:text-slate-600',
             'focus-visible:border-indigo-400/60 focus-visible:ring-2 focus-visible:ring-indigo-400/40',
             Icon && 'pl-10',
             trailing && 'pr-11',
             error && 'border-rose-500/50',
-          )}
-          {...inputProps}
-        />
+          ),
+          ...inputProps,
+        })}
         {trailing && <span className="absolute right-3 top-1/2 -translate-y-1/2">{trailing}</span>}
       </div>
       {hint && !error && (
