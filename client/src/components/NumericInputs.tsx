@@ -1,5 +1,6 @@
 import * as React from 'react';
 import { Input, type InputProps } from '@/components/ui/input';
+import { cn } from '@/lib/utils';
 
 /**
  * Fields that refuse letters.
@@ -9,18 +10,23 @@ import { Input, type InputProps } from '@/components/ui/input';
  * dropped as it is typed, and a paste is filtered the same way, so there is
  * nothing to correct afterwards and no error to read.
  *
- * WHY NOT `type="number"`, which is the obvious answer:
+ * Phone fields are `type="number"` and digits only, by product decision: no
+ * +, brackets, dashes or spaces. Three things that choice drags in, handled
+ * here rather than left to bite:
  *
- *  - It cannot hold a phone number. `+880 1700-111222` and `(880) 1700 111222`
- *    are not parseable as numbers, so the browser discards them - and those are
- *    the formats this product accepts and that people here actually write.
- *  - It loses a decimal while it is being typed. Browsers report a half-typed
- *    "7." as an EMPTY value, which is exactly the bug that made the VAT rate
- *    field turn 7.5 into 75.
- *  - A scroll wheel over a focused number input silently changes it. On a
- *    price or a stock count that is a quiet data-corruption bug, and tills get
- *    scrolled constantly.
- *  - Its default `step` of 1 marks every decimal invalid.
+ *  - A stored number that still has formatting - "+8801741918615" - renders as
+ *    EMPTY in a number input, so opening a record and saving it would silently
+ *    wipe the number. Incoming values are stripped to digits, so a legacy
+ *    number loads as 8801741918615 and stays editable.
+ *  - A scroll wheel over a focused number input changes it. On a till, which
+ *    gets scrolled constantly, that is quiet data corruption. The wheel is
+ *    ignored while the field has focus.
+ *  - `maxLength` does nothing on a number input, so the digit cap is enforced
+ *    by the filter instead.
+ *
+ * The other fields stay text with an `inputMode`, because a number input
+ * reports a half-typed "7." as EMPTY - which is exactly the bug that made the
+ * VAT rate turn 7.5 into 75.
  *
  * `inputMode` is what actually matters on the tablet a till runs on: it chooses
  * the on-screen keypad. These set it correctly and keep the value a string, so
@@ -46,18 +52,33 @@ function useFiltered(value: string, onChange: (next: string) => void, filter: (r
   );
 }
 
-/**
- * A phone number.
- *
- * Keeps digits and the punctuation people write numbers with. `type="tel"` is
- * the correct type here - it asks for a telephone keypad without pretending
- * the value is arithmetic.
- */
-const phoneFilter = (raw: string) => raw.replace(/[^\d+()\-\s]/g, '').slice(0, 32);
+/** Digits and nothing else. Also used to clean a stored value on the way in. */
+const phoneFilter = (raw: string) => raw.replace(/\D/g, '').slice(0, 15);
 
 export function PhoneInput({ value, onChange, ...rest }: FilteredProps) {
-  const handle = useFiltered(value, onChange, phoneFilter);
-  return <Input {...rest} type="tel" inputMode="tel" autoComplete="tel" value={value} onChange={handle} />;
+  const digits = phoneFilter(value ?? '');
+
+  // A legacy "+8801741918615" would render empty and save as blank. Rewriting
+  // it to digits once, on load, keeps the record intact.
+  React.useEffect(() => {
+    if (digits !== value) onChange(digits);
+  }, [digits, value, onChange]);
+
+  const handle = useFiltered(digits, onChange, phoneFilter);
+  return (
+    <Input
+      {...rest}
+      type="number"
+      inputMode="numeric"
+      autoComplete="tel"
+      value={digits}
+      onChange={handle}
+      // The spinner is meaningless on a phone number, and the wheel would
+      // change it by accident.
+      onWheel={(event) => event.currentTarget.blur()}
+      className={cn('[appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none', rest.className)}
+    />
+  );
 }
 
 /**

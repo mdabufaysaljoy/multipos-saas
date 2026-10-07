@@ -2072,24 +2072,36 @@ async function main() {
     check(`...and accepted for ${label}`, res.status === 201, { name, status: res.status, error: res.error });
   }
 
-  // A phone number is not a decimal, and not unbounded.
+  // A phone number is digits and nothing else - no +, brackets, dashes or
+  // spaces - so the field can be a plain number input that cannot hold text.
   for (const [label, phone] of [
     ['a decimal', '01700.11122'],
     ['letters', 'abcdefghij'],
+    ['a leading +', '+8801700111222'],
+    ['brackets and spaces', '(880) 1700 111222'],
+    ['dashes', '01700-111222'],
     ['too few digits', '017001'],
     ['more digits than E.164 allows', '1234567890123456'],
   ]) {
     const res = await regField({ name: 'Abu Faysal', phone, email: `vp${fieldStamp}${Math.random().toString(36).slice(2, 7)}@example.com` });
-    check(`A phone number is refused when it is ${label}`, res.status === 422, { phone, status: res.status });
+    check(`A phone number is refused when it has ${label}`, res.status === 422, { phone, status: res.status });
   }
   for (const [label, phone] of [
-    ['plain digits', '01700111222'],
-    ['an international number', '+880 1700-111222'],
-    ['brackets and spaces', '(880) 1700 111222'],
+    ['a local number', '01700111222'],
+    ['a country code written as digits', '8801700111222'],
   ]) {
     const res = await regField({ name: 'Abu Faysal', phone, email: `vp${fieldStamp}${Math.random().toString(36).slice(2, 7)}@example.com` });
     check(`...and accepted as ${label}`, res.status === 201, { phone, status: res.status, error: res.error });
   }
+
+  // A number input renders a stored "+8801741918615" as EMPTY, so opening a
+  // record and saving it would wipe the number. The field strips it to digits
+  // on the way in instead of blanking it.
+  const phoneInput = readFileSync(new URL('../client/src/components/NumericInputs.tsx', import.meta.url), 'utf8');
+  check('Phone fields are number inputs', phoneInput.includes('type="number"'));
+  check('...keeping digits only', phoneInput.includes("raw.replace(/\\D/g, '')"));
+  check('...normalising a stored number rather than blanking it', phoneInput.includes('if (digits !== value) onChange(digits)'));
+  check('...and ignoring the scroll wheel, which would silently change it', phoneInput.includes('onWheel'));
 
   // A business name is NOT a person's name: "A1 Traders" is a real trading
   // name and refusing it would be refusing the truth.
@@ -4527,7 +4539,7 @@ async function main() {
   });
   check('Accepts a valid email', goodEmail.status === 201, goodEmail.error);
 
-  const badPhones = ['abcdefghij', '<script>alert(1)</script>', '12345', 'call-me', '{"$ne":null}'];
+  const badPhones = ['abcdefghij', '<script>alert(1)</script>', '12345', 'call-me', '{"$ne":null}', '+8801712345678', '(017) 1234 5678', '01712-345678', '01712.345678'];
   for (const phone of badPhones) {
     const res = await api('/customers', {
       method: 'POST',
@@ -4537,7 +4549,9 @@ async function main() {
     check(`Rejects phone ${JSON.stringify(phone.slice(0, 24))}`, res.status === 422, res.status);
   }
 
-  const goodPhones = ['01712345678', '+880 1712-345678', '(017) 1234 5678'];
+  // Digits only now - no +, brackets, dashes or spaces - so a phone field can
+  // be a plain number input that cannot hold text at all.
+  const goodPhones = ['01712345678', '8801712345678', '0171234567'];
   for (const [i, phone] of goodPhones.entries()) {
     const res = await api('/customers', {
       method: 'POST',

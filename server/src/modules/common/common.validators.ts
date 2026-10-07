@@ -66,20 +66,21 @@ export const emailAddress = z
 export const optionalEmailAddress = emailAddress.or(z.literal('')).optional().default('');
 
 /**
- * A phone number.
+ * A phone number: digits only.
  *
- * Permissive about how it is WRITTEN - people type +880, spaces, dashes and
- * brackets - and strict about what it contains. Two holes this closes:
- *
- *  - A dot used to be allowed, so "01700.11122" was accepted as a phone
- *    number. A phone number is not a decimal, and a field that takes one is a
- *    field somebody will put a price in.
- *  - There was a lower bound on digits but no upper one, so a 21-digit number
- *    was stored happily. E.164 caps a real number at 15.
+ * No +, brackets, dashes or spaces - a product decision, so the field can be a
+ * plain number input and nothing but digits can ever be typed or stored. The
+ * country code is written as digits ("8801700111222") rather than "+880".
  *
  * Seven is the shortest national number still in use; fifteen is the
- * international maximum. Between them sits every number a shop will ever type,
- * including an overseas supplier's.
+ * international maximum under E.164. A dot was previously allowed, which meant
+ * "01700.11122" was accepted - a phone number is not a decimal, and a field
+ * that takes one is a field somebody will put a price in.
+ *
+ * Numbers stored before this carried formatting. Nothing rewrites them in
+ * place, because a stored number is still a correct number; the phone input
+ * strips them to digits when a record is opened, so the next save normalises
+ * it rather than a migration touching rows nobody asked us to touch.
  */
 export const PHONE_MIN_DIGITS = 7;
 export const PHONE_MAX_DIGITS = 15;
@@ -87,14 +88,13 @@ export const PHONE_MAX_DIGITS = 15;
 export const phoneNumber = z
   .string()
   .trim()
-  .max(32, 'Phone number is too long')
-  .refine((value) => /^[+()\-\s\d]+$/.test(value), {
-    message: 'A phone number may only contain digits, spaces and + ( ) -',
+  .refine((value) => /^\d+$/.test(value), {
+    message: 'A phone number may contain digits only',
   })
-  .refine((value) => (value.match(/\d/g) ?? []).length >= PHONE_MIN_DIGITS, {
+  .refine((value) => value.length >= PHONE_MIN_DIGITS, {
     message: `Enter a complete phone number (at least ${PHONE_MIN_DIGITS} digits)`,
   })
-  .refine((value) => (value.match(/\d/g) ?? []).length <= PHONE_MAX_DIGITS, {
+  .refine((value) => value.length <= PHONE_MAX_DIGITS, {
     message: `A phone number cannot be longer than ${PHONE_MAX_DIGITS} digits`,
   });
 
