@@ -2699,6 +2699,85 @@ async function main() {
 
   await api(`/plans/${race2Plan.data._id}`, { method: 'DELETE', token: platform2.token });
 
+  // The product ceiling is UNIVERSAL, so the guard has to hold on every POS -
+  // not just Clothing, whose catalogue is the one the race above exercises.
+  // Each vertical keeps its own collection, so each needs its own proof.
+  for (const pos of [
+    { vertical: 'supershop', label: 'Super Shop', path: '/supershop/products', importPath: '/supershop/imports', body: (i, stamp) => ({ name: `RSP${i}`, barcode: `RSP${stamp}${i}`, unitType: 'each', priceMinor: 1000, category: 'General' }) },
+    { vertical: 'pharmacy', label: 'Pharmacy', path: '/pharmacy/medicines', body: (i, stamp) => ({ name: `RMD${i}`, genericName: `Gen${i}`, strength: `${i + 1}mg`, dosageForm: 'tablet', manufacturer: `M${stamp}`, sellingPriceMinor: 1000, category: 'General' }) },
+    { vertical: 'restaurant', label: 'Restaurant', path: '/restaurant/menu', body: (i) => ({ name: `RMI${i}`, category: 'Mains', priceMinor: 1000 }) },
+  ]) {
+    const stamp = `${raceStamp}${pos.vertical.slice(0, 2)}`;
+    const reg = await api('/auth/register', {
+      method: 'POST',
+      body: {
+        businessName: `Race ${pos.label} ${stamp}`,
+        name: 'Racer',
+        email: `race.${pos.vertical}.${stamp}@example.com`,
+        password: 'Password@123',
+        vertical: pos.vertical,
+      },
+    });
+    const token = reg.data?.tokens?.accessToken;
+    await api('/stores', { method: 'POST', token, body: { name: `Race ${pos.label} Store`, currency: 'BDT' } });
+
+    const plan = await api('/plans', {
+      method: 'POST',
+      token: platform2.token,
+      body: {
+        code: `race-${pos.vertical}-${stamp}`,
+        name: `Race ${pos.label} Plan`,
+        interval: 'monthly',
+        priceMinor: 1000,
+        tier: 1,
+        isPublic: false,
+        posProductCode: pos.vertical,
+        limits: { maxProducts: 2, maxStaff: 1, maxStores: 1, maxCustomers: 2, maxMonthlySales: 2 },
+        features: { salesReports: true },
+      },
+    });
+    await api('/platform/subscriptions', {
+      method: 'POST',
+      token: platform2.token,
+      body: { tenantId: reg.data?.tenant?.id, planId: plan.data?._id, periods: 1, status: 'active' },
+    });
+
+    const fired = await Promise.all(
+      [...Array(6)].map((_, i) => api(pos.path, { method: 'POST', token, body: pos.body(i, stamp) })),
+    );
+    const after = (await api('/subscriptions/current', { token })).data?.usage?.products;
+    check(`${pos.label}: concurrent creates cannot exceed the product limit`, after <= 2, {
+      limit: 2,
+      after,
+      accepted: fired.filter((r) => r.status < 300).length,
+      statuses: fired.map((r) => r.status),
+    });
+    check(`${pos.label}: nothing that fitted was rejected`, after === 2, { expected: 2, after });
+
+    // Bulk import goes through the same create service, so a workspace already
+    // at its ceiling cannot bring more in through a file either.
+    if (pos.importPath) {
+      const sheet = await uploadSheet(`${pos.importPath}/preview`, {
+        token,
+        bytes: productCsv(
+          [[`Over ${stamp}A`, '250', '', '', '', 'Piece', '0', '0', '', ''], [`Over ${stamp}B`, '250', '', '', '', 'Piece', '0', '0', '', '']],
+          { headers: ['Product', 'Price', 'Barcode', 'Department', 'Brand', 'Sold by', 'VAT rate', 'Reorder level', 'Opening stock', 'Cost price'] },
+        ),
+      });
+      const confirmed = sheet.data?.importId
+        ? await api(`${pos.importPath}/${sheet.data.importId}/confirm`, { method: 'POST', token })
+        : { status: 0 };
+      const afterImport = (await api('/subscriptions/current', { token })).data?.usage?.products;
+      check(`${pos.label}: an import cannot push past the product limit`, afterImport <= 2, {
+        limit: 2,
+        afterImport,
+        confirmStatus: confirmed.status,
+      });
+    }
+
+    await api(`/plans/${plan.data?._id}`, { method: 'DELETE', token: platform2.token });
+  }
+
   // --- 7. storage tricks ---------------------------------------------------
   section('Anti-bypass: upload abuse');
 
@@ -5918,6 +5997,29 @@ async function main() {
   check('Super Shop: the completed sale joins the active shift', basket.data?.shiftId === ssShift.data?.shift?._id, basket.data?.shiftId);
   const ssShiftLive = await api('/pos-shifts/current', { token: ssToken });
   check('Super Shop: the X-report includes the sale and cash net of change', ssShiftLive.data?.report?.sales?.salesCount === 1 && ssShiftLive.data?.report?.cash?.cashSalesMinor === 27_800, ssShiftLive.data?.report);
+
+  // The X and Z reports were always BUILT - `buildReport` serves the open shift
+  // live and freezes it on close - but the screen offered them as a ghost link
+  // in a card header and, for Z, as an undiscoverable "click the row". Both are
+  // now named buttons, and both go through the shared QZ Tray receipt printer
+  // rather than a browser print dialog.
+  const shiftScreen = readFileSync(new URL('../client/src/pages/PosShiftsPage.tsx', import.meta.url), 'utf8');
+  check('Super Shop: the shift screen offers a named Print X Report button', /Print X Report/.test(shiftScreen));
+  check('Super Shop: and a named Print Z Report button', /Print Z Report/.test(shiftScreen));
+  check('Super Shop: shift reports print through the shared thermal/QZ printer', /useReceiptPrint/.test(shiftScreen));
+  // The report DIALOG needs its own Print control. `ReceiptPrintBar` is only
+  // the status strip - it renders nothing while printing is idle - so a dialog
+  // carrying it alone opens the report with no way to put it on paper, which is
+  // exactly what Clothing and Super Shop did. Pharmacy's shift screen is the
+  // reference: status strip, then a footer with Close and Print.
+  const reportDialog = shiftScreen.slice(shiftScreen.indexOf('function ReportDialog'));
+  check('Super Shop: the report dialog has a Print button, not just the status strip', /onClick=\{print\.print\}/.test(reportDialog), 'ReportDialog renders no Print control');
+  check('Super Shop: the Print button shows progress while printing', /print\.direct && print\.status === 'printing'/.test(reportDialog));
+  check('Super Shop: and the dialog can be dismissed from its footer', /<DialogFooter/.test(reportDialog));
+  const pharmacyShifts = readFileSync(new URL('../client/src/pages/pharmacy/PharmacyShiftsPage.tsx', import.meta.url), 'utf8');
+  check('Pharmacy keeps the print control it always had', /onClick=\{print\.print\}/.test(pharmacyShifts));
+  check('Super Shop: and the shift screen never opens a browser print dialog', !/window\.print\(/.test(shiftScreen));
+  check('Super Shop: printing a report calls no shift-closing endpoint', !/\/close/.test(shiftScreen.slice(shiftScreen.indexOf('function ReportDialog'))), 'ReportDialog must not close a shift');
   await api(`/pos-shifts/${ssShift.data.shift._id}/cash-movements`, { method: 'POST', token: ssToken, body: { type: 'pay_out', amountMinor: 800, reason: 'Petty cash' } });
   const ssShiftAfterMovement = await api('/pos-shifts/current', { token: ssToken });
   const ssShiftClosed = await api(`/pos-shifts/${ssShift.data.shift._id}/close`, { method: 'POST', token: ssToken, body: { countedCashMinor: ssShiftAfterMovement.data.report.cash.expectedCashMinor } });
@@ -9724,6 +9826,137 @@ async function main() {
   const ssNeverReceived = await ssReceive(ssNever.data._id, { quantity: 10, costPriceMinor: 400 });
   check('Super Shop: the first delivery pays off what was already sold', ssNeverReceived.data?.quantityOnHand === 7, ssNeverReceived.data);
   check('Super Shop: and sets the cost basis it never had', ssNeverReceived.data?.costPriceMinor === 400, ssNeverReceived.data);
+
+  // --- Weighed goods: a shelf that is empty without being exactly zero ---------
+  // Pieces are COUNTED, so a shelf lands on exactly zero and the override's
+  // "at or below zero" test is a state it really reaches. Grams are MEASURED:
+  // a sack sold in 300 g and 750 g scoops leaves a remainder, so the balance is
+  // almost never exactly zero. The override therefore never engaged for loose
+  // goods - a shop could see "0.3 kg" on the shelf and be unable to sell any
+  // amount above it, for good, whatever note it wrote. For a measured line the
+  // branch is out of stock when it cannot cover the line; "not enough" is still
+  // refused for pieces, which the soap assertions above hold.
+  const ssLoose = await ssProduct({ name: `Loose Lentils ${oosStamp}`, category: 'Grocery', unitType: 'weight', priceMinor: 12_000 });
+  const ssLooseSell = (token, grams, note) =>
+    api('/supershop/sales', {
+      method: 'POST',
+      token,
+      body: { items: [{ productId: ssLoose.data._id, quantity: grams }], payments: [{ method: 'cash', amountMinor: 500_000 }], ...(note ? { note } : {}) },
+    });
+  const ssLooseOnHand = async () => (await ssApi(`/products/${ssLoose.data._id}`)).data?.product?.stock?.quantityOnHand ?? 0;
+
+  // An ordinary weighed sale off a full shelf is untouched, including fractions.
+  await ssReceive(ssLoose.data._id, { quantity: 10_000, costPriceMinor: 9000 });
+  const ssLooseHalf = await ssLooseSell(ssTill.session.token, 500);
+  check('Super Shop: 0.5 kg off a full shelf needs no note', ssLooseHalf.status === 201, ssLooseHalf.error);
+  check('Super Shop: and is not flagged as an out-of-stock sale', ssLooseHalf.data?.items?.[0]?.outOfStockOverride !== true, ssLooseHalf.data?.items?.[0]);
+  check('Super Shop: 0.5 kg of a 120.00/kg product is priced at 60.00', ssLooseHalf.data?.subtotalMinor === 6000, ssLooseHalf.data?.subtotalMinor);
+  const ssLooseQuarter = await ssLooseSell(ssTill.session.token, 1250);
+  check('Super Shop: 1.25 kg off a full shelf needs no note', ssLooseQuarter.status === 201, ssLooseQuarter.error);
+  check('Super Shop: 1.25 kg is priced at 150.00', ssLooseQuarter.data?.subtotalMinor === 15_000, ssLooseQuarter.data?.subtotalMinor);
+  check('Super Shop: the weighed balance came down by the grams sold', (await ssLooseOnHand()) === 8250, await ssLooseOnHand());
+
+  // Leave a remainder: the state a weighed shelf actually ends in.
+  await ssApi(`/products/${ssLoose.data._id}/adjust`, { method: 'POST', body: { type: 'adjust', quantityDelta: -8000, reason: 'Counted down to the remainder' } });
+  check('Super Shop: the shelf now holds a 250 g remainder', (await ssLooseOnHand()) === 250, await ssLooseOnHand());
+
+  const ssLooseNoNote = await ssLooseSell(ssTill.session.token, 500);
+  check('Super Shop: 0.5 kg against a 250 g remainder is refused without a note', ssLooseNoNote.status === 422 && ssLooseNoNote.error?.details?.reason === 'OUT_OF_STOCK_NOTE_REQUIRED', ssLooseNoNote.error);
+  check('Super Shop: and the remainder is untouched', (await ssLooseOnHand()) === 250, await ssLooseOnHand());
+
+  const ssLooseNote = 'Weighed out for the customer; shelf count corrected after';
+  const ssLooseSold = await ssLooseSell(ssTill.session.token, 500, ssLooseNote);
+  check('Super Shop: with a note the weighed line sells against the remainder', ssLooseSold.status === 201, ssLooseSold.error);
+  check('Super Shop: the weighed line is flagged as an out-of-stock sale', ssLooseSold.data?.items?.[0]?.outOfStockOverride === true, ssLooseSold.data?.items?.[0]);
+  check('Super Shop: the explanation is saved on the weighed sale', ssLooseSold.data?.note === ssLooseNote, ssLooseSold.data?.note);
+  check('Super Shop: the weighed balance went negative by the shortfall', (await ssLooseOnHand()) === -250, await ssLooseOnHand());
+  const ssLooseLedger = (await api(`/supershop/stock-ledger?itemId=${ssLoose.data._id}&limit=5`, { token: ssToken })).data ?? [];
+  check('Super Shop: the weighed ledger row is flagged and carries the note', ssLooseLedger[0]?.balanceAfter === -250 && ssLooseLedger[0]?.quantityChange === -500 && ssLooseLedger[0]?.reason?.includes(ssLooseNote), ssLooseLedger[0]);
+
+  // Already negative, and exactly zero, both still sell with a note.
+  const ssLooseAgain = await ssLooseSell(ssTill.session.token, 1250, 'Second customer, same correction pending');
+  check('Super Shop: 1.25 kg sells again from an already negative balance', ssLooseAgain.status === 201, ssLooseAgain.error);
+  await ssApi(`/products/${ssLoose.data._id}/adjust`, { method: 'POST', body: { type: 'adjust', quantityDelta: 1500, reason: 'Counted back to zero' } });
+  check('Super Shop: the weighed shelf is back at exactly zero', (await ssLooseOnHand()) === 0, await ssLooseOnHand());
+  const ssLooseAtZero = await ssLooseSell(ssTill.session.token, 300, 'Sold at exactly zero on hand');
+  check('Super Shop: 0.3 kg sells at exactly zero on hand', ssLooseAtZero.status === 201, ssLooseAtZero.error);
+  check('Super Shop: and only the grams sold came off', (await ssLooseOnHand()) === -300, await ssLooseOnHand());
+
+  // Another branch's weighed shelf is still none of this branch's business.
+  const ssLooseCross = await api('/supershop/sales', {
+    method: 'POST',
+    token: phToken,
+    body: { items: [{ productId: ssLoose.data._id, quantity: 100 }], payments: [{ method: 'cash', amountMinor: 10_000 }], note: 'Cross-tenant attempt' },
+  });
+  check("Super Shop: another workspace cannot sell this branch's weighed goods", ssLooseCross.status === 403, ssLooseCross.status);
+
+  // --- A decimal VAT rate, end to end -----------------------------------------
+  // Rates are stored in BASIS POINTS, so 7.5% is 750 and the hundredths place
+  // is real storage rather than a display trick. These assert that a half-point
+  // rate survives create -> read back -> sale -> VAT figure -> report, and that
+  // the bounds still refuse nonsense.
+  const ssVatProduct = await ssProduct({ name: `Decimal Vat Rice ${oosStamp}`, category: 'Grocery', priceMinor: 10_750, vatRateBps: 750 });
+  check('Super Shop: a 7.5% rate is accepted as 750 basis points', ssVatProduct.status === 201, ssVatProduct.error);
+  const ssVatRead = await ssApi(`/products/${ssVatProduct.data._id}`);
+  check('Super Shop: and reads back as exactly 750, not 700 or 7500', ssVatRead.data?.product?.vatRateBps === 750, ssVatRead.data?.product?.vatRateBps);
+
+  for (const [percent, bps] of [['5', 500], ['7', 700], ['7.5', 750], ['12.5', 1250], ['15.75', 1575], ['0', 0], ['100', 10_000]]) {
+    const res = await ssApi(`/products/${ssVatProduct.data._id}`, { method: 'PATCH', body: { vatRateBps: bps } });
+    // `PATCH /products/:id` answers with the product itself, not { product }.
+    check(`Super Shop: a VAT rate of ${percent}% stores as ${bps} bps`, res.status === 200 && res.data?.vatRateBps === bps, res.data?.vatRateBps ?? res.error);
+    check(`Super Shop: and ${percent}% is still ${bps} bps when read back`, (await ssApi(`/products/${ssVatProduct.data._id}`)).data?.product?.vatRateBps === bps);
+  }
+  check('Super Shop: a negative VAT rate is refused', (await ssApi(`/products/${ssVatProduct.data._id}`, { method: 'PATCH', body: { vatRateBps: -750 } })).status === 422);
+  check('Super Shop: a rate above 100% is refused', (await ssApi(`/products/${ssVatProduct.data._id}`, { method: 'PATCH', body: { vatRateBps: 10_001 } })).status === 422);
+  check('Super Shop: a fractional basis point is refused (750.5 is not a rate)', (await ssApi(`/products/${ssVatProduct.data._id}`, { method: 'PATCH', body: { vatRateBps: 750.5 } })).status === 422);
+  check('Super Shop: a rate sent as a string is refused', (await ssApi(`/products/${ssVatProduct.data._id}`, { method: 'PATCH', body: { vatRateBps: '750' } })).status === 422);
+
+  // 107.50 VAT-inclusive at 7.5% is 100.00 net plus 7.50 VAT - the brief's own
+  // example, in the inclusive pricing Super Shop actually uses.
+  await ssApi(`/products/${ssVatProduct.data._id}`, { method: 'PATCH', body: { vatRateBps: 750 } });
+  await ssReceive(ssVatProduct.data._id, { quantity: 20, costPriceMinor: 8000 });
+  const ssVatSale = await api('/supershop/sales', {
+    method: 'POST',
+    token: ssTill.session.token,
+    body: { items: [{ productId: ssVatProduct.data._id, quantity: 1 }], payments: [{ method: 'cash', amountMinor: 20_000 }] },
+  });
+  check('Super Shop: a sale at a 7.5% rate completes', ssVatSale.status === 201, ssVatSale.error);
+  check('Super Shop: the line carries the decimal rate, not a rounded one', ssVatSale.data?.items?.[0]?.vatRateBps === 750, ssVatSale.data?.items?.[0]?.vatRateBps);
+  check('Super Shop: 7.5% of 107.50 inclusive is 7.50 of VAT', ssVatSale.data?.items?.[0]?.vatMinor === 750, ssVatSale.data?.items?.[0]);
+  check('Super Shop: and the sale total VAT agrees', ssVatSale.data?.vatMinor === 750, ssVatSale.data?.vatMinor);
+
+  const ssVatReceipt = await api(`/supershop/sales/${ssVatSale.data._id}/receipt`, { token: ssToken });
+  check('Super Shop: the receipt reports the decimal rate', (ssVatReceipt.data?.sale?.items ?? []).some((i) => i.vatRateBps === 750), ssVatReceipt.data?.sale?.items?.[0]);
+
+  // The SHARED settings tax rate - every POS uses this one screen.
+  //
+  // The old field rendered `String(rateBasisPoints / 100)`, so what was on
+  // screen was recomputed from an integer on every keystroke and a half-typed
+  // "7." could not survive a render: typing 7.5 went "7" -> "7." -> back to
+  // "7" -> "75", and the shop was charging 75% VAT. The field now keeps the
+  // TEXT and derives the number from it.
+  const settingsScreen = readFileSync(new URL('../client/src/pages/SettingsPage.tsx', import.meta.url), 'utf8');
+  check('The settings tax rate is not re-derived from the stored integer on every render', !/value=\{draft\.tax\.rateBasisPoints \? String\(draft\.tax\.rateBasisPoints \/ 100\) : ''\}/.test(settingsScreen));
+  check('...it keeps what was typed in its own state', /function PercentField/.test(settingsScreen) && /useState\(\(\) => asText\(basisPoints\)\)/.test(settingsScreen));
+  check('...and only follows the stored value when the two really differ', /toBasisPoints\(current\) === basisPoints \? current : asText\(basisPoints\)/.test(settingsScreen));
+  check('...keeping a decimal keypad without the type="number" trailing-dot trap', /inputMode="decimal"/.test(settingsScreen) && !/id="tax-rate"[\s\S]{0,200}type="number"/.test(settingsScreen));
+  // The conversion itself, on the values the shop actually types.
+  const toBps = (raw) => (raw.trim() === '' ? 0 : Math.round(Number(raw) * 100));
+  check('A half-typed "7." already means 700, so the field is left alone', toBps('7.') === 700 && toBps('7') === 700);
+  for (const [typed, bps] of [['5', 500], ['7.5', 750], ['5.6', 560], ['12.5', 1250], ['15.75', 1575], ['0', 0], ['100', 10_000]]) {
+    check(`Settings: "${typed}%" converts to ${bps} basis points`, toBps(typed) === bps, toBps(typed));
+  }
+
+  // The till and every report render a rate from the same helper, so a shopkeeper
+  // who typed 7.5 is never shown 7.50 back.
+  const ssVatHelpers = readFileSync(new URL('../client/src/lib/supershop.ts', import.meta.url), 'utf8');
+  check('Super Shop: the rate formatter trims trailing zeros instead of forcing two places', /formatVatRate = \(bps: number\) => `\${vatPercentText\(bps\)}%`/.test(ssVatHelpers), 'formatVatRate no longer delegates to vatPercentText');
+  for (const file of ['client/src/pages/supershop/ShopProductsPage.tsx', 'client/src/features/supershop/QuickCreateDialog.tsx']) {
+    const source = readFileSync(new URL(`../${file}`, import.meta.url), 'utf8');
+    const vatField = /id="(shop|qc)-vat"[^>]*/.exec(source.replace(/\s+/g, ' '))?.[0] ?? '';
+    check(`${file.split('/').pop()}: the VAT field asks for a decimal keypad`, /inputMode="decimal"/.test(vatField), vatField);
+    check(`${file.split('/').pop()}: and is not a step-1 number input`, !/type="number"/.test(vatField), vatField);
+  }
 
   // --- Pharmacy ----------------------------------------------------------------
   const phStoreId = (await api('/stores', { token: phToken })).data?.[0]?._id;

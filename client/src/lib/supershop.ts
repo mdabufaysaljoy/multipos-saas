@@ -40,8 +40,6 @@ export const lineAmount = (unitPriceMinor: number, quantity: number, unitType: S
 /** Mirrors the server's whole-unit, half-up Super Shop total rounding. */
 export const roundShopTotal = (minor: number): number => Math.floor((minor + 50) / 100) * 100;
 
-export const formatVatRate = (bps: number) => `${(bps / 100).toFixed(bps % 100 === 0 ? 0 : 2)}%`;
-
 /** "15" or "7.5" -> basis points; null if invalid. */
 export function parseVatPercent(raw: string): number | null {
   const match = /^(\d{1,3})(?:\.(\d{0,2}))?$/.exec(raw.trim());
@@ -50,5 +48,17 @@ export function parseVatPercent(raw: string): number | null {
   return bps <= 10_000 ? bps : null;
 }
 
+/**
+ * A rate as a person would write it: "15", "7.5", "15.75".
+ *
+ * Rates are STORED in basis points, so 7.5% is 750 and the hundredths place is
+ * real - but a whole rate must not read as "15.00" and a half-point rate must
+ * not read as "7.50", because a shopkeeper who typed 7.5 and is shown 7.50
+ * reasonably concludes the field did something to it. Trailing zeros go; 7.05
+ * keeps both places.
+ */
 export const vatPercentText = (bps: number) =>
   bps % 100 === 0 ? String(bps / 100) : (bps / 100).toFixed(2).replace(/0$/, '');
+
+/** The same rate with its sign, for a list, a dashboard or a report. */
+export const formatVatRate = (bps: number) => `${vatPercentText(bps)}%`;

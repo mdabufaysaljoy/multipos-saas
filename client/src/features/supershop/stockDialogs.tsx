@@ -41,6 +41,7 @@ export function TextField({
   value,
   max,
   placeholder,
+  inputMode,
   onChange,
 }: {
   id: string;
@@ -48,12 +49,26 @@ export function TextField({
   value: string;
   max: number;
   placeholder?: string;
+  /**
+   * Optional, and only ever a hint to the on-screen keyboard - the field stays
+   * a text input so a half-typed "7." is never rewritten underneath the cursor.
+   * A till is used on a tablet, where a numeric field that does not ask for
+   * `decimal` offers no decimal point at all.
+   */
+  inputMode?: React.ComponentProps<'input'>['inputMode'];
   onChange: (value: string) => void;
 }) {
   return (
     <div className="space-y-1.5">
       <Label htmlFor={id}>{label}</Label>
-      <Input id={id} value={value} maxLength={max} placeholder={placeholder} onChange={(event) => onChange(event.target.value)} />
+      <Input
+        id={id}
+        value={value}
+        maxLength={max}
+        placeholder={placeholder}
+        inputMode={inputMode}
+        onChange={(event) => onChange(event.target.value)}
+      />
     </div>
   );
 }

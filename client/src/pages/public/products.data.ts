@@ -58,10 +58,10 @@ export const SAAS_PRODUCTS: SaasProduct[] = [
     slug: 'restaurant-pos',
     vertical: 'restaurant',
     name: 'Restaurant POS',
-    tagline: 'Tables, kitchen and shifts',
-    description: 'Dine-in, takeaway and delivery with table management, kitchen tickets and shift close.',
+    tagline: 'Tables, tokens and shifts',
+    description: 'Dine-in and takeaway with table management, order tokens for the kitchen and a shift close that balances the drawer.',
     icon: Utensils,
-    highlights: ['Menu with categories', 'Table management', 'Kitchen tickets', 'Shift open and close reports'],
+    highlights: ['Menu with sizes and add-ons', 'Table management', 'Order tokens printed on send', 'Shift open and close reports'],
     features: [
       { title: 'Front of house', items: ['Dine-in, takeaway and delivery orders', 'Table plan and table status', 'Orders tracked from placed to served'] },
       { title: 'Kitchen', items: ['Kitchen view of open tickets', 'Menu items with prices and availability'] },

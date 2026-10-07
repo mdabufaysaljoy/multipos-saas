@@ -58,16 +58,19 @@ export function OnboardingPage() {
 
   return (
     <AuthShell
-      title="A strong operating day starts with a clean setup."
+      eyebrow="Final setup"
+      title="A clean setup, once."
       copy="Add the details your team and customers will see. You can refine them later as the business grows."
+      // The visitor is already authenticated by the time they reach this step.
+      sceneState="success"
     >
       <div className="w-full space-y-6 py-4">
+        {/* Only the bare heading needs light-on-dark; everything below sits on
+            its own white card and reads unchanged. */}
         <div>
-          <p className="text-xs font-bold uppercase tracking-[.2em] text-primary">Final setup</p>
-          <h1 className="mt-3 text-3xl font-bold tracking-[-.04em] text-slate-950">Set up your store</h1>
-          <p className="mt-2 text-sm text-muted-foreground">
-            This is the shop your sales, stock and receipts belong to.
-          </p>
+          <p className="text-xs font-bold uppercase tracking-[.2em] text-indigo-300">Final setup</p>
+          <h1 className="mt-3 text-3xl font-bold tracking-[-.04em] text-white">Set up your store</h1>
+          <p className="mt-2 text-sm text-slate-400">This is the shop your sales, stock and receipts belong to.</p>
         </div>
 
         {/* One proven contact is what a subscription, an invoice and a renewal

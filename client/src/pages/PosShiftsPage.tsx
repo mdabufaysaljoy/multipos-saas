@@ -100,6 +100,33 @@ export function PosShiftsPage() {
       headerClassName: 'text-right',
       cell: (row) => <Variance value={row.varianceMinor} currency={currency} />,
     },
+    {
+      key: 'print',
+      header: '',
+      className: 'text-right',
+      headerClassName: 'text-right',
+      // Its own row in the mobile card, rather than squeezed beside the figures.
+      mobile: 'actions',
+      cell: (row) => (
+        // The Z report was only ever reachable by guessing that the row itself
+        // was clickable. A closed shift's report is frozen on close, so this
+        // fetches and prints the stored figures - it does not recalculate them,
+        // and it cannot re-close a shift that is already closed.
+        <Button
+          variant="outline"
+          size="sm"
+          className="shrink-0"
+          loading={load.isPending && load.variables === row._id}
+          onClick={(event) => {
+            event.stopPropagation();
+            load.mutate(row._id);
+          }}
+        >
+          <Printer />
+          {row.closedAt ? 'Print Z Report' : 'Print X Report'}
+        </Button>
+      ),
+    },
   ];
 
   return (
@@ -122,9 +149,12 @@ export function PosShiftsPage() {
               )}
             </CardTitle>
             {current && (
-              <Button variant="ghost" size="sm" onClick={() => setPrinting(current)}>
+              /* A mid-shift reading. It only prints what `GET /pos-shifts/current`
+                 already returned, so pressing it never closes or finalises the
+                 shift and never writes a report record. */
+              <Button variant="outline" size="sm" className="shrink-0" onClick={() => setPrinting(current)}>
                 <Printer />
-                X-report
+                Print X Report
               </Button>
             )}
           </CardHeader>
@@ -518,6 +548,24 @@ function ReportDialog({
           </ReceiptPaper>
         </div>
         <ReceiptPrintBar print={print} />
+        {/*
+          The actual Print control. `ReceiptPrintBar` is only the STATUS strip -
+          it renders nothing at all while printing is idle, and its own copy
+          says "use Print below", which for this one dialog was referring to a
+          button that had never been added. Clothing and Super Shop share this
+          screen, so both verticals could open an X or Z report and had no way
+          to put it on paper; Pharmacy's own shift screen has had this footer
+          all along, and this is the same thing in the same order.
+        */}
+        <DialogFooter className="print:hidden">
+          <Button variant="outline" onClick={onClose}>
+            Close
+          </Button>
+          <Button onClick={print.print} loading={print.direct && print.status === 'printing'}>
+            <Printer />
+            {print.direct ? 'Print directly' : 'Print'}
+          </Button>
+        </DialogFooter>
       </DialogContent>
     </Dialog>
   );

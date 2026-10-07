@@ -21,7 +21,7 @@ import { formatPlanPrice } from '@/lib/money';
 import { UsageMeter } from '@/components/UsageMeter';
 import { evaluateUsage, usageLimitsFor } from '@/lib/usageLimits';
 import { PlanComparisonTable } from '@/features/billing/PlanComparisonTable';
-import { upgradeGains } from '@/lib/planCatalog';
+import { formatLimit, upgradeGains } from '@/lib/planCatalog';
 import { FEATURE_LABELS } from '@/lib/planCatalog';
 import type { PlanOption, SubscriptionPlan } from '@/types/domain';
 import { VerifyContactCard } from '@/features/verification/VerifyContactCard';
@@ -575,7 +575,9 @@ function LimitRow({ label, value }: { label: string; value: number }) {
   return (
     <li className="flex justify-between">
       <span className="text-muted-foreground">{label}</span>
-      <span className="tabular font-medium">{value === -1 ? 'Unlimited' : value}</span>
+      {/* The shared formatter, so a five-figure ceiling reads as 30,000 here
+          exactly as it does on the public pricing page. */}
+      <span className="tabular font-medium">{formatLimit(value)}</span>
     </li>
   );
 }

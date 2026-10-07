@@ -3,7 +3,7 @@ import { useLocation } from 'react-router-dom';
 import { navLabelFor } from '@/layouts/AppLayout';
 import { useAuth } from '@/hooks/useAuth';
 
-const BRAND = 'RetailerSWs';
+const BRAND = 'Retailer Suites';
 const TAGLINE = 'Point of sale for your business';
 
 /**
@@ -36,7 +36,7 @@ function publicTitleFor(pathname: string): string | null {
 /**
  * What the browser tab says.
  *
- * Signed out it is the product: "RetailSuite — Point of sale for your business".
+ * Signed out it is the product: "Retailer Suites — Point of sale for your business".
  * Signed in it is the SHOP, because someone with three branches open in three
  * tabs needs to tell them apart at a glance: "Dhanmondi — Point of sale".
  *

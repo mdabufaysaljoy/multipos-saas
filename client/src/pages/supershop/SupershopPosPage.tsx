@@ -70,6 +70,24 @@ interface CartLine {
  * goods, take payment, print. Totals are previews; the server prices every line
  * and works out VAT.
  */
+/**
+ * Whether this line can only be sold by a till that may sell out of stock.
+ *
+ * It mirrors the server's rule exactly. Pieces are COUNTED: they land on
+ * exactly zero, so the override applies at or below zero and "some but not
+ * enough" stays blocked. Grams are WEIGHED: a sack sold in 300 g scoops leaves
+ * a remainder, and a shelf holding that remainder is empty, so the override
+ * applies whenever the branch cannot cover the line.
+ *
+ * This decides what the screen says and which buttons are live. Whether the
+ * sale is actually allowed is decided again by `createSale` from the cashier's
+ * real permissions - nothing here is the security boundary.
+ */
+const needsStockOverride = (product: ShopProduct, quantity: number) => {
+  const onHand = product.stock?.quantityOnHand ?? 0;
+  return product.unitType === 'weight' ? onHand < quantity : onHand <= 0;
+};
+
 export function SupershopPosPage() {
   const { activeStore, can, session } = useAuth();
   const currency = activeStore?.currency ?? 'BDT';
@@ -232,7 +250,7 @@ export function SupershopPosPage() {
   const pointsToEarn = loyaltyMember
     ? pointsForSpend(Math.max(0, unroundedTotal - vatEstimateMinor), loyaltyMember.earnSpendMinor)
     : 0;
-  const hasOutOfStockLine = cart.some((line) => (line.product.stock?.quantityOnHand ?? 0) <= 0);
+  const hasOutOfStockLine = cart.some((line) => needsStockOverride(line.product, line.quantity));
 
   // A note explains an out-of-stock line. Take that line out of the basket and
   // the explanation goes with it, rather than travelling silently to the server
@@ -340,8 +358,9 @@ export function SupershopPosPage() {
     }
     const current = cart.find((line) => line.product._id === product._id)?.quantity ?? 0;
     const onHand = product.stock?.quantityOnHand ?? 0;
-    // Anyone may sell when there is none, with a required note at checkout.
-    // Having SOME but not enough remains blocked here and on the server.
+    // Pieces the branch has none of may be sold with a required note at
+    // checkout. Having SOME but not enough remains blocked here and on the
+    // server, because pieces are counted and a count is exact.
     const sellable = onHand <= 0 ? current + 1 : onHand;
     if (current + 1 > sellable) {
       toast.error(`Only ${onHand} of ${product.name} in stock`);
@@ -999,8 +1018,13 @@ function WeighDialog({
   const [kg, setKg] = React.useState(line.quantity > 0 ? gramsToKgText(line.quantity) : '');
   const grams = parseKgToGrams(kg);
   const onHand = line.product.stock?.quantityOnHand ?? 0;
-  // Anyone may sell a stock-out item with a note, but not exceed a positive balance.
-  const tooMuch = grams !== null && onHand > 0 && grams > onHand;
+  // No stock ceiling here, deliberately. A weighed shelf is a MEASUREMENT, so
+  // it is out of stock whenever it cannot cover what is being weighed - a 120 g
+  // remainder serves nobody asking for 500 g, and refusing the line left loose
+  // goods unsellable for good once the balance stopped being a round number.
+  // The till weighs what the customer wants, the sale note explains it and the
+  // ledger row is stamped, exactly as for a piece the branch has none of. The
+  // server decides again from the balance it reads; nothing here is a boundary.
 
   return (
     <Dialog open onOpenChange={(open) => !open && onClose()}>
@@ -1014,7 +1038,7 @@ function WeighDialog({
         <form
           onSubmit={(event) => {
             event.preventDefault();
-            if (grams !== null && !tooMuch) onConfirm(grams);
+            if (grams !== null) onConfirm(grams);
           }}
           className="space-y-3"
         >
@@ -1035,12 +1059,17 @@ function WeighDialog({
             </p>
           )}
           {kg !== '' && grams === null && <p className="text-sm text-destructive">Enter a weight like 0.5 or 1.25</p>}
-          {tooMuch && <p className="text-sm text-destructive">Only {formatQuantity(onHand, 'weight')} in stock</p>}
+          {grams !== null && onHand < grams && (
+            <p className="text-sm text-muted-foreground">
+              {onHand > 0 ? `Only ${formatQuantity(onHand, 'weight')} on the shelf` : 'Out of stock'} · a sale note is
+              required at checkout
+            </p>
+          )}
           <DialogFooter>
             <Button type="button" variant="outline" onClick={onClose}>
               Cancel
             </Button>
-            <Button type="submit" disabled={grams === null || tooMuch}>
+            <Button type="submit" disabled={grams === null}>
               {line.quantity > 0 ? 'Update' : 'Add'}
             </Button>
           </DialogFooter>

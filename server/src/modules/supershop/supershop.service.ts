@@ -11,7 +11,7 @@ import { loadReceiptStore } from '../../services/receipt/receiptStore';
 import { ApiError } from '../../utils/ApiError';
 import { formatDocumentNumber, nextSequence } from '../../utils/counters';
 import { resolvePage, searchRegex } from '../../utils/pagination';
-import { entitlementService } from '../../services/subscription/entitlement.service';
+import { entitlementService, type Entitlement } from '../../services/subscription/entitlement.service';
 import { customerService } from '../customers/customers.service';
 import { posCategoryService } from '../../services/catalogue/posCategories.service';
 import { shopBrandService } from '../../services/catalogue/shopBrands.service';
@@ -171,12 +171,39 @@ class SupershopService {
     await shopBrandService.assertUsable(ctx, values.brand);
     try {
       const product = await ShopProductModel.create({ tenantId: ctx.tenantId, ...values, createdBy: ctx.userId });
+      // The check above is not atomic, so two tills creating at once can both
+      // pass it. Confirm by ORDINAL - how many products exist at or before this
+      // one - which is stable under concurrency because ObjectIds are
+      // monotonic, and undo the one that landed beyond the ceiling. The same
+      // guard Clothing and Restaurant use.
+      await this.assertOrdinalOrRollback(ctx, entitlement, product._id);
       return product.toObject();
     } catch (error) {
       // Two identical creates at the same instant: the index caught what the
       // check above could not. Same refusal, so a till cannot tell the
       // difference between losing that race and being second in line.
       if (isDuplicateKey(error)) throw ApiError.conflict('Another product already uses this barcode');
+      throw error;
+    }
+  }
+
+  /**
+   * Confirms the new product fits the plan, and removes it if it does not.
+   *
+   * A hard delete, not a soft one: the product never legitimately existed, so
+   * leaving a tombstone would both mislead the catalogue and keep consuming the
+   * slot it was refused for.
+   */
+  private async assertOrdinalOrRollback(ctx: TenantContext, entitlement: Entitlement, productId: Types.ObjectId) {
+    const ordinal = await ShopProductModel.countDocuments({
+      tenantId: ctx.tenantId,
+      deletedAt: null,
+      _id: { $lte: productId },
+    });
+    try {
+      entitlementService.assertOrdinalWithinLimit(entitlement, 'maxProducts', ordinal, 'products');
+    } catch (error) {
+      await ShopProductModel.deleteOne({ _id: productId, tenantId: ctx.tenantId });
       throw error;
     }
   }
@@ -555,9 +582,14 @@ class SupershopService {
     };
 
     // ---- take stock ----------------------------------------------------------
-    // Super Shop may sell a product only when it is completely out of stock;
-    // the inventory adapter still refuses "some stock, but not enough". This is
-    // available to every cashier, but an explanatory sale note is mandatory.
+    // Super Shop's override is the mandatory sale NOTE, not a permission: a
+    // branch runs tills that must be able to serve a customer standing at the
+    // counter, and the note plus the `outOfStockOverride` ledger stamp is what
+    // makes that auditable. (Clothing gates the same capability on
+    // `sales.sellOutOfStock`; the two verticals differ here deliberately.)
+    //
+    // `measured` tells the adapter what empty means for the line: pieces are
+    // counted and reach exactly zero, grams are weighed and almost never do.
     const taken: ShopReservation[] = [];
     try {
       for (const line of priced) {
@@ -566,6 +598,7 @@ class SupershopService {
           quantity: line.quantity,
           label: line.product.name,
           allowOutOfStock: true,
+          measured: line.product.unitType === 'weight',
         });
         reservation.detail.unitType = line.product.unitType;
         taken.push(reservation);

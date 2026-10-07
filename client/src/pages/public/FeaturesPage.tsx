@@ -1,122 +1,142 @@
-import { Link } from 'react-router-dom';
-import { ArrowRight, BarChart3, Building2, Layers, Receipt, Users, Wallet } from 'lucide-react';
-import { Button } from '@/components/ui/button';
-import { AnalyticsPreview } from '@/features/public/ProductPreview';
-import { Reveal, SectionHeading } from '@/features/public/Reveal';
-import { SAAS_PRODUCTS } from './products.data';
+import {
+  BarChart3,
+  Boxes,
+  Building2,
+  CreditCard,
+  FileSpreadsheet,
+  Fingerprint,
+  Lock,
+  Printer,
+  Receipt,
+  RefreshCw,
+  ScanLine,
+  Users,
+  Wallet,
+} from 'lucide-react';
+import { Reveal, Stagger } from '@/features/public/motion';
+import { Container, CtaButton, DarkSection, SectionHeading } from '@/features/public/primitives';
+import { PosTerminal } from '@/features/public/PosTerminal';
 
-const FEATURES = [
-  [
-    Layers,
-    'Several POS. One account.',
-    'Run different business types from one identity while every workspace keeps its own stock, team and subscription.',
-  ],
-  [
-    Wallet,
-    'One wallet for everything',
-    'Fund once, pay for workspaces and services, and keep a transparent record of every movement.',
-  ],
-  [
-    BarChart3,
-    'Insight that stays useful',
-    'Move from daily sales to profit, product, customer and staff analysis as your plan grows.',
-  ],
-  [
-    Building2,
-    'Branches without blind spots',
-    'Separate operational data by branch, then bring it together for owners who need the complete picture.',
-  ],
-  [
-    Users,
-    'Access with intention',
-    'Give each staff member the permissions their role needs, protected beyond the interface.',
-  ],
-  [
-    Receipt,
-    'A clean paper trail',
-    'Print receipts at the counter and keep subscription invoices ready when the business needs them.',
-  ],
-] as const;
+/**
+ * The platform, by capability.
+ *
+ * Grouped the way the work actually divides — the counter, the stock room, the
+ * office — rather than as one long feature list. Everything named here exists
+ * in the product today.
+ */
+const GROUPS: { title: string; copy: string; items: { icon: typeof ScanLine; label: string; copy: string }[] }[] = [
+  {
+    title: 'At the counter',
+    copy: 'The screen a cashier lives on.',
+    items: [
+      { icon: ScanLine, label: 'Barcode checkout', copy: 'Scan to add; search when there is no label.' },
+      { icon: CreditCard, label: 'Split payment', copy: 'Cash, bKash, Nagad, bank and card on one sale.' },
+      { icon: Printer, label: 'Thermal receipts', copy: '48, 58, 78 and 80mm, printed direct or through the browser.' },
+      { icon: RefreshCw, label: 'Returns and exchanges', copy: 'Against the original sale, with stock put back or written off.' },
+    ],
+  },
+  {
+    title: 'Behind the shop',
+    copy: 'What you sell, and what is left.',
+    items: [
+      { icon: Boxes, label: 'Stock per branch', copy: 'Every movement in a ledger you can read back.' },
+      { icon: FileSpreadsheet, label: 'Bulk import', copy: 'Bring a catalogue in from a spreadsheet, errors reported by row.' },
+      { icon: Users, label: 'Customers and loyalty', copy: 'Purchase history, and points earned on a scanned card.' },
+      { icon: Building2, label: 'Multiple branches', copy: 'Each with its own stock, staff and drawer.' },
+    ],
+  },
+  {
+    title: 'In the office',
+    copy: 'What the business did.',
+    items: [
+      { icon: BarChart3, label: 'Analytics', copy: 'Sales, cost and margin by product, branch, staff and tender.' },
+      { icon: Receipt, label: 'Reports you can print', copy: 'The page you are looking at, as a PDF.' },
+      { icon: Wallet, label: 'One wallet', copy: 'Fund the account once; every workspace draws from it.' },
+      { icon: Fingerprint, label: 'Roles and permissions', copy: 'Who may discount, refund or see cost — set per role.' },
+    ],
+  },
+];
 
 export function FeaturesPage() {
   return (
-    <div className="bg-white">
-      <section className="px-4 py-20 sm:px-6 lg:px-8 lg:py-28">
-        <Reveal>
-          <SectionHeading
-            eyebrow="The platform underneath"
-            title="Powerful where it matters. Quiet everywhere else."
-            copy="RetailerSWs connects the work at the counter to the control behind it—without forcing every business into the same workflow."
-          />
-        </Reveal>
-        <div className="mx-auto mt-14 grid max-w-7xl gap-px overflow-hidden rounded-[2rem] bg-slate-200 ring-1 ring-slate-200 sm:grid-cols-2 lg:grid-cols-3">
-          {FEATURES.map(([Icon, title, copy], index) => (
-            <Reveal key={title} delay={(index % 3) * 60} className="bg-white">
-              <article className="h-full p-7 lg:p-8">
-                <span className="flex h-11 w-11 items-center justify-center rounded-xl bg-slate-950 text-cyan-300">
-                  <Icon className="h-5 w-5" />
-                </span>
-                <h2 className="mt-6 text-lg font-bold">{title}</h2>
-                <p className="mt-2 text-sm leading-6 text-slate-600">{copy}</p>
-              </article>
+    <>
+      <DarkSection grid className="py-20 sm:py-28">
+        <Container>
+          <div className="grid items-center gap-14 lg:grid-cols-[1fr_1fr]">
+            <div>
+              <SectionHeading
+                tone="dark"
+                align="left"
+                eyebrow="The platform"
+                title={<>One system behind every counter.</>}
+                copy="The till changes with the trade. Accounts, branches, staff, stock, money and reporting do not."
+              />
+              <Reveal delay={200}>
+                <div className="mt-9 flex flex-wrap gap-3">
+                  <CtaButton to="/register">Start free</CtaButton>
+                  <CtaButton to="/products" variant="ghost">
+                    See the POS systems
+                  </CtaButton>
+                </div>
+              </Reveal>
+            </div>
+            <Reveal delay={160} from="none" scale={0.96}>
+              <PosTerminal vertical="supershop" />
             </Reveal>
-          ))}
-        </div>
-      </section>
-      <section className="bg-slate-950 px-4 py-20 text-white sm:px-6 lg:px-8 lg:py-28">
-        <div className="mx-auto grid max-w-7xl gap-12 lg:grid-cols-[.82fr_1.18fr] lg:items-center">
-          <Reveal>
-            <p className="text-xs font-bold uppercase tracking-[.22em] text-cyan-300">See what changed today</p>
-            <h2 className="mt-4 text-balance text-4xl font-bold tracking-[-.045em]">
-              Decisions move faster when the picture is clear.
-            </h2>
-            <p className="mt-5 text-lg leading-8 text-slate-400">
-              Sales, inventory, payments and profitability belong in the same conversation. Your available analytics
-              follow the plan catalogue already enforced by the platform.
-            </p>
-            <Button
-              variant="outline"
-              className="mt-8 rounded-xl border-white/15 bg-white/5 text-white hover:bg-white/10 hover:text-white"
-              asChild
-            >
-              <Link to="/pricing">
-                Compare plans <ArrowRight />
-              </Link>
-            </Button>
-          </Reveal>
-          <Reveal delay={120}>
-            <AnalyticsPreview />
-          </Reveal>
-        </div>
-      </section>
-      <section className="px-4 py-20 sm:px-6 lg:px-8 lg:py-28">
-        <SectionHeading
-          eyebrow="Trade-specific depth"
-          title="Shared foundations. Specialist detail."
-          copy="The platform remains consistent while each POS adds the tools its business type genuinely needs."
-        />
-        <div className="mx-auto mt-12 grid max-w-7xl gap-4 sm:grid-cols-2">
-          {SAAS_PRODUCTS.map((product) => (
-            <Link
-              key={product.slug}
-              to={`/products/${product.slug}`}
-              className="group flex gap-5 rounded-2xl border border-slate-200 p-6 transition hover:-translate-y-1 hover:border-indigo-200 hover:shadow-xl hover:shadow-slate-900/5"
-            >
-              <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-slate-100 text-slate-700 transition group-hover:bg-slate-950 group-hover:text-cyan-300">
-                <product.icon className="h-5 w-5" />
-              </span>
-              <span className="min-w-0">
-                <span className="flex items-center gap-2 font-bold">
-                  {product.name}
-                  <ArrowRight className="h-4 w-4 transition group-hover:translate-x-1" />
-                </span>
-                <span className="mt-1 block text-sm text-slate-500">{product.tagline}</span>
-                <span className="mt-3 line-clamp-2 block text-sm leading-6 text-slate-600">{product.description}</span>
-              </span>
-            </Link>
-          ))}
-        </div>
-      </section>
-    </div>
+          </div>
+        </Container>
+      </DarkSection>
+
+      {GROUPS.map((group, index) => (
+        <section
+          key={group.title}
+          className={index % 2 === 0 ? 'bg-white py-20 sm:py-24' : 'border-y border-slate-200 bg-slate-50 py-20 sm:py-24'}
+        >
+          <Container>
+            <SectionHeading align="left" eyebrow={`0${index + 1}`} title={group.title} copy={group.copy} />
+            <Stagger className="mt-12 grid gap-4 sm:grid-cols-2 lg:grid-cols-4" step={70}>
+              {group.items.map((item) => (
+                <div key={item.label} className="rs-lift group h-full rounded-2xl border border-slate-200 bg-white p-6 hover:border-indigo-200">
+                  <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-slate-950 text-white transition-colors duration-300 group-hover:bg-gradient-to-br group-hover:from-indigo-500 group-hover:to-cyan-400 group-hover:text-slate-950">
+                    <item.icon className="h-[1.125rem] w-[1.125rem]" aria-hidden />
+                  </span>
+                  <h3 className="mt-5 text-[0.9375rem] font-semibold text-slate-950">{item.label}</h3>
+                  <p className="mt-1.5 text-[0.8125rem] leading-6 text-slate-600">{item.copy}</p>
+                </div>
+              ))}
+            </Stagger>
+          </Container>
+        </section>
+      ))}
+
+      <DarkSection className="py-20 sm:py-28">
+        <Container>
+          <div className="mx-auto max-w-2xl text-center">
+            <Reveal>
+              <Lock className="mx-auto h-6 w-6 text-indigo-400" aria-hidden />
+            </Reveal>
+            <Reveal delay={80}>
+              <h2 className="rs-h2 mt-6 text-[2rem] font-bold text-white sm:text-[2.5rem]">
+                And the money is handled carefully.
+              </h2>
+            </Reveal>
+            <Reveal delay={140}>
+              <p className="mt-5 text-[1.0625rem] leading-8 text-slate-400">
+                Prices are computed on the server, stock is guarded against double-selling, payments are idempotent, and
+                invoices and ledger rows can never be edited after they are written.
+              </p>
+            </Reveal>
+            <Reveal delay={210}>
+              <div className="mt-9 flex flex-wrap justify-center gap-3">
+                <CtaButton to="/register">Create a workspace</CtaButton>
+                <CtaButton to="/pricing" variant="ghost">
+                  See pricing
+                </CtaButton>
+              </div>
+            </Reveal>
+          </div>
+        </Container>
+      </DarkSection>
+    </>
   );
 }

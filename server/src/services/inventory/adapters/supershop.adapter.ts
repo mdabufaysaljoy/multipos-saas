@@ -53,7 +53,10 @@ export function shopMovementRow(
 }
 
 /**
- * Super Shop stock: one row per product per branch, never negative.
+ * Super Shop stock: one row per product per branch.
+ *
+ * It goes below zero only through an authorized out-of-stock sale, the same way
+ * Clothing's does; every other path keeps it at or above zero.
  *
  * Every take is a single guarded `$inc`, so two tills selling the last packet
  * cannot both succeed - the loser matches no document and is told what is
@@ -95,10 +98,23 @@ class SupershopInventoryAdapter implements InventoryAdapter<ShopStockDetail> {
     // does not match `$lte: 0`, so the upsert tries to insert a second row for
     // the same product and the unique index refuses it. That duplicate key is
     // the "not enough stock" case, and it falls through to the error below.
+    //
+    // What counts as empty depends on how the goods are measured. Pieces are
+    // COUNTED: they land on exactly zero, `$lte: 0` is a state the shelf really
+    // reaches, and "some stock but not enough" stays refused. Weighed goods are
+    // MEASURED: a 10 kg sack sold in 300 g and 750 g scoops leaves a remainder,
+    // so the balance is almost never exactly zero and this guard could never
+    // match - the override was unreachable for precisely the goods a shop sells
+    // loose, which is the bug. For a measured line the shelf is out of stock
+    // when it cannot cover the line, and the sale goes negative the way
+    // Clothing's always has. The permission is still what decides whether any
+    // of this is offered, and the note and the `outOfStockOverride` ledger
+    // stamp below still record it.
+    const emptyEnough = request.measured ? { $lt: request.quantity } : { $lte: 0 };
     if (request.allowOutOfStock) {
       try {
         const sold = await ShopStockModel.findOneAndUpdate(
-          { tenantId: ctx.tenantId, storeId: ctx.storeId, productId: request.itemId, quantityOnHand: { $lte: 0 } },
+          { tenantId: ctx.tenantId, storeId: ctx.storeId, productId: request.itemId, quantityOnHand: emptyEnough },
           {
             $inc: { quantityOnHand: -request.quantity },
             // A branch that never received these goods has no cost basis for

@@ -111,9 +111,26 @@
   }
 }
 
-/* Public SaaS surface. Kept scoped so the authenticated POS design remains unchanged. */
+/* --------------------------------------------------------------------------
+   Retailer Suites — public website
+
+   Everything here is scoped under `.public-shell`, so the authenticated POS
+   keeps its own design entirely. One scale, one set of easings, one accent
+   ramp; the marketing pages compose from these rather than inventing values.
+
+   Motion is CSS-driven on purpose. The app ships no animation library, and the
+   two things a marketing site needs - reveal on scroll and looping product
+   choreography - are a few keyframes and one IntersectionObserver. Adding a
+   runtime for that would cost more bundle than it saves code.
+   -------------------------------------------------------------------------- */
 .public-shell {
-  --public-ink: #0f172a;
+  --rs-ink: #050915;
+  --rs-muted: #64748b;
+  --rs-accent: #4f46e5;
+  --rs-accent-2: #06b6d4;
+  --rs-accent-3: #a855f7;
+  --rs-ease: cubic-bezier(0.22, 1, 0.36, 1);
+  --rs-radius: 1.25rem;
   font-feature-settings:
     'ss01' 1,
     'cv02' 1,
@@ -127,97 +144,492 @@
   text-wrap: pretty;
 }
 
-.public-reveal {
+/* --- type ---------------------------------------------------------------- */
+.rs-display {
+  letter-spacing: -0.042em;
+  line-height: 0.98;
+}
+.rs-h2 {
+  letter-spacing: -0.035em;
+  line-height: 1.05;
+}
+.rs-gradient-text {
+  background: linear-gradient(100deg, #818cf8 0%, #22d3ee 45%, #c084fc 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+/* --- reveal on scroll ---------------------------------------------------- */
+.rs-reveal {
   opacity: 0;
-  transform: translateY(22px);
+  transform: translate3d(var(--rs-from-x, 0), var(--rs-from-y, 24px), 0) scale(var(--rs-from-scale, 1));
   transition:
-    opacity 700ms cubic-bezier(0.22, 1, 0.36, 1),
-    transform 700ms cubic-bezier(0.22, 1, 0.36, 1);
-  transition-delay: var(--reveal-delay, 0ms);
+    opacity 760ms var(--rs-ease),
+    transform 760ms var(--rs-ease);
+  transition-delay: var(--rs-delay, 0ms);
+  will-change: opacity, transform;
 }
-
-.public-reveal.is-visible {
+.rs-reveal.is-in {
   opacity: 1;
-  transform: translateY(0);
+  transform: none;
 }
 
-.public-orb {
+/* --- ambient background -------------------------------------------------- */
+.rs-aurora {
   position: absolute;
+  inset: 0;
+  overflow: hidden;
   pointer-events: none;
+}
+.rs-aurora::before,
+.rs-aurora::after {
+  content: '';
+  position: absolute;
   border-radius: 9999px;
-  filter: blur(2px);
-  opacity: 0.8;
-  animation: public-drift 14s ease-in-out infinite alternate;
+  filter: blur(64px);
+}
+.rs-aurora::before {
+  width: 46rem;
+  height: 46rem;
+  top: -18rem;
+  right: -14rem;
+  background: radial-gradient(circle, rgba(79, 70, 229, 0.5), transparent 65%);
+  animation: rs-drift 20s var(--rs-ease) infinite alternate;
+}
+.rs-aurora::after {
+  width: 38rem;
+  height: 38rem;
+  bottom: -16rem;
+  left: -10rem;
+  background: radial-gradient(circle, rgba(6, 182, 212, 0.38), transparent 65%);
+  animation: rs-drift 26s var(--rs-ease) -8s infinite alternate-reverse;
 }
 
-.public-orb-one {
-  width: 32rem;
-  height: 32rem;
-  right: -10rem;
-  top: -12rem;
-  background: radial-gradient(circle, rgba(99, 102, 241, 0.22), transparent 68%);
+/* A faint engineering grid; gives the dark sections depth without clutter. */
+.rs-grid {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background-image:
+    linear-gradient(to right, rgba(148, 163, 184, 0.09) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(148, 163, 184, 0.09) 1px, transparent 1px);
+  background-size: 64px 64px;
+  mask-image: radial-gradient(ellipse 100% 70% at 50% 0%, #000 40%, transparent 75%);
+  -webkit-mask-image: radial-gradient(ellipse 100% 70% at 50% 0%, #000 40%, transparent 75%);
 }
 
-.public-orb-two {
-  width: 26rem;
-  height: 26rem;
-  left: 28%;
-  bottom: -15rem;
-  background: radial-gradient(circle, rgba(34, 211, 238, 0.19), transparent 68%);
-  animation-delay: -6s;
+/* --- surfaces ------------------------------------------------------------ */
+.rs-glass {
+  background: rgba(255, 255, 255, 0.055);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
 }
-
-.public-float {
-  animation: public-float 5s ease-in-out infinite;
-}
-.public-preview {
+.rs-lift {
   transition:
-    transform 500ms cubic-bezier(0.22, 1, 0.36, 1),
-    box-shadow 500ms ease;
+    transform 420ms var(--rs-ease),
+    box-shadow 420ms var(--rs-ease),
+    border-color 420ms var(--rs-ease);
 }
-.public-preview:hover {
-  transform: translateY(-3px) rotateX(1deg);
-  box-shadow: 0 36px 90px -32px rgba(15, 23, 42, 0.38);
+.rs-lift:hover {
+  transform: translateY(-4px);
+  box-shadow: 0 32px 70px -36px rgba(15, 23, 42, 0.5);
 }
 
-@keyframes public-drift {
+/* A hairline gradient border, drawn with a mask so the fill stays clean. */
+.rs-ring {
+  position: relative;
+}
+.rs-ring::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  padding: 1px;
+  background: linear-gradient(140deg, rgba(129, 140, 248, 0.6), rgba(34, 211, 238, 0.25), transparent 60%);
+  -webkit-mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  pointer-events: none;
+}
+
+/* --- the POS terminal choreography -------------------------------------- */
+.rs-scanline {
+  animation: rs-scan 3.6s var(--rs-ease) infinite;
+}
+.rs-line-in {
+  opacity: 0;
+  animation: rs-line-in 3.6s var(--rs-ease) infinite both;
+  animation-delay: var(--rs-delay, 0ms);
+}
+.rs-pulse-soft {
+  animation: rs-pulse-soft 2.6s ease-in-out infinite;
+}
+.rs-receipt {
+  animation: rs-receipt 3.6s var(--rs-ease) infinite;
+  transform-origin: top center;
+}
+.rs-float {
+  animation: rs-float 7s ease-in-out infinite;
+}
+.rs-float-slow {
+  animation: rs-float 11s ease-in-out -3s infinite;
+}
+.rs-spin-slow {
+  animation: rs-spin 28s linear infinite;
+}
+.rs-bar {
+  transform-origin: bottom;
+  animation: rs-bar-grow 1100ms var(--rs-ease) both;
+}
+.rs-marquee {
+  animation: rs-marquee 32s linear infinite;
+}
+.rs-shimmer {
+  background-size: 200% 100%;
+  animation: rs-shimmer 2.4s linear infinite;
+}
+
+@keyframes rs-drift {
   from {
-    transform: translate3d(-2%, -2%, 0) scale(0.96);
+    transform: translate3d(-3%, -3%, 0) scale(0.92);
   }
   to {
-    transform: translate3d(4%, 5%, 0) scale(1.08);
+    transform: translate3d(5%, 6%, 0) scale(1.12);
   }
 }
-
-@keyframes public-float {
+@keyframes rs-float {
   0%,
   100% {
-    transform: translateY(0) rotate(-1deg);
+    transform: translateY(0);
   }
   50% {
-    transform: translateY(-8px) rotate(1deg);
+    transform: translateY(-10px);
+  }
+}
+@keyframes rs-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@keyframes rs-scan {
+  0%,
+  12% {
+    transform: translateY(0);
+    opacity: 0;
+  }
+  18% {
+    opacity: 1;
+  }
+  38% {
+    transform: translateY(100%);
+    opacity: 1;
+  }
+  46%,
+  100% {
+    opacity: 0;
+  }
+}
+/* Each basket line uses the same curve and is staggered with a negative delay,
+   because a keyframe selector cannot take a custom property. */
+@keyframes rs-line-in {
+  0% {
+    opacity: 0;
+    transform: translateX(-10px);
+  }
+  8% {
+    opacity: 1;
+    transform: translateX(0);
+  }
+  88% {
+    opacity: 1;
+    transform: translateX(0);
+  }
+  100% {
+    opacity: 0;
+    transform: translateX(0);
+  }
+}
+@keyframes rs-pulse-soft {
+  0%,
+  100% {
+    opacity: 0.55;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1.04);
+  }
+}
+@keyframes rs-receipt {
+  0%,
+  62% {
+    transform: scaleY(0);
+    opacity: 0;
+  }
+  72% {
+    transform: scaleY(1);
+    opacity: 1;
+  }
+  94% {
+    transform: scaleY(1);
+    opacity: 1;
+  }
+  100% {
+    transform: scaleY(1);
+    opacity: 0;
+  }
+}
+@keyframes rs-bar-grow {
+  from {
+    transform: scaleY(0.04);
+    opacity: 0;
+  }
+  to {
+    transform: scaleY(1);
+    opacity: 1;
+  }
+}
+@keyframes rs-marquee {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(-50%);
+  }
+}
+@keyframes rs-shimmer {
+  to {
+    background-position: -200% 0;
   }
 }
 
+/* --------------------------------------------------------------------------
+   Authentication scene
+
+   The login visual: an operator at the counter ringing up a sale and printing
+   the receipt. It has four states and the page drives them from the REAL auth
+   result, so the paper only finishes feeding once the server has said yes.
+   -------------------------------------------------------------------------- */
+.rs-pos-bob {
+  animation: rs-pos-bob 4.5s ease-in-out infinite;
+  transform-origin: 50% 100%;
+}
+.rs-pos-type {
+  animation: rs-pos-type 0.9s ease-in-out infinite;
+  transform-origin: 50% 0%;
+}
+.rs-pos-row {
+  animation: rs-pos-row 2.4s ease-out infinite both;
+}
+.rs-pos-caret {
+  animation: rs-pos-caret 1.05s steps(1) infinite;
+}
+.rs-paper-feed {
+  animation: rs-paper-feed 2.1s cubic-bezier(0.33, 1, 0.68, 1) infinite;
+  transform-origin: 50% 0%;
+}
+.rs-paper-done {
+  animation: rs-paper-done 620ms cubic-bezier(0.22, 1, 0.36, 1) both;
+  transform-origin: 50% 0%;
+}
+.rs-pos-shake {
+  animation: rs-shake 520ms cubic-bezier(0.36, 0.07, 0.19, 0.97);
+}
+.rs-pos-pop {
+  animation: rs-pop 520ms var(--rs-ease) both;
+}
+.rs-pos-burst {
+  animation: rs-burst 900ms var(--rs-ease) both;
+}
+.rs-check-draw {
+  stroke-dasharray: 26;
+  stroke-dashoffset: 26;
+  animation: rs-check 480ms var(--rs-ease) 120ms forwards;
+}
+
+@keyframes rs-pos-bob {
+  0%,
+  100% {
+    transform: translateY(0) scaleY(1);
+  }
+  50% {
+    transform: translateY(-1.5px) scaleY(1.012);
+  }
+}
+@keyframes rs-pos-type {
+  0%,
+  100% {
+    transform: translateY(0) rotate(0deg);
+  }
+  50% {
+    transform: translateY(2px) rotate(-3deg);
+  }
+}
+@keyframes rs-pos-row {
+  0% {
+    opacity: 0;
+    transform: translateX(-5px);
+  }
+  18%,
+  86% {
+    opacity: 1;
+    transform: translateX(0);
+  }
+  100% {
+    opacity: 0;
+    transform: translateX(0);
+  }
+}
+@keyframes rs-pos-caret {
+  0%,
+  49% {
+    opacity: 1;
+  }
+  50%,
+  100% {
+    opacity: 0;
+  }
+}
+/* The paper leaves the printer, then the loop resets for the next sale. */
+@keyframes rs-paper-feed {
+  0% {
+    transform: scaleY(0.04);
+    opacity: 0;
+  }
+  14% {
+    opacity: 1;
+  }
+  70%,
+  92% {
+    transform: scaleY(1);
+    opacity: 1;
+  }
+  100% {
+    transform: scaleY(1);
+    opacity: 0;
+  }
+}
+@keyframes rs-paper-done {
+  from {
+    transform: scaleY(0.12);
+    opacity: 0;
+  }
+  to {
+    transform: scaleY(1);
+    opacity: 1;
+  }
+}
+@keyframes rs-shake {
+  0%,
+  100% {
+    transform: translateX(0);
+  }
+  15%,
+  55% {
+    transform: translateX(-7px);
+  }
+  35%,
+  75% {
+    transform: translateX(7px);
+  }
+  90% {
+    transform: translateX(-3px);
+  }
+}
+@keyframes rs-pop {
+  0% {
+    transform: scale(0.86);
+    opacity: 0;
+  }
+  60% {
+    transform: scale(1.04);
+  }
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+@keyframes rs-burst {
+  0% {
+    transform: scale(0.7);
+    opacity: 0.75;
+  }
+  100% {
+    transform: scale(1.9);
+    opacity: 0;
+  }
+}
+@keyframes rs-check {
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+
+/* --------------------------------------------------------------------------
+   Reduced motion
+
+   Everything decorative stops. Nothing that carries meaning is hidden: the
+   reveals settle to their final state rather than never arriving, and the POS
+   terminal keeps its finished frame - a complete, legible bill - instead of an
+   empty one.
+   -------------------------------------------------------------------------- */
 @media (prefers-reduced-motion: reduce) {
-  .public-reveal {
+  .public-shell .rs-reveal {
     opacity: 1;
     transform: none;
     transition: none;
   }
-  .public-orb,
-  .public-float {
+  .public-shell .rs-aurora::before,
+  .public-shell .rs-aurora::after,
+  .public-shell .rs-float,
+  .public-shell .rs-float-slow,
+  .public-shell .rs-spin-slow,
+  .public-shell .rs-pulse-soft,
+  .public-shell .rs-marquee,
+  .public-shell .rs-shimmer,
+  .public-shell .rs-scanline {
     animation: none;
   }
-  .public-preview,
-  .public-preview:hover {
-    transform: none;
-    transition: none;
+  .public-shell .rs-scanline {
+    opacity: 0;
   }
-  .public-shell *,
-  .public-shell *::before,
-  .public-shell *::after {
-    scroll-behavior: auto !important;
+  .public-shell .rs-line-in,
+  .public-shell .rs-receipt,
+  .public-shell .rs-bar {
+    animation: none;
+    opacity: 1;
+    transform: none;
+  }
+  .public-shell .rs-lift:hover {
+    transform: none;
+  }
+  /*
+    The scene still has to say which state it is in - that is the whole point of
+    it - so the idling stops, but the receipt is shown printed and the tick is
+    drawn complete rather than never arriving.
+  */
+  .public-shell .rs-pos-bob,
+  .public-shell .rs-pos-type,
+  .public-shell .rs-pos-caret,
+  .public-shell .rs-pos-shake,
+  .public-shell .rs-pos-burst {
+    animation: none;
+  }
+  .public-shell .rs-pos-row,
+  .public-shell .rs-paper-feed,
+  .public-shell .rs-paper-done,
+  .public-shell .rs-pos-pop {
+    animation: none;
+    opacity: 1;
+    transform: none;
+  }
+  .public-shell .rs-check-draw {
+    animation: none;
+    stroke-dashoffset: 0;
   }
 }
 

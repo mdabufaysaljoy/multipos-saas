@@ -1,19 +1,15 @@
-<!--
-  The same mark the app wears: the shop glyph on the brand square, so a pinned
-  tab looks like the sidebar and the sign-in page.
--->
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32">
-  <rect width="32" height="32" rx="7" fill="#2563eb" />
-  <g
-    transform="translate(6 6)"
-    fill="none"
-    stroke="#ffffff"
-    stroke-width="2"
-    stroke-linecap="round"
-    stroke-linejoin="round"
-  >
-    <path d="M2.97 1h14.06a1 1 0 0 1 .96.73l1.2 4.2a2.4 2.4 0 0 1-2.31 3.07 2.62 2.62 0 0 1-2.2-1.2 2.62 2.62 0 0 1-2.2 1.2 2.62 2.62 0 0 1-2.2-1.2 2.62 2.62 0 0 1-2.2 1.2 2.62 2.62 0 0 1-2.2-1.2 2.62 2.62 0 0 1-2.2 1.2A2.4 2.4 0 0 1 .81 5.93l1.2-4.2A1 1 0 0 1 2.97 1Z" />
-    <path d="M2 9v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9" />
-    <path d="M7.5 19v-5a1.5 1.5 0 0 1 1.5-1.5h2a1.5 1.5 0 0 1 1.5 1.5v5" />
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" role="img" aria-label="Retailer Suites">
+  <defs>
+    <linearGradient id="rs" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#4f46e5" />
+      <stop offset=".55" stop-color="#4f46e5" />
+      <stop offset="1" stop-color="#06b6d4" />
+    </linearGradient>
+  </defs>
+  <rect width="32" height="32" rx="8" fill="url(#rs)" />
+  <g fill="none" stroke="#fff" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M7 11.8h18M7 11.8 9.1 7a1.8 1.8 0 0 1 1.7-1h10.4a1.8 1.8 0 0 1 1.7 1l2.1 4.8" />
+    <path d="M7 11.8v12.4A2 2 0 0 0 9 26h14a2 2 0 0 0 2-1.8V11.8" />
+    <path d="M12.6 16.6h6.8M12.6 20.5h4" opacity=".85" />
   </g>
 </svg>

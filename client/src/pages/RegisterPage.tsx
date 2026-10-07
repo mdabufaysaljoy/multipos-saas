@@ -1,4 +1,3 @@
-import { onboardingApi } from '@/api/endpoints';
 import * as React from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useForm } from 'react-hook-form';
@@ -6,15 +5,21 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { toast } from 'sonner';
+import { AlertCircle, ArrowRight, Building2, Eye, EyeOff, Lock, Mail, Phone, User } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
 import { ApiError } from '@/api/client';
+import { onboardingApi } from '@/api/endpoints';
 import { useAuth } from '@/hooks/useAuth';
 import { useTrialOffer } from '@/hooks/useTrialDays';
-import { AuthShell } from '@/features/public/AuthShell';
+import { AuthField, AuthHeading, AuthShell } from '@/features/public/AuthShell';
+import type { SceneState } from '@/features/public/AuthScene';
+import { cn } from '@/lib/utils';
 
+/**
+ * Mirrors the server's register schema. The only rule the backend enforces on
+ * a password is 8-128 characters, so that is the only one treated as an error;
+ * everything else the meter shows is advice.
+ */
 const schema = z
   .object({
     businessName: z.string().trim().min(2, 'Business name is required'),
@@ -31,20 +36,40 @@ const schema = z
 
 type FormValues = z.infer<typeof schema>;
 
+/** Advice, not a gate: the server asks only for length. */
+function strengthOf(password: string) {
+  if (!password) return { score: 0, label: '', tone: '' };
+  let score = 0;
+  if (password.length >= 8) score += 1;
+  if (password.length >= 12) score += 1;
+  if (/[a-z]/.test(password) && /[A-Z]/.test(password)) score += 1;
+  if (/\d/.test(password)) score += 1;
+  if (/[^A-Za-z0-9]/.test(password)) score += 1;
+  const label = score <= 2 ? 'Weak' : score === 3 ? 'Fair' : score === 4 ? 'Strong' : 'Excellent';
+  const tone = score <= 2 ? 'bg-rose-400' : score === 3 ? 'bg-amber-400' : 'bg-emerald-400';
+  return { score, label, tone };
+}
+
 export function RegisterPage() {
   const { register: signUp } = useAuth();
   const navigate = useNavigate();
   const { days: trialDays, planName: trialPlanName } = useTrialOffer();
+  const [searchParams] = useSearchParams();
+  const requestedPos = searchParams.get('pos');
+
+  const [vertical, setVertical] = React.useState('');
+  const [showPassword, setShowPassword] = React.useState(false);
+  const [scene, setScene] = React.useState<SceneState>('idle');
+  const [formError, setFormError] = React.useState<string | null>(null);
+
   // The POS types come from the platform catalog: active products only.
   const { data: posTypes, isLoading: posTypesLoading } = useQuery({
     queryKey: ['public-pos-types'],
     queryFn: onboardingApi.publicPosTypes,
     staleTime: 5 * 60 * 1000,
   });
-  const available = (posTypes ?? []).filter((option) => option.available);
-  const [searchParams] = useSearchParams();
-  const requestedPos = searchParams.get('pos');
-  const [vertical, setVertical] = React.useState('');
+  const available = React.useMemo(() => (posTypes ?? []).filter((option) => option.available), [posTypes]);
+
   React.useEffect(() => {
     if (vertical || available.length === 0) return;
     // A POS chosen on a product page is preselected - but only if it is really offered.
@@ -57,7 +82,12 @@ export function RegisterPage() {
     defaultValues: { businessName: '', name: '', email: '', phone: '', password: '', confirmPassword: '' },
   });
 
+  const password = form.watch('password');
+  const strength = strengthOf(password ?? '');
+
   const onSubmit = async (values: FormValues) => {
+    setFormError(null);
+    setScene('scanning');
     try {
       await signUp({
         businessName: values.businessName,
@@ -67,96 +97,195 @@ export function RegisterPage() {
         password: values.password,
         vertical: vertical || undefined,
       });
-      toast.success('Workspace created. Let’s set up your store.');
-      navigate('/onboarding', { replace: true });
+      // Only after the server has created the workspace.
+      setScene('success');
+      window.setTimeout(() => {
+        toast.success('Workspace created. Let’s set up your store.');
+        navigate('/onboarding', { replace: true });
+      }, 620);
     } catch (error) {
-      const message = error instanceof ApiError ? error.message : 'Could not create your workspace';
-      form.setError('email', { message });
-      toast.error(message);
+      const message = error instanceof ApiError ? error.message : 'Could not create your workspace. Check your connection and try again.';
+      setScene('error');
+      setFormError(message);
+      form.setError('email', { message: '' });
+      form.setFocus('email');
     }
   };
 
-  const field = (name: keyof FormValues, label: string, props: Record<string, unknown> = {}) => (
-    <div className="space-y-1.5">
-      <Label htmlFor={name}>{label}</Label>
-      <Input id={name} aria-invalid={Boolean(form.formState.errors[name])} {...props} {...form.register(name)} />
-      {form.formState.errors[name] && (
-        <p className="text-xs text-destructive">{form.formState.errors[name]?.message}</p>
-      )}
-    </div>
-  );
+  const busy = form.formState.isSubmitting || scene === 'scanning' || scene === 'success';
 
   return (
     <AuthShell
-      title="Your business deserves a better control room."
-      copy="Choose the workflow that fits, invite the right people and start with a clear view of every day."
+      eyebrow="Get started"
+      title="Minutes from your first receipt."
+      copy={trialDays ? `Start with a ${trialDays}-day free trial of ${trialPlanName}. No card required.` : 'Start free. No card required.'}
+      sceneState={scene}
     >
-      <div className="w-full space-y-6 py-4">
-        <div>
-          <p className="text-xs font-bold uppercase tracking-[.2em] text-primary">Get started</p>
-          <h1 className="mt-3 text-3xl font-bold tracking-[-.04em] text-slate-950">Create your workspace</h1>
-          <p className="mt-2 text-sm text-muted-foreground">
-            {trialDays ? `Start with a ${trialDays}-day free trial of ${trialPlanName}.` : 'Start with a free trial.'}{' '}
-            No card required.
-          </p>
+      <AuthHeading
+        title="Create your workspace"
+        copy={trialDays ? `${trialDays} days free. No card required.` : 'Free to start. No card required.'}
+      />
+
+      <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-5" noValidate>
+        {formError && (
+          <div role="alert" className="rs-scan-pop flex items-start gap-2.5 rounded-xl border border-rose-500/25 bg-rose-500/10 px-4 py-3">
+            <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-rose-400" aria-hidden />
+            <p className="text-[0.875rem] leading-6 text-rose-200">{formError}</p>
+          </div>
+        )}
+
+        {/* ----------------------------------------------------- POS type */}
+        <fieldset className="space-y-2.5">
+          <legend className="text-[0.8125rem] font-medium text-slate-300">Which POS do you want?</legend>
+          {posTypesLoading ? (
+            <div className="grid gap-2 sm:grid-cols-2">
+              {[0, 1, 2, 3].map((key) => (
+                <div key={key} className="h-[3.75rem] animate-pulse rounded-xl border border-white/10 bg-white/[0.04]" />
+              ))}
+            </div>
+          ) : (
+            <div className="grid gap-2 sm:grid-cols-2" role="radiogroup" aria-label="POS type">
+              {available.map((option) => {
+                const selected = vertical === option.vertical;
+                return (
+                  <label
+                    key={option.vertical}
+                    className={cn(
+                      'cursor-pointer rounded-xl border p-3.5 text-left outline-none transition-all duration-300',
+                      selected
+                        ? 'border-indigo-400/60 bg-indigo-500/10 shadow-[0_12px_32px_-20px_rgba(79,70,229,0.9)]'
+                        : 'border-white/10 bg-white/[0.03] hover:border-white/20 hover:bg-white/[0.06]',
+                      'focus-within:ring-2 focus-within:ring-indigo-400',
+                    )}
+                  >
+                    <input
+                      type="radio"
+                      name="vertical"
+                      className="sr-only"
+                      value={option.vertical}
+                      checked={selected}
+                      onChange={() => setVertical(option.vertical)}
+                      disabled={busy}
+                    />
+                    <span className={cn('block text-[0.875rem] font-semibold', selected ? 'text-white' : 'text-slate-300')}>
+                      {option.label}
+                    </span>
+                    {option.description && (
+                      <span className="mt-0.5 block text-[0.75rem] leading-5 text-slate-500">{option.description}</span>
+                    )}
+                  </label>
+                );
+              })}
+            </div>
+          )}
+        </fieldset>
+
+        <AuthField
+          id="businessName"
+          label="Business name"
+          icon={Building2}
+          error={form.formState.errors.businessName?.message}
+          inputProps={{ placeholder: 'Denim Republic', autoFocus: true, ...form.register('businessName') }}
+        />
+
+        <div className="grid gap-5 sm:grid-cols-2">
+          <AuthField
+            id="name"
+            label="Your name"
+            icon={User}
+            error={form.formState.errors.name?.message}
+            inputProps={{ placeholder: 'Ayesha Rahman', autoComplete: 'name', ...form.register('name') }}
+          />
+          <AuthField
+            id="phone"
+            label="Phone"
+            icon={Phone}
+            hint="Optional"
+            error={form.formState.errors.phone?.message}
+            inputProps={{ placeholder: '01700000000', autoComplete: 'tel', ...form.register('phone') }}
+          />
         </div>
 
-        <Card className="rounded-2xl border-slate-200 shadow-xl shadow-slate-900/5">
-          <CardHeader className="pb-3">
-            <CardTitle className="text-base">Business details</CardTitle>
-            <CardDescription>You can change any of this later</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4" noValidate>
-              <fieldset className="space-y-2">
-                <legend className="text-sm font-medium">What type of POS do you want to create?</legend>
-                {posTypesLoading ? (
-                  <p className="text-xs text-muted-foreground">Loading POS types…</p>
-                ) : (
-                  <div className="grid gap-2 sm:grid-cols-2" role="radiogroup">
-                    {available.map((option) => (
-                      <label
-                        key={option.vertical}
-                        className={`cursor-pointer rounded-md border p-3 text-sm ${vertical === option.vertical ? 'border-primary ring-1 ring-primary' : ''}`}
-                      >
-                        <input
-                          type="radio"
-                          name="vertical"
-                          className="sr-only"
-                          value={option.vertical}
-                          checked={vertical === option.vertical}
-                          onChange={() => setVertical(option.vertical)}
-                        />
-                        <span className="font-medium">{option.label}</span>
-                        {option.description && (
-                          <span className="mt-0.5 block text-xs text-muted-foreground">{option.description}</span>
-                        )}
-                      </label>
-                    ))}
-                  </div>
-                )}
-              </fieldset>
-              {field('businessName', 'Business name', { placeholder: 'Denim Republic', autoFocus: true })}
-              {field('name', 'Your name', { placeholder: 'Ayesha Rahman' })}
-              {field('email', 'Email', { type: 'email', autoComplete: 'username' })}
-              {field('phone', 'Phone (optional)', { placeholder: '01700000000' })}
-              {field('password', 'Password', { type: 'password', autoComplete: 'new-password' })}
-              {field('confirmPassword', 'Confirm password', { type: 'password', autoComplete: 'new-password' })}
+        <AuthField
+          id="email"
+          label="Email"
+          icon={Mail}
+          error={form.formState.errors.email?.message}
+          inputProps={{ type: 'email', autoComplete: 'username', placeholder: 'you@business.com', ...form.register('email') }}
+        />
 
-              <Button type="submit" className="w-full" loading={form.formState.isSubmitting}>
-                Create workspace
-              </Button>
-            </form>
-          </CardContent>
-        </Card>
+        <div>
+          <AuthField
+            id="password"
+            label="Password"
+            icon={Lock}
+            error={form.formState.errors.password?.message}
+            inputProps={{
+              type: showPassword ? 'text' : 'password',
+              autoComplete: 'new-password',
+              placeholder: 'At least 8 characters',
+              ...form.register('password'),
+            }}
+            trailing={
+              <button
+                type="button"
+                onClick={() => setShowPassword((value) => !value)}
+                aria-label={showPassword ? 'Hide password' : 'Show password'}
+                aria-pressed={showPassword}
+                className="rounded-md p-1 text-slate-500 outline-none transition-colors hover:text-slate-200 focus-visible:ring-2 focus-visible:ring-indigo-400"
+              >
+                {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+              </button>
+            }
+          />
+          {password && (
+            <div className="mt-2.5 flex items-center gap-2.5">
+              <div className="flex h-1 flex-1 gap-1" aria-hidden>
+                {[0, 1, 2, 3, 4].map((step) => (
+                  <span
+                    key={step}
+                    className={cn('flex-1 rounded-full transition-colors duration-300', step < strength.score ? strength.tone : 'bg-white/10')}
+                  />
+                ))}
+              </div>
+              <span className="text-[0.75rem] text-slate-400">{strength.label}</span>
+            </div>
+          )}
+        </div>
 
-        <p className="text-center text-sm text-muted-foreground">
-          Already have an account?{' '}
-          <Link to="/login" className="font-medium text-primary hover:underline">
-            Sign in
-          </Link>
-        </p>
-      </div>
+        <AuthField
+          id="confirmPassword"
+          label="Confirm password"
+          icon={Lock}
+          error={form.formState.errors.confirmPassword?.message}
+          inputProps={{
+            type: showPassword ? 'text' : 'password',
+            autoComplete: 'new-password',
+            placeholder: 'Type it again',
+            ...form.register('confirmPassword'),
+          }}
+        />
+
+        <Button
+          type="submit"
+          disabled={busy}
+          loading={scene === 'scanning'}
+          className="h-12 w-full rounded-full bg-gradient-to-r from-indigo-500 to-cyan-400 font-semibold text-slate-950 shadow-[0_14px_40px_-12px_rgba(79,70,229,0.8)] transition hover:brightness-110"
+        >
+          {scene === 'success' ? 'Workspace created' : 'Create workspace'}
+          {scene !== 'success' && <ArrowRight />}
+        </Button>
+      </form>
+
+      <p className="mt-8 text-center text-[0.875rem] text-slate-400">
+        Already have an account?{' '}
+        <Link
+          to="/login"
+          className="rounded font-semibold text-white outline-none transition-colors hover:text-cyan-300 focus-visible:ring-2 focus-visible:ring-indigo-400"
+        >
+          Sign in
+        </Link>
+      </p>
     </AuthShell>
   );
 }
