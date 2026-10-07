@@ -2033,6 +2033,37 @@ async function main() {
   const brandMark = readFileSync(new URL('../client/src/features/public/BrandMark.tsx', import.meta.url), 'utf8');
   check('The header shows the name beside the logo, not instead of it', /\{!compact && <span className="truncate/.test(brandMark));
 
+  // ---- tabs survive a reload ------------------------------------------------
+  // Every tabbed screen used to snap back to its first tab on reload, which is
+  // exactly when you least want it: a reload usually follows saving something
+  // on the tab you were looking at.
+  const tabHook = readFileSync(new URL('../client/src/hooks/useTabParam.ts', import.meta.url), 'utf8');
+  check('A tab selection is kept in the URL', /useSearchParams/.test(tabHook));
+  check('...replacing history rather than pushing, so Back still leaves the page', /replace: true/.test(tabHook));
+  check('...writing no parameter for the default tab, so clean URLs stay clean', /next === fallback\) updated\.delete/.test(tabHook));
+  check('...and falling back when the value is not a real tab', /allowed\.includes\(raw\)/.test(tabHook));
+
+  const tabbedScreens = [
+    'client/src/pages/PlatformPage.tsx',
+    'client/src/pages/SettingsPage.tsx',
+    'client/src/pages/ReportsPage.tsx',
+    'client/src/pages/WorkspacePage.tsx',
+    'client/src/pages/WalletPage.tsx',
+    'client/src/pages/MarketingPage.tsx',
+    'client/src/pages/SubscriptionPage.tsx',
+    'client/src/pages/PlatformAccountPage.tsx',
+    'client/src/pages/pharmacy/PharmacyReportsPage.tsx',
+    'client/src/pages/supershop/SupershopReportsPage.tsx',
+    'client/src/features/platform/SiteSettingsTab.tsx',
+  ];
+  for (const file of tabbedScreens) {
+    const source = readFileSync(new URL(`../${file}`, import.meta.url), 'utf8');
+    check(`${file.split('/').pop()} keeps its tab in the URL`, /useTabParam/.test(source) && !/<Tabs defaultValue/.test(source), file);
+  }
+  // The platform panel nests three levels, each with its own key.
+  const platformScreen2 = readFileSync(new URL('../client/src/pages/PlatformPage.tsx', import.meta.url), 'utf8');
+  check('Nested platform tabs each get their own key', ["useTabParam('tab'", "useTabParam('billing'", "useTabParam('settings'"].every((call) => platformScreen2.includes(call)));
+
   // ---- search engines and share cards --------------------------------------
   // The site is a client-rendered SPA, and the social crawlers do not run
   // JavaScript. Tags added at runtime are tags Facebook, WhatsApp and LinkedIn

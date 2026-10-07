@@ -13,6 +13,7 @@ import { ApiError } from '@/api/client';
 import { platformApi } from '@/api/endpoints';
 import { SEO_PAGES, type SiteFaqEntry, type SiteSettings } from '@/types/site';
 import { cn } from '@/lib/utils';
+import { useTabParam } from '@/hooks/useTabParam';
 
 /**
  * The public website, edited by the platform admin.
@@ -28,6 +29,7 @@ import { cn } from '@/lib/utils';
  * guess what a blank will produce.
  */
 export function SiteSettingsTab() {
+  const [section, setSection] = useTabParam('section', 'brand', ['brand', 'seo', 'contact', 'social', 'content']);
   const queryClient = useQueryClient();
   const { data, isLoading } = useQuery({ queryKey: ['platform', 'site'], queryFn: platformApi.site });
 
@@ -36,7 +38,7 @@ export function SiteSettingsTab() {
   const refresh = () => void queryClient.invalidateQueries({ queryKey: ['platform', 'site'] });
 
   return (
-    <Tabs defaultValue="brand">
+    <Tabs value={section} onValueChange={setSection}>
       <TabsList className="mb-3 flex-wrap">
         <TabsTrigger value="brand">Brand</TabsTrigger>
         <TabsTrigger value="seo">SEO</TabsTrigger>

@@ -8,6 +8,7 @@ import { WalletPanel } from '@/features/billing/WalletPanel';
 import { billingApi } from '@/api/endpoints';
 import { formatMoney } from '@/lib/money';
 import { useAuth } from '@/hooks/useAuth';
+import { useTabParam } from '@/hooks/useTabParam';
 
 /**
  * Wallet, promoted to its own top-level section.
@@ -18,11 +19,12 @@ import { useAuth } from '@/hooks/useAuth';
  * was spent on.
  */
 export function WalletPage() {
+  const [tab, setTab] = useTabParam('tab', 'wallet', ['wallet', 'history']);
   return (
     <div className="space-y-5 p-4 lg:p-6">
       <PageHeader title="Wallet" description="Your prepaid balance for subscriptions, SMS and email." />
 
-      <Tabs defaultValue="wallet">
+      <Tabs value={tab} onValueChange={setTab}>
         <TabsList>
           <TabsTrigger value="wallet">Balance &amp; activity</TabsTrigger>
           <TabsTrigger value="history">History</TabsTrigger>

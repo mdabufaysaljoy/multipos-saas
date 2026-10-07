@@ -27,6 +27,7 @@ import type { PlanOption, SubscriptionPlan } from '@/types/domain';
 import { VerifyContactCard } from '@/features/verification/VerifyContactCard';
 import { useAuth } from '@/hooks/useAuth';
 import { cn } from '@/lib/utils';
+import { useTabParam } from '@/hooks/useTabParam';
 
 const STATUS_STYLE: Record<string, { label: string; variant: 'success' | 'warning' | 'destructive' | 'secondary' }> = {
   active: { label: 'Active', variant: 'success' },
@@ -93,6 +94,7 @@ function BillingActivity() {
 }
 
 export function SubscriptionPage() {
+  const [tab, setTab] = useTabParam('tab', 'plans', ['plans', 'activity']);
   const queryClient = useQueryClient();
   const { refresh, session } = useAuth();
   const [interval, setInterval] = React.useState<'monthly' | 'yearly'>('monthly');
@@ -319,7 +321,7 @@ export function SubscriptionPage() {
         </Card>
       )}
 
-      <Tabs defaultValue="plans">
+      <Tabs value={tab} onValueChange={setTab}>
         <TabsList>
           <TabsTrigger value="plans">Plans</TabsTrigger>
           <TabsTrigger value="activity">Billing activity</TabsTrigger>

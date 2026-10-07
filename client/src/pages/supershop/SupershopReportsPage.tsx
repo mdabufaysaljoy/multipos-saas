@@ -17,6 +17,7 @@ import { formatQuantity, formatVatRate } from '@/lib/supershop';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/hooks/useAuth';
 import type { ShopReports } from '@/types/supershop';
+import { useTabParam } from '@/hooks/useTabParam';
 
 const isLocked = (error: unknown) => error instanceof ApiError && error.code === 'ADVANCED_ANALYTICS_REQUIRED';
 const bps = (value: number) => `${(value / 100).toFixed(1)}%`;
@@ -34,6 +35,7 @@ const bps = (value: number) => `${(value / 100).toFixed(1)}%`;
  * branch rules; nothing here counts a sale.
  */
 export function SupershopReportsPage() {
+  const [tab, setTab] = useTabParam('tab', 'sales', ['sales', 'products', 'departments', 'brands', 'staff', 'payments', 'vat', 'returns', 'inventory', 'customers', 'branches']);
   const { session, activeStore } = useAuth();
   const currency = activeStore?.currency ?? 'BDT';
   const money = (minor: number) => formatMoney(minor, currency);
@@ -87,7 +89,7 @@ export function SupershopReportsPage() {
 
       {ready && data && (
         <>
-          <Tabs defaultValue="sales">
+          <Tabs value={tab} onValueChange={setTab}>
             <TabsList className="h-auto flex-wrap justify-start gap-1">
               <TabsTrigger value="sales">Sales &amp; profit</TabsTrigger>
               <TabsTrigger value="products">Products</TabsTrigger>

@@ -29,6 +29,7 @@ import { PaymentInstructionsCard } from '@/features/platform/PaymentInstructions
 import { PaymentOperationsTab } from '@/features/platform/PaymentOperationsTab';
 import { PosProductsTab } from '@/features/platform/PosProductsTab';
 import { SiteSettingsTab } from '@/features/platform/SiteSettingsTab';
+import { useTabParam } from '@/hooks/useTabParam';
 import { PlansTab } from '@/features/platform/PlansTab';
 import { SearchInput, useDebounced } from '@/components/SearchInput';
 import { MoneyInput } from '@/components/MoneyInput';
@@ -74,6 +75,19 @@ const DEFAULT_VERTICAL = 'clothing';
  */
 export function PlatformPage() {
   const { session, logout } = useAuth();
+  // Three levels of tabs, three keys, so a reload lands on the exact pane -
+  // `/platform?tab=settings&section=website` rather than back at Workspaces.
+  const [tab, setTab] = useTabParam('tab', 'workspaces', [
+    'workspaces',
+    'accounts',
+    'billing',
+    'analytics',
+    'pos-types',
+    'settings',
+    'audit',
+  ]);
+  const [billing, setBilling] = useTabParam('billing', 'requests', ['requests', 'subscriptions', 'payments', 'plans']);
+  const [settings, setSettings] = useTabParam('settings', 'payments', ['payments', 'integrations', 'website']);
   const { data: overview } = useQuery({ queryKey: ['platform', 'overview'], queryFn: platformApi.overview });
 
   return (
@@ -108,7 +122,7 @@ export function PlatformPage() {
             Billing gathers everything about money in one place - subscriptions,
             the requests awaiting a decision, and the payments already taken -
             which is how an operator actually works through a day. */}
-        <Tabs defaultValue="workspaces">
+        <Tabs value={tab} onValueChange={setTab}>
           <TabsList>
             <TabsTrigger value="workspaces">Workspaces</TabsTrigger>
             <TabsTrigger value="accounts">Accounts</TabsTrigger>
@@ -128,7 +142,7 @@ export function PlatformPage() {
           </TabsContent>
 
           <TabsContent value="billing">
-            <Tabs defaultValue="requests">
+            <Tabs value={billing} onValueChange={setBilling}>
               <TabsList className="mb-3">
                 <TabsTrigger value="requests">Pending requests</TabsTrigger>
                 <TabsTrigger value="subscriptions">Subscriptions</TabsTrigger>
@@ -159,7 +173,7 @@ export function PlatformPage() {
           </TabsContent>
 
           <TabsContent value="settings">
-            <Tabs defaultValue="payments">
+            <Tabs value={settings} onValueChange={setSettings}>
               <TabsList className="mb-3 flex-wrap">
                 <TabsTrigger value="payments">Payment accounts</TabsTrigger>
                 <TabsTrigger value="integrations">SMS &amp; email</TabsTrigger>

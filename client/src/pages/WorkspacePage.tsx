@@ -33,6 +33,7 @@ import { WalletAdjustDialog } from '@/features/platform/WalletAdjustDialog';
 import { formatMoney } from '@/lib/money';
 import { cn } from '@/lib/utils';
 import type { Category, Product, Role, StaffMember } from '@/types/domain';
+import { useTabParam } from '@/hooks/useTabParam';
 
 /**
  * Platform-admin management of ONE workspace.
@@ -42,6 +43,7 @@ import type { Category, Product, Role, StaffMember } from '@/types/domain';
  * re-checks the platform-admin role on each request.
  */
 export function WorkspacePage() {
+  const [tab, setTab] = useTabParam('tab', 'branches', ['branches', 'products', 'categories', 'staff', 'roles', 'wallet', 'sales']);
   const { tenantId = '' } = useParams<{ tenantId: string }>();
   const navigate = useNavigate();
   const api = React.useMemo(() => platformApi.ws(tenantId), [tenantId]);
@@ -92,7 +94,7 @@ export function WorkspacePage() {
           />
         </div>
 
-        <Tabs defaultValue="branches">
+        <Tabs value={tab} onValueChange={setTab}>
           <TabsList className="h-auto flex-wrap justify-start gap-1">
             <TabsTrigger value="branches">Branches</TabsTrigger>
             <TabsTrigger value="products">Products</TabsTrigger>
