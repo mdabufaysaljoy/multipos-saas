@@ -7,6 +7,7 @@ import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { toast } from 'sonner';
 import { AlertCircle, ArrowRight, Building2, Eye, EyeOff, Lock, Mail, Phone, User } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { PhoneInput } from '@/components/NumericInputs';
 import { ApiError } from '@/api/client';
 import { onboardingApi } from '@/api/endpoints';
 import { useAuth } from '@/hooks/useAuth';
@@ -79,6 +80,10 @@ export function RegisterPage() {
 
   const form = useForm<FormValues>({
     resolver: zodResolver(schema),
+    // Nothing is flagged while a field is being typed for the first time; it
+    // is checked when you leave it, and corrects live from then on.
+    mode: 'onTouched',
+    reValidateMode: 'onChange',
     defaultValues: { businessName: '', name: '', email: '', phone: '', password: '', confirmPassword: '' },
   });
 
@@ -196,13 +201,22 @@ export function RegisterPage() {
             error={form.formState.errors.name?.message}
             inputProps={{ placeholder: 'Ayesha Rahman', autoComplete: 'name', ...form.register('name') }}
           />
+          {/* Letters cannot be typed here at all - the keystroke is dropped
+              rather than accepted and then complained about. */}
           <AuthField
             id="phone"
             label="Phone"
             icon={Phone}
             hint="Optional"
             error={form.formState.errors.phone?.message}
-            inputProps={{ placeholder: '01700000000', autoComplete: 'tel', ...form.register('phone') }}
+            inputProps={{ placeholder: '01700000000' }}
+            render={(props) => (
+              <PhoneInput
+                {...props}
+                value={form.watch('phone') ?? ''}
+                onChange={(value) => form.setValue('phone', value, { shouldValidate: form.formState.isSubmitted })}
+              />
+            )}
           />
         </div>
 

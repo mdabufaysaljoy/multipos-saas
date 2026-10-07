@@ -10,6 +10,7 @@ import { MoneyInput } from '@/components/MoneyInput';
 import { ApiError } from '@/api/client';
 import { supershopApi } from '@/api/supershop';
 import { formatQuantity, MAX_PIECES, parseKgToGrams } from '@/lib/supershop';
+import { filters } from '@/components/NumericInputs';
 import type { ShopMovement, ShopProduct, ShopUnitType } from '@/types/supershop';
 
 /**
@@ -42,6 +43,7 @@ export function TextField({
   max,
   placeholder,
   inputMode,
+  filter,
   onChange,
 }: {
   id: string;
@@ -49,6 +51,12 @@ export function TextField({
   value: string;
   max: number;
   placeholder?: string;
+  /**
+   * Drops characters as they are typed. A quantity or a rate field that is
+   * given one cannot hold a letter at all - there is nothing to correct and no
+   * error to read, because the keystroke never lands.
+   */
+  filter?: (raw: string) => string;
   /**
    * Optional, and only ever a hint to the on-screen keyboard - the field stays
    * a text input so a half-typed "7." is never rewritten underneath the cursor.
@@ -67,7 +75,7 @@ export function TextField({
         maxLength={max}
         placeholder={placeholder}
         inputMode={inputMode}
-        onChange={(event) => onChange(event.target.value)}
+        onChange={(event) => onChange(filter ? filter(event.target.value) : event.target.value)}
       />
     </div>
   );
@@ -98,7 +106,15 @@ export function ReceiveDialog({ product, currency, onClose, onSaved }: { product
           </DialogDescription>
         </DialogHeader>
         <div className="grid gap-3 sm:grid-cols-2">
-          <TextField id="receive-qty" label={product.unitType === 'weight' ? 'Weight (kg)' : 'Pieces'} value={quantity} max={10} onChange={setQuantity} />
+          <TextField
+            id="receive-qty"
+            label={product.unitType === 'weight' ? 'Weight (kg)' : 'Pieces'}
+            value={quantity}
+            max={10}
+            inputMode={product.unitType === 'weight' ? 'decimal' : 'numeric'}
+            filter={product.unitType === 'weight' ? filters.decimal(3) : filters.integer(10)}
+            onChange={setQuantity}
+          />
           <div className="space-y-1.5">
             <Label>Cost {product.unitType === 'weight' ? 'per kg' : 'per piece'}</Label>
             <MoneyInput value={cost} onChange={setCost} ariaLabel="Cost" />

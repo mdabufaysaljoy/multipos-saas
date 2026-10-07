@@ -23,6 +23,7 @@ import { formatMoney } from '@/lib/money';
 import { useAuth } from '@/hooks/useAuth';
 import { cn } from '@/lib/utils';
 import type { SmsCampaign, SmsMessage } from '@/types/domain';
+import { useTabParam } from '@/hooks/useTabParam';
 
 /**
  * Marketing campaigns (SMS and email), billed from the wallet.
@@ -32,6 +33,7 @@ import type { SmsCampaign, SmsMessage } from '@/types/domain';
  * segment count - before committing.
  */
 export function MarketingPage() {
+  const [tab, setTab] = useTabParam('tab', 'sms', ['sms', 'email', 'history']);
   const { activeStore } = useAuth();
   const currency = activeStore?.currency ?? 'BDT';
 
@@ -94,7 +96,7 @@ export function MarketingPage() {
         <Stat icon={<MessageSquare className="h-4 w-4" />} label="Spent on SMS" value={formatMoney(status.usage.totalCostMinor, currency)} />
       </div>
 
-      <Tabs defaultValue="sms">
+      <Tabs value={tab} onValueChange={setTab}>
         <TabsList>
           <TabsTrigger value="sms">SMS campaign</TabsTrigger>
           <TabsTrigger value="email">Email campaign</TabsTrigger>

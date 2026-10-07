@@ -23,6 +23,7 @@ import { PaymentsPanel } from '@/features/billing/PaymentsPanel';
 import { StatementPanel } from '@/features/billing/StatementPanel';
 import { PAYMENT_METHOD_LABEL } from '@/features/billing/billingLabels';
 import { formatMoney } from '@/lib/money';
+import { useTabParam } from '@/hooks/useTabParam';
 
 const REASON_KEY = (accountId: string) => `platform-support-reason:${accountId}`;
 const readReason = (accountId: string) => {
@@ -124,6 +125,7 @@ function ReasonGate({ onSubmit }: { onSubmit: (reason: string) => void }) {
 }
 
 function AccountSupport({ accountId, reason, back, onChangeReason }: { accountId: string; reason: string; back: React.ReactNode; onChangeReason: () => void }) {
+  const [tab, setTab] = useTabParam('tab', 'overview', ['overview', 'wallet', 'statement', 'invoices', 'payments', 'receipts', 'top-ups', 'history']);
   const { data, isLoading, isError, error } = useQuery({
     queryKey: ['platform', 'account', accountId, 'overview', reason],
     queryFn: () => platformAccountsApi.overview(accountId, reason),
@@ -168,7 +170,7 @@ function AccountSupport({ accountId, reason, back, onChangeReason }: { accountId
           </Button>
         </p>
 
-        <Tabs defaultValue="overview">
+        <Tabs value={tab} onValueChange={setTab}>
           <TabsList className="flex-wrap">
             <TabsTrigger value="overview">Overview</TabsTrigger>
             <TabsTrigger value="wallet">Wallet ledger</TabsTrigger>

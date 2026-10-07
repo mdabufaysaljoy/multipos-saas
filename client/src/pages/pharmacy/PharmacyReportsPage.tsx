@@ -15,11 +15,13 @@ import { pharmacyApi } from '@/api/pharmacy';
 import { formatMoney } from '@/lib/money';
 import { dosageFormLabel } from '@/lib/pharmacy';
 import { useAuth } from '@/hooks/useAuth';
+import { useTabParam } from '@/hooks/useTabParam';
 
 const PHARMACY_RANGES = [{ value: 'today', label: 'Today' }, { value: 'last7', label: '7 days' }, { value: 'last30', label: '30 days' }];
 const isLocked = (error: unknown) => error instanceof ApiError && error.code === 'ADVANCED_ANALYTICS_REQUIRED';
 
 export function PharmacyReportsPage() {
+  const [tab, setTab] = useTabParam('tab', 'sales', ['sales', 'products', 'inventory', 'payments', 'staff', 'profit']);
   const { session, activeStore } = useAuth();
   const currency = activeStore?.currency ?? 'BDT';
   const money = (minor: number) => formatMoney(minor, currency);
@@ -41,7 +43,7 @@ export function PharmacyReportsPage() {
         <AnalyticsStat label="Inventory value" value={money(data.inventory.costMinor)} hint={`${data.inventory.units} units · ${data.inventory.batches} batches`} />
       </div>
 
-      <Tabs defaultValue="sales" className="space-y-4">
+      <Tabs value={tab} onValueChange={setTab} className="space-y-4">
         <div className="overflow-x-auto"><TabsList className="h-auto min-w-max flex-wrap justify-start"><TabsTrigger value="sales">Sales</TabsTrigger><TabsTrigger value="products">Products</TabsTrigger><TabsTrigger value="inventory">Inventory & expiry</TabsTrigger><TabsTrigger value="payments">Payments</TabsTrigger><TabsTrigger value="staff">Staff</TabsTrigger><TabsTrigger value="profit">Profit</TabsTrigger></TabsList></div>
 
         <TabsContent value="sales" className="space-y-4">

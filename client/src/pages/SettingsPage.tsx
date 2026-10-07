@@ -23,21 +23,21 @@ import { isLoyaltyVertical } from '@/features/loyalty/useLoyaltyAccess';
 import { LabelSettingsCard } from '@/features/barcode/LabelSettingsCard';
 import { TenderSettingsCard } from '@/features/payments/TenderSettingsCard';
 import { PrinterSettingsCard } from '@/features/printing/PrinterSettingsCard';
-import { useSearchParams } from 'react-router-dom';
 import { ApiError } from '@/api/client';
 import { authApi, storeApi } from '@/api/endpoints';
 import { useAuth } from '@/hooks/useAuth';
 import { DEFAULT_LABEL_SETTINGS, type ReceiptPayload, type StoreSettings } from '@/types/domain';
 import { SUPPORTED_WIDTHS } from '@/features/receipt/ThermalReceipt';
+import { useTabParam } from '@/hooks/useTabParam';
 
 /** The POS types whose goods carry a barcode, and so can have labels printed. */
 const LABEL_VERTICALS = ['clothing', 'supershop', 'pharmacy'];
 
 export function SettingsPage() {
+  const [tab, setTab] = useTabParam('tab', 'store', ['store', 'receipt', 'tax', 'labels', 'printer', 'loyalty', 'account']);
   const queryClient = useQueryClient();
   const { can, refresh, session } = useAuth();
   const readOnly = !can('settings.edit');
-  const [searchParams] = useSearchParams();
 
   const { data: store, isLoading } = useQuery({ queryKey: ['store', 'current'], queryFn: storeApi.current });
   const [draft, setDraft] = React.useState<StoreSettings | null>(null);
@@ -189,7 +189,11 @@ export function SettingsPage() {
           </PermissionGate>
         }
       />
-      <Tabs defaultValue={['loyalty', 'printer'].includes(searchParams.get('tab') ?? '') ? searchParams.get('tab')! : 'store'}>
+      {/* It already READ ?tab=, but only as a starting value and only for two
+          of the tabs - so switching tabs never updated the address bar and a
+          reload dropped you back on Store. It is a controlled value now, and
+          every tab is addressable. */}
+      <Tabs value={tab} onValueChange={setTab}>
         <TabsList className="h-auto flex-wrap">
           <TabsTrigger value="store">Store</TabsTrigger>
           <TabsTrigger value="receipt">Receipt</TabsTrigger>
