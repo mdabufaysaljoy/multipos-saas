@@ -2,6 +2,8 @@ import type { Request, Response } from 'express';
 import { Types } from 'mongoose';
 import { ROLES, SUBSCRIPTION_STATUS } from '../../config/constants';
 import { DEFAULT_POS_VERTICAL } from '../../config/verticals';
+import { posCatalogService } from '../../services/posCatalog/posCatalog.service';
+import { workspaceDeletionService } from '../../services/account/workspaceDeletion.service';
 import { PharmacySaleModel } from '../../models/PharmacySale';
 import { ShopSaleModel } from '../../models/ShopSale';
 import { PaymentModel } from '../../models/Payment';
@@ -594,9 +596,40 @@ export const testSmtp = asyncHandler(async (req: Request, res: Response) => {
  * created through the SAME code paths, so a platform-provisioned workspace is
  * indistinguishable from a self-service one.
  */
+/** What deleting this workspace would remove. Changes nothing. */
+export const workspaceDeletionPlan = asyncHandler(async (req: Request, res: Response) => {
+  const { tenantId } = params<{ tenantId: string }>(req);
+  ok(res, await workspaceDeletionService.plan(new Types.ObjectId(tenantId)));
+});
+
+/**
+ * Deletes a workspace and everything that belonged to it.
+ *
+ * The one call in this panel that cannot be undone, so it is audited BEFORE
+ * the rows go: the audit entry has to survive the thing it describes, and it
+ * records what the workspace was rather than a dangling id.
+ */
+export const deleteWorkspace = asyncHandler(async (req: Request, res: Response) => {
+  const { tenantId } = params<{ tenantId: string }>(req);
+  const { confirmName, reason } = body<{ confirmName: string; reason?: string }>(req);
+  const id = new Types.ObjectId(tenantId);
+
+  const plan = await workspaceDeletionService.plan(id);
+  await recordAudit(req, {
+    action: 'platform.workspace_deleted',
+    targetTenantId: id,
+    targetLabel: plan.name,
+    oldValue: { name: plan.name, vertical: plan.vertical, rows: plan.totalRows, reason: reason ?? '' },
+  });
+
+  const actor = actorFrom(req);
+  ok(res, await workspaceDeletionService.remove(id, confirmName, { id: actor.id, name: actor.name }));
+});
+
 export const createWorkspace = asyncHandler(async (req: Request, res: Response) => {
   const input = body<{
     businessName: string;
+    vertical?: string;
     ownerUserId?: string;
     owner?: { name: string; email: string; phone?: string; password: string };
     planId?: string;
@@ -604,6 +637,13 @@ export const createWorkspace = asyncHandler(async (req: Request, res: Response) 
     storeName?: string;
     storeCode?: string;
   }>(req);
+
+  // Which POS this workspace runs, checked against the live catalogue exactly
+  // as the customer-facing path checks it - an unknown code, one that is not
+  // offered, or one with no module behind it is refused here rather than
+  // creating a workspace nobody can open. Omitted means the default, so an
+  // older client that sends no vertical behaves as it always did.
+  const vertical = await posCatalogService.resolveForNewWorkspace(input.vertical ?? DEFAULT_POS_VERTICAL);
 
   const { UserModel: Users, hashPassword } = await import('../../models/User');
   const { createSystemRoles } = await import('../roles/roles.defaults');
@@ -660,7 +700,7 @@ export const createWorkspace = asyncHandler(async (req: Request, res: Response) 
   await TenantModel.create({
     _id: tenantId,
     accountId,
-    vertical: DEFAULT_POS_VERTICAL,
+    vertical,
     name: input.businessName,
     slug: uniqueSlug(input.businessName),
     ownerUserId: ownerId,

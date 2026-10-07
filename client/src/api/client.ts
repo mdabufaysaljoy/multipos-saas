@@ -164,7 +164,13 @@ export async function patch<T>(url: string, body?: unknown): Promise<T> {
   return res.data.data;
 }
 
-export async function del<T>(url: string): Promise<T> {
-  const res = await http.delete<ApiEnvelope<T>>(url);
+/**
+ * `body` is optional and almost always absent. A DELETE that needs one is a
+ * delete that wants confirming - the workspace delete retypes the name - and
+ * axios sends it as the request body, which is where the server's validator
+ * reads it from.
+ */
+export async function del<T>(url: string, body?: unknown): Promise<T> {
+  const res = await http.delete<ApiEnvelope<T>>(url, body === undefined ? undefined : { data: body });
   return res.data.data;
 }

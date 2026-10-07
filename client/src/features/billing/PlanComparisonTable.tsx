@@ -29,7 +29,17 @@ export function PlanComparisonTable({
        absolutely positioned) inside this scroll box. Without it they were
        placed against the page and stretched it to the table's full unclipped
        height - a long blank scroll below the app on the subscription page. */
-    <div className="relative max-h-[75vh] overflow-auto rounded-lg border">
+    /* The surface AND the ink are stated here rather than inherited. The cells
+       paint themselves with app tokens (`bg-muted`, `bg-background`), so the
+       text has to come from the same set or the two disagree: on the public
+       pricing page this table sits inside a shell that sets `text-white` for
+       its dark sections, and every label and figure that merely inherited a
+       colour was white on a white card - invisible. Only the parts with an
+       explicit colour of their own (`text-muted-foreground`, `text-success`)
+       survived, which is exactly what the page looked like. Stating it is a
+       no-op on the subscription page, where the inherited value was already
+       this. */
+    <div className="relative max-h-[75vh] overflow-auto rounded-lg border bg-background text-foreground">
       <table className="w-full min-w-[560px] border-collapse text-sm">
         <thead className="sticky top-0 z-20">
           <tr>

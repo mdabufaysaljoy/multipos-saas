@@ -4,7 +4,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
 import { format } from 'date-fns';
-import { Building2, CircleDollarSign, LogOut, Pause, Play, Plus, Users, Wallet } from 'lucide-react';
+import { Building2, CircleDollarSign, Clock, LogOut, Pause, Play, Plus, Trash2, Users, Wallet } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -60,6 +60,9 @@ interface TenantRow {
 /** Plans an admin may put a workspace of this POS type on: its own plans and shared ones. */
 const plansForPosType = (plans: SubscriptionPlan[] | undefined, posType: string) =>
   (plans ?? []).filter((plan) => !plan.posProductCode || plan.posProductCode === posType);
+
+/** What the POS picker starts on, until the admin chooses otherwise. */
+const DEFAULT_VERTICAL = 'clothing';
 
 /**
  * Platform administration.
@@ -200,6 +203,8 @@ function TenantsTab() {
   const [term, setTerm] = React.useState('');
   const search = useDebounced(term, 300);
   const [assigning, setAssigning] = React.useState<TenantRow | null>(null);
+  const [granting, setGranting] = React.useState<TenantRow | null>(null);
+  const [deleting, setDeleting] = React.useState<TenantRow | null>(null);
   const [funding, setFunding] = React.useState<TenantRow | null>(null);
   const [suspending, setSuspending] = React.useState<TenantRow | null>(null);
 
@@ -290,6 +295,14 @@ function TenantsTab() {
             <Plus />
             Subscription
           </Button>
+          <Button variant="outline" size="sm" onClick={() => setGranting(row)}>
+            <Clock />
+            Grant days
+          </Button>
+          <Button variant="outline" size="sm" className="text-destructive hover:bg-destructive/10 hover:text-destructive" onClick={() => setDeleting(row)}>
+            <Trash2 />
+            Delete
+          </Button>
           <Button variant="outline" size="sm" onClick={() => setFunding(row)}>
             <Wallet />
             Wallet
@@ -345,6 +358,8 @@ function TenantsTab() {
         onClose={() => setFunding(null)}
       />
       <AssignSubscriptionDialog tenant={assigning} onClose={() => setAssigning(null)} />
+      <GrantAccessDialog tenant={granting} onClose={() => setGranting(null)} />
+      <DeleteWorkspaceDialog tenant={deleting} onClose={() => setDeleting(null)} />
 
       <ConfirmDialog
         open={Boolean(suspending)}
@@ -370,30 +385,46 @@ function TenantsTab() {
 function CreateWorkspaceDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (open: boolean) => void }) {
   const queryClient = useQueryClient();
   const navigate = useNavigate();
-  const [form, setForm] = React.useState({
+  const blank = {
     businessName: '',
+    vertical: DEFAULT_VERTICAL,
     ownerName: '',
     ownerEmail: '',
     ownerPhone: '',
     password: '',
     planId: 'trial',
     storeName: '',
-  });
+  };
+  const [form, setForm] = React.useState(blank);
 
   const { data: allPlans } = useQuery({ queryKey: ['platform', 'plans'], queryFn: platformApi.allPlans, enabled: open });
-  // Workspaces created here are Clothing workspaces.
-  const plans = React.useMemo(() => plansForPosType(allPlans, 'clothing'), [allPlans]);
+  // Only the POS types that can actually be opened today. The server checks the
+  // chosen one against the same catalogue, so a stale list here cannot create a
+  // workspace nobody can sign into.
+  const { data: posProducts } = useQuery({ queryKey: ['platform', 'pos-products'], queryFn: platformApi.posProducts, enabled: open });
+  const posOptions = React.useMemo(
+    () => (posProducts ?? []).filter((product) => product.status === 'active' && product.moduleAvailable !== false),
+    [posProducts],
+  );
+  // Plans follow the chosen POS: a Pharmacy workspace must not be offered a
+  // Clothing plan. Picking a different POS clears a plan that no longer applies.
+  const plans = React.useMemo(() => plansForPosType(allPlans, form.vertical), [allPlans, form.vertical]);
+  React.useEffect(() => {
+    if (form.planId !== 'trial' && !plans.some((plan) => plan._id === form.planId)) {
+      setForm((f) => ({ ...f, planId: 'trial' }));
+    }
+  }, [plans, form.planId]);
 
   React.useEffect(() => {
-    if (open) {
-      setForm({ businessName: '', ownerName: '', ownerEmail: '', ownerPhone: '', password: '', planId: 'trial', storeName: '' });
-    }
+    if (open) setForm(blank);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
   const create = useMutation({
     mutationFn: () =>
       platformApi.createWorkspace({
         businessName: form.businessName.trim(),
+        vertical: form.vertical,
         owner: {
           name: form.ownerName.trim(),
           email: form.ownerEmail.trim(),
@@ -430,9 +461,25 @@ function CreateWorkspaceDialog({ open, onOpenChange }: { open: boolean; onOpenCh
         </DialogHeader>
 
         <div className="space-y-3">
-          <div className="space-y-1.5">
-            <Label>Business name</Label>
-            <Input autoFocus value={form.businessName} onChange={(e) => setForm((f) => ({ ...f, businessName: e.target.value }))} />
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div className="space-y-1.5">
+              <Label>Business name</Label>
+              <Input autoFocus value={form.businessName} onChange={(e) => setForm((f) => ({ ...f, businessName: e.target.value }))} />
+            </div>
+            <div className="space-y-1.5">
+              <Label>POS type</Label>
+              <Select value={form.vertical} onValueChange={(v) => setForm((f) => ({ ...f, vertical: v }))}>
+                <SelectTrigger><SelectValue placeholder="Choose a POS" /></SelectTrigger>
+                <SelectContent>
+                  {posOptions.map((product) => (
+                    <SelectItem key={product.code} value={product.code}>
+                      {product.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-muted-foreground">Fixed once the workspace exists.</p>
+            </div>
           </div>
 
           <div className="grid gap-3 sm:grid-cols-2">
@@ -480,6 +527,245 @@ function CreateWorkspaceDialog({ open, onOpenChange }: { open: boolean; onOpenCh
           <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
           <Button disabled={!valid} loading={create.isPending} onClick={() => create.mutate()}>
             Create workspace
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/**
+ * Deleting a workspace, for good.
+ *
+ * It shows what would go BEFORE asking, because an empty workspace somebody
+ * opened by mistake and one holding three thousand sales are not the same
+ * decision, and an admin should not have to guess which one they are looking
+ * at. The name is retyped to confirm - and checked again on the server, which
+ * is what actually guards the data.
+ */
+function DeleteWorkspaceDialog({ tenant, onClose }: { tenant: TenantRow | null; onClose: () => void }) {
+  const queryClient = useQueryClient();
+  const [confirmName, setConfirmName] = React.useState('');
+  const [reason, setReason] = React.useState('');
+
+  React.useEffect(() => {
+    setConfirmName('');
+    setReason('');
+  }, [tenant]);
+
+  const { data: plan, isLoading } = useQuery({
+    queryKey: ['platform', 'deletion-plan', tenant?._id],
+    queryFn: () => platformApi.workspaceDeletionPlan(tenant!._id),
+    enabled: Boolean(tenant),
+  });
+
+  const remove = useMutation({
+    mutationFn: () => platformApi.deleteWorkspace(tenant!._id, { confirmName: confirmName.trim(), ...(reason.trim() ? { reason: reason.trim() } : {}) }),
+    onSuccess: (result) => {
+      toast.success(`${result.name} deleted`, { description: `${result.deletedRows.toLocaleString()} records removed.` });
+      onClose();
+      void queryClient.invalidateQueries({ queryKey: ['platform'] });
+    },
+    onError: (err) => toast.error(err instanceof ApiError ? err.message : 'Could not delete the workspace'),
+  });
+
+  const nameMatches = Boolean(tenant) && confirmName.trim() === tenant!.name.trim();
+
+  return (
+    <Dialog open={Boolean(tenant)} onOpenChange={(open) => !open && onClose()}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle className="text-destructive">Delete this workspace</DialogTitle>
+          <DialogDescription>
+            Permanently removes <strong>{tenant?.name}</strong> and everything in it. This cannot be undone.
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="space-y-4">
+          {isLoading && <p className="text-sm text-muted-foreground">Counting what would go…</p>}
+
+          {plan && (
+            <>
+              <div className="rounded-md border border-destructive/30 bg-destructive/5 p-3">
+                <p className="text-sm font-semibold text-destructive">
+                  {plan.totalRows.toLocaleString()} record{plan.totalRows === 1 ? '' : 's'} will be deleted
+                </p>
+                <ul className="mt-2 grid grid-cols-2 gap-x-4 gap-y-0.5 text-xs text-muted-foreground">
+                  {plan.willDelete.slice(0, 10).map((row) => (
+                    <li key={row.model} className="flex justify-between gap-2">
+                      <span className="truncate">{row.model}</span>
+                      <span className="tabular">{row.count.toLocaleString()}</span>
+                    </li>
+                  ))}
+                </ul>
+                {plan.willDelete.length > 10 && (
+                  <p className="mt-1.5 text-xs text-muted-foreground">and {plan.willDelete.length - 10} more…</p>
+                )}
+              </div>
+
+              <p className="text-xs leading-5 text-muted-foreground">
+                The account, its wallet and the financial record — invoices, receipts and the wallet ledger — are kept.
+                {plan.isLastWorkspace
+                  ? ' This is the account’s only workspace, so the owner’s login is retired with it.'
+                  : ` The account keeps ${plan.siblingWorkspaces} other workspace${plan.siblingWorkspaces === 1 ? '' : 's'}, and the owner moves to one of them.`}
+              </p>
+            </>
+          )}
+
+          <div className="space-y-1.5">
+            <Label htmlFor="delete-confirm">
+              Type <span className="font-semibold text-foreground">{tenant?.name}</span> to confirm
+            </Label>
+            <Input id="delete-confirm" value={confirmName} onChange={(e) => setConfirmName(e.target.value)} autoComplete="off" />
+          </div>
+
+          <div className="space-y-1.5">
+            <Label>Reason (optional)</Label>
+            <Input value={reason} onChange={(e) => setReason(e.target.value)} placeholder="Abandoned signup, duplicate workspace" />
+          </div>
+        </div>
+
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button variant="destructive" disabled={!nameMatches || remove.isPending} loading={remove.isPending} onClick={() => remove.mutate()}>
+            <Trash2 />
+            Delete permanently
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/** The day counts a grant is offered in. Anything else is a full subscription. */
+const GRANT_DAY_OPTIONS = [1, 2, 3, 5, 7] as const;
+
+/**
+ * A few days of access, on the house.
+ *
+ * For the shop whose payment has not cleared, who is mid-evaluation, or who
+ * rang up at closing time with an expired plan. It is deliberately separate
+ * from "Assign a subscription": that one bills whole plan periods and records
+ * the money collected, this one records no payment at all.
+ *
+ * It is the SAME endpoint underneath - a period with an explicit end date and
+ * no auto-renew - because a grant has to carry a plan to be worth anything.
+ * Entitlements come entirely from the plan snapshot, so access with no plan
+ * behind it would unlock a POS with every feature flag off and every limit at
+ * zero. The admin therefore picks which plan the days run on, and the
+ * workspace gets exactly that plan until the clock runs out.
+ *
+ * It works from any starting point - no subscription, expired, or one already
+ * running - because the server closes whatever was there and opens this.
+ */
+function GrantAccessDialog({ tenant, onClose }: { tenant: TenantRow | null; onClose: () => void }) {
+  const queryClient = useQueryClient();
+  const [planId, setPlanId] = React.useState('');
+  const [days, setDays] = React.useState<number>(7);
+  const [notes, setNotes] = React.useState('');
+
+  const { data: allPlans } = useQuery({ queryKey: ['platform', 'plans'], queryFn: platformApi.allPlans, enabled: Boolean(tenant) });
+  const plans = React.useMemo(() => plansForPosType(allPlans, tenant?.vertical ?? 'clothing'), [allPlans, tenant?.vertical]);
+
+  React.useEffect(() => {
+    if (!tenant) return;
+    setPlanId('');
+    setDays(7);
+    setNotes('');
+  }, [tenant]);
+
+  // Counted from now, not from midnight: a grant made at 4pm should still be
+  // good at 4pm on its last day rather than expiring that evening.
+  const endsAt = React.useMemo(() => {
+    const end = new Date();
+    end.setDate(end.getDate() + days);
+    return end;
+  }, [days]);
+
+  const grant = useMutation({
+    mutationFn: () =>
+      platformApi.assignSubscription({
+        tenantId: tenant!._id,
+        planId,
+        endDate: endsAt.toISOString(),
+        status: 'active',
+        // Never renews: it lapses on its own, which is the point of a grant.
+        autoRenew: false,
+        notes: notes.trim() || `Complimentary ${days}-day access granted by platform admin`,
+      }),
+    onSuccess: () => {
+      toast.success(`${days} day${days === 1 ? '' : 's'} of access granted`);
+      onClose();
+      void queryClient.invalidateQueries({ queryKey: ['platform'] });
+    },
+    onError: (err) => toast.error(err instanceof ApiError ? err.message : 'Could not grant access'),
+  });
+
+  return (
+    <Dialog open={Boolean(tenant)} onOpenChange={(open) => !open && onClose()}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Grant temporary access</DialogTitle>
+          <DialogDescription>
+            Opens the POS for <strong>{tenant?.name}</strong> for a few days, with no payment recorded. Works whether the
+            workspace has no subscription, an expired one, or one already running — this supersedes it.
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="space-y-4">
+          <div className="space-y-1.5">
+            <Label>How long</Label>
+            <div className="flex flex-wrap gap-2">
+              {GRANT_DAY_OPTIONS.map((option) => (
+                <Button
+                  key={option}
+                  type="button"
+                  size="sm"
+                  variant={days === option ? 'default' : 'outline'}
+                  onClick={() => setDays(option)}
+                >
+                  {option} day{option === 1 ? '' : 's'}
+                </Button>
+              ))}
+            </div>
+            <p className="text-xs text-muted-foreground">
+              Ends {endsAt.toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })}.
+            </p>
+          </div>
+
+          <div className="space-y-1.5">
+            <Label>Plan the access runs on</Label>
+            <Select value={planId} onValueChange={setPlanId}>
+              <SelectTrigger>
+                <SelectValue placeholder="Choose a plan" />
+              </SelectTrigger>
+              <SelectContent>
+                {(plans ?? []).map((plan) => (
+                  <SelectItem key={plan._id} value={plan._id}>
+                    {plan.name} — {formatPlanPrice(plan.priceMinor, plan.currency)}/{plan.interval === 'yearly' ? 'year' : 'month'}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <p className="text-xs text-muted-foreground">
+              Decides the features and limits during the grant. Nothing is charged.
+            </p>
+          </div>
+
+          <div className="space-y-1.5">
+            <Label>Reason (optional)</Label>
+            <Input value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Payment pending, extended over the weekend" />
+          </div>
+        </div>
+
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button disabled={!planId || grant.isPending} loading={grant.isPending} onClick={() => grant.mutate()}>
+            Grant {days} day{days === 1 ? '' : 's'}
           </Button>
         </DialogFooter>
       </DialogContent>

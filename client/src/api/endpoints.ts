@@ -690,6 +690,23 @@ export const platformApi = {
   unassignedUsers: () => get<{ _id: string; name: string; email: string }[]>('/platform/users/unassigned'),
   updateUser: (id: string, body: Record<string, unknown>) => patch<Record<string, unknown>>(`/platform/users/${id}`, body),
   createWorkspace: (body: Record<string, unknown>) => post<Record<string, unknown>>('/platform/workspaces', body),
+  /** What deleting a workspace would remove. Changes nothing. */
+  workspaceDeletionPlan: (tenantId: string) =>
+    get<{
+      tenantId: string;
+      name: string;
+      vertical: string;
+      siblingWorkspaces: number;
+      willDelete: { model: string; count: number }[];
+      totalRows: number;
+      willKeep: { model: string; count: number }[];
+      isLastWorkspace: boolean;
+    }>(`/platform/workspaces/${tenantId}/deletion-plan`),
+  deleteWorkspace: (tenantId: string, body: { confirmName: string; reason?: string }) =>
+    del<{ tenantId: string; name: string; deletedRows: number; keptRows: number; owner: string }>(
+      `/platform/workspaces/${tenantId}`,
+      body,
+    ),
 
   /** Workspace-scoped management. The tenant is always explicit in the URL. */
   ws: (tenantId: string) => ({

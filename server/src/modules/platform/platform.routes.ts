@@ -1,6 +1,7 @@
 import * as emailNotifications from './emailNotifications.controller';
 import * as paymentDevices from './paymentDevices.controller';
 import { isProd } from '../../config/env';
+import { POS_PRODUCT_CODE_PATTERN } from '../../config/verticals';
 import rateLimit from 'express-rate-limit';
 import { accountDocumentParams, accountListQuerySchema, accountParams, supportInvoiceQuerySchema, supportPaymentQuerySchema, supportReasonQuerySchema, supportReceiptQuerySchema, supportStatementQuerySchema, supportTopUpQuerySchema, supportWalletQuerySchema, walletAdjustmentSchema, walletReversalSchema, accountTransactionParams } from './accountsSupport.validators';
 import { Router } from 'express';
@@ -202,6 +203,12 @@ router.post(
   validate({
     body: z.object({
       businessName: z.string().trim().min(2).max(160),
+      // Which POS the workspace runs. Optional so an older client that does not
+      // send one still works, and the handler falls back to the default - but a
+      // value sent here is honoured and checked against the live catalogue,
+      // which is the whole point: every workspace made from this panel used to
+      // come out Clothing whatever the admin intended.
+      vertical: z.string().trim().regex(POS_PRODUCT_CODE_PATTERN, 'Unknown POS type').optional(),
       // Ids are checked for shape here, so a malformed one is a 422 rather
       // than a cast error deeper in the handler.
       ownerUserId: z.string().regex(/^[a-f0-9]{24}$/i, 'Invalid user id').optional(),
@@ -220,6 +227,26 @@ router.post(
     }),
   }),
   controller.createWorkspace,
+);
+
+// Deleting a workspace outright. Two calls on purpose: the panel shows what
+// would go before it asks, because an empty workspace somebody opened by
+// mistake and one holding three thousand sales are different decisions.
+router.get(
+  '/workspaces/:tenantId/deletion-plan',
+  validate({ params: z.object({ tenantId: objectId }) }),
+  controller.workspaceDeletionPlan,
+);
+router.delete(
+  '/workspaces/:tenantId',
+  adminActionLimiter,
+  validate({
+    params: z.object({ tenantId: objectId }),
+    // The name is retyped and checked server-side: the dialog is not what
+    // stands between a mis-click and a shop's data.
+    body: z.object({ confirmName: z.string().trim().min(1).max(160), reason: z.string().trim().max(300).optional() }).strict(),
+  }),
+  controller.deleteWorkspace,
 );
 
 router.get('/subscriptions', validate({ query: listQuery }), controller.listSubscriptions);
