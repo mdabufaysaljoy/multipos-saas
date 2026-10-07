@@ -60,13 +60,19 @@ const TICKET_AUDIENCE = 'password-reset-ticket';
 const MAX_IDENTITIES = 10;
 
 /**
- * The one answer the request step ever gives.
+ * What the request step says when the address IS registered.
  *
- * Saying "no such account" here would turn the endpoint into a register of who
- * banks with us. The wording is deliberately about what WILL happen, not about
- * what was found.
+ * An unregistered one is told so plainly - see `request`. That is a deliberate
+ * product decision with a real cost, written down here so nobody has to guess
+ * whether it was an oversight: the endpoint can now be used to find out which
+ * addresses have accounts. Per-IP rate limiting is what stands between that
+ * and a usable customer list, so the limiter on this route is not decoration
+ * and must not be loosened.
  */
-const GENERIC_REQUEST_MESSAGE = 'If the account exists, a verification code has been sent.';
+const SENT_MESSAGE = 'A verification code has been sent to your email.';
+
+/** Said when the address is not registered. */
+const NOT_FOUND_MESSAGE = 'No account was found with that email address.';
 
 export interface RequestResetResult {
   message: string;
@@ -117,17 +123,23 @@ interface TicketPayload {
 
 class PasswordResetService {
   /**
-   * Step 1. Always answers the same way.
+   * Step 1. Sends a code, or says the address is not registered.
    *
-   * An unknown address is not an error and leaves no row: it simply does the
-   * same amount of nothing, and says the same sentence. A known address that is
-   * asking too often IS told to wait - a cooldown is about this mailbox, which
-   * the person asking already controls, so it reveals nothing they do not know.
+   * An unknown address is refused with a 404 and NOTHING ELSE HAPPENS: no mail
+   * is sent, no code is generated and no row is written. The refusal is the
+   * whole of it.
+   *
+   * This tells an anonymous caller whether an address has an account here,
+   * which is a trade the product has chosen: a shopkeeper who mistypes their
+   * email should be told, rather than left waiting for a code that was never
+   * coming. The mitigation that remains is the per-IP limiter on the route -
+   * five requests per fifteen minutes in production - so enumerating a list of
+   * addresses is slow enough not to be worth doing.
    */
   async request(rawEmail: string, meta: { ip?: string } = {}): Promise<RequestResetResult> {
     const email = rawEmail.trim().toLowerCase();
     const shape: RequestResetResult = {
-      message: GENERIC_REQUEST_MESSAGE,
+      message: SENT_MESSAGE,
       expiresInMinutes: CODE_TTL_MINUTES,
       resendAfterSeconds: RESEND_COOLDOWN_SECONDS,
       codeLength: CODE_LENGTH,
@@ -135,9 +147,12 @@ class PasswordResetService {
 
     // A deactivated or deleted identity cannot be signed into, so resetting its
     // password would be pointless; if EVERY identity on the address is in that
-    // state the address behaves, correctly, like one that does not exist.
+    // state the address is treated as unregistered - which it effectively is,
+    // and saying "deactivated" instead would leak more, not less.
     const identities = await UserModel.find({ email, deletedAt: null, isActive: true }).select('_id').limit(MAX_IDENTITIES).lean();
-    if (identities.length === 0) return shape;
+    if (identities.length === 0) {
+      throw ApiError.notFound(NOT_FOUND_MESSAGE, { reason: 'ACCOUNT_NOT_FOUND', field: 'email' });
+    }
 
     const now = Date.now();
     const recent = await PasswordResetCodeModel.find({ email, createdAt: { $gte: new Date(now - 60 * 60 * 1000) } })

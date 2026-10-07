@@ -49,22 +49,40 @@ Outside production the API also returns the code as `devCode`, because a develop
 has SMTP configured and a reset nobody can complete would make the flow untestable. `isProd` gates
 it, so a real deployment never returns a code to anyone.
 
-## 3. Not revealing who has an account
+## 3. An unregistered address is told so
 
-Step 1 answers the **same sentence** for a registered and an unregistered address:
+Step 1 refuses an address that has no account:
 
-> If the account exists, a verification code has been sent.
+> No account was found with that email address.
 
-The responses are byte-identical apart from the development-only `devCode`. An unknown address leaves
-no row behind and sends no mail. A delivery failure is logged and swallowed rather than reported,
-because "the gateway refused" for one address and silence for another would be exactly the oracle this
-avoids. Step 2 gives a wrong code and an unknown address the same refusal.
+**This is a deliberate trade, and it has a real cost.** The endpoint can be used to find out which
+addresses have accounts here, which is worth something to anyone running a phishing or
+credential-stuffing campaign. It was chosen anyway, because the alternative leaves a shopkeeper who
+mistyped their own email staring at a code that was never coming, with nothing on screen to explain
+why.
 
-Nothing in any response carries a user id, an account id, a workspace name or a role. The masked
-address (`s****t@example.com`) appears only **after** the right code was typed.
+What that leaves as the mitigation is **rate limiting**, so it is no longer decoration:
 
-A cooldown message *is* returned plainly — it concerns a mailbox the person asking already controls,
-so it tells them nothing they do not know.
+| | production |
+|---|---|
+| `POST /password/forgot` per IP | 5 per 15 minutes |
+| `POST /password/verify-code` and `/password/reset` per IP | 30 per 15 minutes |
+
+Harvesting a list at five addresses per quarter hour is slow enough not to be worth doing. **Do not
+loosen the forgot-password limiter**; it is the only thing standing between this endpoint and a
+usable customer list.
+
+Refusing is the **whole** of what happens: no mail is sent, no code is generated and no row is
+written. Otherwise a stranger could use the form to send mail to any address they liked.
+
+Three things stay quiet on purpose:
+
+- **Step 2 does not distinguish** a wrong code from an unknown address. It must not, or it becomes a
+  way to guess codes with feedback.
+- **A deactivated account reads as unregistered.** Saying "that account is deactivated" would leak
+  more than saying nothing.
+- **No response carries** a user id, an account id, a workspace name or a role. The masked address
+  (`s****t@example.com`) appears only *after* the right code was typed.
 
 ## 4. The ticket
 
@@ -117,7 +135,7 @@ ever travels in a URL where it could reach browser history, a proxy log or a ref
 
 | | |
 |---|---|
-| `scripts/smoke-test.mjs` | the flow over HTTP: the link on the login screen, generic responses, wrong/right codes, attempt limits, the cooldown, old password dead, new password working, bystanders untouched, ticket/token separation, validation |
+| `scripts/smoke-test.mjs` | the flow over HTTP: the link on the login screen, an unregistered address refused, wrong/right codes, attempt limits, the cooldown, old password dead, new password working, bystanders untouched, ticket/token separation, validation |
 | `server/src/seed/passwordReset.check.ts` | what needs the clock moved: expiry, supersession, the cooldown, single use, and that a reset covers every identity on the address and no one else |
 
 The clock-dependent cases are model-level on purpose: over HTTP they would mean sleeping a minute per

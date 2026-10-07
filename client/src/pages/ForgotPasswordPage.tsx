@@ -86,7 +86,13 @@ export function ForgotPasswordPage() {
 
   const busy = scene === 'scanning';
 
-  /** Step 1, and the resend. Advances on any answer, because every answer is the same. */
+  /**
+   * Step 1, and the resend.
+   *
+   * It only advances when the server confirms a code went out. An address with
+   * no account is refused with a 404 and the screen stays here showing why -
+   * being told plainly beats waiting for a code that was never coming.
+   */
   const requestCode = async (address: string) => {
     setFormError(null);
     setScene('scanning');
@@ -102,9 +108,17 @@ export function ForgotPasswordPage() {
       window.setTimeout(() => setScene('idle'), 620);
       return true;
     } catch (error) {
-      // A cooldown or an IP rate limit is a real refusal and is shown as one.
+      // An unknown address, a cooldown or an IP rate limit are all real
+      // refusals and are shown as such.
+      const message = errorText(error, 'Could not send a code. Check your connection and try again.');
       setScene('error');
-      setFormError(errorText(error, 'Could not send a code. Check your connection and try again.'));
+      setFormError(message);
+      // A refusal about the ADDRESS belongs on the address field, so it is
+      // marked and focused rather than left for the person to hunt for.
+      if (error instanceof ApiError && error.status === 404) {
+        emailForm.setError('email', { message });
+        emailForm.setFocus('email');
+      }
       return false;
     }
   };
@@ -193,9 +207,12 @@ export function ForgotPasswordPage() {
 
       {step === 'code' && (
         <>
+          {/* This step is only reached once the server has confirmed the
+              account and sent the code, so it says so plainly and names the
+              address it went to. */}
           <AuthHeading
             title="Enter your code"
-            copy={`If an account uses that address, a ${6}-digit code is on its way. It expires in ${expiresInMinutes} minutes.`}
+            copy={`A 6-digit code is on its way to ${email}. It expires in ${expiresInMinutes} minutes.`}
           />
           <form onSubmit={codeForm.handleSubmit(onCode)} className="space-y-5" noValidate>
             {banner}
@@ -257,6 +274,12 @@ export function ForgotPasswordPage() {
                 Use a different email
               </Button>
             </div>
+
+            {/* The account is known to exist by now, so the remaining reasons
+                a code has not arrived are the mailbox, not the address. */}
+            <p className="pt-1 text-center text-[0.8125rem] leading-6 text-slate-500">
+              No code after a minute? Check your spam folder, or send a new one.
+            </p>
           </form>
         </>
       )}
