@@ -68,20 +68,63 @@ export const optionalEmailAddress = emailAddress.or(z.literal('')).optional().de
 /**
  * A phone number.
  *
- * Deliberately permissive about punctuation - people write +880, spaces and
- * dashes - but it must contain a plausible run of DIGITS. The previous
- * `z.string().max(32)` accepted "abcdefghij" and "<script>x" as phone numbers.
+ * Permissive about how it is WRITTEN - people type +880, spaces, dashes and
+ * brackets - and strict about what it contains. Two holes this closes:
+ *
+ *  - A dot used to be allowed, so "01700.11122" was accepted as a phone
+ *    number. A phone number is not a decimal, and a field that takes one is a
+ *    field somebody will put a price in.
+ *  - There was a lower bound on digits but no upper one, so a 21-digit number
+ *    was stored happily. E.164 caps a real number at 15.
+ *
+ * Seven is the shortest national number still in use; fifteen is the
+ * international maximum. Between them sits every number a shop will ever type,
+ * including an overseas supplier's.
  */
+export const PHONE_MIN_DIGITS = 7;
+export const PHONE_MAX_DIGITS = 15;
+
 export const phoneNumber = z
   .string()
   .trim()
   .max(32, 'Phone number is too long')
-  .refine((value) => (value.match(/\d/g) ?? []).length >= 6, {
-    message: 'Enter a valid phone number',
+  .refine((value) => /^[+()\-\s\d]+$/.test(value), {
+    message: 'A phone number may only contain digits, spaces and + ( ) -',
   })
-  .refine((value) => /^[+()\-\s\d.]+$/.test(value), {
-    message: 'A phone number may only contain digits, spaces and + ( ) - .',
+  .refine((value) => (value.match(/\d/g) ?? []).length >= PHONE_MIN_DIGITS, {
+    message: `Enter a complete phone number (at least ${PHONE_MIN_DIGITS} digits)`,
+  })
+  .refine((value) => (value.match(/\d/g) ?? []).length <= PHONE_MAX_DIGITS, {
+    message: `A phone number cannot be longer than ${PHONE_MAX_DIGITS} digits`,
   });
+
+/**
+ * A person's name.
+ *
+ * Letters, spaces, and the three marks that appear inside real names: the
+ * hyphen in "Rahman-Khan", the apostrophe in "O'Brien", and the dot in "Md."
+ * - which is not a nicety here, it is how a very large share of the country
+ * writes their own name.
+ *
+ * `\p{L}` rather than `A-Za-z`, so Bangla, Arabic and every other script is a
+ * name too - and `\p{M}` with it, which is not optional: Bangla writes its
+ * vowels as COMBINING MARKS, so "আবু ফয়সাল" is letters and marks interleaved
+ * and a letters-only rule rejects most of the country's own names. Digits and
+ * symbols are still refused: a person is not "Rahman123", and a name field
+ * that accepts `<` is a name field somebody will put markup in.
+ *
+ * NOT for business, shop or supplier names. "A1 Traders" and "Shop 24/7" are
+ * real trading names, and refusing them would be refusing the truth.
+ */
+export const personName = (what = 'Name') =>
+  z
+    .string()
+    .trim()
+    .min(2, `${what} is required`)
+    .max(120, `${what} is too long`)
+    .refine((value) => /^[\p{L}][\p{L}\p{M}\s'.-]*$/u.test(value), {
+      message: `${what} may only contain letters, spaces and ' . -`,
+    });
 
 export const optionalPhoneNumber = phoneNumber.or(z.literal('')).optional().default('');
 
