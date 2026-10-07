@@ -28,6 +28,7 @@ import { PageHeader } from '@/components/PageHeader';
 import { PaymentInstructionsCard } from '@/features/platform/PaymentInstructionsCard';
 import { PaymentOperationsTab } from '@/features/platform/PaymentOperationsTab';
 import { PosProductsTab } from '@/features/platform/PosProductsTab';
+import { SiteSettingsTab } from '@/features/platform/SiteSettingsTab';
 import { PlansTab } from '@/features/platform/PlansTab';
 import { SearchInput, useDebounced } from '@/components/SearchInput';
 import { MoneyInput } from '@/components/MoneyInput';
@@ -159,15 +160,19 @@ export function PlatformPage() {
 
           <TabsContent value="settings">
             <Tabs defaultValue="payments">
-              <TabsList className="mb-3">
+              <TabsList className="mb-3 flex-wrap">
                 <TabsTrigger value="payments">Payment accounts</TabsTrigger>
                 <TabsTrigger value="integrations">SMS &amp; email</TabsTrigger>
+                <TabsTrigger value="website">Website</TabsTrigger>
               </TabsList>
               <TabsContent value="payments">
                 <PaymentInstructionsCard />
               </TabsContent>
               <TabsContent value="integrations">
                 <IntegrationsTab />
+              </TabsContent>
+              <TabsContent value="website">
+                <SiteSettingsTab />
               </TabsContent>
             </Tabs>
           </TabsContent>
