@@ -283,6 +283,10 @@ try {
   // The HTTP suite cannot reach these: there is deliberately no route that edits
   // an invoice or a ledger row, so the guards are checked at the model.
   await run(process.execPath, [TSX_CLI, 'server/src/seed/immutability.check.ts']);
+  // Nor these: a code that has expired, one superseded by a newer one and the
+  // resend cooldown all need the clock moved, which over HTTP would mean
+  // sleeping through a minute per assertion.
+  await run(process.execPath, [TSX_CLI, 'server/src/seed/passwordReset.check.ts']);
 } catch (error) {
   testFailure = error;
 } finally {

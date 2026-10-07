@@ -10,7 +10,9 @@ import type { ChangePasswordInput, LoginInput, RegisterInput, SelectLoginInput, 
 import { recordAudit } from '../../services/audit/audit.service';
 import { UserModel } from '../../models/User';
 import { verificationService } from '../../services/auth/verification.service';
+import { passwordResetService } from '../../services/auth/passwordReset.service';
 import type { ConfirmCodeInput, SendCodeInput } from './verification.validators';
+import type { ForgotPasswordInput, ResetPasswordInput, VerifyResetCodeInput } from './passwordReset.validators';
 
 const REFRESH_COOKIE = 'refreshToken';
 
@@ -111,6 +113,42 @@ export const changePassword = asyncHandler(async (req: Request, res: Response) =
   await authService.changePassword(req.auth.id, body<ChangePasswordInput>(req));
   clearRefreshCookie(res);
   ok(res, { message: 'Password updated. Please sign in again.' });
+});
+
+// ------------------------------------------------- forgotten password
+//
+// All three steps are public: the person cannot sign in, which is the point.
+// The security boundary is the emailed code and the ticket it earns, both
+// checked server-side, so nothing here reads anything the client asserts about
+// who it is.
+
+/**
+ * Step 1. Answers identically whether or not the address is registered, so the
+ * endpoint cannot be used to find out who has an account.
+ */
+export const forgotPassword = asyncHandler(async (req: Request, res: Response) => {
+  const { email } = body<ForgotPasswordInput>(req);
+  ok(res, await passwordResetService.request(email, { ip: req.ip ?? '' }));
+});
+
+/** Step 2. A right code earns a short-lived ticket; a wrong one says how many tries are left. */
+export const verifyPasswordResetCode = asyncHandler(async (req: Request, res: Response) => {
+  const { email, code } = body<VerifyResetCodeInput>(req);
+  ok(res, await passwordResetService.verify(email, code));
+});
+
+/**
+ * Step 3. Spends the ticket and sets the password.
+ *
+ * The refresh cookie is cleared because every session on the address was just
+ * revoked - leaving the browser holding a dead token would only produce a
+ * confusing failure on the next request.
+ */
+export const resetPassword = asyncHandler(async (req: Request, res: Response) => {
+  const { resetTicket, newPassword } = body<ResetPasswordInput>(req);
+  await passwordResetService.reset(resetTicket, newPassword);
+  clearRefreshCookie(res);
+  ok(res, { message: 'Password updated. Please sign in with your new password.' });
 });
 
 /** Verification status for the signed-in user: what is proven, what is not. */

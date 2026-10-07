@@ -185,6 +185,16 @@ export function LoginPage() {
               label="Password"
               icon={Lock}
               error={form.formState.errors.password?.message}
+              // The one way back in for somebody locked out. It sits on the
+              // password field because that is where they discover the problem.
+              labelAside={
+                <Link
+                  to="/forgot-password"
+                  className="rounded text-[0.8125rem] font-medium text-slate-400 outline-none transition-colors hover:text-cyan-300 focus-visible:ring-2 focus-visible:ring-indigo-400"
+                >
+                  Forgot password?
+                </Link>
+              }
               inputProps={{
                 type: showPassword ? 'text' : 'password',
                 autoComplete: 'current-password',

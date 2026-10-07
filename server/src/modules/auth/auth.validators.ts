@@ -2,10 +2,17 @@ import { POS_PRODUCT_CODE_PATTERN } from '../../config/verticals';
 import { z } from 'zod';
 import { emailAddress, objectId, optionalPhoneNumber, passwordCheck } from '../common/common.validators';
 
-const password = z
+/**
+ * THE password policy. Registration, the signed-in change and the forgotten-
+ * password reset all import this one schema, so there is never a second rule
+ * that accepts something the first would refuse.
+ */
+export const newPassword = z
   .string()
   .min(8, 'Password must be at least 8 characters')
   .max(128, 'Password is too long');
+
+const password = newPassword;
 
 const email = emailAddress;
 

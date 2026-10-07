@@ -6,6 +6,7 @@ import { validate } from '../../middleware/validate';
 import { confirmCodeSchema, sendCodeSchema } from './verification.validators';
 import * as controller from './auth.controller';
 import { changePasswordSchema, loginSchema, registerSchema, selectLoginSchema, switchWorkspaceSchema } from './auth.validators';
+import { forgotPasswordSchema, resetPasswordSchema, verifyResetCodeSchema } from './passwordReset.validators';
 
 const router = Router();
 
@@ -33,6 +34,37 @@ router.post('/refresh', controller.refresh);
 router.post('/logout', controller.logout);
 
 router.get('/me', authenticate, controller.me);
+
+/**
+ * Forgotten password: public, because the person cannot sign in.
+ *
+ * Two limiters, because the two halves are abused differently. Asking for a
+ * code costs the platform an email, so sending is capped tightly per IP on top
+ * of the per-address cooldown and hourly cap in the service. Answering a code
+ * is a guessing game, so it gets its own window - the per-code attempt counter
+ * stops five wrong guesses against one code, and this stops somebody cycling
+ * through fresh codes to keep guessing. Development is relaxed so the
+ * end-to-end suite, which runs the whole flow several times, is not throttled
+ * into looking like a product failure.
+ */
+const forgotPasswordLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: isProd ? 5 : 5_000,
+  standardHeaders: 'draft-7',
+  legacyHeaders: false,
+  message: { success: false, error: { code: 'TOO_MANY_REQUESTS', message: 'Too many password reset requests. Try again in a few minutes.' } },
+});
+const resetAttemptLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: isProd ? 30 : 5_000,
+  standardHeaders: 'draft-7',
+  legacyHeaders: false,
+  message: { success: false, error: { code: 'TOO_MANY_REQUESTS', message: 'Too many attempts. Try again in a few minutes.' } },
+});
+
+router.post('/password/forgot', forgotPasswordLimiter, validate({ body: forgotPasswordSchema }), controller.forgotPassword);
+router.post('/password/verify-code', resetAttemptLimiter, validate({ body: verifyResetCodeSchema }), controller.verifyPasswordResetCode);
+router.post('/password/reset', resetAttemptLimiter, validate({ body: resetPasswordSchema }), controller.resetPassword);
 
 /**
  * Switching mints a new token pair, so it is throttled like other token
