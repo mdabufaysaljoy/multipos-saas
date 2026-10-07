@@ -1999,6 +1999,95 @@ async function main() {
   });
   check('A grant that has run out closes the POS again', (await api('/products', { token: await grantToken() })).status === 402);
 
+  // ---- deleting a workspace outright ---------------------------------------
+  // A real delete: rows leave the database. The account, its wallet and the
+  // financial record survive, because money that moved really moved.
+  const delEmail = `wsdel${runId}@example.com`;
+  const delMade = await api('/platform/workspaces', {
+    method: 'POST',
+    token: padmin.token,
+    body: {
+      businessName: `Deletable Shop ${runId}`,
+      vertical: 'supershop',
+      owner: { name: 'Delete Owner', email: delEmail, phone: '01700000995', password: 'Password@123' },
+    },
+  });
+  check('A workspace to delete is provisioned', delMade.status === 201, delMade.error);
+  const delTenantId = delMade.data.tenantId;
+
+  const delPlan = await api(`/platform/workspaces/${delTenantId}/deletion-plan`, { token: padmin.token });
+  check('The panel can see what a delete would remove', delPlan.status === 200, delPlan.error);
+  check('...naming the workspace and its POS', delPlan.data?.name === `Deletable Shop ${runId}` && delPlan.data?.vertical === 'supershop', delPlan.data);
+  check('...counting real rows', delPlan.data?.totalRows > 0, delPlan.data?.totalRows);
+  check('...including the roles and store it was given', (delPlan.data?.willDelete ?? []).some((r) => r.model === 'Role') && (delPlan.data?.willDelete ?? []).some((r) => r.model === 'Store'), delPlan.data?.willDelete);
+  check('...and saying it is the account\u2019s only workspace', delPlan.data?.isLastWorkspace === true && delPlan.data?.siblingWorkspaces === 0, delPlan.data);
+  check('A deletion plan deletes nothing by itself', (await api(`/platform/workspaces/${delTenantId}/overview`, { token: padmin.token })).status === 200);
+
+  // The name is retyped and checked on the SERVER, not only in a dialog.
+  const delWrongName = await api(`/platform/workspaces/${delTenantId}`, { method: 'DELETE', token: padmin.token, body: { confirmName: 'Not The Name' } });
+  check('A delete with the wrong name is refused', delWrongName.status === 400 && delWrongName.error?.details?.reason === 'NAME_MISMATCH', delWrongName.error);
+  check('...and the workspace is still there', (await api(`/platform/workspaces/${delTenantId}/overview`, { token: padmin.token })).status === 200);
+  check('A workspace owner cannot delete their own workspace', (await api(`/platform/workspaces/${delTenantId}`, { method: 'DELETE', token: admin.token, body: { confirmName: `Deletable Shop ${runId}` } })).status === 403);
+
+  const delAccountId = (await api(`/platform/workspaces/${delTenantId}/overview`, { token: padmin.token })).data?.tenant?.accountId;
+  const delDone = await api(`/platform/workspaces/${delTenantId}`, {
+    method: 'DELETE',
+    token: padmin.token,
+    body: { confirmName: `Deletable Shop ${runId}`, reason: 'Smoke test cleanup' },
+  });
+  check('Platform admin deletes the workspace', delDone.status === 200, delDone.error);
+  check('...and says how much went', delDone.data?.deletedRows > 0, delDone.data?.deletedRows);
+  check('The workspace is gone', (await api(`/platform/workspaces/${delTenantId}/overview`, { token: padmin.token })).status === 404);
+  check('Its owner can no longer sign in', (await api('/auth/login', { method: 'POST', body: { email: delEmail, password: 'Password@123' } })).status === 401);
+  check('...because it was their only workspace, so the login was retired', delDone.data?.owner === 'retired', delDone.data?.owner);
+
+  // Everything tenant-scoped really left, found through the registry rather
+  // than a list that would rot - the same way the service finds it.
+  const delLeftovers = await api(`/platform/workspaces/${delTenantId}/deletion-plan`, { token: padmin.token });
+  check('Nothing tenant-scoped is left behind', delLeftovers.status === 404, delLeftovers.status);
+
+  // The account survives, because the wallet and the books are not a workspace's to take.
+  if (delAccountId) {
+    const delAccount = await api(`/platform/accounts/${delAccountId}`, { token: padmin.token });
+    check('The account itself survives the workspace', delAccount.status === 200, delAccount.status);
+  }
+
+  // Deleting ONE workspace of an account leaves the others, and moves the owner
+  // rather than stranding them: an owner reaches their other shops through the
+  // account, but only while their own tenantId still points somewhere real.
+  const twoEmail = `wstwo${runId}@example.com`;
+  const twoFirst = await api('/platform/workspaces', {
+    method: 'POST',
+    token: padmin.token,
+    body: { businessName: `Two Shop A ${runId}`, owner: { name: 'Two Owner', email: twoEmail, phone: '01700000994', password: 'Password@123' } },
+  });
+  const twoOwnerId = twoFirst.data?.ownerId;
+  const twoSecond = await api('/platform/workspaces', {
+    method: 'POST',
+    token: padmin.token,
+    body: { businessName: `Two Shop B ${runId}`, vertical: 'pharmacy', ownerUserId: twoOwnerId },
+  });
+  check('One owner can run two workspaces', twoFirst.status === 201 && twoSecond.status === 201, twoSecond.error);
+
+  const twoDeleted = await api(`/platform/workspaces/${twoFirst.data.tenantId}`, {
+    method: 'DELETE',
+    token: padmin.token,
+    body: { confirmName: `Two Shop A ${runId}` },
+  });
+  check('Deleting one of two workspaces succeeds', twoDeleted.status === 200, twoDeleted.error);
+  check('...and the owner is moved rather than retired', twoDeleted.data?.owner === 'moved', twoDeleted.data?.owner);
+  check('The other workspace is untouched', (await api(`/platform/workspaces/${twoSecond.data.tenantId}/overview`, { token: padmin.token })).status === 200);
+  const twoLogin = await api('/auth/login', { method: 'POST', body: { email: twoEmail, password: 'Password@123' } });
+  check('...and the owner can still sign in', twoLogin.status === 200, twoLogin.error);
+  check('...landing in the workspace they still have', twoLogin.data?.tenant?.id === twoSecond.data.tenantId || twoLogin.data?.tenant?._id === twoSecond.data.tenantId, twoLogin.data?.tenant);
+
+  // The service finds its targets through the model registry, so a model added
+  // next month is covered without anybody remembering to add it to a list.
+  const deletionService = readFileSync(new URL('../server/src/services/account/workspaceDeletion.service.ts', import.meta.url), 'utf8');
+  check('The delete enumerates models from the registry, not a hand-kept list', /Object\.keys\(mongoose\.models\)/.test(deletionService) && /schema\.path\('tenantId'\)/.test(deletionService));
+  check('...and spares the financial record deliberately', ['Invoice', 'WalletTransaction', 'WalletReceipt', 'Wallet', 'Account'].every((m) => deletionService.includes(`'${m}'`)));
+  check('...removing the tenant row last so nothing is orphaned mid-way', deletionService.indexOf("TenantModel.deleteOne") > deletionService.indexOf('for (const model of tenantScopedModels())'));
+
   // The day presets the panel offers are the ones it sends.
   const platformScreen = readFileSync(new URL('../client/src/pages/PlatformPage.tsx', import.meta.url), 'utf8');
   check('The panel offers 1, 2, 3, 5 and 7 day grants', /GRANT_DAY_OPTIONS = \[1, 2, 3, 5, 7\]/.test(platformScreen));

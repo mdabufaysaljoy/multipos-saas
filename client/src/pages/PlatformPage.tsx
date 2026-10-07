@@ -4,7 +4,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
 import { format } from 'date-fns';
-import { Building2, CircleDollarSign, Clock, LogOut, Pause, Play, Plus, Users, Wallet } from 'lucide-react';
+import { Building2, CircleDollarSign, Clock, LogOut, Pause, Play, Plus, Trash2, Users, Wallet } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -204,6 +204,7 @@ function TenantsTab() {
   const search = useDebounced(term, 300);
   const [assigning, setAssigning] = React.useState<TenantRow | null>(null);
   const [granting, setGranting] = React.useState<TenantRow | null>(null);
+  const [deleting, setDeleting] = React.useState<TenantRow | null>(null);
   const [funding, setFunding] = React.useState<TenantRow | null>(null);
   const [suspending, setSuspending] = React.useState<TenantRow | null>(null);
 
@@ -298,6 +299,10 @@ function TenantsTab() {
             <Clock />
             Grant days
           </Button>
+          <Button variant="outline" size="sm" className="text-destructive hover:bg-destructive/10 hover:text-destructive" onClick={() => setDeleting(row)}>
+            <Trash2 />
+            Delete
+          </Button>
           <Button variant="outline" size="sm" onClick={() => setFunding(row)}>
             <Wallet />
             Wallet
@@ -354,6 +359,7 @@ function TenantsTab() {
       />
       <AssignSubscriptionDialog tenant={assigning} onClose={() => setAssigning(null)} />
       <GrantAccessDialog tenant={granting} onClose={() => setGranting(null)} />
+      <DeleteWorkspaceDialog tenant={deleting} onClose={() => setDeleting(null)} />
 
       <ConfirmDialog
         open={Boolean(suspending)}
@@ -521,6 +527,111 @@ function CreateWorkspaceDialog({ open, onOpenChange }: { open: boolean; onOpenCh
           <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
           <Button disabled={!valid} loading={create.isPending} onClick={() => create.mutate()}>
             Create workspace
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/**
+ * Deleting a workspace, for good.
+ *
+ * It shows what would go BEFORE asking, because an empty workspace somebody
+ * opened by mistake and one holding three thousand sales are not the same
+ * decision, and an admin should not have to guess which one they are looking
+ * at. The name is retyped to confirm - and checked again on the server, which
+ * is what actually guards the data.
+ */
+function DeleteWorkspaceDialog({ tenant, onClose }: { tenant: TenantRow | null; onClose: () => void }) {
+  const queryClient = useQueryClient();
+  const [confirmName, setConfirmName] = React.useState('');
+  const [reason, setReason] = React.useState('');
+
+  React.useEffect(() => {
+    setConfirmName('');
+    setReason('');
+  }, [tenant]);
+
+  const { data: plan, isLoading } = useQuery({
+    queryKey: ['platform', 'deletion-plan', tenant?._id],
+    queryFn: () => platformApi.workspaceDeletionPlan(tenant!._id),
+    enabled: Boolean(tenant),
+  });
+
+  const remove = useMutation({
+    mutationFn: () => platformApi.deleteWorkspace(tenant!._id, { confirmName: confirmName.trim(), ...(reason.trim() ? { reason: reason.trim() } : {}) }),
+    onSuccess: (result) => {
+      toast.success(`${result.name} deleted`, { description: `${result.deletedRows.toLocaleString()} records removed.` });
+      onClose();
+      void queryClient.invalidateQueries({ queryKey: ['platform'] });
+    },
+    onError: (err) => toast.error(err instanceof ApiError ? err.message : 'Could not delete the workspace'),
+  });
+
+  const nameMatches = Boolean(tenant) && confirmName.trim() === tenant!.name.trim();
+
+  return (
+    <Dialog open={Boolean(tenant)} onOpenChange={(open) => !open && onClose()}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle className="text-destructive">Delete this workspace</DialogTitle>
+          <DialogDescription>
+            Permanently removes <strong>{tenant?.name}</strong> and everything in it. This cannot be undone.
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="space-y-4">
+          {isLoading && <p className="text-sm text-muted-foreground">Counting what would go…</p>}
+
+          {plan && (
+            <>
+              <div className="rounded-md border border-destructive/30 bg-destructive/5 p-3">
+                <p className="text-sm font-semibold text-destructive">
+                  {plan.totalRows.toLocaleString()} record{plan.totalRows === 1 ? '' : 's'} will be deleted
+                </p>
+                <ul className="mt-2 grid grid-cols-2 gap-x-4 gap-y-0.5 text-xs text-muted-foreground">
+                  {plan.willDelete.slice(0, 10).map((row) => (
+                    <li key={row.model} className="flex justify-between gap-2">
+                      <span className="truncate">{row.model}</span>
+                      <span className="tabular">{row.count.toLocaleString()}</span>
+                    </li>
+                  ))}
+                </ul>
+                {plan.willDelete.length > 10 && (
+                  <p className="mt-1.5 text-xs text-muted-foreground">and {plan.willDelete.length - 10} more…</p>
+                )}
+              </div>
+
+              <p className="text-xs leading-5 text-muted-foreground">
+                The account, its wallet and the financial record — invoices, receipts and the wallet ledger — are kept.
+                {plan.isLastWorkspace
+                  ? ' This is the account’s only workspace, so the owner’s login is retired with it.'
+                  : ` The account keeps ${plan.siblingWorkspaces} other workspace${plan.siblingWorkspaces === 1 ? '' : 's'}, and the owner moves to one of them.`}
+              </p>
+            </>
+          )}
+
+          <div className="space-y-1.5">
+            <Label htmlFor="delete-confirm">
+              Type <span className="font-semibold text-foreground">{tenant?.name}</span> to confirm
+            </Label>
+            <Input id="delete-confirm" value={confirmName} onChange={(e) => setConfirmName(e.target.value)} autoComplete="off" />
+          </div>
+
+          <div className="space-y-1.5">
+            <Label>Reason (optional)</Label>
+            <Input value={reason} onChange={(e) => setReason(e.target.value)} placeholder="Abandoned signup, duplicate workspace" />
+          </div>
+        </div>
+
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button variant="destructive" disabled={!nameMatches || remove.isPending} loading={remove.isPending} onClick={() => remove.mutate()}>
+            <Trash2 />
+            Delete permanently
           </Button>
         </DialogFooter>
       </DialogContent>

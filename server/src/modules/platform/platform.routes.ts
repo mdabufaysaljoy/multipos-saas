@@ -229,6 +229,26 @@ router.post(
   controller.createWorkspace,
 );
 
+// Deleting a workspace outright. Two calls on purpose: the panel shows what
+// would go before it asks, because an empty workspace somebody opened by
+// mistake and one holding three thousand sales are different decisions.
+router.get(
+  '/workspaces/:tenantId/deletion-plan',
+  validate({ params: z.object({ tenantId: objectId }) }),
+  controller.workspaceDeletionPlan,
+);
+router.delete(
+  '/workspaces/:tenantId',
+  adminActionLimiter,
+  validate({
+    params: z.object({ tenantId: objectId }),
+    // The name is retyped and checked server-side: the dialog is not what
+    // stands between a mis-click and a shop's data.
+    body: z.object({ confirmName: z.string().trim().min(1).max(160), reason: z.string().trim().max(300).optional() }).strict(),
+  }),
+  controller.deleteWorkspace,
+);
+
 router.get('/subscriptions', validate({ query: listQuery }), controller.listSubscriptions);
 router.get('/subscriptions/expiring', controller.expiringSoon);
 router.post('/subscriptions/run-renewals', validate({ body: z.object({}).strict() }), renewalsAdmin.runRenewals);
