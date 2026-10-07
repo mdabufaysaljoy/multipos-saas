@@ -62,7 +62,7 @@ export class ApiError extends Error {
   static validation(message: string, details?: unknown) { return new ApiError('VALIDATION_ERROR', message, details); }
   static unauthorized(message = 'Authentication required') { return new ApiError('UNAUTHORIZED', message); }
   static forbidden(message = 'You do not have permission to perform this action') { return new ApiError('FORBIDDEN', message); }
-  static notFound(message = 'Resource not found') { return new ApiError('NOT_FOUND', message); }
+  static notFound(message = 'Resource not found', details?: unknown) { return new ApiError('NOT_FOUND', message, details); }
   static conflict(message: string, details?: unknown) { return new ApiError('CONFLICT', message, details); }
   static insufficientStock(message: string, details?: unknown) { return new ApiError('INSUFFICIENT_STOCK', message, details); }
   static limitExceeded(message: string, details?: unknown) { return new ApiError('LIMIT_EXCEEDED', message, details); }

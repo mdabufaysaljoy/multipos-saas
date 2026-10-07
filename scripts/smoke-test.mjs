@@ -2842,7 +2842,7 @@ async function main() {
   const fpVerify = (email, code) => api('/auth/password/verify-code', { method: 'POST', body: { email, code } });
   const fpReset = (resetTicket, newPassword) => api('/auth/password/reset', { method: 'POST', body: { resetTicket, newPassword } });
   const fpSignIn = (email, password) => api('/auth/login', { method: 'POST', body: { email, password } });
-  const GENERIC = 'If the account exists, a verification code has been sent.';
+  const SENT = 'A verification code has been sent to your email.';
 
   // 1. The way in is on the login screen itself.
   const loginScreen = readFileSync(new URL('../client/src/pages/LoginPage.tsx', import.meta.url), 'utf8');
@@ -2854,26 +2854,40 @@ async function main() {
   check('The reset screen walks email -> code -> password -> done', ["'email'", "'code'", "'password'", "'done'"].every((step) => resetScreen.includes(step)));
   check('The reset screen never puts a code or password in a URL', !/\?(code|password|token)=/.test(resetScreen));
 
-  // 2 & 3. A real address and an unknown one are indistinguishable.
+  // 2 & 3. A registered address gets a code; an unregistered one is told so.
+  //
+  // This DOES let an anonymous caller learn which addresses have accounts - a
+  // trade the product has chosen, so a shopkeeper who mistypes their email is
+  // told rather than left waiting for a code that was never coming. The per-IP
+  // limiter is what keeps that from being a usable way to harvest a list, so
+  // it is asserted below and must not be loosened.
   const fpKnown = await fpForgot(fpEmail);
-  check('A registered address gets the generic answer', fpKnown.status === 200 && fpKnown.data?.message === GENERIC, fpKnown.data ?? fpKnown.error);
+  check('A registered address is sent a code', fpKnown.status === 200 && fpKnown.data?.message === SENT, fpKnown.data ?? fpKnown.error);
   const fpCode = fpKnown.data?.devCode;
   check('A development server hands back the code so the flow is testable', /^\d{6}$/.test(String(fpCode)), typeof fpCode);
+
   const fpUnknown = await fpForgot(`nobody${fpStamp}@example.com`);
-  check('An unknown address gets the SAME answer', fpUnknown.status === 200 && fpUnknown.data?.message === GENERIC, fpUnknown.data ?? fpUnknown.error);
-  check('...and is given no code, so nothing distinguishes the two', fpUnknown.data?.devCode === undefined, fpUnknown.data);
-  check(
-    '...and the two responses are byte-identical apart from the code',
-    JSON.stringify({ ...fpKnown.data, devCode: undefined }) === JSON.stringify({ ...fpUnknown.data, devCode: undefined }),
-    { known: fpKnown.data, unknown: fpUnknown.data },
-  );
+  check('An unregistered address is refused', fpUnknown.status === 404, { status: fpUnknown.status, error: fpUnknown.error });
+  check('...saying the account was not found', /No account was found/i.test(fpUnknown.error?.message ?? ''), fpUnknown.error);
+  check('...naming the field, so the form can mark it', fpUnknown.error?.details?.field === 'email', fpUnknown.error?.details);
+  check('...and is given no code', fpUnknown.data?.devCode === undefined, fpUnknown.data);
+
+  // Refusing must be the WHOLE of it: no mail, no code, no row. Otherwise a
+  // stranger could make us send mail to any address they liked.
+  check('...leaving no reset row behind', (await fpVerify(`nobody${fpStamp}@example.com`, '123456')).status === 400);
+
+  // A deactivated account cannot be signed into, so it is treated as
+  // unregistered rather than being announced as deactivated.
   check('No response leaks an id or workspace', !/userId|accountId|tenantId|workspace/i.test(JSON.stringify(fpKnown.data)), fpKnown.data);
 
   // 4 & 5. Wrong codes are counted and refused; the right one earns a ticket.
   const fpWrong = await fpVerify(fpEmail, '000000' === fpCode ? '111111' : '000000');
   check('An incorrect code is refused', fpWrong.status === 400, fpWrong.error);
   check('...and says how many attempts are left', /attempts? left/.test(fpWrong.error?.message ?? ''), fpWrong.error?.message);
-  check('An unknown address cannot be probed through the code step either', (await fpVerify(`nobody${fpStamp}@example.com`, '123456')).status === 400);
+  // The CODE step stays generic even though the request step does not: it must
+  // not distinguish "wrong code" from "no account", or it becomes a way to
+  // guess codes with feedback.
+  check('The code step does not distinguish a wrong code from an unknown address', (await fpVerify(`nobody${fpStamp}@example.com`, '123456')).status === 400);
 
   const fpVerified = await fpVerify(fpEmail, fpCode);
   check('The correct code is accepted', fpVerified.status === 200, fpVerified.error);
