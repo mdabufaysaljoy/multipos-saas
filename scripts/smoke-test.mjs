@@ -228,6 +228,13 @@ async function login(email, password) {
   return { token: res.data.tokens.accessToken, session: res.data };
 }
 
+/**
+ * Staff fixtures are named like people, because the person-name rule now
+ * refuses digits - "RS1" is not a name, and a test that creates one was
+ * testing something the product does not allow.
+ */
+const STAFF_NAMES = ['Ayesha Rahman', 'Karim Uddin', 'Nusrat Jahan', 'Tanvir Hasan', 'Sadia Akter', 'Rafiq Mia', 'Mitu Begum', 'Shakil Ahmed'];
+
 async function main() {
   console.log('\n==========  Clothing POS smoke test  ==========');
 
@@ -2033,6 +2040,94 @@ async function main() {
   const brandMark = readFileSync(new URL('../client/src/features/public/BrandMark.tsx', import.meta.url), 'utf8');
   check('The header shows the name beside the logo, not instead of it', /\{!compact && <span className="truncate/.test(brandMark));
 
+  // ---- what a field will accept ---------------------------------------------
+  // The server is the boundary: whatever the form does, these are the rules
+  // that decide what can land in the database.
+  const fieldStamp = String(Date.now()).slice(-7);
+  const regField = (body) => api('/auth/register', { method: 'POST', body: { businessName: 'Validation Shop', password: 'Password@123', ...body } });
+
+  // A name is a person's name. Digits and markup are not.
+  for (const [label, name] of [
+    ['digits', 'Rahman123'],
+    ['markup', '<script>x</script>'],
+    ['an email address', 'me@example.com'],
+    ['symbols', 'Rahman@#$'],
+    ['one letter', 'R'],
+  ]) {
+    const res = await regField({ name, email: `vn${fieldStamp}${Math.random().toString(36).slice(2, 7)}@example.com` });
+    check(`A person's name is refused when it contains ${label}`, res.status === 422, { name, status: res.status });
+  }
+
+  // ...and the names people actually have are accepted. Bangla writes its
+  // vowels as combining marks, so a letters-only rule would reject most of the
+  // country's own names.
+  for (const [label, name] of [
+    ['a Bangla name', 'মোঃ আবু ফয়সাল'],
+    ['an abbreviated name', 'Md. Abu Faysal'],
+    ['an apostrophe', "O'Brien"],
+    ['a hyphenated name', 'Rahman-Khan'],
+  ]) {
+    const email = `vn${fieldStamp}${Math.random().toString(36).slice(2, 7)}@example.com`;
+    const res = await regField({ name, email });
+    check(`...and accepted for ${label}`, res.status === 201, { name, status: res.status, error: res.error });
+  }
+
+  // A phone number is digits and nothing else - no +, brackets, dashes or
+  // spaces - so the field can be a plain number input that cannot hold text.
+  for (const [label, phone] of [
+    ['a decimal', '01700.11122'],
+    ['letters', 'abcdefghij'],
+    ['a leading +', '+8801700111222'],
+    ['brackets and spaces', '(880) 1700 111222'],
+    ['dashes', '01700-111222'],
+    ['too few digits', '017001'],
+    ['more digits than E.164 allows', '1234567890123456'],
+  ]) {
+    const res = await regField({ name: 'Abu Faysal', phone, email: `vp${fieldStamp}${Math.random().toString(36).slice(2, 7)}@example.com` });
+    check(`A phone number is refused when it has ${label}`, res.status === 422, { phone, status: res.status });
+  }
+  for (const [label, phone] of [
+    ['a local number', '01700111222'],
+    ['a country code written as digits', '8801700111222'],
+  ]) {
+    const res = await regField({ name: 'Abu Faysal', phone, email: `vp${fieldStamp}${Math.random().toString(36).slice(2, 7)}@example.com` });
+    check(`...and accepted as ${label}`, res.status === 201, { phone, status: res.status, error: res.error });
+  }
+
+  // A number input renders a stored "+8801741918615" as EMPTY, so opening a
+  // record and saving it would wipe the number. The field strips it to digits
+  // on the way in instead of blanking it.
+  const phoneInput = readFileSync(new URL('../client/src/components/NumericInputs.tsx', import.meta.url), 'utf8');
+  // `type="tel"`, not `type="number"`: browsers refuse to autofill a saved
+  // telephone number into a number input, and the filter already makes a
+  // letter impossible to type.
+  check('Phone fields ask for a telephone keypad', phoneInput.includes('type="tel"'));
+  check('...keeping digits only', phoneInput.includes("raw.replace(/\\D/g, '')"));
+  check('...normalising a stored number rather than blanking it', phoneInput.includes('if (digits !== value) onChange(digits)'));
+  check('...and ignoring the scroll wheel, which would silently change it', phoneInput.includes('onWheel'));
+
+  // Browser autofill matches on `name` + `autocomplete`. The phone field had
+  // lost its `name`, so there was nothing for the browser to fill.
+  const registerScreen = readFileSync(new URL('../client/src/pages/RegisterPage.tsx', import.meta.url), 'utf8');
+  for (const [field, token] of [
+    ['business name', "autoComplete: 'organization'"],
+    ['email', "autoComplete: 'email'"],
+    ['phone', "name: 'phone', autoComplete: 'tel'"],
+  ]) {
+    check(`Registration lets the browser autofill the ${field}`, registerScreen.includes(token), token);
+  }
+  check('...and every field it asks to autofill has a name', !/inputProps=\{\{ placeholder: '01700000000' \}\}/.test(registerScreen));
+
+  // A business name is NOT a person's name: "A1 Traders" is a real trading
+  // name and refusing it would be refusing the truth.
+  const vBiz = await regField({ businessName: 'A1 Traders 24/7', name: 'Abu Faysal', email: `vb${fieldStamp}@example.com` });
+  check('A business name may contain digits, because real ones do', vBiz.status === 201, vBiz.error);
+
+  // Every refusal names the field that was wrong, so a form can point at it.
+  const vDetail = await regField({ name: 'Rahman123', phone: 'abcdef', email: `vd${fieldStamp}@example.com` });
+  const vFields = (vDetail.error?.details ?? []).map((d) => d.path);
+  check('A refusal names each field that failed', vFields.includes('name') && vFields.includes('phone'), vDetail.error?.details);
+
   // ---- tabs survive a reload ------------------------------------------------
   // Every tabbed screen used to snap back to its first tab on reload, which is
   // exactly when you least want it: a reload usually follows saving something
@@ -3275,7 +3370,7 @@ async function main() {
     api('/staff', {
       method: 'POST',
       token: race2Token,
-      body: { name: `RS${i}`, email: `rs${i}.${raceStamp}@example.com`, password: 'Password@123' },
+      body: { name: STAFF_NAMES[i % STAFF_NAMES.length], email: `rs${i}.${raceStamp}@example.com`, password: 'Password@123' },
     }), 4, (u) => u?.staff);
 
   await raceCase('branches', 'maxStores', 2, (i) =>
@@ -3552,7 +3647,7 @@ async function main() {
       const res = await api('/staff', {
         method: 'POST',
         token: tenant.token,
-        body: { name: `Staff ${i}`, email: `st${i}.${tenant.stamp}@example.com`, password: 'Password@123' },
+        body: { name: STAFF_NAMES[i % STAFF_NAMES.length], email: `st${i}.${tenant.stamp}@example.com`, password: 'Password@123' },
       });
       if (res.status === 201) created += 1;
       else if (blockedAt === null) blockedAt = i;
@@ -4459,7 +4554,7 @@ async function main() {
   });
   check('Accepts a valid email', goodEmail.status === 201, goodEmail.error);
 
-  const badPhones = ['abcdefghij', '<script>alert(1)</script>', '12345', 'call-me', '{"$ne":null}'];
+  const badPhones = ['abcdefghij', '<script>alert(1)</script>', '12345', 'call-me', '{"$ne":null}', '+8801712345678', '(017) 1234 5678', '01712-345678', '01712.345678'];
   for (const phone of badPhones) {
     const res = await api('/customers', {
       method: 'POST',
@@ -4469,7 +4564,9 @@ async function main() {
     check(`Rejects phone ${JSON.stringify(phone.slice(0, 24))}`, res.status === 422, res.status);
   }
 
-  const goodPhones = ['01712345678', '+880 1712-345678', '(017) 1234 5678'];
+  // Digits only now - no +, brackets, dashes or spaces - so a phone field can
+  // be a plain number input that cannot hold text at all.
+  const goodPhones = ['01712345678', '8801712345678', '0171234567'];
   for (const [i, phone] of goodPhones.entries()) {
     const res = await api('/customers', {
       method: 'POST',
@@ -7691,7 +7788,7 @@ async function main() {
   const anTillCreated = await api('/staff', {
     method: 'POST',
     token: ssToken,
-    body: { name: `AN Till ${anStamp}`, email: `ssan${anStamp}@example.com`, password: 'Password@123', storeId: anHome, extraPermissions: ['sales.create', 'sales.view', 'products.view', 'reports.view', 'customers.view', 'customers.create'] },
+    body: { name: 'Analytics Till', email: `ssan${anStamp}@example.com`, password: 'Password@123', storeId: anHome, extraPermissions: ['sales.create', 'sales.view', 'products.view', 'reports.view', 'customers.view', 'customers.create'] },
   });
   const anTill = { id: anTillCreated.data?.id, token: (await login(`ssan${anStamp}@example.com`, 'Password@123')).token };
   check('An analytics till is created', anTillCreated.status === 201 && Boolean(anTill.token), anTillCreated.error);
@@ -7730,7 +7827,7 @@ async function main() {
   // ---- by staff ----------------------------------------------------------------
   const anByStaff = await anReport({ staffId: anTill.id });
   check('A staff filter counts only their sales', anByStaff.data?.totals?.salesCount === 1 && anByStaff.data?.totals?.grossSalesMinor === 20_000, anByStaff.data?.totals);
-  check('...and the staff breakdown names them', (anByStaff.data?.staff ?? []).length === 1 && anByStaff.data.staff[0].name === `AN Till ${anStamp}`, anByStaff.data?.staff);
+  check('...and the staff breakdown names them', (anByStaff.data?.staff ?? []).length === 1 && anByStaff.data.staff[0].name === 'Analytics Till', anByStaff.data?.staff);
   // Profit must agree between the header and the dimension: same definition,
   // same numbers, no second way of working it out.
   check(
@@ -7802,7 +7899,7 @@ async function main() {
   const anNoReports = await api('/staff', {
     method: 'POST',
     token: ssToken,
-    body: { name: `AN NoReports ${anStamp}`, email: `ssanr${anStamp}@example.com`, password: 'Password@123', storeId: anHome, extraPermissions: ['sales.create', 'products.view'] },
+    body: { name: 'Analytics No Reports', email: `ssanr${anStamp}@example.com`, password: 'Password@123', storeId: anHome, extraPermissions: ['sales.create', 'products.view'] },
   });
   check('A till without reports.view can be created', anNoReports.status === 201, anNoReports.error);
   const anNoReportsToken = (await login(`ssanr${anStamp}@example.com`, 'Password@123')).token;
@@ -7932,7 +8029,7 @@ async function main() {
   const boTillCreated = await api('/staff', {
     method: 'POST',
     token: ssToken,
-    body: { name: `BO Till ${boStamp}`, email: `ssbo${boStamp}@example.com`, password: 'Password@123', storeId: boHome, extraPermissions: ['sales.create', 'sales.view', 'products.view', 'reports.view'] },
+    body: { name: 'Branch Overview Till', email: `ssbo${boStamp}@example.com`, password: 'Password@123', storeId: boHome, extraPermissions: ['sales.create', 'sales.view', 'products.view', 'reports.view'] },
   });
   check('A till is created for the branch-overview permission check', boTillCreated.status === 201, boTillCreated.error);
   const boTillToken = (await login(`ssbo${boStamp}@example.com`, 'Password@123')).token;
@@ -9629,7 +9726,7 @@ async function main() {
     const variantId = product.data?.variants?.[0]?._id;
     const sale = await api('/sales', { method: 'POST', token, body: { items: [{ variantId, quantity: 1 }], paymentMethod: 'cash' } });
     const customer = await api('/customers', { method: 'POST', token, body: { name: `MTS ${tag} Buyer`, phone: `019${String(mtsStamp).slice(-6)}${tag === 'A' ? '01' : '02'}` } });
-    const staff = await api('/staff', { method: 'POST', token, storeId: store.data?._id, body: { name: `MTS ${tag} Staff`, email: `mtsstaff${tag}${mtsStamp}@example.com`, password: 'Password@123', storeId: store.data?._id } });
+    const staff = await api('/staff', { method: 'POST', token, storeId: store.data?._id, body: { name: 'Multi Tenant Staff', email: `mtsstaff${tag}${mtsStamp}@example.com`, password: 'Password@123', storeId: store.data?._id } });
     const subscription = (await api('/subscriptions/current', { token })).data?.subscription;
     return {
       token,

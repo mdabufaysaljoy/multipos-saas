@@ -190,7 +190,7 @@ export function RegisterPage() {
           label="Business name"
           icon={Building2}
           error={form.formState.errors.businessName?.message}
-          inputProps={{ placeholder: 'Denim Republic', autoFocus: true, ...form.register('businessName') }}
+          inputProps={{ placeholder: 'Denim Republic', autoFocus: true, autoComplete: 'organization', ...form.register('businessName') }}
         />
 
         <div className="grid gap-5 sm:grid-cols-2">
@@ -209,7 +209,7 @@ export function RegisterPage() {
             icon={Phone}
             hint="Optional"
             error={form.formState.errors.phone?.message}
-            inputProps={{ placeholder: '01700000000' }}
+            inputProps={{ placeholder: '01700000000', name: 'phone', autoComplete: 'tel' }}
             render={(props) => (
               <PhoneInput
                 {...props}
@@ -225,7 +225,7 @@ export function RegisterPage() {
           label="Email"
           icon={Mail}
           error={form.formState.errors.email?.message}
-          inputProps={{ type: 'email', autoComplete: 'username', placeholder: 'you@business.com', ...form.register('email') }}
+          inputProps={{ type: 'email', autoComplete: 'email', placeholder: 'you@business.com', ...form.register('email') }}
         />
 
         <div>

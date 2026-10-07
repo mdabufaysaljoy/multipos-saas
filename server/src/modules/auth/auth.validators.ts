@@ -1,6 +1,6 @@
 import { POS_PRODUCT_CODE_PATTERN } from '../../config/verticals';
 import { z } from 'zod';
-import { emailAddress, objectId, optionalPhoneNumber, passwordCheck } from '../common/common.validators';
+import { emailAddress, objectId, optionalPhoneNumber, passwordCheck, personName } from '../common/common.validators';
 
 /**
  * THE password policy. Registration, the signed-in change and the forgotten-
@@ -18,7 +18,7 @@ const email = emailAddress;
 
 export const registerSchema = z.object({
   businessName: z.string().trim().min(2, 'Business name is required').max(160),
-  name: z.string().trim().min(2, 'Your name is required').max(120),
+  name: personName('Your name'),
   email,
   phone: optionalPhoneNumber,
   password,

@@ -1,12 +1,12 @@
 import { z } from 'zod';
 import { ALL_PERMISSIONS } from '../../config/permissions';
-import { objectId, searchSchema, emailAddress, optionalPhoneNumber } from '../common/common.validators';
+import { objectId, searchSchema, emailAddress, optionalPhoneNumber, personName } from '../common/common.validators';
 
 const permissionKey = z.enum(ALL_PERMISSIONS as [string, ...string[]]);
 
 export const createStaffSchema = z
   .object({
-    name: z.string().trim().min(2, 'Name is required').max(120),
+    name: personName('Name'),
     email: emailAddress,
     phone: optionalPhoneNumber,
     password: z.string().min(8, 'Password must be at least 8 characters').max(128),
