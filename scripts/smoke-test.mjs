@@ -1935,6 +1935,65 @@ async function main() {
   check('An unknown POS type is refused', bogusPos.status === 422, { status: bogusPos.status, error: bogusPos.error });
   check('...and no workspace is left behind', (await api('/auth/login', { method: 'POST', body: { email: `bogus${runId}@example.com`, password: 'Password@123' } })).status === 401);
 
+  // ---- the public website's own settings -----------------------------------
+  // Branding, SEO text, contact details and the policy pages live on the
+  // settings singleton so an operator can change them without a deploy.
+  const siteBefore = await api('/public/site');
+  check('The public site settings are readable without a session', siteBefore.status === 200, siteBefore.status);
+  check('...and fall back to the deployment branding when nothing is set', Boolean(siteBefore.data?.name), siteBefore.data?.name);
+  check('...carrying no credentials from the settings document', !/smtp|apiKey|password|senderId/i.test(JSON.stringify(siteBefore.data)), Object.keys(siteBefore.data ?? {}));
+
+  const siteSaved = await api('/platform/site', {
+    method: 'PATCH',
+    token: padmin.token,
+    body: {
+      name: `Smoke Suites ${runId}`,
+      tagline: 'Tills that fit the shop',
+      contact: { addressLine1: '12 Test Road', city: 'Dhaka', country: 'Bangladesh' },
+      seo: { defaultDescription: 'POS for clothing, supershop, restaurant and pharmacy.', indexable: true },
+      content: { faq: [{ question: 'Is there a trial?', answer: 'Yes, and no card is needed.' }] },
+    },
+  });
+  check('Platform admin saves the site settings', siteSaved.status === 200, siteSaved.error);
+
+  const siteAfter = await api('/public/site');
+  check('The public site reflects the save immediately', siteAfter.data?.name === `Smoke Suites ${runId}`, siteAfter.data?.name);
+  check('...including the address', siteAfter.data?.contact?.city === 'Dhaka', siteAfter.data?.contact);
+  check('...and the FAQ', siteAfter.data?.content?.faq?.[0]?.question === 'Is there a trial?', siteAfter.data?.content?.faq);
+
+  // Saving one section must not blank the others.
+  await api('/platform/site', { method: 'PATCH', token: padmin.token, body: { tagline: 'Changed tagline only' } });
+  const sitePartial = await api('/public/site');
+  check('Saving one section leaves the rest alone', sitePartial.data?.contact?.city === 'Dhaka' && sitePartial.data?.name === `Smoke Suites ${runId}`, sitePartial.data?.contact);
+  check('...and applies the one that changed', sitePartial.data?.tagline === 'Changed tagline only', sitePartial.data?.tagline);
+
+  // These values are rendered into href/src on a page served to anonymous
+  // people, so a URL field that accepted a script would be stored XSS.
+  for (const [label, payload] of [
+    ['a javascript: logo', { logoUrl: 'javascript:alert(1)' }],
+    ['a data: logo', { logoUrl: 'data:text/html,<script>alert(1)</script>' }],
+    ['a colour smuggling a declaration', { primaryColor: 'red; background:url(x)' }],
+    ['a malformed contact email', { contact: { email: 'not-an-email' } }],
+    ['an unknown field', { unknownField: 'x' }],
+  ]) {
+    check(`Site settings refuse ${label}`, (await api('/platform/site', { method: 'PATCH', token: padmin.token, body: payload })).status === 422);
+  }
+  check('...while a real https logo is accepted', (await api('/platform/site', { method: 'PATCH', token: padmin.token, body: { logoUrl: 'https://cdn.example.com/logo.svg' } })).status === 200);
+  check('...and a same-origin path is too', (await api('/platform/site', { method: 'PATCH', token: padmin.token, body: { logoUrl: '/uploads/logo.webp' } })).status === 200);
+
+  check('Only a platform admin may change the site', (await api('/platform/site', { method: 'PATCH', token: admin.token, body: { name: 'Nope' } })).status === 403);
+  check('...and an anonymous request certainly may not', (await api('/platform/site', { method: 'PATCH', body: { name: 'Nope' } })).status === 401);
+
+  // robots.txt is generated, because whether this deployment may be indexed at
+  // all is a setting - a staging site out-ranking production is a real failure.
+  const robotsOn = await fetch(`${BASE}/public/robots.txt`).then((r) => r.text());
+  check('robots.txt allows crawling when the site is indexable', /Allow: \//.test(robotsOn) && /Sitemap:/.test(robotsOn), robotsOn.slice(0, 80));
+  check('...and keeps the signed-in app out of the index', /Disallow: \/pos/.test(robotsOn) && /Disallow: \/platform/.test(robotsOn));
+  await api('/platform/site', { method: 'PATCH', token: padmin.token, body: { seo: { indexable: false } } });
+  const robotsOff = await fetch(`${BASE}/public/robots.txt`).then((r) => r.text());
+  check('Turning indexing off disallows everything', /Disallow: \/$/m.test(robotsOff.trim()) && !/Allow:/.test(robotsOff), robotsOff.trim());
+  await api('/platform/site', { method: 'PATCH', token: padmin.token, body: { seo: { indexable: true } } });
+
   // ---- a few days of access, granted by hand -------------------------------
   // The shop whose payment has not cleared, or who rang up at closing time with
   // an expired plan. A grant carries a PLAN, because entitlements come entirely

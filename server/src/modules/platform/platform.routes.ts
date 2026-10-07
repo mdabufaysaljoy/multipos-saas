@@ -19,6 +19,8 @@ import platformTenantRoutes from './platformTenant.routes';
 import * as controller from './platform.controller';
 import * as paymentOps from './paymentOps.controller';
 import * as posProducts from './posProducts.controller';
+import * as siteController from './site.controller';
+import { updateSiteSchema } from './site.validators';
 import * as pricingAdmin from './pricingAdmin.controller';
 import * as renewalsAdmin from './renewalsAdmin.controller';
 import * as accountsSupport from './accountsSupport.controller';
@@ -248,6 +250,13 @@ router.delete(
   }),
   controller.deleteWorkspace,
 );
+
+// ---- the public website ---------------------------------------------------
+// Branding, SEO, contact details and the policy pages, all editable here so an
+// operator can change them without a deploy.
+router.get('/site', siteController.getSite);
+router.patch('/site', adminActionLimiter, validate({ body: updateSiteSchema }), siteController.updateSite);
+router.post('/site/image', adminActionLimiter, siteController.brandingUpload.single('file'), siteController.uploadBrandingImage);
 
 router.get('/subscriptions', validate({ query: listQuery }), controller.listSubscriptions);
 router.get('/subscriptions/expiring', controller.expiringSoon);
