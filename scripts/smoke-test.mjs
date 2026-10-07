@@ -2033,6 +2033,50 @@ async function main() {
   const brandMark = readFileSync(new URL('../client/src/features/public/BrandMark.tsx', import.meta.url), 'utf8');
   check('The header shows the name beside the logo, not instead of it', /\{!compact && <span className="truncate/.test(brandMark));
 
+  // ---- search engines and share cards --------------------------------------
+  // The site is a client-rendered SPA, and the social crawlers do not run
+  // JavaScript. Tags added at runtime are tags Facebook, WhatsApp and LinkedIn
+  // never see, so the build writes a real HTML file per route with the tags
+  // already in it. These assert the generator, not a built artifact, because
+  // the suite must not require a prior `npm run build`.
+  const prerender = readFileSync(new URL('../client/scripts/prerender.mjs', import.meta.url), 'utf8');
+  const seoLib = readFileSync(new URL('../client/src/lib/seo.ts', import.meta.url), 'utf8');
+
+  check('The build writes a page per public route', /writeFile\(resolve\(dir, 'index.html'\)/.test(prerender));
+  for (const tag of ['og:title', 'og:description', 'og:url', 'og:image', 'twitter:card', 'canonical']) {
+    check(`...carrying ${tag}`, prerender.includes(tag));
+  }
+  check('...and structured data', /application\/ld\+json/.test(prerender) && /Organization/.test(prerender) && /FAQPage/.test(prerender) && /BreadcrumbList/.test(prerender));
+  check('JSON-LD cannot break out of its own script tag', /replace\(\/<\/g, '\\\\u003c'\)/.test(prerender), 'jsonLd must escape <');
+  check('Injected values are HTML-escaped', /escapeHtml/.test(prerender));
+
+  check('robots.txt is written to the SITE root, not the API host', /writeFile\(resolve\(DIST, 'robots\.txt'\)/.test(prerender));
+  check('...and a sitemap beside it', /writeFile\(resolve\(DIST, 'sitemap\.xml'\)/.test(prerender));
+  check('Turning indexing off empties the sitemap and blocks crawlers', /indexable\s*\?/.test(prerender) && /'Disallow: \/'/.test(prerender));
+  check('...and marks every page noindex', /noindex,nofollow/.test(prerender));
+  check('The signed-in app is never offered to crawlers', /Disallow: \/pos/.test(prerender) && /Disallow: \/platform/.test(prerender));
+
+  // A build must not fail because a marketing description could not be fetched.
+  check('An unreachable settings API falls back to built-in copy', /using built-in copy/.test(prerender));
+
+  // The generator parses the route table out of the TypeScript module, so the
+  // two must agree. This runs the generator's OWN parse against the real file:
+  // if somebody reformats the table and the regex stops matching, the build
+  // would quietly emit fewer pages, and this is what notices.
+  const seoBlock = seoLib.slice(seoLib.indexOf('export const PUBLIC_ROUTES'), seoLib.indexOf('export const PRODUCT_SLUGS'));
+  const declared = [...seoBlock.matchAll(/path:\s*'([^']+)'/g)].map((m) => m[1]).sort();
+  const flat = seoBlock.replace(/\s+/g, ' ');
+  const parsed = [...flat.matchAll(/\{ path: '([^']+)', title: '([^']*)', description: '([^']*)',? \}/g)].map((m) => m[1]).sort();
+  check(
+    'The generator parses every route the app declares',
+    declared.length > 0 && parsed.join('|') === declared.join('|'),
+    { declared, parsedByGenerator: parsed },
+  );
+
+  const titleSource = readFileSync(new URL('../client/src/components/DocumentTitle.tsx', import.meta.url), 'utf8');
+  check('Canonical and Open Graph are kept current as the visitor navigates', /link\[rel='canonical'\]/.test(titleSource) && /og:url/.test(titleSource));
+  check('...and the signed-in app is left out of it', /isPublicPath/.test(titleSource));
+
   // ---- a few days of access, granted by hand -------------------------------
   // The shop whose payment has not cleared, or who rang up at closing time with
   // an expired plan. A grant carries a PLAN, because entitlements come entirely

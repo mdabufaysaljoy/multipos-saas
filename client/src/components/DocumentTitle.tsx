@@ -3,6 +3,7 @@ import { useLocation } from 'react-router-dom';
 import { navLabelFor } from '@/layouts/AppLayout';
 import { useAuth } from '@/hooks/useAuth';
 import { useSite } from '@/features/public/useSite';
+import { absoluteUrl, isPublicPath, routeSeoFor } from '@/lib/seo';
 
 /** Used until the settings load, and if they never do. */
 const BRAND = 'Retailer Suites';
@@ -140,17 +141,60 @@ export function DocumentTitle() {
     }
   }, [site]);
 
-  // The description changes per page, so it is its own effect.
+  /**
+   * The per-page tags, which change on every navigation.
+   *
+   * The build step bakes these into each page's HTML, which is what crawlers
+   * and share cards read. This keeps them honest AFTERWARDS: once the SPA has
+   * booted, moving from /pricing to /contact would otherwise leave the
+   * canonical link and the Open Graph block describing the page the visitor
+   * arrived on. Anything that reads the live DOM - Google's renderer, a
+   * share-preview extension, a person checking - would be told the wrong page.
+   */
   React.useEffect(() => {
-    if (!site) return;
-    const configured = site.seo.pages.find((page) => page.path === pathname)?.description?.trim();
-    const description = configured || site.seo.defaultDescription?.trim();
-    if (!description) return;
-    setHeadTag(
-      "meta[name='description']",
-      () => Object.assign(document.createElement('meta'), { name: 'description' }),
-      (el) => el.setAttribute('content', description),
-    );
+    if (!site || !isPublicPath(pathname)) return;
+
+    const configured = site.seo.pages.find((page) => page.path === pathname);
+    const builtIn = routeSeoFor(pathname);
+    const description =
+      configured?.description?.trim() ||
+      (pathname === '/' ? site.seo.defaultDescription?.trim() : '') ||
+      builtIn?.description ||
+      site.seo.defaultDescription?.trim();
+    const url = absoluteUrl(site.seo.canonicalBaseUrl, pathname);
+
+    const meta = (name: string, content: string, property = false) => {
+      if (!content) return;
+      const attr = property ? 'property' : 'name';
+      setHeadTag(
+        `meta[${attr}='${name}']`,
+        () => {
+          const el = document.createElement('meta');
+          el.setAttribute(attr, name);
+          return el;
+        },
+        (el) => el.setAttribute('content', content),
+      );
+    };
+
+    if (description) meta('description', description);
+    meta('og:title', document.title, true);
+    meta('og:url', url, true);
+    meta('og:site_name', site.name, true);
+    if (description) meta('og:description', description, true);
+    if (site.socialImageUrl) meta('og:image', site.socialImageUrl, true);
+    meta('twitter:title', document.title);
+    if (description) meta('twitter:description', description);
+
+    if (site.seo.canonicalBaseUrl) {
+      setHeadTag(
+        "link[rel='canonical']",
+        () => Object.assign(document.createElement('link'), { rel: 'canonical' }),
+        (el) => el.setAttribute('href', url),
+      );
+    }
+    // A staging build must keep saying so on every page, not only the first.
+    meta('robots', site.seo.indexable ? 'index,follow' : 'noindex,nofollow');
   }, [site, pathname]);
 
   return null;
