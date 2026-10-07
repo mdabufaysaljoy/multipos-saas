@@ -548,6 +548,24 @@ function ReportDialog({
           </ReceiptPaper>
         </div>
         <ReceiptPrintBar print={print} />
+        {/*
+          The actual Print control. `ReceiptPrintBar` is only the STATUS strip -
+          it renders nothing at all while printing is idle, and its own copy
+          says "use Print below", which for this one dialog was referring to a
+          button that had never been added. Clothing and Super Shop share this
+          screen, so both verticals could open an X or Z report and had no way
+          to put it on paper; Pharmacy's own shift screen has had this footer
+          all along, and this is the same thing in the same order.
+        */}
+        <DialogFooter className="print:hidden">
+          <Button variant="outline" onClick={onClose}>
+            Close
+          </Button>
+          <Button onClick={print.print} loading={print.direct && print.status === 'printing'}>
+            <Printer />
+            {print.direct ? 'Print directly' : 'Print'}
+          </Button>
+        </DialogFooter>
       </DialogContent>
     </Dialog>
   );

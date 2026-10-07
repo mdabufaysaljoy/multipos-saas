@@ -405,22 +405,12 @@ export function SettingsPage() {
                   onChange={(v) => patch({ tax: { ...draft.tax, label: v } })}
                 />
                 <div className="space-y-1.5">
-                  <Label>Rate (%)</Label>
-                  <Input
-                    type="text"
-                    inputMode="decimal"
+                  <Label htmlFor="tax-rate">Rate (%)</Label>
+                  <PercentField
+                    id="tax-rate"
                     disabled={readOnly || !draft.tax.enabled}
-                    value={draft.tax.rateBasisPoints ? String(draft.tax.rateBasisPoints / 100) : ''}
-                    onChange={(e) => {
-                      const raw = e.target.value;
-                      if (raw === '') return patch({ tax: { ...draft.tax, rateBasisPoints: 0 } });
-                      if (!/^\d{0,3}(\.\d{0,2})?$/.test(raw)) return;
-                      const percent = Number(raw);
-                      if (percent > 100) return;
-                      // Stored as basis points so the rate stays an integer.
-                      patch({ tax: { ...draft.tax, rateBasisPoints: Math.round(percent * 100) } });
-                    }}
-                    placeholder="7.5"
+                    basisPoints={draft.tax.rateBasisPoints}
+                    onChange={(rateBasisPoints) => patch({ tax: { ...draft.tax, rateBasisPoints } })}
                   />
                 </div>
                 <Toggle
@@ -468,6 +458,77 @@ export function SettingsPage() {
       </Tabs>
     </div>
   );
+}
+
+/**
+ * A percentage typed by a person, stored as basis points.
+ *
+ * The field keeps the TEXT, and only derives the number from it. That is the
+ * whole fix: the old input rendered `String(rateBasisPoints / 100)`, so what
+ * was on screen was recomputed from an integer on every keystroke and a
+ * half-typed "7." could not survive a render. Typing 7.5 went
+ * "7" -> "7." -> re-rendered as "7" -> "75", and a shop that wanted 7.5% got
+ * 75%. Same for 5.6, and for every other rate with a decimal point.
+ *
+ * It stays `type="text"` with `inputMode="decimal"` deliberately. `type="number"`
+ * would not fix it and would add problems of its own: browsers report an
+ * in-progress "7." as an EMPTY value, so the dot is lost the same way, the
+ * default `step=1` marks 7.5 invalid, and a scroll wheel over a focused field
+ * silently changes a tax rate. `inputMode="decimal"` is what actually brings up
+ * a keypad with a decimal point on the tablet a till runs on.
+ *
+ * The external value is still the source of truth: when it changes to something
+ * the text does not already mean (loading, resetting, switching branch), the
+ * text follows it.
+ */
+function PercentField({
+  id,
+  basisPoints,
+  disabled,
+  onChange,
+}: {
+  id: string;
+  basisPoints: number;
+  disabled?: boolean;
+  onChange: (basisPoints: number) => void;
+}) {
+  const asText = (bps: number) => (bps ? String(bps / 100) : '');
+  const [text, setText] = React.useState(() => asText(basisPoints));
+
+  // Follow the stored value only when the two have genuinely diverged, so that
+  // "7." - which means 700, exactly as "7" does - is left alone while it is
+  // being typed.
+  React.useEffect(() => {
+    setText((current) => (toBasisPoints(current) === basisPoints ? current : asText(basisPoints)));
+  }, [basisPoints]);
+
+  return (
+    <Input
+      id={id}
+      type="text"
+      inputMode="decimal"
+      disabled={disabled}
+      value={text}
+      onChange={(event) => {
+        const raw = event.target.value;
+        // Up to three digits and two decimals. A refused keystroke changes
+        // nothing at all, rather than rewriting what is already there.
+        if (raw !== '' && !/^\d{0,3}(\.\d{0,2})?$/.test(raw)) return;
+        const bps = toBasisPoints(raw);
+        if (bps > 10_000) return;
+        setText(raw);
+        if (bps !== basisPoints) onChange(bps);
+      }}
+      placeholder="7.5"
+    />
+  );
+}
+
+/** "7.5" -> 750. Rates are stored in basis points so they stay integers. */
+function toBasisPoints(raw: string): number {
+  if (raw.trim() === '') return 0;
+  const percent = Number(raw);
+  return Number.isFinite(percent) ? Math.round(percent * 100) : 0;
 }
 
 function Field({

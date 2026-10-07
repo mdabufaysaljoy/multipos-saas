@@ -6007,6 +6007,17 @@ async function main() {
   check('Super Shop: the shift screen offers a named Print X Report button', /Print X Report/.test(shiftScreen));
   check('Super Shop: and a named Print Z Report button', /Print Z Report/.test(shiftScreen));
   check('Super Shop: shift reports print through the shared thermal/QZ printer', /useReceiptPrint/.test(shiftScreen));
+  // The report DIALOG needs its own Print control. `ReceiptPrintBar` is only
+  // the status strip - it renders nothing while printing is idle - so a dialog
+  // carrying it alone opens the report with no way to put it on paper, which is
+  // exactly what Clothing and Super Shop did. Pharmacy's shift screen is the
+  // reference: status strip, then a footer with Close and Print.
+  const reportDialog = shiftScreen.slice(shiftScreen.indexOf('function ReportDialog'));
+  check('Super Shop: the report dialog has a Print button, not just the status strip', /onClick=\{print\.print\}/.test(reportDialog), 'ReportDialog renders no Print control');
+  check('Super Shop: the Print button shows progress while printing', /print\.direct && print\.status === 'printing'/.test(reportDialog));
+  check('Super Shop: and the dialog can be dismissed from its footer', /<DialogFooter/.test(reportDialog));
+  const pharmacyShifts = readFileSync(new URL('../client/src/pages/pharmacy/PharmacyShiftsPage.tsx', import.meta.url), 'utf8');
+  check('Pharmacy keeps the print control it always had', /onClick=\{print\.print\}/.test(pharmacyShifts));
   check('Super Shop: and the shift screen never opens a browser print dialog', !/window\.print\(/.test(shiftScreen));
   check('Super Shop: printing a report calls no shift-closing endpoint', !/\/close/.test(shiftScreen.slice(shiftScreen.indexOf('function ReportDialog'))), 'ReportDialog must not close a shift');
   await api(`/pos-shifts/${ssShift.data.shift._id}/cash-movements`, { method: 'POST', token: ssToken, body: { type: 'pay_out', amountMinor: 800, reason: 'Petty cash' } });
@@ -9916,6 +9927,25 @@ async function main() {
 
   const ssVatReceipt = await api(`/supershop/sales/${ssVatSale.data._id}/receipt`, { token: ssToken });
   check('Super Shop: the receipt reports the decimal rate', (ssVatReceipt.data?.sale?.items ?? []).some((i) => i.vatRateBps === 750), ssVatReceipt.data?.sale?.items?.[0]);
+
+  // The SHARED settings tax rate - every POS uses this one screen.
+  //
+  // The old field rendered `String(rateBasisPoints / 100)`, so what was on
+  // screen was recomputed from an integer on every keystroke and a half-typed
+  // "7." could not survive a render: typing 7.5 went "7" -> "7." -> back to
+  // "7" -> "75", and the shop was charging 75% VAT. The field now keeps the
+  // TEXT and derives the number from it.
+  const settingsScreen = readFileSync(new URL('../client/src/pages/SettingsPage.tsx', import.meta.url), 'utf8');
+  check('The settings tax rate is not re-derived from the stored integer on every render', !/value=\{draft\.tax\.rateBasisPoints \? String\(draft\.tax\.rateBasisPoints \/ 100\) : ''\}/.test(settingsScreen));
+  check('...it keeps what was typed in its own state', /function PercentField/.test(settingsScreen) && /useState\(\(\) => asText\(basisPoints\)\)/.test(settingsScreen));
+  check('...and only follows the stored value when the two really differ', /toBasisPoints\(current\) === basisPoints \? current : asText\(basisPoints\)/.test(settingsScreen));
+  check('...keeping a decimal keypad without the type="number" trailing-dot trap', /inputMode="decimal"/.test(settingsScreen) && !/id="tax-rate"[\s\S]{0,200}type="number"/.test(settingsScreen));
+  // The conversion itself, on the values the shop actually types.
+  const toBps = (raw) => (raw.trim() === '' ? 0 : Math.round(Number(raw) * 100));
+  check('A half-typed "7." already means 700, so the field is left alone', toBps('7.') === 700 && toBps('7') === 700);
+  for (const [typed, bps] of [['5', 500], ['7.5', 750], ['5.6', 560], ['12.5', 1250], ['15.75', 1575], ['0', 0], ['100', 10_000]]) {
+    check(`Settings: "${typed}%" converts to ${bps} basis points`, toBps(typed) === bps, toBps(typed));
+  }
 
   // The till and every report render a rate from the same helper, so a shopkeeper
   // who typed 7.5 is never shown 7.50 back.
