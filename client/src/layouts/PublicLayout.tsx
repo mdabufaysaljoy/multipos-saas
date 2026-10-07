@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/button';
 import { BrandMark } from '@/features/public/BrandMark';
 import { Container } from '@/features/public/primitives';
 import { useAuth } from '@/hooks/useAuth';
+import { telHref, useSite } from '@/features/public/useSite';
 import { cn } from '@/lib/utils';
 import { PageFallback } from '@/lib/lazyPage';
 
@@ -17,6 +18,7 @@ const NAV = [
 
 export function PublicLayout() {
   const { session } = useAuth();
+  const site = useSite();
   const location = useLocation();
   const [open, setOpen] = React.useState(false);
   const [scrolled, setScrolled] = React.useState(false);
@@ -177,9 +179,30 @@ export function PublicLayout() {
             <div className="max-w-sm">
               <BrandMark />
               <p className="mt-5 text-[0.9375rem] leading-7 text-slate-400">
-                One account. Every counter. Point of sale, stock and insight for clothing, restaurant, super shop and
-                pharmacy businesses.
+                {site?.tagline?.trim() ||
+                  'One account. Every counter. Point of sale, stock and insight for clothing, restaurant, super shop and pharmacy businesses.'}
               </p>
+
+              {/* Contact details the platform admin maintains. Each line is
+                  omitted entirely when it is not set, so a half-filled address
+                  never renders as a row of stray commas. */}
+              <address className="mt-6 space-y-1.5 not-italic text-[0.875rem] leading-6 text-slate-400">
+                {site?.contact.email && (
+                  <a href={`mailto:${site.contact.email}`} className="block transition-colors hover:text-white">
+                    {site.contact.email}
+                  </a>
+                )}
+                {site?.contact.phone && (
+                  <a href={telHref(site.contact.phone)} className="block transition-colors hover:text-white">
+                    {site.contact.phone}
+                  </a>
+                )}
+                {addressLines(site).length > 0 && (
+                  <span className="block pt-1 text-slate-500">{addressLines(site).join(', ')}</span>
+                )}
+              </address>
+
+              <SocialLinks site={site} />
             </div>
             <FooterCol
               title="POS systems"
@@ -199,21 +222,70 @@ export function PublicLayout() {
               ]}
             />
             <FooterCol
-              title="Account"
+              title="Company"
               links={[
                 ['Sign in', '/login'],
                 ['Create workspace', '/register'],
+                ['FAQ', '/faq'],
+                ['Privacy policy', '/privacy'],
+                ['Terms', '/terms'],
               ]}
             />
           </div>
 
           <div className="mt-14 flex flex-col gap-3 border-t border-white/10 pt-7 text-[0.8125rem] text-slate-500 sm:flex-row sm:items-center sm:justify-between">
-            <p>© {new Date().getFullYear()} Retailer Suites. All rights reserved.</p>
+            <p>
+              © {new Date().getFullYear()} {site?.name?.trim() || 'Retailer Suites'}. All rights reserved.
+            </p>
             <p>Built for growing businesses in Bangladesh and beyond.</p>
           </div>
         </Container>
       </footer>
     </div>
+  );
+}
+
+/** The address as a list of the parts that were actually filled in. */
+function addressLines(site: ReturnType<typeof useSite>): string[] {
+  if (!site) return [];
+  const { addressLine1, addressLine2, city, postcode, country } = site.contact;
+  return [addressLine1, addressLine2, [city, postcode].filter(Boolean).join(' '), country]
+    .map((part) => part?.trim() ?? '')
+    .filter(Boolean);
+}
+
+/**
+ * The brand's own profiles.
+ *
+ * `rel="me"` is not decoration: it is how a search engine confirms that these
+ * accounts and this site are the same organisation, which is what lets the
+ * brand panel in search results show them.
+ */
+function SocialLinks({ site }: { site: ReturnType<typeof useSite> }) {
+  const links = [
+    ['Facebook', site?.social.facebook],
+    ['Instagram', site?.social.instagram],
+    ['LinkedIn', site?.social.linkedin],
+    ['YouTube', site?.social.youtube],
+    ['X', site?.social.x],
+  ].filter(([, href]) => Boolean(href)) as [string, string][];
+  if (links.length === 0) return null;
+
+  return (
+    <ul className="mt-6 flex flex-wrap gap-x-4 gap-y-2">
+      {links.map(([label, href]) => (
+        <li key={label}>
+          <a
+            href={href}
+            target="_blank"
+            rel="me noopener noreferrer"
+            className="text-[0.8125rem] text-slate-400 underline-offset-4 transition-colors hover:text-white hover:underline"
+          >
+            {label}
+          </a>
+        </li>
+      ))}
+    </ul>
   );
 }
 

@@ -1994,6 +1994,35 @@ async function main() {
   check('Turning indexing off disallows everything', /Disallow: \/$/m.test(robotsOff.trim()) && !/Allow:/.test(robotsOff), robotsOff.trim());
   await api('/platform/site', { method: 'PATCH', token: padmin.token, body: { seo: { indexable: true } } });
 
+  // The policy pages and FAQ are rendered by the site from these settings.
+  const markdownRenderer = readFileSync(new URL('../client/src/features/public/Markdown.tsx', import.meta.url), 'utf8');
+  // The ATTRIBUTE, not the word: the file's own comment explains why it does
+  // not use one, and prose must not fail a test about code.
+  check('Admin-written content is rendered to React nodes, never to an HTML string', !/dangerouslySetInnerHTML\s*=/.test(markdownRenderer));
+  check('...and link schemes are allow-listed, so javascript: cannot survive', /\^https\?:/.test(markdownRenderer) && /safeHref/.test(markdownRenderer));
+  for (const file of ['client/src/pages/public/PolicyPage.tsx', 'client/src/pages/public/FaqPage.tsx']) {
+    const source = readFileSync(new URL(`../${file}`, import.meta.url), 'utf8');
+    check(`${file.split('/').pop()} never injects raw HTML`, !/dangerouslySetInnerHTML\s*=/.test(source));
+  }
+  const faqScreen = readFileSync(new URL('../client/src/pages/public/FaqPage.tsx', import.meta.url), 'utf8');
+  // A scripted accordion that mounts its answer on click hides the content
+  // from exactly the audience an FAQ page exists for.
+  check('The FAQ uses <details>, so every answer is in the HTML a crawler reads', /<details/.test(faqScreen));
+
+  const publicLayout = readFileSync(new URL('../client/src/layouts/PublicLayout.tsx', import.meta.url), 'utf8');
+  check('The footer reads its contact details from the settings', /site\?\.contact\.email/.test(publicLayout));
+  check('...links the policy pages', /'\/privacy'/.test(publicLayout) && /'\/terms'/.test(publicLayout));
+  check('...and marks social profiles rel="me" so they can be tied to the brand', /rel="me noopener noreferrer"/.test(publicLayout));
+
+  const routesFile = readFileSync(new URL('../client/src/routes/AppRoutes.tsx', import.meta.url), 'utf8');
+  for (const path of ['/faq', '/privacy', '/terms', '/refunds']) {
+    check(`${path} is a real route`, new RegExp(`path="${path}"`).test(routesFile));
+  }
+
+  const titleComponent = readFileSync(new URL('../client/src/components/DocumentTitle.tsx', import.meta.url), 'utf8');
+  check('The tab title uses the admin title template', /titleTemplate/.test(titleComponent) && /replace\('%s'/.test(titleComponent));
+  check('...and the favicon follows the settings', /link\[rel='icon'\]/.test(titleComponent));
+
   // ---- a few days of access, granted by hand -------------------------------
   // The shop whose payment has not cleared, or who rang up at closing time with
   // an expired plan. A grant carries a PLAN, because entitlements come entirely
