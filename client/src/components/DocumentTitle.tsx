@@ -10,7 +10,11 @@ const BRAND = 'Retailer Suites';
 const TAGLINE = 'Point of sale for your business';
 
 /** Creates the link/meta if it is not already in the document, then sets it. */
-function setHeadTag(selector: string, create: () => HTMLElement, apply: (el: HTMLElement) => void) {
+function setHeadTag(
+  selector: string,
+  create: () => HTMLElement,
+  apply: (el: HTMLElement) => void,
+) {
   let el = document.head.querySelector<HTMLElement>(selector);
   if (!el) {
     el = create();
@@ -42,11 +46,20 @@ const PUBLIC_TITLES: Record<string, string> = {
 /** The longest public path that matches, so `/products/clothing` still resolves. */
 function publicTitleFor(pathname: string): string | null {
   let best: { path: string; title: string } | null = null;
+
   for (const [path, title] of Object.entries(PUBLIC_TITLES)) {
-    const matches = path === '/' ? pathname === '/' : pathname === path || pathname.startsWith(`${path}/`);
+    const matches =
+      path === '/'
+        ? pathname === '/'
+        : pathname === path || pathname.startsWith(`${path}/`);
+
     if (!matches) continue;
-    if (!best || path.length > best.path.length) best = { path, title };
+
+    if (!best || path.length > best.path.length) {
+      best = { path, title };
+    }
   }
+
   return best?.title ?? null;
 }
 
@@ -79,18 +92,26 @@ export function DocumentTitle() {
       document.title = `${shop} — ${appPage}`;
       return;
     }
+
     if (session && shop && !publicTitleFor(pathname)) {
       document.title = shop;
       return;
     }
 
     // A public page. The admin's own text wins, then the built-in name.
-    const configured = site?.seo.pages.find((page) => page.path === pathname)?.title?.trim();
+    const configured = site?.seo.pages
+      .find((page) => page.path === pathname)
+      ?.title?.trim();
+
     const home = pathname === '/';
-    const template = site?.seo.titleTemplate?.includes('%s') ? site.seo.titleTemplate : `%s — ${brand}`;
+    const template = site?.seo.titleTemplate?.includes('%s')
+      ? site.seo.titleTemplate
+      : `%s — ${brand}`;
+
     const defaultTitle = site?.seo.defaultTitle?.trim();
 
     let title: string;
+
     if (configured) {
       title = template.replace('%s', configured);
     } else if (home && defaultTitle) {
@@ -101,7 +122,10 @@ export function DocumentTitle() {
       title = defaultTitle;
     } else {
       const builtIn = publicTitleFor(pathname);
-      title = builtIn ? template.replace('%s', builtIn) : (defaultTitle || `${brand} — ${TAGLINE}`);
+
+      title = builtIn
+        ? template.replace('%s', builtIn)
+        : defaultTitle || `${brand} — ${TAGLINE}`;
     }
 
     document.title = title;
@@ -135,8 +159,15 @@ export function DocumentTitle() {
     if (site.seo.googleSiteVerification) {
       setHeadTag(
         "meta[name='google-site-verification']",
-        () => Object.assign(document.createElement('meta'), { name: 'google-site-verification' }),
-        (el) => el.setAttribute('content', site.seo.googleSiteVerification),
+        () =>
+          Object.assign(document.createElement('meta'), {
+            name: 'google-site-verification',
+          }),
+        (el) =>
+          el.setAttribute(
+            'content',
+            site.seo.googleSiteVerification,
+          ),
       );
     }
   }, [site]);
@@ -156,16 +187,24 @@ export function DocumentTitle() {
 
     const configured = site.seo.pages.find((page) => page.path === pathname);
     const builtIn = routeSeoFor(pathname);
+
     const description =
       configured?.description?.trim() ||
       (pathname === '/' ? site.seo.defaultDescription?.trim() : '') ||
       builtIn?.description ||
       site.seo.defaultDescription?.trim();
+
     const url = absoluteUrl(site.seo.canonicalBaseUrl, pathname);
 
-    const meta = (name: string, content: string, property = false) => {
+    const meta = (
+      name: string,
+      content: string,
+      property = false,
+    ) => {
       if (!content) return;
+
       const attr = property ? 'property' : 'name';
+
       setHeadTag(
         `meta[${attr}='${name}']`,
         () => {
@@ -177,24 +216,44 @@ export function DocumentTitle() {
       );
     };
 
-    if (description) meta('description', description);
+    if (description) {
+      meta('description', description);
+    }
+
     meta('og:title', document.title, true);
     meta('og:url', url, true);
     meta('og:site_name', site.name, true);
-    if (description) meta('og:description', description, true);
-    if (site.socialImageUrl) meta('og:image', site.socialImageUrl, true);
+
+    if (description) {
+      meta('og:description', description, true);
+    }
+
+    if (site.socialImageUrl) {
+      meta('og:image', site.socialImageUrl, true);
+    }
+
     meta('twitter:title', document.title);
-    if (description) meta('twitter:description', description);
+
+    if (description) {
+      meta('twitter:description', description);
+    }
 
     if (site.seo.canonicalBaseUrl) {
       setHeadTag(
         "link[rel='canonical']",
-        () => Object.assign(document.createElement('link'), { rel: 'canonical' }),
+        () =>
+          Object.assign(document.createElement('link'), {
+            rel: 'canonical',
+          }),
         (el) => el.setAttribute('href', url),
       );
     }
+
     // A staging build must keep saying so on every page, not only the first.
-    meta('robots', site.seo.indexable ? 'index,follow' : 'noindex,nofollow');
+    meta(
+      'robots',
+      site.seo.indexable ? 'index,follow' : 'noindex,nofollow',
+    );
   }, [site, pathname]);
 
   return null;

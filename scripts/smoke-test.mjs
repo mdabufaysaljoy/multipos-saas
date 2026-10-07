@@ -2056,13 +2056,24 @@ async function main() {
     'client/src/pages/supershop/SupershopReportsPage.tsx',
     'client/src/features/platform/SiteSettingsTab.tsx',
   ];
+
   for (const file of tabbedScreens) {
     const source = readFileSync(new URL(`../${file}`, import.meta.url), 'utf8');
-    check(`${file.split('/').pop()} keeps its tab in the URL`, /useTabParam/.test(source) && !/<Tabs defaultValue/.test(source), file);
+    check(
+      `${file.split('/').pop()} keeps its tab in the URL`,
+      /useTabParam/.test(source) && !/<Tabs defaultValue/.test(source),
+      file,
+    );
   }
+
   // The platform panel nests three levels, each with its own key.
   const platformScreen2 = readFileSync(new URL('../client/src/pages/PlatformPage.tsx', import.meta.url), 'utf8');
-  check('Nested platform tabs each get their own key', ["useTabParam('tab'", "useTabParam('billing'", "useTabParam('settings'"].every((call) => platformScreen2.includes(call)));
+  check(
+    'Nested platform tabs each get their own key',
+    ["useTabParam('tab'", "useTabParam('billing'", "useTabParam('settings'"].every((call) =>
+      platformScreen2.includes(call),
+    ),
+  );
 
   // ---- search engines and share cards --------------------------------------
   // The site is a client-rendered SPA, and the social crawlers do not run
@@ -2074,18 +2085,48 @@ async function main() {
   const seoLib = readFileSync(new URL('../client/src/lib/seo.ts', import.meta.url), 'utf8');
 
   check('The build writes a page per public route', /writeFile\(resolve\(dir, 'index.html'\)/.test(prerender));
+
   for (const tag of ['og:title', 'og:description', 'og:url', 'og:image', 'twitter:card', 'canonical']) {
     check(`...carrying ${tag}`, prerender.includes(tag));
   }
-  check('...and structured data', /application\/ld\+json/.test(prerender) && /Organization/.test(prerender) && /FAQPage/.test(prerender) && /BreadcrumbList/.test(prerender));
-  check('JSON-LD cannot break out of its own script tag', /replace\(\/<\/g, '\\\\u003c'\)/.test(prerender), 'jsonLd must escape <');
+
+  check(
+    '...and structured data',
+    /application\/ld\+json/.test(prerender) &&
+      /Organization/.test(prerender) &&
+      /FAQPage/.test(prerender) &&
+      /BreadcrumbList/.test(prerender),
+  );
+
+  check(
+    'JSON-LD cannot break out of its own script tag',
+    /replace\(\/<\/g, '\\\\u003c'\)/.test(prerender),
+    'jsonLd must escape <',
+  );
+
   check('Injected values are HTML-escaped', /escapeHtml/.test(prerender));
 
-  check('robots.txt is written to the SITE root, not the API host', /writeFile\(resolve\(DIST, 'robots\.txt'\)/.test(prerender));
-  check('...and a sitemap beside it', /writeFile\(resolve\(DIST, 'sitemap\.xml'\)/.test(prerender));
-  check('Turning indexing off empties the sitemap and blocks crawlers', /indexable\s*\?/.test(prerender) && /'Disallow: \/'/.test(prerender));
+  check(
+    'robots.txt is written to the SITE root, not the API host',
+    /writeFile\(resolve\(DIST, 'robots\.txt'\)/.test(prerender),
+  );
+
+  check(
+    '...and a sitemap beside it',
+    /writeFile\(resolve\(DIST, 'sitemap\.xml'\)/.test(prerender),
+  );
+
+  check(
+    'Turning indexing off empties the sitemap and blocks crawlers',
+    /indexable\s*\?/.test(prerender) && /'Disallow: \/'/.test(prerender),
+  );
+
   check('...and marks every page noindex', /noindex,nofollow/.test(prerender));
-  check('The signed-in app is never offered to crawlers', /Disallow: \/pos/.test(prerender) && /Disallow: \/platform/.test(prerender));
+
+  check(
+    'The signed-in app is never offered to crawlers',
+    /Disallow: \/pos/.test(prerender) && /Disallow: \/platform/.test(prerender),
+  );
 
   // A build must not fail because a marketing description could not be fetched.
   check('An unreachable settings API falls back to built-in copy', /using built-in copy/.test(prerender));
@@ -2094,21 +2135,43 @@ async function main() {
   // two must agree. This runs the generator's OWN parse against the real file:
   // if somebody reformats the table and the regex stops matching, the build
   // would quietly emit fewer pages, and this is what notices.
-  const seoBlock = seoLib.slice(seoLib.indexOf('export const PUBLIC_ROUTES'), seoLib.indexOf('export const PRODUCT_SLUGS'));
-  const declared = [...seoBlock.matchAll(/path:\s*'([^']+)'/g)].map((m) => m[1]).sort();
+  const seoBlock = seoLib.slice(
+    seoLib.indexOf('export const PUBLIC_ROUTES'),
+    seoLib.indexOf('export const PRODUCT_SLUGS'),
+  );
+
+  const declared = [...seoBlock.matchAll(/path:\s*'([^']+)'/g)]
+    .map((m) => m[1])
+    .sort();
+
   const flat = seoBlock.replace(/\s+/g, ' ');
-  const parsed = [...flat.matchAll(/\{ path: '([^']+)', title: '([^']*)', description: '([^']*)',? \}/g)].map((m) => m[1]).sort();
+
+  const parsed = [
+    ...flat.matchAll(/\{ path: '([^']+)', title: '([^']*)', description: '([^']*)',? \}/g),
+  ]
+    .map((m) => m[1])
+    .sort();
+
   check(
     'The generator parses every route the app declares',
     declared.length > 0 && parsed.join('|') === declared.join('|'),
     { declared, parsedByGenerator: parsed },
   );
 
-  const titleSource = readFileSync(new URL('../client/src/components/DocumentTitle.tsx', import.meta.url), 'utf8');
-  check('Canonical and Open Graph are kept current as the visitor navigates', /link\[rel='canonical'\]/.test(titleSource) && /og:url/.test(titleSource));
-  check('...and the signed-in app is left out of it', /isPublicPath/.test(titleSource));
+  const titleSource = readFileSync(
+    new URL('../client/src/components/DocumentTitle.tsx', import.meta.url),
+    'utf8',
+  );
 
-  // ---- a few days of access, granted by hand -------------------------------
+  check(
+    'Canonical and Open Graph are kept current as the visitor navigates',
+    /link\[rel='canonical'\]/.test(titleSource) && /og:url/.test(titleSource),
+  );
+
+  check(
+    '...and the signed-in app is left out of it',
+    /isPublicPath/.test(titleSource),
+  );  // ---- a few days of access, granted by hand -------------------------------
   // The shop whose payment has not cleared, or who rang up at closing time with
   // an expired plan. A grant carries a PLAN, because entitlements come entirely
   // from the plan snapshot: access with nothing behind it would open a POS with
