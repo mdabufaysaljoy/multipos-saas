@@ -61,6 +61,9 @@ interface TenantRow {
 const plansForPosType = (plans: SubscriptionPlan[] | undefined, posType: string) =>
   (plans ?? []).filter((plan) => !plan.posProductCode || plan.posProductCode === posType);
 
+/** What the POS picker starts on, until the admin chooses otherwise. */
+const DEFAULT_VERTICAL = 'clothing';
+
 /**
  * Platform administration.
  *
@@ -370,30 +373,46 @@ function TenantsTab() {
 function CreateWorkspaceDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (open: boolean) => void }) {
   const queryClient = useQueryClient();
   const navigate = useNavigate();
-  const [form, setForm] = React.useState({
+  const blank = {
     businessName: '',
+    vertical: DEFAULT_VERTICAL,
     ownerName: '',
     ownerEmail: '',
     ownerPhone: '',
     password: '',
     planId: 'trial',
     storeName: '',
-  });
+  };
+  const [form, setForm] = React.useState(blank);
 
   const { data: allPlans } = useQuery({ queryKey: ['platform', 'plans'], queryFn: platformApi.allPlans, enabled: open });
-  // Workspaces created here are Clothing workspaces.
-  const plans = React.useMemo(() => plansForPosType(allPlans, 'clothing'), [allPlans]);
+  // Only the POS types that can actually be opened today. The server checks the
+  // chosen one against the same catalogue, so a stale list here cannot create a
+  // workspace nobody can sign into.
+  const { data: posProducts } = useQuery({ queryKey: ['platform', 'pos-products'], queryFn: platformApi.posProducts, enabled: open });
+  const posOptions = React.useMemo(
+    () => (posProducts ?? []).filter((product) => product.status === 'active' && product.moduleAvailable !== false),
+    [posProducts],
+  );
+  // Plans follow the chosen POS: a Pharmacy workspace must not be offered a
+  // Clothing plan. Picking a different POS clears a plan that no longer applies.
+  const plans = React.useMemo(() => plansForPosType(allPlans, form.vertical), [allPlans, form.vertical]);
+  React.useEffect(() => {
+    if (form.planId !== 'trial' && !plans.some((plan) => plan._id === form.planId)) {
+      setForm((f) => ({ ...f, planId: 'trial' }));
+    }
+  }, [plans, form.planId]);
 
   React.useEffect(() => {
-    if (open) {
-      setForm({ businessName: '', ownerName: '', ownerEmail: '', ownerPhone: '', password: '', planId: 'trial', storeName: '' });
-    }
+    if (open) setForm(blank);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
   const create = useMutation({
     mutationFn: () =>
       platformApi.createWorkspace({
         businessName: form.businessName.trim(),
+        vertical: form.vertical,
         owner: {
           name: form.ownerName.trim(),
           email: form.ownerEmail.trim(),
@@ -430,9 +449,25 @@ function CreateWorkspaceDialog({ open, onOpenChange }: { open: boolean; onOpenCh
         </DialogHeader>
 
         <div className="space-y-3">
-          <div className="space-y-1.5">
-            <Label>Business name</Label>
-            <Input autoFocus value={form.businessName} onChange={(e) => setForm((f) => ({ ...f, businessName: e.target.value }))} />
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div className="space-y-1.5">
+              <Label>Business name</Label>
+              <Input autoFocus value={form.businessName} onChange={(e) => setForm((f) => ({ ...f, businessName: e.target.value }))} />
+            </div>
+            <div className="space-y-1.5">
+              <Label>POS type</Label>
+              <Select value={form.vertical} onValueChange={(v) => setForm((f) => ({ ...f, vertical: v }))}>
+                <SelectTrigger><SelectValue placeholder="Choose a POS" /></SelectTrigger>
+                <SelectContent>
+                  {posOptions.map((product) => (
+                    <SelectItem key={product.code} value={product.code}>
+                      {product.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-muted-foreground">Fixed once the workspace exists.</p>
+            </div>
           </div>
 
           <div className="grid gap-3 sm:grid-cols-2">

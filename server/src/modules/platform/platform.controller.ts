@@ -2,6 +2,7 @@ import type { Request, Response } from 'express';
 import { Types } from 'mongoose';
 import { ROLES, SUBSCRIPTION_STATUS } from '../../config/constants';
 import { DEFAULT_POS_VERTICAL } from '../../config/verticals';
+import { posCatalogService } from '../../services/posCatalog/posCatalog.service';
 import { PharmacySaleModel } from '../../models/PharmacySale';
 import { ShopSaleModel } from '../../models/ShopSale';
 import { PaymentModel } from '../../models/Payment';
@@ -597,6 +598,7 @@ export const testSmtp = asyncHandler(async (req: Request, res: Response) => {
 export const createWorkspace = asyncHandler(async (req: Request, res: Response) => {
   const input = body<{
     businessName: string;
+    vertical?: string;
     ownerUserId?: string;
     owner?: { name: string; email: string; phone?: string; password: string };
     planId?: string;
@@ -604,6 +606,13 @@ export const createWorkspace = asyncHandler(async (req: Request, res: Response) 
     storeName?: string;
     storeCode?: string;
   }>(req);
+
+  // Which POS this workspace runs, checked against the live catalogue exactly
+  // as the customer-facing path checks it - an unknown code, one that is not
+  // offered, or one with no module behind it is refused here rather than
+  // creating a workspace nobody can open. Omitted means the default, so an
+  // older client that sends no vertical behaves as it always did.
+  const vertical = await posCatalogService.resolveForNewWorkspace(input.vertical ?? DEFAULT_POS_VERTICAL);
 
   const { UserModel: Users, hashPassword } = await import('../../models/User');
   const { createSystemRoles } = await import('../roles/roles.defaults');
@@ -660,7 +669,7 @@ export const createWorkspace = asyncHandler(async (req: Request, res: Response) 
   await TenantModel.create({
     _id: tenantId,
     accountId,
-    vertical: DEFAULT_POS_VERTICAL,
+    vertical,
     name: input.businessName,
     slug: uniqueSlug(input.businessName),
     ownerUserId: ownerId,

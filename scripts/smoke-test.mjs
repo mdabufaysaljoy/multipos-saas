@@ -1900,6 +1900,40 @@ async function main() {
   check('Provisioned owner is an admin', newOwnerLogin.data?.user?.role === 'admin');
   check('Provisioned workspace already has a store', newOwnerLogin.data?.stores?.length === 1);
   check('Provisioned owner does NOT need onboarding', newOwnerLogin.data?.needsStoreSetup === false);
+  // Every workspace made from this panel used to come out Clothing: the request
+  // schema had no `vertical` at all and the handler hardcoded the default, so
+  // an admin provisioning a Pharmacy silently got a Clothing POS.
+  check('Provisioning defaults to Clothing when no POS is named', newOwnerLogin.data?.tenant?.vertical === 'clothing', newOwnerLogin.data?.tenant?.vertical);
+
+  for (const vertical of ['supershop', 'pharmacy', 'restaurant']) {
+    const made = await api('/platform/workspaces', {
+      method: 'POST',
+      token: padmin.token,
+      body: {
+        businessName: `Provisioned ${vertical} ${runId}`,
+        vertical,
+        owner: { name: 'POS Owner', email: `${vertical}own${runId}@example.com`, phone: '01700000998', password: 'Password@123' },
+      },
+    });
+    check(`Platform admin provisions a ${vertical} workspace`, made.status === 201, made.error);
+    const session = await api('/auth/login', { method: 'POST', body: { email: `${vertical}own${runId}@example.com`, password: 'Password@123' } });
+    check(`...and it really runs the ${vertical} POS`, session.data?.tenant?.vertical === vertical, session.data?.tenant?.vertical);
+  }
+
+  // The chosen POS is checked against the live catalogue, exactly as the
+  // customer-facing path checks it - the panel cannot create a workspace
+  // nobody could then sign into.
+  const bogusPos = await api('/platform/workspaces', {
+    method: 'POST',
+    token: padmin.token,
+    body: {
+      businessName: `Bogus POS ${runId}`,
+      vertical: 'laundromat',
+      owner: { name: 'Nobody', email: `bogus${runId}@example.com`, phone: '01700000997', password: 'Password@123' },
+    },
+  });
+  check('An unknown POS type is refused', bogusPos.status === 422, { status: bogusPos.status, error: bogusPos.error });
+  check('...and no workspace is left behind', (await api('/auth/login', { method: 'POST', body: { email: `bogus${runId}@example.com`, password: 'Password@123' } })).status === 401);
 
   // ---- platform user management ----
   const suspend = await api(`/platform/users/${pStaff.data.id}`, {
