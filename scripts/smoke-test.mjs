@@ -1935,6 +1935,77 @@ async function main() {
   check('An unknown POS type is refused', bogusPos.status === 422, { status: bogusPos.status, error: bogusPos.error });
   check('...and no workspace is left behind', (await api('/auth/login', { method: 'POST', body: { email: `bogus${runId}@example.com`, password: 'Password@123' } })).status === 401);
 
+  // ---- a few days of access, granted by hand -------------------------------
+  // The shop whose payment has not cleared, or who rang up at closing time with
+  // an expired plan. A grant carries a PLAN, because entitlements come entirely
+  // from the plan snapshot: access with nothing behind it would open a POS with
+  // every feature off and every limit at zero.
+  const grantEmail = `grant${runId}@example.com`;
+  const granted = await api('/platform/workspaces', {
+    method: 'POST',
+    token: padmin.token,
+    body: {
+      businessName: `Granted Shop ${runId}`,
+      owner: { name: 'Grant Owner', email: grantEmail, phone: '01700000996', password: 'Password@123' },
+    },
+  });
+  check('A workspace to grant access to is provisioned', granted.status === 201, granted.error);
+  const grantTenantId = granted.data.tenantId;
+  const grantSignIn = () => api('/auth/login', { method: 'POST', body: { email: grantEmail, password: 'Password@123' } });
+  const grantToken = async () => (await grantSignIn()).data?.tokens?.accessToken;
+  const grantSub = async () => (await api(`/platform/workspaces/${grantTenantId}/overview`, { token: padmin.token })).data?.subscription;
+
+  // Expire it, so this is the "no usable subscription" case the grant exists for.
+  const grantSubId = (await grantSub())?._id ?? (await grantSub())?.id;
+  const expired = await api(`/platform/subscriptions/${grantSubId}/status`, {
+    method: 'PATCH',
+    token: padmin.token,
+    body: { status: 'expired', reason: 'Expired for the grant test' },
+  });
+  check('The workspace subscription can be expired', expired.status === 200, expired.error);
+  check('An expired workspace cannot reach its POS', (await api('/products', { token: await grantToken() })).status === 402);
+
+  // Grant three days on a real plan.
+  const grantPlan = ((await api('/plans?vertical=clothing')).data ?? []).find((p) => p.code === 'showroom-monthly');
+  const grantEnd = new Date(Date.now() + 3 * 24 * 60 * 60 * 1000);
+  const grantRes = await api('/platform/subscriptions', {
+    method: 'POST',
+    token: padmin.token,
+    body: {
+      tenantId: grantTenantId,
+      planId: grantPlan._id,
+      endDate: grantEnd.toISOString(),
+      status: 'active',
+      autoRenew: false,
+      notes: 'Complimentary 3-day access granted by platform admin',
+    },
+  });
+  check('Platform admin grants 3 days of access', grantRes.status === 201 || grantRes.status === 200, grantRes.error);
+  check('...and the expired workspace can use its POS again', (await api('/products', { token: await grantToken() })).status === 200);
+
+  const afterGrant = await grantSub();
+  const grantDays = Math.round((new Date(afterGrant.currentPeriodEnd) - Date.now()) / (24 * 60 * 60 * 1000));
+  check('...for exactly the days granted', grantDays === 3, { grantDays, endsAt: afterGrant?.currentPeriodEnd });
+  check('...and it never renews itself', afterGrant?.autoRenew === false, afterGrant?.autoRenew);
+  // The overview exposes the frozen snapshot as `plan`.
+  check('...on the plan the admin chose, so the features are real', afterGrant?.plan?.code === 'showroom-monthly', afterGrant?.plan);
+  check('...with no payment invented for it', ((await api(`/platform/workspaces/${grantTenantId}/overview`, { token: padmin.token })).data?.payments ?? []).length === 0);
+
+  // A grant that has run out stops working, like any other ended period.
+  await api(`/platform/subscriptions/${afterGrant._id ?? afterGrant.id}/status`, {
+    method: 'PATCH',
+    token: padmin.token,
+    body: { status: 'expired', reason: 'Grant ran out' },
+  });
+  check('A grant that has run out closes the POS again', (await api('/products', { token: await grantToken() })).status === 402);
+
+  // The day presets the panel offers are the ones it sends.
+  const platformScreen = readFileSync(new URL('../client/src/pages/PlatformPage.tsx', import.meta.url), 'utf8');
+  check('The panel offers 1, 2, 3, 5 and 7 day grants', /GRANT_DAY_OPTIONS = \[1, 2, 3, 5, 7\]/.test(platformScreen));
+  check('...sends an explicit end date rather than billing periods', /endDate: endsAt\.toISOString\(\)/.test(platformScreen));
+  check('...never auto-renews a grant', /autoRenew: false/.test(platformScreen));
+  check('...and records no payment for one', !/recordPayment/.test(platformScreen.slice(platformScreen.indexOf('function GrantAccessDialog'), platformScreen.indexOf('/** Manual subscription activation'))));
+
   // ---- platform user management ----
   const suspend = await api(`/platform/users/${pStaff.data.id}`, {
     method: 'PATCH',

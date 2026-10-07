@@ -4,7 +4,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
 import { format } from 'date-fns';
-import { Building2, CircleDollarSign, LogOut, Pause, Play, Plus, Users, Wallet } from 'lucide-react';
+import { Building2, CircleDollarSign, Clock, LogOut, Pause, Play, Plus, Users, Wallet } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -203,6 +203,7 @@ function TenantsTab() {
   const [term, setTerm] = React.useState('');
   const search = useDebounced(term, 300);
   const [assigning, setAssigning] = React.useState<TenantRow | null>(null);
+  const [granting, setGranting] = React.useState<TenantRow | null>(null);
   const [funding, setFunding] = React.useState<TenantRow | null>(null);
   const [suspending, setSuspending] = React.useState<TenantRow | null>(null);
 
@@ -293,6 +294,10 @@ function TenantsTab() {
             <Plus />
             Subscription
           </Button>
+          <Button variant="outline" size="sm" onClick={() => setGranting(row)}>
+            <Clock />
+            Grant days
+          </Button>
           <Button variant="outline" size="sm" onClick={() => setFunding(row)}>
             <Wallet />
             Wallet
@@ -348,6 +353,7 @@ function TenantsTab() {
         onClose={() => setFunding(null)}
       />
       <AssignSubscriptionDialog tenant={assigning} onClose={() => setAssigning(null)} />
+      <GrantAccessDialog tenant={granting} onClose={() => setGranting(null)} />
 
       <ConfirmDialog
         open={Boolean(suspending)}
@@ -515,6 +521,140 @@ function CreateWorkspaceDialog({ open, onOpenChange }: { open: boolean; onOpenCh
           <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
           <Button disabled={!valid} loading={create.isPending} onClick={() => create.mutate()}>
             Create workspace
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/** The day counts a grant is offered in. Anything else is a full subscription. */
+const GRANT_DAY_OPTIONS = [1, 2, 3, 5, 7] as const;
+
+/**
+ * A few days of access, on the house.
+ *
+ * For the shop whose payment has not cleared, who is mid-evaluation, or who
+ * rang up at closing time with an expired plan. It is deliberately separate
+ * from "Assign a subscription": that one bills whole plan periods and records
+ * the money collected, this one records no payment at all.
+ *
+ * It is the SAME endpoint underneath - a period with an explicit end date and
+ * no auto-renew - because a grant has to carry a plan to be worth anything.
+ * Entitlements come entirely from the plan snapshot, so access with no plan
+ * behind it would unlock a POS with every feature flag off and every limit at
+ * zero. The admin therefore picks which plan the days run on, and the
+ * workspace gets exactly that plan until the clock runs out.
+ *
+ * It works from any starting point - no subscription, expired, or one already
+ * running - because the server closes whatever was there and opens this.
+ */
+function GrantAccessDialog({ tenant, onClose }: { tenant: TenantRow | null; onClose: () => void }) {
+  const queryClient = useQueryClient();
+  const [planId, setPlanId] = React.useState('');
+  const [days, setDays] = React.useState<number>(7);
+  const [notes, setNotes] = React.useState('');
+
+  const { data: allPlans } = useQuery({ queryKey: ['platform', 'plans'], queryFn: platformApi.allPlans, enabled: Boolean(tenant) });
+  const plans = React.useMemo(() => plansForPosType(allPlans, tenant?.vertical ?? 'clothing'), [allPlans, tenant?.vertical]);
+
+  React.useEffect(() => {
+    if (!tenant) return;
+    setPlanId('');
+    setDays(7);
+    setNotes('');
+  }, [tenant]);
+
+  // Counted from now, not from midnight: a grant made at 4pm should still be
+  // good at 4pm on its last day rather than expiring that evening.
+  const endsAt = React.useMemo(() => {
+    const end = new Date();
+    end.setDate(end.getDate() + days);
+    return end;
+  }, [days]);
+
+  const grant = useMutation({
+    mutationFn: () =>
+      platformApi.assignSubscription({
+        tenantId: tenant!._id,
+        planId,
+        endDate: endsAt.toISOString(),
+        status: 'active',
+        // Never renews: it lapses on its own, which is the point of a grant.
+        autoRenew: false,
+        notes: notes.trim() || `Complimentary ${days}-day access granted by platform admin`,
+      }),
+    onSuccess: () => {
+      toast.success(`${days} day${days === 1 ? '' : 's'} of access granted`);
+      onClose();
+      void queryClient.invalidateQueries({ queryKey: ['platform'] });
+    },
+    onError: (err) => toast.error(err instanceof ApiError ? err.message : 'Could not grant access'),
+  });
+
+  return (
+    <Dialog open={Boolean(tenant)} onOpenChange={(open) => !open && onClose()}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Grant temporary access</DialogTitle>
+          <DialogDescription>
+            Opens the POS for <strong>{tenant?.name}</strong> for a few days, with no payment recorded. Works whether the
+            workspace has no subscription, an expired one, or one already running — this supersedes it.
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="space-y-4">
+          <div className="space-y-1.5">
+            <Label>How long</Label>
+            <div className="flex flex-wrap gap-2">
+              {GRANT_DAY_OPTIONS.map((option) => (
+                <Button
+                  key={option}
+                  type="button"
+                  size="sm"
+                  variant={days === option ? 'default' : 'outline'}
+                  onClick={() => setDays(option)}
+                >
+                  {option} day{option === 1 ? '' : 's'}
+                </Button>
+              ))}
+            </div>
+            <p className="text-xs text-muted-foreground">
+              Ends {endsAt.toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })}.
+            </p>
+          </div>
+
+          <div className="space-y-1.5">
+            <Label>Plan the access runs on</Label>
+            <Select value={planId} onValueChange={setPlanId}>
+              <SelectTrigger>
+                <SelectValue placeholder="Choose a plan" />
+              </SelectTrigger>
+              <SelectContent>
+                {(plans ?? []).map((plan) => (
+                  <SelectItem key={plan._id} value={plan._id}>
+                    {plan.name} — {formatPlanPrice(plan.priceMinor, plan.currency)}/{plan.interval === 'yearly' ? 'year' : 'month'}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <p className="text-xs text-muted-foreground">
+              Decides the features and limits during the grant. Nothing is charged.
+            </p>
+          </div>
+
+          <div className="space-y-1.5">
+            <Label>Reason (optional)</Label>
+            <Input value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Payment pending, extended over the weekend" />
+          </div>
+        </div>
+
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button disabled={!planId || grant.isPending} loading={grant.isPending} onClick={() => grant.mutate()}>
+            Grant {days} day{days === 1 ? '' : 's'}
           </Button>
         </DialogFooter>
       </DialogContent>
