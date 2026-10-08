@@ -1,6 +1,6 @@
 import type { Request, Response } from 'express';
 import { Types } from 'mongoose';
-import { ROLES, SUBSCRIPTION_STATUS } from '../../config/constants';
+import { PAYMENT_PROVIDERS, ROLES, SUBSCRIPTION_STATUS } from '../../config/constants';
 import { DEFAULT_POS_VERTICAL } from '../../config/verticals';
 import { posCatalogService } from '../../services/posCatalog/posCatalog.service';
 import { workspaceDeletionService } from '../../services/account/workspaceDeletion.service';
@@ -581,6 +581,45 @@ export const integrations = asyncHandler(async (_req: Request, res: Response) =>
  * Reads the account balance rather than sending a message: it proves the key
  * works without spending money or messaging a real person.
  */
+/**
+ * Checks that this server can actually talk to ZiniPay.
+ *
+ * It asks about an invoice that does not exist, which is the cheapest
+ * question there is: nothing is created and no money moves. What matters is
+ * which way it fails. "Invoice not found" means the gateway answered and
+ * accepted the key, so checkouts will work. A connection error means this
+ * server has no route to it - a firewall, or a host without outbound access -
+ * which looks exactly like a broken integration from the customer's side and
+ * is the one thing that cannot be diagnosed from a payment screen.
+ */
+export const testZiniPay = asyncHandler(async (req: Request, res: Response) => {
+  await paymentRegistry.refresh();
+  if (!paymentRegistry.isUsable(PAYMENT_PROVIDERS.ZINIPAY)) {
+    await recordAudit(req, { action: 'platform.gateway_tested', newValue: { ok: false, reason: 'not configured' } });
+    ok(res, { ok: false, message: 'ZiniPay has no API key, or it is switched off.' });
+    return;
+  }
+
+  const provider = paymentRegistry.get(PAYMENT_PROVIDERS.ZINIPAY);
+  let reachable = false;
+  let message = '';
+  try {
+    await provider.verifyPayment('connection-test-no-such-invoice');
+    // An answer at all is the proof; a made-up invoice should not resolve.
+    reachable = true;
+    message = 'ZiniPay answered and accepted the API key.';
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : 'unknown';
+    // The gateway answering "no such invoice" is a SUCCESS: it was reached and
+    // it read the key. Only a transport failure means it was not.
+    reachable = /not found/i.test(reason);
+    message = reachable ? 'ZiniPay answered and accepted the API key.' : reason;
+  }
+
+  await recordAudit(req, { action: 'platform.gateway_tested', newValue: { ok: reachable, provider: PAYMENT_PROVIDERS.ZINIPAY } });
+  ok(res, { ok: reachable, provider: 'ZiniPay', message });
+});
+
 export const testSms = asyncHandler(async (req: Request, res: Response) => {
   const status = await smsService.statusAsync();
   if (!status.available) {

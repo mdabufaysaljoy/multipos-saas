@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { CheckCircle2, CreditCard, HandCoins, KeyRound } from 'lucide-react';
+import { CheckCircle2, CreditCard, HandCoins, KeyRound, PlugZap } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -47,6 +47,18 @@ export function PaymentGatewayCard() {
       enabled: Boolean(payments.zinipay?.enabled),
     });
   }, [data]);
+
+  // Reaching the gateway is a separate question from having a key, and the one
+  // a payment screen cannot answer: a server with no route to it fails every
+  // checkout in a way that looks like a broken integration.
+  const test = useMutation({
+    mutationFn: platformApi.testZiniPay,
+    onSuccess: (result) =>
+      result.ok
+        ? toast.success('ZiniPay is reachable', { description: result.message })
+        : toast.error('Could not reach ZiniPay', { description: result.message }),
+    onError: (error) => toast.error(error instanceof ApiError ? error.message : 'The test could not be run'),
+  });
 
   const save = useMutation({
     mutationFn: () =>
@@ -189,7 +201,11 @@ export function PaymentGatewayCard() {
         </CardContent>
       </Card>
 
-      <div className="flex justify-end">
+      <div className="flex flex-wrap justify-end gap-2">
+        <Button variant="outline" onClick={() => test.mutate()} loading={test.isPending} disabled={!keyStored}>
+          <PlugZap className="h-4 w-4" />
+          Test connection
+        </Button>
         <Button onClick={() => save.mutate()} loading={save.isPending}>
           Save payment settings
         </Button>

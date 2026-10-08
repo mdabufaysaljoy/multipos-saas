@@ -707,6 +707,8 @@ export const platformApi = {
   settings: () => get<UntypedAdminPayload>('/platform/settings'),
   updateSettings: (body: Record<string, unknown>) => patch<Record<string, unknown>>('/platform/settings', body),
   testSmtp: () => post<{ ok: boolean; error?: string }>('/platform/integrations/smtp/test'),
+  /** Checks this server can actually reach the payment gateway. Moves no money. */
+  testZiniPay: () => post<{ ok: boolean; provider?: string; message: string }>('/platform/integrations/zinipay/test'),
   /** Verifies the stored gateway key by reading the account balance. */
   testSms: () =>
     post<{

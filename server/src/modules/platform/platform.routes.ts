@@ -94,6 +94,9 @@ router.get('/settings', controller.getSettings);
 router.get('/integrations', controller.integrations);
 router.post('/integrations/smtp/test', controller.testSmtp);
 router.post('/integrations/sms/test', controller.testSms);
+// Proves this server can reach the gateway, which a payment screen cannot tell
+// apart from a broken integration. Creates nothing and moves no money.
+router.post('/integrations/zinipay/test', controller.testZiniPay);
 router.get('/audit-log', validate({ query: listQuery.extend({ action: z.string().trim().max(60).optional() }) }), controller.auditLog);
 router.patch(
   '/settings',
