@@ -299,6 +299,11 @@ try {
   // real money, and still could not be asked to produce a FAILED payment on
   // demand. It runs against a stub of their documented API instead.
   await run(process.execPath, [TSX_CLI, 'server/src/seed/zinipay.check.ts']);
+  // Nor these: campaign delivery is a background worker now, and its rules are
+  // about interruption and repetition - a claim whose lease expired, a retry
+  // that must skip what already went out, a second batch that must not refund
+  // twice. Over HTTP each would need a crash at an exact instant.
+  await run(process.execPath, [TSX_CLI, 'server/src/seed/campaignDelivery.check.ts']);
 } catch (error) {
   testFailure = error;
 } finally {

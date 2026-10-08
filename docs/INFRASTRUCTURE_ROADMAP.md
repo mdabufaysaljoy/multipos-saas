@@ -1,8 +1,8 @@
 # Infrastructure roadmap
 
 **Phases 0 (audit), 1 (Redis foundation) and 2 (BullMQ worker foundation) are
-COMPLETED. No background job has been migrated yet — that is Phase 3. Phases
-3–12 are not implemented.** Live status per area is `docs/IMPLEMENTATION_STATUS.md`,
+COMPLETED. Phase 3 is PART DONE: campaign delivery has been migrated (§5.1),
+the other five candidates have not. Phases 4–12 are not implemented.** Live status per area is `docs/IMPLEMENTATION_STATUS.md`,
 which is the file to trust when this one and it disagree.
 
 Written 2026-10-08 against the working tree at `claude/retailer-suites-audit-e61761`
@@ -285,18 +285,30 @@ can abandon a half-sent campaign.
 
 ## 5. Background-job migration plan
 
-### Status: NOT STARTED — this is Phase 3
+### Status: IN PROGRESS — 1 of 6 migrated
 
-**Nothing below has been migrated.** Phase 2 built the foundation they move
-onto (§4); every candidate still runs exactly where this audit found it. The
-candidate list, the per-item analysis and the order in §5.2 are the Phase 3
-work plan.
+**Campaign delivery has moved** to the `campaign-delivery` queue (2026-10-08):
+100 recipients per job, worker concurrency 1, per-recipient claim leases and a
+unique `(campaignId, recipient)` index for duplicate protection, with the same
+delivery function used inline when no Redis is configured. Full detail, tests
+and limitations in `docs/IMPLEMENTATION_STATUS.md` §1.3.
+
+**The other five candidates below are unchanged** and still run exactly where
+this audit found them. Their per-item analysis stands as the work plan.
+
+Before migrating the next one: campaign delivery has **not** been validated
+against a real Redis (no Redis in this environment, none in CI). Prove it there
+first — the reason campaigns went first was to prove the foundation.
 
 ### 5.1 Candidates, by priority
 
 Every row below was read from the named file.
 
-#### P1 — SMS and email campaigns
+#### P1 — SMS and email campaigns — **MIGRATED 2026-10-08**
+
+The analysis below is the Phase 0 finding, kept for the record. What was built
+differs from it in one way worth noting: the wallet charge was already up front,
+so the money needed no change at all — only the loop moved.
 
 | | |
 |---|---|
@@ -399,8 +411,8 @@ database as the invoice.
 ### 5.2 Migration order
 
 ```
+   Campaigns         → batch queue               DONE 2026-10-08
 1. Scheduler passes  → repeatable jobs           (no user-visible change)
-2. Campaigns         → fan-out queue             (biggest win; API returns "queued")
 3. Auth codes        → queue                     (watch the delivery-reporting contract)
 4. Image optimise    → queue                     (validation stays inline)
 5. Import commit     → queue                     (needs per-row progress first)
@@ -793,7 +805,7 @@ PHASE 1   Redis foundation                          (COMPLETED 2026-10-08)
    ↓
 PHASE 2   BullMQ worker foundation                  (COMPLETED 2026-10-08)
    ↓
-PHASE 3   Background-job migration                  ← next
+PHASE 3   Background-job migration                  ← IN PROGRESS (campaigns done)
    ↓
 PHASE 4   Rate limiting (distributed)
    ↓

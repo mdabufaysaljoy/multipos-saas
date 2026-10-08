@@ -129,6 +129,44 @@ export function createAppWorker<DataType = unknown, ResultType = unknown>(
   return worker;
 }
 
+/** How long a forced close is given before the shutdown moves on regardless. */
+const CLOSE_TIMEOUT_MS = 2_000;
+
+/** Resolves when `work` does, or after `ms` - whichever comes first. */
+async function bounded<T>(work: Promise<T>, ms: number): Promise<T | 'timed-out'> {
+  // The rejection is attached here so a late failure cannot surface as an
+  // unhandled rejection after the race has already been decided.
+  const settled = work.catch((error: unknown) => {
+    throw error;
+  });
+  return Promise.race([settled, new Promise<'timed-out'>((resolve) => setTimeout(() => resolve('timed-out'), ms).unref())]);
+}
+
+/**
+ * Closes one worker: graceful first, then forcibly, then gives up.
+ *
+ * `worker.close()` waits for the jobs already in hand, which is what we want -
+ * but it must not be awaited unconditionally. A worker whose Redis connection
+ * has gone can leave that promise pending for ever, and a shutdown that never
+ * finishes is a deployment that hangs until something kills it. So each stage
+ * is bounded, and the last stage is "stop waiting".
+ */
+async function closeWorker(worker: Worker, graceMs: number): Promise<void> {
+  try {
+    if ((await bounded(worker.close(), graceMs)) !== 'timed-out') return;
+  } catch (error) {
+    logger.warn('A worker did not close cleanly', { error: error instanceof Error ? error.message : String(error) });
+    return;
+  }
+
+  logger.warn(`A worker still had active jobs after ${graceMs}ms and is being stopped`);
+  try {
+    await bounded(worker.close(true), CLOSE_TIMEOUT_MS);
+  } catch (error) {
+    logger.warn('A worker could not be stopped cleanly', { error: error instanceof Error ? error.message : String(error) });
+  }
+}
+
 /** What this process currently holds. For logging and future status reporting. */
 export const queueStatus = () => ({
   connectionOpened: queueConnectionOpened(),
@@ -157,28 +195,13 @@ export async function shutdownQueues(graceMs = SHUTDOWN_GRACE_MS): Promise<void>
     logger.info('Queue shutdown started', { workers: openWorkers.length, queues: openQueues.length });
   }
 
-  await Promise.all(
-    openWorkers.map(async (worker) => {
-      let forced = false;
-      const timer = setTimeout(() => {
-        forced = true;
-        void worker.close(true);
-      }, graceMs);
-      timer.unref();
-      try {
-        await worker.close();
-      } catch (error) {
-        logger.warn('A worker did not close cleanly', { error: error instanceof Error ? error.message : String(error) });
-      } finally {
-        clearTimeout(timer);
-        if (forced) logger.warn(`A worker still had active jobs after ${graceMs}ms and was stopped`);
-      }
-    }),
-  );
+  await Promise.all(openWorkers.map((worker) => closeWorker(worker, graceMs)));
 
   await Promise.all(
     openQueues.map((queue) =>
-      queue.close().catch((error: unknown) => {
+      // Bounded for the same reason as the workers: a close against a
+      // connection that is already gone can simply never settle.
+      bounded(queue.close(), CLOSE_TIMEOUT_MS).catch((error: unknown) => {
         logger.warn('A queue did not close cleanly', { error: error instanceof Error ? error.message : String(error) });
       }),
     ),

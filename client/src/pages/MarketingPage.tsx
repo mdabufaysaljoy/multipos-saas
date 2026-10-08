@@ -192,8 +192,13 @@ function ComposeTab({
       mode === 'campaign'
         ? messagingApi.sendCampaign({ name: name.trim(), message: message.trim(), audience: 'all-customers' })
         : messagingApi.sendOne({ to: phone.trim(), message: message.trim() }),
-    onSuccess: () => {
-      toast.success(mode === 'campaign' ? 'Campaign sent' : 'Message sent');
+    onSuccess: (result) => {
+      // A campaign is delivered in the background, so the honest message is
+      // that it has started - not that every customer has it. The server says
+      // which: 'queued'/'sending' means a worker has it, anything else means it
+      // finished before the response.
+      const queued = mode === 'campaign' && ['queued', 'sending'].includes((result as SmsCampaign).status ?? '');
+      toast.success(mode === 'campaign' ? (queued ? 'Campaign queued - sending now' : 'Campaign sent') : 'Message sent');
       setMessage('');
       setName('');
       setPhone('');

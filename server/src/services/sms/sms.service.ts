@@ -2,7 +2,7 @@ import { Types } from 'mongoose';
 import { getPlatformSettings } from '../../models/PlatformSettings';
 import { SmsCampaignModel, SmsMessageModel } from '../../models/SmsMessage';
 import { ApiError } from '../../utils/ApiError';
-import { htmlToPlainText, sanitizeEmailHtml } from '../../utils/sanitizeEmailHtml';
+import { sanitizeEmailHtml } from '../../utils/sanitizeEmailHtml';
 import { logger } from '../../utils/logger';
 import { resolvePage } from '../../utils/pagination';
 import { walletService } from '../wallet/wallet.service';
@@ -10,6 +10,13 @@ import { usageChargeService } from '../billing/usageCharge.service';
 import { smsRegistry } from './registry';
 import { emailService } from '../email';
 import { countSegments } from './SmsProvider';
+import {
+  batchIndexesFor,
+  CAMPAIGN_BATCH_SIZE,
+  deliverCampaignBatch,
+  type CampaignJobData,
+} from './campaignDelivery.service';
+import { campaignQueueAvailable, enqueueCampaignBatches } from '../../queues/campaign.queue';
 import type { TenantContext } from '../../types/express';
 
 export interface CostEstimate {
@@ -153,10 +160,78 @@ class SmsService {
   }
 
   /**
+   * Hands a prepared campaign to the background worker.
+   *
+   * The recipients, the message and the charge are already durable before this
+   * runs, so all that is enqueued is `{ campaignId, tenantId, batchIndex }` per
+   * batch. If the enqueue fails the campaign is NOT reported as queued: the
+   * charge is returned and the campaign is marked failed, because a campaign
+   * that was paid for and silently never sent is the worst of the outcomes.
+   *
+   * WHEN THERE IS NO REDIS the work runs inline, exactly as it did before this
+   * migration. Phase 1 made Redis optional for the API on purpose, and a
+   * deployment without it must still be able to send a campaign - enqueueing
+   * into nothing would mean a campaign that never goes out. It is the same
+   * delivery code either way (`deliverCampaignBatch`), reached two ways; there
+   * is no second implementation to drift.
+   */
+  private async dispatchCampaign(
+    campaign: { _id: Types.ObjectId; tenantId: Types.ObjectId; name: string; recipientCount: number; usageChargeId: Types.ObjectId | null },
+    charge: { _id: Types.ObjectId; amountMinor: number },
+    actor: { userId: Types.ObjectId | null; userName: string },
+  ) {
+    const batchIndexes = batchIndexesFor(campaign.recipientCount);
+    const job: Omit<CampaignJobData, 'batchIndex'> = {
+      campaignId: String(campaign._id),
+      tenantId: String(campaign.tenantId),
+    };
+
+    if (!campaignQueueAvailable()) {
+      // Inline fallback: one attempt per recipient, which is what the
+      // synchronous implementation did, so a transient failure is recorded
+      // rather than left pending for a worker that does not exist.
+      for (const batchIndex of batchIndexes) {
+        await deliverCampaignBatch({ ...job, batchIndex }, { lastAttempt: true });
+      }
+      return this.campaignView(campaign._id, campaign.tenantId);
+    }
+
+    try {
+      await enqueueCampaignBatches({ ...job, batchIndexes });
+    } catch (error) {
+      logger.error('Could not enqueue a campaign; the charge is being returned', {
+        campaignId: String(campaign._id),
+        error: error instanceof Error ? error.message : String(error),
+      });
+      if (charge.amountMinor > 0) {
+        await usageChargeService
+          .refund(charge._id, charge.amountMinor, `Refund - "${campaign.name}" could not be queued`, actor)
+          .catch(() => undefined);
+      }
+      await SmsCampaignModel.updateOne(
+        { _id: campaign._id, tenantId: campaign.tenantId },
+        { $set: { status: 'failed', completedAt: new Date(), actualCostMinor: 0 } },
+      );
+      throw ApiError.internal('The campaign could not be queued for sending. Nothing was sent and the charge has been returned.');
+    }
+
+    return this.campaignView(campaign._id, campaign.tenantId);
+  }
+
+  /** The campaign as the API returns it, read back so counters are current. */
+  private async campaignView(campaignId: Types.ObjectId, tenantId: Types.ObjectId) {
+    const campaign = await SmsCampaignModel.findOne({ _id: campaignId, tenantId }).lean();
+    if (!campaign) throw ApiError.notFound('Campaign not found');
+    return campaign;
+  }
+
+  /**
    * Promotional campaign to many recipients.
    *
-   * One usage charge for the whole campaign, sent, then one refund for the
-   * failures against that charge.
+   * One usage charge for the whole campaign up front, one refund for the
+   * failures at the end - unchanged. What changed is WHERE the sending happens:
+   * the recipients are stored, the work is enqueued, and the request returns.
+   * It no longer waits for up to 5,000 sequential gateway calls.
    */
   async sendCampaign(
     ctx: TenantContext,
@@ -184,6 +259,7 @@ class SmsService {
       );
     }
 
+    const batchIndexes = batchIndexesFor(unique.length);
     const campaign = await SmsCampaignModel.create({
       tenantId: ctx.tenantId,
       storeId: ctx.storeId,
@@ -193,8 +269,12 @@ class SmsService {
       encoding: estimate.encoding,
       recipientCount: unique.length,
       estimatedCostMinor: estimate.totalCostMinor,
-      status: 'sending',
-      startedAt: new Date(),
+      // Paid for and stored, but not yet started. A worker moves it to
+      // 'sending' when it picks up the first batch.
+      status: 'queued',
+      batchSize: CAMPAIGN_BATCH_SIZE,
+      batchCount: batchIndexes.length,
+      queuedAt: new Date(),
       createdBy: ctx.userId,
       createdByNameSnapshot: ctx.userName,
     });
@@ -219,13 +299,18 @@ class SmsService {
 
     campaign.usageChargeId = charge._id;
     campaign.estimatedCostMinor = charge.amountMinor;
+    await campaign.save();
+
     // The frozen unit price, so the per-message cost matches what was charged.
     const perMessageCost = charge.unitPriceMinor * estimate.segments;
-    let sent = 0;
-    let failed = 0;
 
-    for (const recipient of unique) {
-      const record = await SmsMessageModel.create({
+    // The recipient list becomes rows BEFORE anything is enqueued. That is what
+    // keeps the job payload to three ids, lets a worker restart carry on from
+    // the database, and - with the unique (campaignId, recipient) index - makes
+    // a repeated delivery attempt unable to create a second row for anyone.
+    // `ordered: false` so one bad row cannot abandon the rest.
+    await SmsMessageModel.insertMany(
+      unique.map((recipient, index) => ({
         tenantId: ctx.tenantId,
         storeId: ctx.storeId,
         campaignId: campaign._id,
@@ -237,47 +322,18 @@ class SmsService {
         costMinor: perMessageCost,
         provider: provider.name,
         status: 'queued',
+        batchIndex: Math.floor(index / CAMPAIGN_BATCH_SIZE),
         sentBy: ctx.userId,
         sentByNameSnapshot: ctx.userName,
-      });
+      })),
+      { ordered: false },
+    );
 
-      try {
-        const result = await provider.send({ to: recipient.phone, message: input.message });
-        record.status = result.success ? 'sent' : 'failed';
-        record.providerMessageId = result.providerMessageId;
-        record.error = result.error ?? null;
-        record.sentAt = result.success ? new Date() : null;
-        if (!result.success) record.costMinor = 0;
-        if (result.success) sent += 1;
-        else failed += 1;
-      } catch (error) {
-        record.status = 'failed';
-        record.error = error instanceof Error ? error.message : 'Unknown error';
-        record.costMinor = 0;
-        failed += 1;
-      }
-
-      await record.save();
-    }
-
-    const actualCostMinor = perMessageCost * sent;
-    const refundMinor = charge.amountMinor - actualCostMinor;
-
-    if (refundMinor > 0) {
-      // A workspace is never charged for a message the gateway did not accept.
-      await usageChargeService.refund(charge._id, refundMinor, `Refund - ${failed} message(s) failed in "${input.name}"`, actorOf(ctx));
-    }
-
-    campaign.sentCount = sent;
-    campaign.failedCount = failed;
-    campaign.actualCostMinor = actualCostMinor;
-    campaign.status = sent === 0 ? 'failed' : 'completed';
-    campaign.completedAt = new Date();
-    await campaign.save();
-
-    if (failed > 0) logger.warn('SMS campaign completed with failures', { campaignId: String(campaign._id), sent, failed });
-
-    return campaign.toObject();
+    return this.dispatchCampaign(
+      { _id: campaign._id, tenantId: ctx.tenantId, name: input.name, recipientCount: unique.length, usageChargeId: charge._id },
+      charge,
+      { userId: ctx.userId, userName: ctx.userName },
+    );
   }
 
   async history(tenantId: Types.ObjectId, input: { page?: number; limit?: number; status?: string; campaignId?: Types.ObjectId }) {
@@ -340,7 +396,16 @@ class SmsService {
       throw ApiError.badRequest('No email provider is configured on this server. Ask an administrator to set up SMTP.');
     }
 
-    const valid = input.recipients.filter((r) => /.+@.+\..+/.test(r.email));
+    // Deduplicated by address, as the SMS path already does: two customers can
+    // share an email, and a workspace should neither be charged twice for one
+    // address nor send the same person the same campaign twice.
+    const valid = [
+      ...new Map(
+        input.recipients
+          .filter((r) => /.+@.+\..+/.test(r.email))
+          .map((r) => [r.email.trim().toLowerCase(), { ...r, email: r.email.trim() }]),
+      ).values(),
+    ];
     if (valid.length === 0) throw ApiError.badRequest('None of the selected customers have a valid email address');
 
     // Sanitise HERE, not in the browser. The client sanitises so the preview is
@@ -350,8 +415,6 @@ class SmsService {
     if (safeHtml.trim().length === 0) {
       throw ApiError.badRequest('The campaign body is empty once scripts and unsafe markup are removed.');
     }
-    const plainText = htmlToPlainText(safeHtml);
-
     const settings = await getPlatformSettings();
     const estimatedTotal = (settings.emailCostMinor ?? 0) * valid.length;
 
@@ -375,8 +438,10 @@ class SmsService {
       channel: 'email',
       recipientCount: valid.length,
       estimatedCostMinor: estimatedTotal,
-      status: 'sending',
-      startedAt: new Date(),
+      status: 'queued',
+      batchSize: CAMPAIGN_BATCH_SIZE,
+      batchCount: batchIndexesFor(valid.length).length,
+      queuedAt: new Date(),
       createdBy: ctx.userId,
       createdByNameSnapshot: ctx.userName,
     });
@@ -402,13 +467,15 @@ class SmsService {
 
     campaign.usageChargeId = charge._id;
     campaign.estimatedCostMinor = charge.amountMinor;
+    await campaign.save();
+
     const perEmail = charge.unitPriceMinor;
 
-    let sent = 0;
-    let failed = 0;
-
-    for (const recipient of valid) {
-      const record = await SmsMessageModel.create({
+    // The sanitised HTML lives on the campaign as `subject\n\nhtml`, so the
+    // worker reads the body - and derives its plain-text fallback - from there,
+    // and the job payload stays three ids.
+    await SmsMessageModel.insertMany(
+      valid.map((recipient, index) => ({
         tenantId: ctx.tenantId,
         storeId: ctx.storeId,
         campaignId: campaign._id,
@@ -421,42 +488,18 @@ class SmsService {
         costMinor: perEmail,
         provider: provider.name,
         status: 'queued',
+        batchIndex: Math.floor(index / CAMPAIGN_BATCH_SIZE),
         sentBy: ctx.userId,
         sentByNameSnapshot: ctx.userName,
-      });
+      })),
+      { ordered: false },
+    );
 
-      // Sent as HTML with a text fallback. It was previously passed as `text`
-      // only, so recipients saw raw markup instead of a formatted email.
-      const result = await provider.send({
-        to: recipient.email,
-        subject: input.subject,
-        text: plainText,
-        html: safeHtml,
-      });
-      record.status = result.success ? 'sent' : 'failed';
-      record.providerMessageId = result.providerMessageId;
-      record.error = result.error ?? null;
-      record.sentAt = result.success ? new Date() : null;
-      if (!result.success) record.costMinor = 0;
-      if (result.success) sent += 1;
-      else failed += 1;
-      await record.save();
-    }
-
-    const actualCostMinor = perEmail * sent;
-    const refundMinor = charge.amountMinor - actualCostMinor;
-    if (refundMinor > 0) {
-      await usageChargeService.refund(charge._id, refundMinor, `Refund - ${failed} email(s) failed in "${input.name}"`, actorOf(ctx));
-    }
-
-    campaign.sentCount = sent;
-    campaign.failedCount = failed;
-    campaign.actualCostMinor = actualCostMinor;
-    campaign.status = sent === 0 ? 'failed' : 'completed';
-    campaign.completedAt = new Date();
-    await campaign.save();
-
-    return campaign.toObject();
+    return this.dispatchCampaign(
+      { _id: campaign._id, tenantId: ctx.tenantId, name: input.name, recipientCount: valid.length, usageChargeId: charge._id },
+      charge,
+      { userId: ctx.userId, userName: ctx.userName },
+    );
   }
 }
 

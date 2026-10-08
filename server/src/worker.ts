@@ -3,6 +3,8 @@ import { env } from './config/env';
 import { redisConfig } from './config/redis';
 import { logger } from './utils/logger';
 import { openQueueConnection, queueStatus, shutdownQueues } from './queues';
+import { registerCampaignWorker } from './queues/campaign.queue';
+import { deliverCampaignBatch } from './services/sms/campaignDelivery.service';
 
 /**
  * The background worker process.
@@ -21,17 +23,18 @@ import { openQueueConnection, queueStatus, shutdownQueues } from './queues';
  * is a process that will never run a single job while looking perfectly
  * healthy - so it refuses to start instead.
  *
- * NO PROCESSORS ARE REGISTERED YET. Phase 2 builds the foundation; Phase 3
- * moves the background-job candidates in docs/INFRASTRUCTURE_ROADMAP.md §5
- * onto it, starting with the two passes still running inside the API's
- * `jobs/subscription.job.ts`. Until then this process connects, says plainly
- * that it has nothing to do, and idles.
+ * WHAT IT RUNS. Campaign email and SMS delivery (Phase 3). Everything else in
+ * docs/INFRASTRUCTURE_ROADMAP.md §5 is still where the audit found it - the two
+ * passes inside the API's `jobs/subscription.job.ts` included - and moves in a
+ * later phase.
  */
 
-/** Registers every worker this process runs. Phase 3 fills this in. */
+/** Registers every worker this process runs. One line per migrated workload. */
 function registerWorkers(): void {
-  // Intentionally empty. Each entry will be one line:
-  //   createAppWorker('messaging', messagingProcessor, { concurrency: 4 });
+  // Campaign email/SMS delivery. The processor is the same function the API
+  // falls back to when no Redis is configured, so there is one implementation
+  // of the sending rules.
+  registerCampaignWorker(deliverCampaignBatch);
 }
 
 async function bootstrap(): Promise<void> {

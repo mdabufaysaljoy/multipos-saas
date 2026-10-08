@@ -86,8 +86,11 @@ export function EmailCampaignTab({
         audience,
         ...(audience === 'selected' ? { customerIds: selected } : {}),
       }),
-    onSuccess: () => {
-      toast.success('Email campaign sent');
+    onSuccess: (result) => {
+      // Delivery happens in the background, so say it has started rather than
+      // that every recipient already has it.
+      const queued = ['queued', 'sending'].includes(result?.status ?? '');
+      toast.success(queued ? 'Email campaign queued - sending now' : 'Email campaign sent');
       setName('');
       setSubject('');
       setHtml('');

@@ -235,10 +235,10 @@ Browser (SPA)  ──relative /api and /uploads──►  API process  ──►
                                                   ├─ Express 5 app
                                                   ├─ setInterval scheduler
                                                   ├─ ./uploads on local disk
-                                                  └─ Redis (optional, unused)
-
-                                               worker process  ──►  MongoDB
-                                                  └─ BullMQ (no processors yet)
+                                                  └─ Redis ──► campaign-delivery queue
+                                                                        │
+                                               worker process  ◄────────┘
+                                                  └─ campaign delivery  ──►  MongoDB
 ```
 
 What that means in practice:
@@ -246,7 +246,7 @@ What that means in practice:
 - **The SPA calls relative `/api` and `/uploads`** (`client/src/api/client.ts`),
   so the client and the API must be served from one origin. There is no
   absolute-URL or CORS path in the client code.
-- **Scheduled work lives in the API process.** `jobs/subscription.job.ts` runs
+- **Scheduled work still lives in the API process.** `jobs/subscription.job.ts` runs
   an hourly billing pass (expiry reminders, renewals, lapsing, invoices,
   receipts, email retries) and a 10-minute payment-reconciliation pass, started
   by `server.ts`. Every pass is batched and idempotent — which is why running
@@ -259,21 +259,31 @@ What that means in practice:
   `express.static` and re-encoded to WebP by `sharp`. Nothing else is a file:
   exports stream straight to the response, and invoices and receipts are
   MongoDB documents.
-- **Redis is connected but unused.** `config/redis.ts` holds one shared
-  `ioredis` client, opened by `server.ts` when `REDIS_URL` is set and closed on
-  shutdown. It is the foundation for queues, distributed rate limiting and
-  shared cache; **no feature reads or writes it yet**, and the application runs
-  identically with `REDIS_URL` unset. An unreachable Redis is logged and
-  retried, never fatal.
-- **A worker process exists but has no work.** `server/src/worker.ts`
+- **Redis backs the queue.** `config/redis.ts` holds one shared `ioredis`
+  client for application use; `queues/connection.ts` holds a second, built from
+  the same configuration with the two overrides BullMQ requires (no ioredis
+  `keyPrefix`, `maxRetriesPerRequest: null`). Redis stays **optional for the
+  API**: unset or unreachable is logged and never fatal.
+- **The worker process delivers campaigns.** `server/src/worker.ts`
   (`npm run worker`) is a separate process holding the BullMQ foundation in
   `server/src/queues/` — `createAppQueue` / `createAppWorker` over one shared
-  Redis connection, with retry, backoff, retention and naming centralised in
-  `queues/options.ts`. **No queue and no processor is defined yet**, so it
-  connects and idles; Phase 3 moves the background jobs onto it. Redis is
-  required there, unlike in the API: the worker exits non-zero without it.
-  Future jobs must use these factories, and queue payloads carry identifiers
-  rather than documents or secrets.
+  connection, with retry, backoff, retention and naming centralised in
+  `queues/options.ts`. It requires Redis, unlike the API, and exits non-zero
+  without it. New background jobs must use these factories and register in
+  `registerWorkers()`; queue payloads carry identifiers, never documents or
+  secrets.
+- **Campaign delivery is the one migrated workload.** `POST /messaging/campaigns`
+  stores one row per recipient, charges the wallet once, enqueues one job per
+  100-recipient batch on `campaign-delivery`, and returns `queued` — it no
+  longer waits for thousands of sequential gateway calls. The worker claims each
+  recipient with a lease before attempting it, so a retry skips what already
+  went out, and a unique `(campaignId, recipient)` index means a repeated
+  attempt cannot create a second row. `services/sms/campaignDelivery.service.ts`
+  is the single implementation; when no Redis is configured the API calls the
+  same function inline, so a deployment without Redis still sends. Everything
+  else in `docs/INFRASTRUCTURE_ROADMAP.md` §5 — auth-code emails, exports,
+  imports, image processing and the subscription scheduler — is still in the API
+  process.
 - **The API and the worker are separate processes.** The API starts no worker
   and the worker starts no HTTP server; a test asserts both from the sources.
 - **There is no Dockerfile and no deployment configuration in this

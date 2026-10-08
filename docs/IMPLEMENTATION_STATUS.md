@@ -3,7 +3,8 @@
 **The source of truth for infrastructure state between sessions.** Last
 verified against the code on **2026-10-08** (branch
 `claude/retailer-suites-audit-e61761`). Phases completed: **0** (audit),
-**1** (Redis foundation), **2** (BullMQ worker foundation).
+**1** (Redis foundation), **2** (BullMQ worker foundation), **3 in part**
+(campaign delivery migrated; the other candidates are not).
 
 ---
 
@@ -56,7 +57,7 @@ Statuses: **COMPLETED** · **IN PROGRESS** · **NOT STARTED** · **DEFERRED** ·
 | **Phase 0 audit** | **COMPLETED** | `docs/INFRASTRUCTURE_ROADMAP.md`, written from source. |
 | **Redis** | **COMPLETED** (foundation only) | `ioredis` 5.11, one shared lazily-opened client in `server/src/config/redis.ts`, opened by `server.ts` and closed on `SIGTERM`/`SIGINT`. Configured by `REDIS_URL` (`rediss://` enables TLS from the scheme alone) and `REDIS_KEY_PREFIX` (defaults to `retailersuites:<NODE_ENV>:`). **Optional:** unset means the client is never opened and nothing changes; unreachable is logged, retried in the background and never fatal; **malformed refuses to boot**, matching the house rule that a half-configured server should not start. `/api/health` reports the live connection state additively. **Nothing consumes it yet** — by design (see §1.1). |
 | **BullMQ / Worker** | **COMPLETED** (foundation only) | `bullmq` 5.81 and `server/src/queues/`: `createAppQueue(name)` and `createAppWorker(name, processor, opts)` over one shared Redis connection, with retry, backoff, retention, naming and the key namespace centralised in `queues/options.ts`. `server/src/worker.ts` is a **separate process** (`npm run worker`) that starts no HTTP server; the API starts no worker, and a test asserts both. Redis is **required** in the worker, which exits 1 with a clear message when it is missing or unreachable. **No queue and no processor is defined yet.** The `setInterval` scheduler inside the API (`jobs/subscription.job.ts` — an hourly billing pass and a 10-minute payment-reconciliation pass) is deliberately untouched and still runs exactly as before; Phase 3 migrates it. Detail in §1.2. |
-| **Background jobs** | **NOT STARTED** | Nothing has been migrated: Phase 2 built the foundation, Phase 3 moves the work onto it. Everything still runs in-request. Candidates, in priority order: SMS/email campaigns (up to 5,000 recipients, sequential, in the request), password-reset and verification emails (inline SMTP), exports (up to 200,000 rows streamed), product import commit (~6,000 documents), `sharp` image optimisation. **Exception:** billing emails already use a correct durable queue in MongoDB (`EmailNotification` — keyed, leased, 5 attempts, backoff). Keep that mechanism; move only its driver. |
+| **Background jobs** | **IN PROGRESS** — 1 of 6 migrated | **Done:** campaign SMS/email delivery, on the `campaign-delivery` queue (see §1.3). **Not started, unchanged from the audit:** password-reset and verification emails (inline SMTP), exports (up to 200,000 rows streamed), product import commit (~6,000 documents), `sharp` image optimisation, and the two `setInterval` passes in `jobs/subscription.job.ts`. **Exception that stays as it is:** billing emails already use a correct durable queue in MongoDB (`EmailNotification` — keyed, leased, 5 attempts, backoff); only its driver should ever move. |
 | **Rate limiting** | **IN PROGRESS** | `express-rate-limit` v7 with one global `/api` limiter (600/min in production) plus 19 route-specific limiters covering login, registration, password reset, verification, checkout, callbacks, exports, imports, messaging (keyed by `tenantId`), platform admin actions and more. **Gaps:** all stores are per-process memory (R1); no per-account login lockout, only per-IP (R2); `/auth/refresh` and `/auth/logout` have no dedicated limiter (R3); `trust proxy` is hard-coded to `1` and must be re-verified when Cloudflare is added (R4). |
 | **Idempotency** | **IN PROGRESS** | No generic middleware. Per-resource keys with unique partial indexes on `Sale`, `Payment`, `Return`, `WalletTransaction`, `UsageCharge`, `UpgradeRequest`, `LoyaltyMembership`, each with replay-read and 11000-recovery. Wallet debits use a guarded `$gte` update; subscription purchase takes a CAS lock; webhooks are replay-safe because a notification is never believed. **Gaps:** `ShopSale`/`PharmacySale`/`RestaurantOrder` have no key at all (I1); Clothing's is optional (I2); plain returns write `null` (I3); no header convention (I4). |
 | **Docker** | **NOT STARTED** | No Dockerfile, no `.dockerignore`. Core is ready (env-driven config, binds all interfaces, `npm start` → `node dist/server.js`, Node ≥ 20, graceful SIGTERM). Blockers: native `sharp` (D1), uploads on local disk (D2), `syncIndexes` disabled in production (D3), the client build fetches the API (D4), the SPA calls relative `/api` so one origin is mandatory (D5), per-replica scheduler and caches (D6). |
@@ -297,6 +298,174 @@ and `SIGINT`.
    what gives it work.
 5. **No queue dashboard and no queue metrics.** Deliberate: that is Phase 11.
 
+### 1.3 Phase 3 (first migration) — campaign delivery (completed 2026-10-08)
+
+**Queue `campaign-delivery`**, one job per bounded batch of recipients,
+processed by the worker process from Phase 2. This is the first workload off
+the request path; nothing else has moved.
+
+**Before.** `POST /messaging/campaigns` (and `/messaging/email-campaigns`)
+resolved the audience, charged the wallet, then looped the recipients
+**sequentially inside the HTTP request** — creating a row, calling the gateway
+and saving, one at a time, for up to 5,000 recipients. The caller waited for
+all of it. An API crash halfway left the campaign `sending` for ever, with some
+messages delivered, no refund issued, and no way to resume.
+
+**After.** The request validates, resolves the audience (tenant-scoped, as
+before), creates the campaign as `queued`, writes **one row per recipient**,
+charges the wallet once, enqueues one job per batch, and returns. Delivery
+happens in the worker.
+
+**Batching: 100 recipients per job** (`CAMPAIGN_BATCH_SIZE`). Chosen from what
+the work costs: sends are sequential and a gateway call takes a few hundred
+milliseconds, so a batch is roughly half a minute — short enough that a crash
+or a redeploy loses and repeats little, long enough that 5,000 recipients is
+**50 jobs rather than 5,000**. Each recipient's row carries its `batchIndex`,
+so batches are disjoint and a job needs no recipient list.
+
+**Concurrency: 1**, both at the worker and inside a batch. The implementation
+this replaces sent one message at a time, the gateways' own limits are not
+documented in this codebase, and the first migration's job is to be correct.
+There is no `Promise.all` over recipients anywhere. Raising it later means
+raising the worker's `concurrency` in `queues/campaign.queue.ts` — the delivery
+code needs no change, because batches are disjoint and every recipient is
+claimed before it is attempted — and it should wait for a known provider limit.
+
+**Retry and backoff** come from the Phase 2 central policy: 3 job attempts,
+exponential backoff from 10s. Per recipient there is a second bound,
+`MAX_DELIVERY_ATTEMPTS = 3`, so no recipient can be attempted endlessly even
+across job retries.
+
+**Payload.** `{ campaignId, tenantId, batchIndex }` — three identifiers. No
+recipient list, no message body, no credentials. The worker reads the
+authoritative data from MongoDB. The job id is
+`campaign:<campaignId>:batch:<n>`, so enqueueing the same batch twice is a
+no-op in BullMQ.
+
+**Delivery persistence and idempotency.** The `SmsMessage` row per recipient
+already existed; this migration made it the delivery record:
+
+| Added | Why |
+|---|---|
+| unique partial index `(campaignId, recipient)` | one recipient cannot appear twice in a campaign, so a repeated attempt cannot create a second row |
+| `status: 'sending'` + `claimedUntil` lease | a worker *claims* a recipient before attempting it, so two workers cannot send to the same person at once |
+| `attempts` | bounds transient retries per recipient |
+| `failureKind: 'transient' \| 'permanent'` | separates "try again" from "trying again cannot help" |
+| `batchIndex` | which job owns this recipient |
+
+A recipient is claimed by one atomic `findOneAndUpdate`; a row already `sent` is
+not a candidate, so **a retried job skips what already went out**. A row claimed
+by a worker that died becomes claimable again once its lease expires. At most
+one attempt per recipient per pass, so a transient failure waits for the queue's
+backoff rather than being burned through in a tight loop.
+
+**Failure classification** (`classifyDeliveryFailure`): invalid or rejected
+recipients, SMTP 5.x.x and 55x codes, authentication and configuration errors,
+and insufficient balance are **permanent** — retrying cannot help and hammering
+a shared gateway damages a sender reputation every tenant depends on. Timeouts,
+network errors and 4xx-style "try later" are **transient**. Anything
+unrecognised is treated as transient, which is safe only because attempts are
+bounded both ways. The reason is stored on the row, with credentials redacted.
+
+**Campaign status.** `queued → sending → completed | failed`. `queued` is new;
+the terminal states are unchanged, so a campaign that delivered some and failed
+some is still `completed` with a non-zero `failedCount`, which is exactly what
+the UI already reads. The campaign table renders no status column, so nothing
+in the UI needed changing beyond the two toasts, which now say "queued —
+sending now" rather than claiming every customer already has it.
+
+**Money, unchanged.** One charge for the whole campaign up front; one refund for
+the failures at the end. Finalisation is a compare-and-swap on the campaign
+status, and only the caller that wins it issues the refund — without that, fifty
+batch jobs would each refund the same campaign. If the enqueue itself fails, the
+charge is returned, the campaign is marked `failed`, and the API reports the
+failure rather than claiming the campaign was queued.
+
+**Tenant isolation.** The worker runs outside any HTTP request, so
+`resolveTenant` has not run and nothing may be inferred from a session. Every
+query carries `tenantId` from the job and matches it against the campaign
+itself; a campaign id alone is never trusted. A job naming another workspace
+delivers nothing and leaves the campaign untouched — asserted in the tests.
+
+**Recovery.** All state is durable in MongoDB before anything is enqueued, so:
+an API crash after enqueue leaves a campaign a worker can finish; a worker crash
+leaves claims that expire and are picked up again; a worker restart continues
+from the rows, never from memory; a Redis outage delays delivery rather than
+losing it; a provider outage becomes transient failures that retry. Nothing
+depends on in-process progress.
+
+**When Redis is absent the delivery runs inline**, exactly as it did before this
+migration. Phase 1 made Redis optional for the API deliberately, and a
+deployment without it must still be able to send a campaign — enqueueing into
+nothing would mean a campaign that silently never goes out. It is the **same
+function** either way (`deliverCampaignBatch`), reached two ways; there is no
+second implementation to drift. This is also why the existing end-to-end suite
+still passes unchanged: with no `REDIS_URL` it exercises the delivery code
+inline, end to end, through the real provider and billing path.
+
+**Tests.** `server/src/seed/campaignDelivery.check.ts`, run by `npm test`
+(**82 assertions**). Delivery is driven through a `setCampaignSender` seam —
+the same pattern `transactionalEmail.service.ts` uses — so successes, transient
+failures, permanent failures and thrown errors are deterministic and no real
+gateway is contacted. It covers batching; the deterministic job id; the
+worker's two decisions (is this the final attempt, and should the batch be
+handed back); the happy path through to `completed`; **tenant isolation**;
+database-level duplicate protection; the full failure-classification table;
+transient retry that skips what already went out; permanent failures never
+retried; the per-recipient attempt bound; the final attempt giving up rather
+than hanging; a thrown provider error not abandoning the batch; **recovery from
+an expired claim**; finalisation and refund happening exactly once; cancelled
+and missing campaigns; and the email channel through the same code. The 4,011
+existing end-to-end assertions pass unchanged.
+
+**Two bugs these tests caught before commit**, both mine, both in this phase's
+code: a transient failure was immediately re-claimable inside the same pass, so
+one batch burned a recipient's three attempts in milliseconds instead of
+retrying later on the backoff; and two configuration failures ("the API key is
+invalid", "No SMS gateway is configured") were classified transient. A third was
+caught by running the real worker process: `shutdownQueues` awaited the graceful
+worker close while the forced close was fire-and-forget, so a worker whose
+connection had gone hung the shutdown until the 30-second backstop killed the
+process with exit 1. All three are fixed.
+
+**Limitations, recorded honestly:**
+
+1. **Exactly-once external delivery is not possible here, and is not claimed.**
+   If a gateway accepts a message and the process dies before the row is
+   updated, the claim expires and the recipient is attempted again — that person
+   gets the message twice. Closing it would need provider-level idempotency
+   keys, which neither the SMS gateway nor SMTP offers in this codebase. The
+   design is at-least-once with durable duplicate protection either side of a
+   single unprotected instant: one row update immediately after one send. **The
+   money is not exposed to it** — a campaign is charged once up front and
+   reconciled once at the end.
+2. **BullMQ's own behaviour is still not covered by a test, and real-Redis
+   validation did not happen in this session.** There is no Redis on this
+   machine and no Docker to run one, and CI has no Redis service. What *was*
+   verified: the worker process starts, registers `campaign-delivery` at
+   concurrency 1, refuses a malformed payload, and shuts down cleanly with exit
+   0. What was **not** verified anywhere: that Redis hands a real job to the
+   worker, that BullMQ retries it on the configured backoff, and that a stall is
+   detected. **Before trusting this in production, run one campaign against a
+   real Redis with the worker attached.** Adding a `redis:7` service to
+   `.github/workflows/ci.yml` and starting the worker in the harness is the
+   cheapest way to make that permanent; it was deliberately not done here
+   because it could not be validated locally.
+3. **Two separate POSTs still create two separate campaigns.** That is unchanged
+   behaviour and arguably correct, but it means the API has no request-level
+   duplicate protection — a double-submitted form sends twice. The queue path is
+   protected (deterministic job ids, per-recipient claims); the *request* is not.
+   An `Idempotency-Key` on the endpoint belongs with Phase 5.
+4. **The unique `(campaignId, recipient)` index must be created deliberately in
+   production.** Mongoose only builds missing indexes outside production, and
+   any pre-existing duplicate pair has to be resolved first.
+5. **No progress reporting.** A caller sees `queued`, then eventually a terminal
+   state; `sentCount` only becomes meaningful at the end. Per-batch progress is
+   in the rows if a UI ever wants it.
+6. **A 15-second shutdown grace applies per worker.** A deploy during a campaign
+   waits up to that long for the batch in hand, then stops it and leaves the
+   remainder to the next worker.
+
 ### Deployment model
 
 **UNDOCUMENTED.** No Dockerfile, compose file, Nginx config, PM2 ecosystem,
@@ -328,7 +497,13 @@ Infrastructure is the subject of this file; the product history lives elsewhere.
 PHASE 0   Infrastructure audit                      COMPLETED  (2026-10-08)
 PHASE 1   Redis foundation                          COMPLETED  (2026-10-08)
 PHASE 2   BullMQ worker foundation                  COMPLETED  (2026-10-08)
-PHASE 3   Background-job migration                  NOT STARTED   ← next
+PHASE 3   Background-job migration                  IN PROGRESS   ← 1 of 6 done
+          campaign delivery                         COMPLETED  (2026-10-08)
+          auth-code emails                          NOT STARTED
+          image optimisation                        NOT STARTED
+          product import commit                     NOT STARTED
+          exports                                   NOT STARTED
+          subscription scheduler passes              NOT STARTED
 PHASE 4   Rate limiting (distributed)               NOT STARTED
 PHASE 5   Idempotency / reliability                 NOT STARTED
 PHASE 6   Docker                                    NOT STARTED
@@ -342,27 +517,34 @@ PHASE 12  Load testing / scaling                    NOT STARTED
 R2 / object storage                                 DEFERRED
 ```
 
-**Next phase: PHASE 3 — background-job migration.** Scope and the full
-candidate list with priorities are in `docs/INFRASTRUCTURE_ROADMAP.md` §5. It
-was not started in this session, by design: Phase 2 is the foundation and
-nothing more.
+**Phase 3 is part done: campaign delivery has moved (§1.3) and nothing else
+has.** Before migrating the next workload, close limitation 2 in §1.3 — run one
+real campaign through a real Redis with the worker attached. The point of doing
+campaigns first was to prove the foundation; it is not proven until that has
+happened.
 
-Phase 3 uses `createAppQueue` / `createAppWorker` and registers each processor
-in `registerWorkers()` in `server/src/worker.ts`. Order, from §5.2:
+The remaining candidates, with the per-item analysis, are in
+`docs/INFRASTRUCTURE_ROADMAP.md` §5. Each registers its processor in
+`registerWorkers()` in `server/src/worker.ts`, next to the campaign one, and
+uses `createAppQueue` / `createAppWorker`. Suggested order:
 
-1. The two `setInterval` passes in `jobs/subscription.job.ts` → repeatable
-   jobs. No user-visible change, every pass already idempotent, so it is the
-   safest way to prove the worker. **Delete `startSubscriptionJobs` from
-   `server.ts` in the same commit** — two code paths for the same work is how
-   double-sends happen.
-2. SMS/email campaigns → fan-out queue. The biggest single win.
-3. Password-reset and verification emails — watch the delivery-reporting
+1. **Password-reset and verification emails.** Watch the delivery-reporting
    contract: `verification.service` currently tells the caller whether the
-   message was delivered, which queueing changes to "accepted".
-4. Image optimisation (validation stays inline), 5. import commit (needs
-   per-row progress first), 6. exports (needs an answer on where the file goes).
+   message was actually delivered, which queueing changes to "accepted". The UI
+   copy has to change with it.
+2. **Image optimisation** — validation (`inspectImage`) stays inline, because
+   rejecting a non-image is a request-time concern.
+3. **Product import commit** — needs per-row progress on the job first, or a
+   retry duplicates products.
+4. **Exports** — needs an answer on where the finished file goes, which is the
+   object-storage question §8 of the roadmap defers.
+5. **The two `setInterval` passes in `jobs/subscription.job.ts`** → repeatable
+   jobs. Low risk (every pass is already idempotent) but **delete
+   `startSubscriptionJobs` from `server.ts` in the same commit** — two code
+   paths for the same work is how double-sends happen.
 
-Read limitation 3 in §1.2 before the first API-side enqueue.
+Read limitation 3 in §1.2 before the next API-side enqueue, and §1.3's
+inline-fallback note before assuming a queue is always available.
 
 ---
 
@@ -370,6 +552,7 @@ Read limitation 3 in §1.2 before the first API-side enqueue.
 
 | Date | Change |
 |---|---|
+| 2026-10-08 | **Phase 3, first migration — campaign delivery.** Campaign SMS and email delivery moved off the HTTP request onto the `campaign-delivery` queue: the request now stores the recipients, charges once, enqueues one job per 100-recipient batch and returns, and the worker delivers. Added `services/sms/campaignDelivery.service.ts` (the single delivery implementation, used by the worker and by the no-Redis inline fallback alike), `queues/campaign.queue.ts`, and `seed/campaignDelivery.check.ts` (82 assertions). `SmsMessage` gained a unique `(campaignId, recipient)` index, a claim lease, `attempts`, `failureKind` and `batchIndex`, which is what makes a worker retry skip what already went out; `SmsCampaign` gained `queued`. Money rules, terminal statuses and tenant scoping unchanged. Fixed three bugs found while testing: a transient failure being re-claimed inside the same pass, two configuration errors misclassified as transient, and `shutdownQueues` hanging when a worker's connection had gone. **No other job migrated**; the subscription scheduler, billing/auth emails, exports, imports and image processing are untouched. |
 | 2026-10-08 | **Phase 2 — BullMQ worker foundation.** Added `bullmq` (which reuses the ioredis Phase 1 installed) and `server/src/queues/`: `createAppQueue` / `createAppWorker` over one shared BullMQ-compatible connection built from the Phase 1 Redis configuration, with naming validation, the key namespace, conservative finite retry/backoff/retention defaults and the payload policy centralised in `queues/options.ts`, plus registries, lifecycle logging and a bounded idempotent `shutdownQueues`. Added `server/src/worker.ts`, a separate process (`npm run worker`, `npm run worker:dev`) that starts no HTTP server, requires Redis and exits 1 without it. New `server/src/queues/queues.check.ts` (run by `npm test`). **No queue, no processor and no migrated job**: the API's `setInterval` scheduler still runs exactly as before. |
 | 2026-10-08 | **Phase 1 — Redis foundation.** Added `ioredis` to the `server` workspace and `server/src/config/redis.ts`: one shared, lazily-opened client with a pure config resolver, a client factory reusable by the future worker, bounded fail-fast command defaults, de-duplicated error logging, a `pingRedis` primitive and idempotent lifecycle calls wired into `server.ts` beside MongoDB's. `REDIS_URL` and `REDIS_KEY_PREFIX` added to the env schema and `.env.example`; Redis is optional, an unreachable server is never fatal, a malformed URL refuses to boot. `/api/health` additively reports the live connection state. New `server/src/config/redis.check.ts` (run by `npm test`) proves all of it against an in-process RESP stub. Nothing consumes Redis yet; rate limiting, queues and the scheduler are untouched. |
 | 2026-10-08 | Phase 0 infrastructure audit. Added `docs/INFRASTRUCTURE_ROADMAP.md`. Replaced this file with the infrastructure status tracker and moved its previous contents — the Super Shop implementation journal — to `docs/SUPERSHOP_IMPLEMENTATION_JOURNAL.md`. Added the infrastructure section to `docs/ARCHITECTURE.md` and corrected its stated dependency versions. No application code changed. |
