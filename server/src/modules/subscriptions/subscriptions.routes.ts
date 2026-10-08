@@ -1,7 +1,6 @@
 import { emptyBodySchema } from '../workspaces/workspaces.validators';
 import { Router } from 'express';
-import rateLimit from 'express-rate-limit';
-import { isProd } from '../../config/env';
+import { createRateLimiter } from '../../middleware/rateLimit';
 import { autoRenewSchema, purchaseQuoteSchema, purchaseSchema, scheduleChangeSchema } from './purchase.validators';
 import { PERMISSIONS } from '../../config/permissions';
 import { authenticate } from '../../middleware/auth';
@@ -44,11 +43,13 @@ router.post(
 router.get('/plan-options', requirePermission(PERMISSIONS.SUBSCRIPTION_VIEW), controller.planOptions);
 
 // Buying a plan in catalog terms. The server prices it; the body cannot carry an amount.
-const purchaseLimiter = rateLimit({
+const purchaseLimiter = createRateLimiter({
+  name: 'subscription-purchase',
   windowMs: 60_000,
-  limit: isProd ? 20 : 10_000,
-  standardHeaders: 'draft-7',
-  legacyHeaders: false,
+  limit: 20,
+  devLimit: 10_000,
+  // Refusing a purchase is lost revenue; the purchase path has its own CAS lock.
+  fallback: 'memory',
   message: { success: false, error: { code: 'TOO_MANY_REQUESTS', message: 'Too many purchase attempts. Wait a minute and try again.' } },
 });
 router.post(

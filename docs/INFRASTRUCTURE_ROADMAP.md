@@ -1,8 +1,9 @@
 # Infrastructure roadmap
 
-**Phases 0 (audit), 1 (Redis foundation) and 2 (BullMQ worker foundation) are
-COMPLETED. Phase 3 is PART DONE: campaign delivery has been migrated (§5.1),
-the other five candidates have not. Phases 4–12 are not implemented.** Live status per area is `docs/IMPLEMENTATION_STATUS.md`,
+**Phases 0 (audit), 1 (Redis foundation), 2 (BullMQ worker foundation)
+and 4 (distributed rate limiting) are COMPLETED. Phase 3 is PART DONE: campaign
+delivery has been migrated (§5.1), the other five candidates have not. Phases
+5–12 are not implemented.** Live status per area is `docs/IMPLEMENTATION_STATUS.md`,
 which is the file to trust when this one and it disagree.
 
 Written 2026-10-08 against the working tree at `claude/retailer-suites-audit-e61761`
@@ -427,7 +428,19 @@ happen.
 
 ## 6. Rate-limiting plan
 
-### 6.1 Current status: IMPLEMENTED, process-local
+### Status: COMPLETED (Phase 4, 2026-10-08)
+
+All 20 limiters now count in Redis through one atomic `EVAL` per request, on the
+shared Phase 1 client; three more were added (per-account login, refresh,
+logout); and `trust proxy` became `TRUST_PROXY_HOPS`. Outage behaviour is
+declared per policy rather than globally. Findings R1–R4 below are closed. Full
+detail, the verification table and the limitations are in
+`docs/IMPLEMENTATION_STATUS.md` §1.4 — including that **genuine multi-instance
+behaviour was not validated**, because there is no Redis in this environment.
+
+**What follows is the Phase 0 finding, kept for the record.**
+
+### 6.1 Phase 0 status: IMPLEMENTED, process-local
 
 `express-rate-limit` v7 with its **default in-memory store**. One global limiter
 plus 19 route-specific ones:
@@ -450,7 +463,7 @@ plus 19 route-specific ones:
 Development limits are deliberately raised (5,000–20,000) so the 3,500-assertion
 end-to-end suite is not throttled; production keeps the strict numbers.
 
-### 6.2 Findings
+### 6.2 Findings — all closed in Phase 4
 
 | | Finding | Risk |
 |---|---|---|
@@ -459,12 +472,15 @@ end-to-end suite is not throttled; production keeps the strict numbers.
 | R3 | `/auth/refresh` and `/auth/logout` have **no dedicated limiter** — only the global `/api` one. | `/refresh` mints tokens and on reuse revokes a whole chain; 600/min is loose for it. |
 | R4 | Limits are IP-keyed, and `trust proxy` is hard-coded to `1` in production. | If Cloudflare *and* Nginx both sit in front (Phase 9), the hop count changes and every limiter may key on the wrong address — which can mean one shared key for the whole internet. Must be re-verified when the proxy chain changes. |
 
-### 6.3 Plan (Phase 4)
+### 6.3 Plan (Phase 4) — done, with two deviations noted below
 
-1. `rate-limit-redis` behind every existing limiter, one shared store, keys
-   prefixed per environment. **Fail open to the memory store** if Redis is
-   unreachable — a POS that cannot sell because a cache is down is a worse
-   outcome than a loose limit.
+1. ~~`rate-limit-redis`~~ — a four-line Lua script in a store of our own
+   instead: the dependency would have added a package to run it, and its key
+   prefixing would have had to be reconciled with Phase 1's. One shared store,
+   keys prefixed per environment. The memory fallback was kept for most
+   policies, but **not blindly**: four policies that guard spending or API
+   capacity refuse instead, and a Redis that was never configured is not treated
+   as an outage at all.
 2. Add per-account login backoff (progressive delay, then a short lock) as a
    counter in Redis plus a durable marker on the user, so it survives a flush.
 3. Add limiters for `/auth/refresh` and `/auth/logout`.
@@ -807,9 +823,9 @@ PHASE 2   BullMQ worker foundation                  (COMPLETED 2026-10-08)
    ↓
 PHASE 3   Background-job migration                  ← IN PROGRESS (campaigns done)
    ↓
-PHASE 4   Rate limiting (distributed)
+PHASE 4   Rate limiting (distributed)              (COMPLETED 2026-10-08)
    ↓
-PHASE 5   Idempotency / reliability
+PHASE 5   Idempotency / reliability                 ← next
    ↓
 PHASE 6   Docker
    ↓

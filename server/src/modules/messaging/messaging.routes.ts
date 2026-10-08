@@ -1,6 +1,5 @@
 import { Router } from 'express';
-import rateLimit from 'express-rate-limit';
-import { isProd } from '../../config/env';
+import { createRateLimiter, tenantIdentity } from '../../middleware/rateLimit';
 import { PERMISSIONS } from '../../config/permissions';
 import { authenticate } from '../../middleware/auth';
 import { requirePermission } from '../../middleware/rbac';
@@ -20,13 +19,19 @@ const router = Router();
  * campaigns as fast as the gateway would take them. Generous enough that no
  * real operator will notice, tight enough that a loop cannot run away.
  */
-const sendLimiter = rateLimit({
+const sendLimiter = createRateLimiter({
+  name: 'messaging-send',
   windowMs: 60 * 60 * 1000,
-  limit: isProd ? 60 : 5_000,
-  standardHeaders: 'draft-7',
-  legacyHeaders: false,
+  limit: 60,
+  devLimit: 5_000,
+  // The one limiter that refuses when Redis is away. It guards the customer's
+  // wallet against a runaway client sending bulk SMS and email to real people,
+  // the threat is precisely "many requests", and a temporary refusal costs
+  // nothing but a retry. Letting every replica independently allow sixty an
+  // hour is the outcome worth preventing.
+  fallback: 'closed',
   // Per workspace, not per IP: several tills share one office connection.
-  keyGenerator: (req) => String(req.ctx?.tenantId ?? req.ip),
+  keyGenerator: tenantIdentity,
   message: {
     success: false,
     error: {

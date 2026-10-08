@@ -1,5 +1,4 @@
-import { isProd } from '../../config/env';
-import rateLimit from 'express-rate-limit';
+import { createRateLimiter } from '../../middleware/rateLimit';
 import { emptyBodySchema } from '../workspaces/workspaces.validators';
 import { accountTopUpListSchema, accountTopUpSchema, topUpParams, accountWalletSummarySchema, accountWalletTransactionsSchema, hostedPaymentSchema, sendMoneyPaymentSchema } from '../wallet/wallet.validators';
 import { Router } from 'express';
@@ -37,11 +36,14 @@ router.get('/receipts', validate({ query: accountReceiptQuerySchema }), controll
 router.get('/receipts/:receiptId', validate({ params: receiptParams }), controller.receipt);
 
 // Adding money to the account wallet from Billing, and withdrawing a request not yet verified.
-const topUpLimiter = rateLimit({
+const topUpLimiter = createRateLimiter({
+  name: 'account-topup',
   windowMs: 15 * 60 * 1000,
-  limit: isProd ? 10 : 1_000,
-  standardHeaders: 'draft-7',
-  legacyHeaders: false,
+  limit: 10,
+  devLimit: 1_000,
+  // Starting a top-up begins a real payment; refusing it would cost the
+  // customer money they are trying to add.
+  fallback: 'memory',
   message: { success: false, error: { code: 'TOO_MANY_REQUESTS', message: 'Too many top-up requests. Try again later.' } },
 });
 router.get('/payment-instructions', controller.paymentInstructions);

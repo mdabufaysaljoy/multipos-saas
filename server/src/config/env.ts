@@ -24,6 +24,26 @@ const schema = z.object({
   REFRESH_TOKEN_TTL: z.string().default('7d'),
   BCRYPT_ROUNDS: z.coerce.number().int().min(8).max(15).default(10),
 
+  /**
+   * How many reverse proxies sit in front of the API.
+   *
+   * This decides what `req.ip` is, and `req.ip` is the identity nearly every
+   * rate limiter counts against - so a wrong value is a security setting, not a
+   * cosmetic one. Express takes the hop-th address from the RIGHT of
+   * `X-Forwarded-For`, counting the proxies it trusts:
+   *
+   *   1 (default) - one proxy, e.g. Nginx terminating TLS. Correct today.
+   *   2           - two, e.g. Cloudflare in front of Nginx.
+   *   0           - no proxy; the socket address is used and XFF is ignored.
+   *
+   * TOO HIGH and a client can spoof its own address by sending its own
+   * `X-Forwarded-For`, giving every attacker a fresh rate-limit bucket. TOO LOW
+   * and every request appears to come from the proxy, so one shared bucket
+   * throttles the whole internet together. Re-check this whenever the number of
+   * proxies changes.
+   */
+  TRUST_PROXY_HOPS: z.coerce.number().int().min(0).max(5).default(1),
+
   CLIENT_ORIGIN: z.string().default('http://localhost:5173'),
 
   /**

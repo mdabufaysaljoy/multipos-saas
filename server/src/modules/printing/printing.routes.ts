@@ -1,7 +1,6 @@
 import { Router, type Request, type Response } from 'express';
-import rateLimit from 'express-rate-limit';
+import { createRateLimiter } from '../../middleware/rateLimit';
 import { z } from 'zod';
-import { isProd } from '../../config/env';
 import { authenticate } from '../../middleware/auth';
 import { resolveTenant } from '../../middleware/tenant';
 import { validate, body } from '../../middleware/validate';
@@ -18,11 +17,13 @@ const router = Router();
 router.use(authenticate, resolveTenant);
 
 // Every QZ call (connect, find printers, print) asks for one signature.
-const signLimiter = rateLimit({
+const signLimiter = createRateLimiter({
+  name: 'printing-sign',
   windowMs: 60_000,
-  limit: isProd ? 240 : 20_000,
-  standardHeaders: 'draft-7',
-  legacyHeaders: false,
+  limit: 240,
+  devLimit: 20_000,
+  // Every receipt printed needs a signature; refusing means no receipts.
+  fallback: 'memory',
   message: { success: false, error: { code: 'TOO_MANY_REQUESTS', message: 'Too many print requests. Wait a moment.' } },
 });
 

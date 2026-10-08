@@ -1,8 +1,7 @@
 import { Router } from 'express';
 import multer from 'multer';
-import rateLimit from 'express-rate-limit';
+import { createRateLimiter } from '../../middleware/rateLimit';
 import { PERMISSIONS } from '../../config/permissions';
-import { isProd } from '../../config/env';
 import { requireAccess } from '../../middleware/access';
 import { authenticate } from '../../middleware/auth';
 import { requireActiveSubscription, requireSubscribedAccess } from '../../middleware/subscription';
@@ -68,11 +67,13 @@ router.use(
 );
 
 // Parsing a file and creating thousands of records are both expensive.
-const importLimiter = rateLimit({
+const importLimiter = createRateLimiter({
+  name: 'product-import',
   windowMs: 60_000,
-  limit: isProd ? IMPORTS_PER_MINUTE : 10_000,
-  standardHeaders: 'draft-7',
-  legacyHeaders: false,
+  limit: IMPORTS_PER_MINUTE,
+  devLimit: 10_000,
+  // As with the POS import: thousands of documents per request.
+  fallback: 'closed',
   message: { success: false, error: { code: 'TOO_MANY_REQUESTS', message: 'Too many imports. Wait a minute and try again.' } },
 });
 

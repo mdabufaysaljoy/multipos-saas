@@ -1,6 +1,5 @@
 import { Router } from 'express';
-import rateLimit from 'express-rate-limit';
-import { isProd } from '../../config/env';
+import { createRateLimiter } from '../../middleware/rateLimit';
 import { authenticate } from '../../middleware/auth';
 import { requireWorkspaceAccess, resolveAccount } from '../../middleware/account';
 import { validate } from '../../middleware/validate';
@@ -15,11 +14,13 @@ const router = Router();
  * gate: an owner may open a new workspace from any workspace they are in, even
  * one whose own plan has lapsed. Ownership is checked in the service.
  */
-const createLimiter = rateLimit({
+const createLimiter = createRateLimiter({
+  name: 'workspace-create',
   windowMs: 60 * 60 * 1000,
-  limit: isProd ? 10 : 1_000,
-  standardHeaders: 'draft-7',
-  legacyHeaders: false,
+  limit: 10,
+  devLimit: 1_000,
+  // The plan's own workspace ceiling is enforced server-side regardless.
+  fallback: 'memory',
   message: { success: false, error: { code: 'TOO_MANY_REQUESTS', message: 'Too many workspaces created. Try again later.' } },
 });
 
@@ -44,11 +45,13 @@ router.patch(
 
 // Each workspace's own subscription. Only reachable for a workspace the
 // signed-in account owns; cancelling one never touches another.
-const cancelLimiter = rateLimit({
+const cancelLimiter = createRateLimiter({
+  name: 'workspace-cancel',
   windowMs: 15 * 60 * 1000,
-  limit: isProd ? 20 : 1_000,
-  standardHeaders: 'draft-7',
-  legacyHeaders: false,
+  limit: 20,
+  devLimit: 1_000,
+  // A customer cancelling must not be blocked by a cache outage.
+  fallback: 'memory',
   message: { success: false, error: { code: 'TOO_MANY_REQUESTS', message: 'Too many requests. Try again later.' } },
 });
 router.get('/:workspaceId/subscription', authenticate, resolveAccount, validate({ params: workspaceParams }), requireWorkspaceAccess(), controller.subscription);

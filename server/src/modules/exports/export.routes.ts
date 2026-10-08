@@ -1,9 +1,8 @@
 import { Router } from 'express';
-import rateLimit from 'express-rate-limit';
+import { createRateLimiter } from '../../middleware/rateLimit';
 import { PERMISSIONS } from '../../config/permissions';
 import { requireAccess } from '../../middleware/access';
 import { authenticate } from '../../middleware/auth';
-import { isProd } from '../../config/env';
 import { requireSubscribedAccess } from '../../middleware/subscription';
 import { resolveTenant } from '../../middleware/tenant';
 import { validate } from '../../middleware/validate';
@@ -31,11 +30,15 @@ router.get('/datasets', controller.datasets);
 router.get('/', validate({ query: listExportsSchema }), controller.history);
 
 // Generating a file is expensive; a handful per minute is plenty for a person.
-const exportLimiter = rateLimit({
+const exportLimiter = createRateLimiter({
+  name: 'export',
   windowMs: 60_000,
-  limit: isProd ? EXPORTS_PER_MINUTE : 10_000,
-  standardHeaders: 'draft-7',
-  legacyHeaders: false,
+  limit: EXPORTS_PER_MINUTE,
+  devLimit: 10_000,
+  // An export still streams up to 200,000 rows inside the request, so this
+  // limiter protects the API's own capacity. Refusing one for a minute costs
+  // the user a retry; letting every replica allow five costs everyone else.
+  fallback: 'closed',
   message: { success: false, error: { code: 'TOO_MANY_REQUESTS', message: 'Too many exports. Wait a minute and try again.' } },
 });
 

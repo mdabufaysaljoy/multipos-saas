@@ -1,6 +1,5 @@
 import express, { Router } from 'express';
-import rateLimit from 'express-rate-limit';
-import { isProd } from '../../config/env';
+import { createRateLimiter } from '../../middleware/rateLimit';
 import { z } from 'zod';
 import { PERMISSIONS } from '../../config/permissions';
 import { authenticate } from '../../middleware/auth';
@@ -28,23 +27,28 @@ router.get('/webhook/:provider', controller.webhook);
 
 // The provider sends the customer's BROWSER here after its payment page. Public by
 // nature (no session survives the round trip); it only ever asks the provider.
-const callbackLimiter = rateLimit({
+const callbackLimiter = createRateLimiter({
+  name: 'payment-callback',
   windowMs: 60_000,
-  limit: isProd ? 60 : 5_000,
-  standardHeaders: 'draft-7',
-  legacyHeaders: false,
+  limit: 60,
+  devLimit: 5_000,
+  // The customer's browser returns here after paying. Refusing it would leave
+  // a paid order unconfirmed, which is far worse than a loose limit.
+  fallback: 'memory',
 });
 router.get('/callback/:provider', callbackLimiter, controller.callback);
 
 router.get('/providers', authenticate, controller.providers);
 
 // Every checkout opens a payment at the provider; keep a runaway client from opening hundreds.
-const checkoutLimiter = rateLimit({
+const checkoutLimiter = createRateLimiter({
+  name: 'payment-checkout',
   windowMs: 60_000,
-  limit: isProd ? 10 : 1_000,
-  standardHeaders: 'draft-7',
-  legacyHeaders: false,
-  message: { success: false, error: { code: 'TOO_MANY_REQUESTS', message: 'Too many payment attempts. Wait a minute and try again.' } },
+  limit: 10,
+  devLimit: 1_000,
+  // Refusing a checkout is lost revenue, and each one is already guarded by an
+  // idempotency key and a CAS lock on the workspace.
+  fallback: 'memory',
 });
 
 router.use(authenticate, resolveTenant);

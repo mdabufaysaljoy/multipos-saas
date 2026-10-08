@@ -252,9 +252,20 @@ What that means in practice:
   by `server.ts`. Every pass is batched and idempotent — which is why running
   two API replicas today duplicates work rather than corrupting it, and why
   moving the passes to a worker is low-risk.
-- **Rate limiting and the four in-memory caches are per process.** Every
-  `express-rate-limit` limiter uses the default memory store, so N replicas mean
-  N × the configured limit.
+- **Rate limiting counts in Redis.** All 23 policies go through
+  `middleware/rateLimit.ts`, which gives `express-rate-limit` a Redis-backed
+  store on the shared Phase 1 client — one atomic `EVAL` per request, keys
+  namespaced as `retailersuites:<env>:rl:<policy>:<identity>`, TTL set in the
+  same script. Every replica therefore sees the same counter. When Redis is
+  unreachable each policy falls back as it declares: most degrade to a
+  per-process counter (the limit still applies, once per replica), while four
+  that guard spending or API capacity refuse with 429. When Redis was never
+  configured, every policy uses the per-process counter, exactly as before
+  Phase 4. `TRUST_PROXY_HOPS` decides `req.ip`, which is what most policies key
+  on, so it must match the deployment.
+- **The four in-memory caches are still per process.** Site settings, the
+  pricing-catalogue guard, SNS certificates and the DNS fallback memory are all
+  per-replica; none affects correctness.
 - **Uploads are files on local disk**, under `cwd/uploads`, served by
   `express.static` and re-encoded to WebP by `sharp`. Nothing else is a file:
   exports stream straight to the response, and invoices and receipts are

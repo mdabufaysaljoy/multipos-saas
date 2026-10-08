@@ -4,7 +4,8 @@
 verified against the code on **2026-10-08** (branch
 `claude/retailer-suites-audit-e61761`). Phases completed: **0** (audit),
 **1** (Redis foundation), **2** (BullMQ worker foundation), **3 in part**
-(campaign delivery migrated; the other candidates are not).
+(campaign delivery migrated; the other candidates are not), **4** (distributed
+rate limiting).
 
 ---
 
@@ -58,7 +59,7 @@ Statuses: **COMPLETED** · **IN PROGRESS** · **NOT STARTED** · **DEFERRED** ·
 | **Redis** | **COMPLETED** (foundation only) | `ioredis` 5.11, one shared lazily-opened client in `server/src/config/redis.ts`, opened by `server.ts` and closed on `SIGTERM`/`SIGINT`. Configured by `REDIS_URL` (`rediss://` enables TLS from the scheme alone) and `REDIS_KEY_PREFIX` (defaults to `retailersuites:<NODE_ENV>:`). **Optional:** unset means the client is never opened and nothing changes; unreachable is logged, retried in the background and never fatal; **malformed refuses to boot**, matching the house rule that a half-configured server should not start. `/api/health` reports the live connection state additively. **Nothing consumes it yet** — by design (see §1.1). |
 | **BullMQ / Worker** | **COMPLETED** (foundation only) | `bullmq` 5.81 and `server/src/queues/`: `createAppQueue(name)` and `createAppWorker(name, processor, opts)` over one shared Redis connection, with retry, backoff, retention, naming and the key namespace centralised in `queues/options.ts`. `server/src/worker.ts` is a **separate process** (`npm run worker`) that starts no HTTP server; the API starts no worker, and a test asserts both. Redis is **required** in the worker, which exits 1 with a clear message when it is missing or unreachable. **No queue and no processor is defined yet.** The `setInterval` scheduler inside the API (`jobs/subscription.job.ts` — an hourly billing pass and a 10-minute payment-reconciliation pass) is deliberately untouched and still runs exactly as before; Phase 3 migrates it. Detail in §1.2. |
 | **Background jobs** | **IN PROGRESS** — 1 of 6 migrated | **Done:** campaign SMS/email delivery, on the `campaign-delivery` queue (see §1.3). **Not started, unchanged from the audit:** password-reset and verification emails (inline SMTP), exports (up to 200,000 rows streamed), product import commit (~6,000 documents), `sharp` image optimisation, and the two `setInterval` passes in `jobs/subscription.job.ts`. **Exception that stays as it is:** billing emails already use a correct durable queue in MongoDB (`EmailNotification` — keyed, leased, 5 attempts, backoff); only its driver should ever move. |
-| **Rate limiting** | **IN PROGRESS** | `express-rate-limit` v7 with one global `/api` limiter (600/min in production) plus 19 route-specific limiters covering login, registration, password reset, verification, checkout, callbacks, exports, imports, messaging (keyed by `tenantId`), platform admin actions and more. **Gaps:** all stores are per-process memory (R1); no per-account login lockout, only per-IP (R2); `/auth/refresh` and `/auth/logout` have no dedicated limiter (R3); `trust proxy` is hard-coded to `1` and must be re-verified when Cloudflare is added (R4). |
+| **Rate limiting** | **COMPLETED** | `express-rate-limit` v7 with a **Redis-backed store** (`middleware/rateLimit.ts`) shared by all 23 policies — the original 1 global + 19 route limiters, migrated with their windows, limits, keys, status codes, headers and messages unchanged, plus 3 new ones. Counters live in Redis under the Phase 1 namespace, so every replica sees the same count. Findings closed: R1 (per-process stores), R2 (no per-account login protection), R3 (`/auth/refresh` and `/auth/logout` unlimited), R4 (`trust proxy` hard-coded — now `TRUST_PROXY_HOPS`). See §1.4. |
 | **Idempotency** | **IN PROGRESS** | No generic middleware. Per-resource keys with unique partial indexes on `Sale`, `Payment`, `Return`, `WalletTransaction`, `UsageCharge`, `UpgradeRequest`, `LoyaltyMembership`, each with replay-read and 11000-recovery. Wallet debits use a guarded `$gte` update; subscription purchase takes a CAS lock; webhooks are replay-safe because a notification is never believed. **Gaps:** `ShopSale`/`PharmacySale`/`RestaurantOrder` have no key at all (I1); Clothing's is optional (I2); plain returns write `null` (I3); no header convention (I4). |
 | **Docker** | **NOT STARTED** | No Dockerfile, no `.dockerignore`. Core is ready (env-driven config, binds all interfaces, `npm start` → `node dist/server.js`, Node ≥ 20, graceful SIGTERM). Blockers: native `sharp` (D1), uploads on local disk (D2), `syncIndexes` disabled in production (D3), the client build fetches the API (D4), the SPA calls relative `/api` so one origin is mandatory (D5), per-replica scheduler and caches (D6). |
 | **Docker Compose** | **NOT STARTED** | No `docker-compose.yml`. When written it must use a **single-node Mongo replica set**: `withTransaction` degrades to compensating writes on a standalone, and CI uses standalone `mongo:7`, so the transaction path has never run anywhere (B9). |
@@ -466,6 +467,184 @@ process with exit 1. All three are fixed.
    waits up to that long for the batch in hand, then stops it and leaves the
    remainder to the next worker.
 
+### 1.4 Phase 4 — distributed rate limiting (completed 2026-10-08)
+
+**The problem.** Every limiter used `express-rate-limit`'s default
+`MemoryStore`, which counts inside one process. With N replicas the real limit
+is N times the configured one — a login limit of 20 per quarter hour becomes 60
+across three replicas — so the limit an operator reads in the code is not the
+limit an attacker meets.
+
+**What changed: only the storage.** All 20 existing limiters keep their exact
+window, limit, key, status code, headers and message. They are the same
+`express-rate-limit` middleware, handed a different store. Nothing about an
+allowed request changed, and no frontend change was needed.
+
+**Algorithm: fixed window, one atomic `EVAL` per request.**
+
+```lua
+local hits = redis.call('INCR', KEYS[1])
+local ttl  = redis.call('PTTL', KEYS[1])
+if hits == 1 or ttl < 0 then
+  redis.call('PEXPIRE', KEYS[1], ARGV[1])
+  ttl = tonumber(ARGV[1])
+end
+return { hits, ttl }
+```
+
+Chosen because it is what the limiters already were — a fixed window — so
+migrating changed storage and not policy; because `INCR` creates the key at 1
+and the expiry is set in the **same script**, so a counter can never outlive its
+window and there is no read-then-write for concurrent requests to slip through;
+and because it is one round trip. A sliding window or token bucket would have
+been a policy change as well as a storage change, and nothing in the audit asked
+for one. A dependency (`rate-limit-redis`) was considered and not taken: it
+would have added a package to run four lines of Lua, and its own key prefixing
+would have had to be reconciled with Phase 1's.
+
+**Redis architecture.** The store reuses the **shared Phase 1 client** from
+`config/redis.ts`. Not the BullMQ connection, which is configured for queues,
+and not a new one — so this phase adds **zero** Redis connections, and nothing
+is created per request. The Phase 1 defaults are what a limiter needs:
+`enableOfflineQueue: false` and a bounded `maxRetriesPerRequest`, so a command
+issued while Redis is away fails in milliseconds rather than holding a request
+open, which is what makes the fallback usable.
+
+**Key design.** `rl:<policy>:<identity>`, passed bare so the Phase 1 client
+prefixes it with `retailersuites:<NODE_ENV>:` — verified on the wire as
+`rlwire:rl:api:::ffff:127.0.0.1` (ioredis applies `keyPrefix` to `EVAL` keys,
+whose key index it knows). Two environments sharing a Redis therefore cannot
+share counters, and two policies or identities never collide. An identity is an
+IP, a workspace id, or a **sha256 hash** of a submitted identifier — never a
+password, token or Authorization header, and nothing identifying reaches the
+logs.
+
+**Redis outage behaviour, decided per policy, not globally:**
+
+- **`memory`** — fall back to a per-process counter. The configured limit still
+  applies, once per replica, so protection degrades from N to N × replicas
+  rather than disappearing. **This is not fail-open.** It is right wherever
+  availability matters more than exactness: a till that cannot sign in cannot
+  sell, and a cache outage must not become a trading outage.
+- **`closed`** — refuse with 429. Four policies, all guarding either spending on
+  the customer's behalf or the API's own capacity, where a runaway client is the
+  actual threat and refusal costs only a retry: `messaging-send`, `export`,
+  `product-import`, `pos-import`.
+
+**One distinction that matters:** `closed` means "refuse while a Redis we were
+told to use is unreachable", **not** "refuse because no Redis was configured".
+Phase 1 made Redis optional for the API deliberately, so when `REDIS_URL` is
+unset every policy uses the per-process counter — exactly the behaviour that
+shipped before this phase. Without that split, Phase 4 would have silently
+turned Redis into a hard dependency and taken whole features away with it. (It
+did, briefly: the first version broke every messaging test, which is how it was
+caught.)
+
+**TTL.** Set in the same script that creates the counter, and the `ttl < 0`
+branch repairs a key that somehow exists without one — so there is no path to an
+unbounded counter key.
+
+**Trust proxy.** Was `isProd ? 1 : false`. The hop count decides `req.ip`, and
+`req.ip` is the identity nearly every limiter counts against, so it is now
+configuration: **`TRUST_PROXY_HOPS`**, default `1` — unchanged behaviour today.
+Too high lets a client spoof its address and mint itself a fresh bucket; too low
+throttles the whole internet against one. It must be re-set when Cloudflare goes
+in front (Phase 9). No limiter reads a forwarding header directly.
+
+**Verification list — all 20 existing policies, limits preserved:**
+
+| Policy | Route(s) | Window | Prod limit | Key | Fallback |
+|---|---|---|---|---|---|
+| `api` | all `/api` | 1 min | 600 | IP | memory |
+| `auth-credentials` | register, login, login/select | 15 min | 20 | IP | memory |
+| `auth-password-forgot` | password/forgot | 15 min | 5 | IP | memory |
+| `auth-password-reset` | password/verify-code, password/reset | 15 min | 30 | IP | memory |
+| `auth-switch-workspace` | switch-workspace | 1 min | 30 | IP | memory |
+| `auth-verification` | verification/send, verification/confirm | 1 min | 6 | IP | memory |
+| `account-topup` | account top-up | 15 min | 10 | IP | memory |
+| `export` | exports | 1 min | 5 | IP | **closed** |
+| `product-import` | products/import | 1 min | 5 | IP | **closed** |
+| `pos-import` | POS imports | 1 min | 5 | IP | **closed** |
+| `messaging-send` | messaging sends | 1 hour | 60 | **tenantId** | **closed** |
+| `payment-callback` | payments/callback | 1 min | 60 | IP | memory |
+| `payment-checkout` | payments/checkout | 1 min | 10 | IP | memory |
+| `payment-provider-events` | provider relay events | 1 min | 120 | IP | memory |
+| `platform-admin` | platform admin actions | 1 min | 60 | IP | memory |
+| `pricing-quote` | pricing quotes | 1 min | 60 | IP | memory |
+| `printing-sign` | printing sign | 1 min | 240 | IP | memory |
+| `subscription-purchase` | subscription purchase | 1 min | 20 | IP | memory |
+| `workspace-create` | workspace create | 1 hour | 10 | IP | memory |
+| `workspace-cancel` | workspace cancel | 15 min | 20 | IP | memory |
+
+Development and test limits are unchanged too (5,000–20,000), so the
+end-to-end suite is not throttled.
+
+**Three policies added:**
+
+| Policy | Route | Window | Limit | Key | Why this number |
+|---|---|---|---|---|---|
+| `auth-login-account` | login | 15 min | 10 | sha256(email) | The per-IP limit cannot stop credential stuffing — a thousand hosts each making one attempt never trips it. This counts against the address someone typed. **Only failed attempts count**, so a busy till is never locked out by its own successful sign-ins. |
+| `auth-refresh` | refresh | 15 min | 120 | IP | An access token lives 15 minutes, so ten tills behind one office address refresh ~40 times an hour, plus reconnection retries. Generous enough not to touch normal multi-device use. |
+| `auth-logout` | logout | 15 min | 60 | IP | Cheap, but should not be unmetered. |
+
+On key growth: an attacker can mint one key per address they guess, but each is
+a few dozen bytes with a 15-minute expiry, and the rate they can be created is
+bounded by the per-IP limiter that runs **first** — which is why the order on
+the login route matters. Enumeration is unaffected: the key is the submitted
+identifier whether or not the account exists, and the 429 body is generic.
+
+**Logging.** A rejection is not logged per request. An outage is logged once per
+policy per minute, naming the policy and the fallback taken — never a key, an
+address or an identifier.
+
+**Tests.** `server/src/middleware/rateLimit.check.ts`, run by `npm test`
+(**54 assertions**). The real `express-rate-limit` middleware with the real
+store, driven through real request/response objects; what stands in for Redis is
+a small executor that applies the script's own semantics (INCR/PTTL/PEXPIRE)
+over a map. Covered: the script is atomic by construction and contains no
+GET/SET pair; key namespacing, determinism and isolation across policies and
+identities; identifier hashing; the limit boundary and the 429 envelope and
+headers; window reset with a controllable clock; 20 concurrent requests each
+receiving a distinct count 1..20 in exactly 20 round trips; **two store
+instances sharing one counter** (the distributed property of our own code);
+policy isolation; TTL always bounded; decrement and reset; both fallbacks; the
+absent-vs-unreachable distinction; and the account-keyed identity collapsing
+three addresses onto one counter while another account is unaffected.
+
+**Real-Redis validation: partial, and the limits of it stated plainly.** There
+is no Redis on this machine and no Docker to run one, so **genuine distributed
+behaviour across two processes was not proven.** What *was* proven, by running
+the real API in production mode against a protocol stub and reading the wire:
+the limiters issue exactly one `EVAL` per request, the key arrives namespaced by
+the Phase 1 prefix (`rlwire:rl:api:…`), and the global plus both login policies
+fire in the expected order. What that does **not** show is Redis executing the
+script atomically under real concurrency — that is Redis's own guarantee and
+needs a real server. **Before relying on this with more than one replica, run
+the two-instance test against a real Redis.**
+
+**Limitations:**
+
+1. **Multi-instance behaviour is not production-validated** (above). The code
+   has no per-instance state and the tests prove two store instances share a
+   counter, but that is our code, not Redis.
+2. **Redis is now a production dependency for *distributed* enforcement.** The
+   API still runs without it, and still rate limits — per process. An operator
+   who wants the configured limits to be the real limits across replicas must
+   run Redis.
+3. **Fixed window, so a burst can straddle a boundary** — up to 2× the limit
+   across two adjacent windows. That was true of the previous implementation
+   too; changing it would be a policy change, and a sliding window is the
+   upgrade path if a burst ever matters.
+4. **`TRUST_PROXY_HOPS` is unverified against the real deployment**, because
+   this repository still documents no deployment (§Deployment model). The
+   default preserves today's behaviour; it must be re-checked in Phase 8/9.
+5. **The `export` limiter keys on IP, not on the signed-in user**, despite the
+   comment in `export.limits.ts` saying "per signed-in user". That mismatch
+   predates this phase and the policy was deliberately left alone rather than
+   silently tightened; it is worth a decision later.
+6. **No rate-limit metrics.** Rejections are observable only in logs; counters
+   and a dashboard belong with Phase 11.
+
 ### Deployment model
 
 **UNDOCUMENTED.** No Dockerfile, compose file, Nginx config, PM2 ecosystem,
@@ -504,7 +683,7 @@ PHASE 3   Background-job migration                  IN PROGRESS   ← 1 of 6 don
           product import commit                     NOT STARTED
           exports                                   NOT STARTED
           subscription scheduler passes              NOT STARTED
-PHASE 4   Rate limiting (distributed)               NOT STARTED
+PHASE 4   Rate limiting (distributed)               COMPLETED  (2026-10-08)
 PHASE 5   Idempotency / reliability                 NOT STARTED
 PHASE 6   Docker                                    NOT STARTED
 PHASE 7   Docker Compose + local production-like    NOT STARTED
@@ -552,6 +731,7 @@ inline-fallback note before assuming a queue is always available.
 
 | Date | Change |
 |---|---|
+| 2026-10-08 | **Phase 4 — distributed rate limiting.** All 20 existing limiters moved from per-process memory to a Redis-backed store (`middleware/rateLimit.ts`) with their policies unchanged, counting through one atomic `EVAL` per request on the shared Phase 1 client — no new Redis connection, nothing per request. Added per-account login protection (failed attempts only, hashed identifier), and dedicated `/auth/refresh` and `/auth/logout` policies. Outage behaviour is declared per policy: four spend/capacity-guarding policies refuse, the rest degrade to a per-process counter; a Redis that was never configured is not treated as an outage, so a no-Redis deployment behaves exactly as before. `trust proxy` became `TRUST_PROXY_HOPS`. New `middleware/rateLimit.check.ts` (54 assertions). Closes audit findings R1–R4. |
 | 2026-10-08 | **Phase 3, first migration — campaign delivery.** Campaign SMS and email delivery moved off the HTTP request onto the `campaign-delivery` queue: the request now stores the recipients, charges once, enqueues one job per 100-recipient batch and returns, and the worker delivers. Added `services/sms/campaignDelivery.service.ts` (the single delivery implementation, used by the worker and by the no-Redis inline fallback alike), `queues/campaign.queue.ts`, and `seed/campaignDelivery.check.ts` (82 assertions). `SmsMessage` gained a unique `(campaignId, recipient)` index, a claim lease, `attempts`, `failureKind` and `batchIndex`, which is what makes a worker retry skip what already went out; `SmsCampaign` gained `queued`. Money rules, terminal statuses and tenant scoping unchanged. Fixed three bugs found while testing: a transient failure being re-claimed inside the same pass, two configuration errors misclassified as transient, and `shutdownQueues` hanging when a worker's connection had gone. **No other job migrated**; the subscription scheduler, billing/auth emails, exports, imports and image processing are untouched. |
 | 2026-10-08 | **Phase 2 — BullMQ worker foundation.** Added `bullmq` (which reuses the ioredis Phase 1 installed) and `server/src/queues/`: `createAppQueue` / `createAppWorker` over one shared BullMQ-compatible connection built from the Phase 1 Redis configuration, with naming validation, the key namespace, conservative finite retry/backoff/retention defaults and the payload policy centralised in `queues/options.ts`, plus registries, lifecycle logging and a bounded idempotent `shutdownQueues`. Added `server/src/worker.ts`, a separate process (`npm run worker`, `npm run worker:dev`) that starts no HTTP server, requires Redis and exits 1 without it. New `server/src/queues/queues.check.ts` (run by `npm test`). **No queue, no processor and no migrated job**: the API's `setInterval` scheduler still runs exactly as before. |
 | 2026-10-08 | **Phase 1 — Redis foundation.** Added `ioredis` to the `server` workspace and `server/src/config/redis.ts`: one shared, lazily-opened client with a pure config resolver, a client factory reusable by the future worker, bounded fail-fast command defaults, de-duplicated error logging, a `pingRedis` primitive and idempotent lifecycle calls wired into `server.ts` beside MongoDB's. `REDIS_URL` and `REDIS_KEY_PREFIX` added to the env schema and `.env.example`; Redis is optional, an unreachable server is never fatal, a malformed URL refuses to boot. `/api/health` additively reports the live connection state. New `server/src/config/redis.check.ts` (run by `npm test`) proves all of it against an in-process RESP stub. Nothing consumes Redis yet; rate limiting, queues and the scheduler are untouched. |

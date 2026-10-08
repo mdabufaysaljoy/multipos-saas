@@ -1,6 +1,5 @@
 import { Router } from 'express';
-import rateLimit from 'express-rate-limit';
-import { isProd } from '../../config/env';
+import { createRateLimiter } from '../../middleware/rateLimit';
 import { validate } from '../../middleware/validate';
 import * as controller from './paymentProviders.controller';
 import { smsEventSchema } from './paymentProviders.validators';
@@ -17,11 +16,13 @@ const router = Router();
  * Flooding is capped per IP: a relay forwards one message per real payment, so
  * a burst is either a retry storm or an attack.
  */
-const eventLimiter = rateLimit({
+const eventLimiter = createRateLimiter({
+  name: 'payment-provider-events',
   windowMs: 60_000,
-  limit: isProd ? 120 : 20_000,
-  standardHeaders: 'draft-7',
-  legacyHeaders: false,
+  limit: 120,
+  devLimit: 20_000,
+  // A dropped relay event is a payment that silently never completes.
+  fallback: 'memory',
   message: { success: false, error: { code: 'TOO_MANY_REQUESTS', message: 'Too many events. Slow down.' } },
 });
 

@@ -1,8 +1,7 @@
 import { Router } from 'express';
 import multer from 'multer';
-import rateLimit from 'express-rate-limit';
+import { createRateLimiter } from '../../middleware/rateLimit';
 import { PERMISSIONS } from '../../config/permissions';
-import { isProd } from '../../config/env';
 import { requireAccess } from '../../middleware/access';
 import { requireActiveSubscription } from '../../middleware/subscription';
 import { validate } from '../../middleware/validate';
@@ -52,11 +51,13 @@ const upload = multer({
   },
 });
 
-const importLimiter = rateLimit({
+const importLimiter = createRateLimiter({
+  name: 'pos-import',
   windowMs: 60_000,
-  limit: isProd ? IMPORTS_PER_MINUTE : 10_000,
-  standardHeaders: 'draft-7',
-  legacyHeaders: false,
+  limit: IMPORTS_PER_MINUTE,
+  devLimit: 10_000,
+  // An import commit writes thousands of documents inside the request.
+  fallback: 'closed',
   message: { success: false, error: { code: 'TOO_MANY_REQUESTS', message: 'Too many imports. Wait a minute and try again.' } },
 });
 

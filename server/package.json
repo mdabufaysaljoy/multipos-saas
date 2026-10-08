@@ -35,6 +35,7 @@
     "test:product-limits": "tsx src/config/productLimits.check.ts",
     "test:redis": "tsx src/config/redis.check.ts",
     "test:queues": "tsx src/queues/queues.check.ts",
+    "test:rate-limit": "tsx src/middleware/rateLimit.check.ts",
     "migrate:verify-clothing": "tsx src/migrations/verifyClothingMigration.ts",
     "report:identities": "tsx src/migrations/reportDuplicateIdentities.ts",
     "bkash:sandbox": "tsx src/scripts/bkashSandboxCheck.ts",

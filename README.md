@@ -129,6 +129,7 @@ hardcoded. See `.env.example` for the full annotated list.
 | `REFRESH_TOKEN_TTL` | Refresh token lifetime | `7d` |
 | `BCRYPT_ROUNDS` | Password hashing cost | `10` |
 | `CLIENT_ORIGIN` | Allowed CORS origin(s), comma-separated | `http://localhost:5173` |
+| `TRUST_PROXY_HOPS` | Reverse proxies in front of the API in production. Decides `req.ip`, which rate limiting keys on — must match the deployment. | `1` |
 | `STORAGE_DRIVER` | `local` \| `s3` \| `cloudinary` | `local` |
 | `STORAGE_LOCAL_DIR` | Upload folder when driver is `local` | `uploads` |
 | `PUBLIC_BASE_URL` | Base URL used to build public file URLs | `http://localhost:4100` |

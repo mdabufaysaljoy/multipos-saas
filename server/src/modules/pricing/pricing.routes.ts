@@ -1,6 +1,5 @@
 import { Router } from 'express';
-import rateLimit from 'express-rate-limit';
-import { isProd } from '../../config/env';
+import { createRateLimiter } from '../../middleware/rateLimit';
 import { authenticate } from '../../middleware/auth';
 import { resolveTenant } from '../../middleware/tenant';
 import { validate } from '../../middleware/validate';
@@ -9,11 +8,13 @@ import { catalogQuerySchema, quoteSchema, workspaceQuoteSchema } from './pricing
 
 const router = Router();
 
-const quoteLimiter = rateLimit({
+const quoteLimiter = createRateLimiter({
+  name: 'pricing-quote',
   windowMs: 60 * 1000,
-  limit: isProd ? 60 : 10_000,
-  standardHeaders: 'draft-7',
-  legacyHeaders: false,
+  limit: 60,
+  devLimit: 10_000,
+  // A public read; refusing it breaks the pricing page.
+  fallback: 'memory',
   message: { success: false, error: { code: 'TOO_MANY_REQUESTS', message: 'Too many price requests. Try again shortly.' } },
 });
 

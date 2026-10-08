@@ -1,8 +1,7 @@
 import * as emailNotifications from './emailNotifications.controller';
 import * as paymentDevices from './paymentDevices.controller';
-import { isProd } from '../../config/env';
 import { POS_PRODUCT_CODE_PATTERN } from '../../config/verticals';
-import rateLimit from 'express-rate-limit';
+import { createRateLimiter } from '../../middleware/rateLimit';
 import { accountDocumentParams, accountListQuerySchema, accountParams, supportInvoiceQuerySchema, supportPaymentQuerySchema, supportReasonQuerySchema, supportReceiptQuerySchema, supportStatementQuerySchema, supportTopUpQuerySchema, supportWalletQuerySchema, walletAdjustmentSchema, walletReversalSchema, accountTransactionParams } from './accountsSupport.validators';
 import { Router } from 'express';
 import { z } from 'zod';
@@ -49,11 +48,13 @@ router.use(authenticate, requirePlatformAdmin);
  * session can act, and makes a scripted burst visible in the audit log.
  * Relaxed outside production so the end-to-end suite is not throttled.
  */
-const adminActionLimiter = rateLimit({
+const adminActionLimiter = createRateLimiter({
+  name: 'platform-admin',
   windowMs: 60_000,
-  limit: isProd ? 60 : 20_000,
-  standardHeaders: 'draft-7',
-  legacyHeaders: false,
+  limit: 60,
+  devLimit: 20_000,
+  // A platform admin fixing an outage must not be locked out by it.
+  fallback: 'memory',
   message: { success: false, error: { code: 'TOO_MANY_REQUESTS', message: 'Too many administrative actions. Slow down.' } },
 });
 
