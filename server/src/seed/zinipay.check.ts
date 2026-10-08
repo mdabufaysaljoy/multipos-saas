@@ -17,6 +17,7 @@
  */
 import { createServer, type Server } from 'node:http';
 import { ZiniPayProvider } from '../services/payment/providers/zinipay.provider';
+import { isConnectFailure, siblingHost } from '../utils/fetchWithDnsFallback';
 
 let passed = 0;
 let failed = 0;
@@ -217,6 +218,19 @@ async function main() {
   }
   check('An unconfigured provider refuses rather than guessing', refused);
   check('...and treats a webhook as unverified', (await unconfigured.handleWebhook({ headers: {}, rawBody: '', parsedBody: {} })).verified === false);
+
+  // ---- the DNS fallback, which decides when a POST may be re-sent ---------
+  // Re-sending a payment request is only safe when it cannot have been
+  // delivered, so this is really a test about not creating two invoices.
+  const connectError = (code: string) => Object.assign(new Error('fetch failed'), { cause: Object.assign(new Error(code), { code }) });
+  check('A connection that never opened may be retried', isConnectFailure(connectError('UND_ERR_CONNECT_TIMEOUT')));
+  check('...as may a refused or unroutable one', isConnectFailure(connectError('ECONNREFUSED')) && isConnectFailure(connectError('EHOSTUNREACH')));
+  // The one that matters: this can happen AFTER the gateway acted on it.
+  check('A reset connection is NOT retried, so no second invoice', !isConnectFailure(connectError('ECONNRESET')));
+  check('A timed-out request is not retried either', !isConnectFailure(Object.assign(new Error('aborted'), { name: 'AbortError' })));
+  check('A refusal from the gateway is not a connection problem', !isConnectFailure(new Error('Invalid API key')));
+  check('The sibling of an API host is its domain', siblingHost('api.zinipay.com') === 'zinipay.com');
+  check('...and a bare domain has none to fall back to', siblingHost('zinipay.com') === null);
 
   server.close();
   console.log(`\n==========  ${passed} passed, ${failed} failed  ==========\n`);

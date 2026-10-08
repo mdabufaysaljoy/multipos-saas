@@ -1,5 +1,6 @@
 import { PAYMENT_PROVIDERS } from '../../../config/constants';
 import { logger } from '../../../utils/logger';
+import { fetchWithDnsFallback } from '../../../utils/fetchWithDnsFallback';
 import { decimalStringToMinor, minorToDecimalString } from '../money';
 import { PaymentProviderNotConfiguredError } from '../PaymentProvider';
 import type {
@@ -156,19 +157,31 @@ export class ZiniPayProvider implements PaymentProvider {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), this.config.timeoutMs ?? 15_000);
     try {
-      const response = await fetch(this.url(path), {
-        method: 'POST',
-        headers: {
-          // The documented preferred header. The query-string forms ZiniPay
-          // also accepts are deliberately not used: an API key in a URL ends up
-          // in access logs and proxy history.
-          'zini-api-key': this.config.apiKey,
-          'Content-Type': 'application/json',
-          Accept: 'application/json',
+      const timeoutMs = this.config.timeoutMs ?? 15_000;
+      const response = await fetchWithDnsFallback(
+        this.url(path),
+        {
+          method: 'POST',
+          headers: {
+            // The documented preferred header. The query-string forms ZiniPay
+            // also accepts are deliberately not used: an API key in a URL ends
+            // up in access logs and proxy history.
+            'zini-api-key': this.config.apiKey,
+            'Content-Type': 'application/json',
+            Accept: 'application/json',
+          },
+          body: JSON.stringify(body),
+          signal: controller.signal,
+          timeoutMs,
         },
-        body: JSON.stringify(body),
-        signal: controller.signal,
-      });
+        // Worth saying once per call rather than never: the gateway works, but
+        // its published address does not, and only they can fix that.
+        (detail) =>
+          logger.warn('ZiniPay was reached through its sibling domain: the address published for it did not answer', {
+            host: detail.host,
+            via: detail.via,
+          }),
+      );
       const payload = (await response.json().catch(() => ({}))) as ZiniPayPayload;
       if (!response.ok) {
         throw new Error(text(payload.message) || `ZiniPay returned HTTP ${response.status}`);
