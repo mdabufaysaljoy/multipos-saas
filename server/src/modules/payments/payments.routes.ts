@@ -18,6 +18,13 @@ const router = Router();
 // check inside each provider adapter, never from a session.
 // bKash notifications arrive through Amazon SNS as text/plain JSON; keep the exact text.
 router.post('/webhook/:provider', express.text({ type: 'text/plain', limit: '256kb' }), controller.webhook);
+// Some gateways deliver the same notification as a GET with a query string
+// instead of a body - ZiniPay documents its payload as "JSON Body / Query". A
+// notification that arrives on a method we refuse is a payment that silently
+// never completes, and the handler already reads the query either way.
+// Accepting it is safe because a notification is never believed: whatever it
+// says, the payment is confirmed by asking the gateway.
+router.get('/webhook/:provider', controller.webhook);
 
 // The provider sends the customer's BROWSER here after its payment page. Public by
 // nature (no session survives the round trip); it only ever asks the provider.

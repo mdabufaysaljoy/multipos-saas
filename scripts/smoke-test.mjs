@@ -5924,6 +5924,132 @@ async function main() {
     const stats = await fetch(`${mock}/__control/stats`).then((r) => r.json());
     check('One access token served every bKash call', stats.grants === 1, stats);
   }
+
+  // --- ZiniPay hosted checkout: the money actually arriving ------------------
+  // The whole point of an automatic gateway is that nobody approves anything by
+  // hand, so this follows a real wallet top-up and a real plan purchase from
+  // opening the checkout to the balance moving - through the real adapter,
+  // against a stub that answers what the live API answers.
+  if (process.env.ZINIPAY_MOCK_URL) {
+    section('ZiniPay: paying for real');
+    const zmock = process.env.ZINIPAY_MOCK_URL;
+    const zs = Date.now();
+    const zControl = (path, payload) =>
+      fetch(`${zmock}/__control/${path}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(payload ?? {}) }).then((r) => r.json());
+
+    // The platform admin configures the gateway, exactly as they would in
+    // Settings. A saved key outranks the environment - which an earlier section
+    // proved - so the mock's key has to be the saved one for anything to pay.
+    await api('/platform/settings', {
+      method: 'PATCH',
+      token: padmin.token,
+      body: { payments: { zinipay: { apiKey: process.env.ZINIPAY_MOCK_KEY ?? 'test-zinipay-key', baseUrl: zmock, enabled: true } } },
+    });
+
+    const zReg = await api('/auth/register', {
+      method: 'POST',
+      body: { businessName: `ZiniPay Shop ${zs}`, name: 'Zini Payer', email: `zini${zs}@example.com`, password: 'ZiniPay@12345' },
+    });
+    const zTok = zReg.data?.tokens?.accessToken;
+    check('A workspace is registered to pay with ZiniPay', Boolean(zTok), zReg.error);
+    // A workspace needs a store, and a payment needs a proven contact.
+    await api('/stores', { method: 'POST', token: zTok, body: { name: 'Zini Main', code: `ZINI${zs}`.slice(0, 16), currency: 'BDT' } });
+    await verifyContact(zTok);
+
+    check('ZiniPay is offered once configured', ((await api('/payments/providers', { token: zTok })).data ?? []).some((p) => p.name === 'zinipay' && p.kind === 'hosted'));
+
+    const zBalance = async () => (await api('/wallet', { token: zTok })).data?.balanceMinor ?? 0;
+    const startingBalance = await zBalance();
+
+    // ---- wallet top-up ------------------------------------------------------
+    const opened = await api('/wallet/top-ups/online', { method: 'POST', token: zTok, body: { amountMinor: 50_000, provider: 'zinipay' } });
+    check('A gateway top-up opens a checkout', opened.status === 201 && Boolean(opened.data?.redirectUrl), opened.error ?? opened.data);
+    const paymentId = opened.data?.paymentId;
+    // The id is the LAST segment, past the brand slug in the path.
+    const invoiceId = String(opened.data?.redirectUrl ?? '').split('/').pop();
+    check('...and the invoice id is read off the payment URL', Boolean(invoiceId) && invoiceId.length > 10, opened.data?.redirectUrl);
+    check('...crediting nothing yet', (await zBalance()) === startingBalance);
+
+    // Coming back from the gateway BEFORE paying must not credit anything: the
+    // browser's word is not what decides this.
+    const tooEarly = await api('/payments/confirm', { method: 'POST', token: zTok, body: { paymentId } });
+    check('Returning to the success page before paying confirms nothing', tooEarly.data?.status === 'pending', tooEarly.data ?? tooEarly.error);
+    check('...and the wallet is untouched', (await zBalance()) === startingBalance);
+    check('...and it says what the payment was for', tooEarly.data?.purpose === 'wallet_topup', tooEarly.data);
+
+    // A forged notification, before any payment exists at the gateway.
+    const forged = await api('/payments/webhook/zinipay', { method: 'POST', body: { invoice_id: invoiceId, status: 'true' } });
+    check('A webhook claiming success credits nothing while the invoice is unpaid', forged.status < 500 && (await zBalance()) === startingBalance, forged.status);
+
+    // Now the customer actually pays.
+    await zControl('pay', { invoiceId });
+    const confirmed = await api('/payments/confirm', { method: 'POST', token: zTok, body: { paymentId } });
+    check('Once paid, the return confirms it', confirmed.data?.status === 'paid', confirmed.data ?? confirmed.error);
+    check('...and the money is in the wallet, with nobody approving it', (await zBalance()) === startingBalance + 50_000, await zBalance());
+
+    // Everything that can arrive twice must credit once.
+    await api('/payments/confirm', { method: 'POST', token: zTok, body: { paymentId } });
+    await api('/payments/webhook/zinipay', { method: 'POST', body: { invoice_id: invoiceId, status: 'true' } });
+    await api(`/payments/webhook/zinipay?invoice_id=${encodeURIComponent(invoiceId)}&status=true`);
+    check('A repeated confirmation and webhook credit the wallet once', (await zBalance()) === startingBalance + 50_000, await zBalance());
+
+    // ---- the webhook alone, with nobody looking at a browser ----------------
+    const second = await api('/wallet/top-ups/online', { method: 'POST', token: zTok, body: { amountMinor: 20_000, provider: 'zinipay' } });
+    const secondInvoice = String(second.data?.redirectUrl ?? '').split('/').pop();
+    await zControl('pay', { invoiceId: secondInvoice });
+    const notified = await api('/payments/webhook/zinipay', { method: 'POST', body: { invoice_id: secondInvoice, status: 'true' } });
+    check('A webhook alone credits the wallet, with no browser involved', notified.status < 400 && (await zBalance()) === startingBalance + 70_000, await zBalance());
+
+    // The same notification as a GET query string, which is the other shape
+    // ZiniPay documents.
+    const third = await api('/wallet/top-ups/online', { method: 'POST', token: zTok, body: { amountMinor: 10_000, provider: 'zinipay' } });
+    const thirdInvoice = String(third.data?.redirectUrl ?? '').split('/').pop();
+    await zControl('pay', { invoiceId: thirdInvoice });
+    await api(`/payments/webhook/zinipay?invoice_id=${encodeURIComponent(thirdInvoice)}&status=true`);
+    check('A query-string webhook credits it too', (await zBalance()) === startingBalance + 80_000, await zBalance());
+
+    // ---- a payment that fails credits nothing ------------------------------
+    const doomed = await api('/wallet/top-ups/online', { method: 'POST', token: zTok, body: { amountMinor: 30_000, provider: 'zinipay' } });
+    const doomedInvoice = String(doomed.data?.redirectUrl ?? '').split('/').pop();
+    await zControl('fail', { invoiceId: doomedInvoice });
+    const failed = await api('/payments/confirm', { method: 'POST', token: zTok, body: { paymentId: doomed.data?.paymentId } });
+    check('A failed payment is reported failed', failed.data?.status === 'failed', failed.data ?? failed.error);
+    check('...and adds nothing to the wallet', (await zBalance()) === startingBalance + 80_000, await zBalance());
+
+    // ---- paying for a plan the same way ------------------------------------
+    const zPlans = (await api('/plans')).data ?? [];
+    const zPlan = zPlans.find((plan) => plan.catalogPlanCode && plan.billingCycle && (plan.priceMinor ?? 0) > 0);
+    check('A payable plan is on sale', Boolean(zPlan), zPlans.map((p) => [p.code, p.catalogPlanCode, p.billingCycle]));
+    if (zPlan) {
+      const quote = await api('/subscriptions/purchase/quote', { method: 'POST', token: zTok, body: { plan: zPlan.catalogPlanCode, billingCycle: zPlan.billingCycle } });
+      check('A plan offers ZiniPay as a way to pay', (quote.data?.paymentMethods?.online ?? []).includes('zinipay'), quote.data?.paymentMethods);
+
+      const buy = await api('/subscriptions/purchase', {
+        method: 'POST',
+        token: zTok,
+        body: { plan: zPlan.catalogPlanCode, billingCycle: zPlan.billingCycle, paymentMethod: 'online', provider: 'zinipay', idempotencyKey: `zini-${zs}` },
+      });
+      const planInvoice = String(buy.data?.redirectUrl ?? '').split('/').pop();
+      check('Buying a plan opens a ZiniPay checkout', buy.status < 400 && Boolean(buy.data?.redirectUrl), buy.error ?? buy.data);
+      // Asserted against the PAYMENT, not the plan: a fresh workspace may
+      // already sit on this plan's tier, which would make a plan comparison
+      // pass for the wrong reason.
+      const beforePaying = await api('/payments/confirm', { method: 'POST', token: zTok, body: { paymentId: buy.data?.paymentId } });
+      check('...and nothing is paid before the customer pays', beforePaying.data?.status === 'pending', beforePaying.data ?? beforePaying.error);
+
+      await zControl('pay', { invoiceId: planInvoice });
+      const planConfirm = await api('/payments/confirm', { method: 'POST', token: zTok, body: { paymentId: buy.data?.paymentId } });
+      check('Once paid, the plan payment confirms', planConfirm.data?.status === 'paid', planConfirm.data ?? planConfirm.error);
+      check('...and it knows this was a subscription, not a top-up', planConfirm.data?.purpose !== 'wallet_topup', planConfirm.data);
+      const live = await api('/subscriptions/current', { token: zTok });
+      check('...and the subscription is active immediately, with nobody approving it', live.data?.subscription?.status === 'active' && live.data?.subscription?.planSnapshot?.code === zPlan.code, live.data?.subscription?.planSnapshot);
+    }
+
+    // ---- the key is a credential, not decoration ---------------------------
+    const zStats = await fetch(`${zmock}/__control/stats`).then((r) => r.json());
+    check('Every ZiniPay call carried the API key', zStats.unauthorized === 0, zStats);
+    check('...and the gateway was asked about every payment', zStats.verifies > 0, zStats);
+  }
   check("It cannot pay the first workspace's order", (await api(`/restaurant/orders/${t1.data._id}/pay`, { method: 'POST', token: rv2.token, body: { payments: [{ method: 'cash', amountMinor: 1 }], rev: 0 } })).status === 404);
   check("It cannot seat the first workspace's table", (await api('/restaurant/orders', { method: 'POST', token: rv2.token, body: { type: 'dine_in', tableId: t2.data._id, items: [{ menuItemId: borhani.data._id, quantity: 1 }] } })).status === 400);
   check('Its menu starts empty', (await api('/restaurant/menu', { token: rv2.token })).data?.length === 0);

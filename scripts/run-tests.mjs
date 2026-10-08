@@ -26,6 +26,7 @@ import process from 'node:process';
 import { fileURLToPath } from 'node:url';
 import mongoose from 'mongoose';
 import { startMockBkash } from './mock-bkash.mjs';
+import { startMockZiniPay } from './mock-zinipay.mjs';
 
 const ROOT = fileURLToPath(new URL('..', import.meta.url));
 const TSX_CLI = fileURLToPath(new URL('../node_modules/tsx/dist/cli.mjs', import.meta.url));
@@ -104,6 +105,10 @@ const testUploadSetting = basename(testUploadDir);
 // checkout -> callback -> activation path run on every test run with no network
 // access and no real credentials. Test-only values; nothing here is a secret.
 const mockBkash = await startMockBkash({ port: Number(process.env.TEST_BKASH_PORT ?? 0) });
+// The same for ZiniPay, so the hosted-checkout path - create, return, verify,
+// credit - runs for real on every test run. Pointed at a stub rather than the
+// live gateway: that one needs real credentials and real money.
+const mockZiniPay = await startMockZiniPay({ port: Number(process.env.TEST_ZINIPAY_PORT ?? 0) });
 
 const childEnv = {
   ...process.env,
@@ -118,6 +123,8 @@ const childEnv = {
   BKASH_PASSWORD: mockBkash.credentials.password,
   BKASH_BASE_URL: mockBkash.url,
   BKASH_WEBHOOK_TOPIC_ARN: 'arn:aws:sns:ap-southeast-1:000000000000:bkash-test',
+  ZINIPAY_API_KEY: mockZiniPay.apiKey,
+  ZINIPAY_BASE_URL: mockZiniPay.url,
 };
 
 const run = (command, args, extraEnv = {}) =>
@@ -195,6 +202,7 @@ function teardown(server) {
   teardownPromise = (async () => {
     await stopServer(server);
     await mockBkash.close().catch(() => {});
+    await mockZiniPay.close().catch(() => {});
 
     let cleanupError = null;
     try {
@@ -279,7 +287,7 @@ try {
   // stock, so it needs known state. This also covers the case where a previous
   // run was killed before its cleanup could happen.
   await run(process.execPath, [TSX_CLI, 'server/src/seed/seed.ts', '--reset']);
-  await run(process.execPath, ['scripts/smoke-test.mjs'], { API_BASE, BKASH_MOCK_URL: mockBkash.url });
+  await run(process.execPath, ['scripts/smoke-test.mjs'], { API_BASE, BKASH_MOCK_URL: mockBkash.url, ZINIPAY_MOCK_URL: mockZiniPay.url, ZINIPAY_MOCK_KEY: mockZiniPay.apiKey });
   // The HTTP suite cannot reach these: there is deliberately no route that edits
   // an invoice or a ledger row, so the guards are checked at the model.
   await run(process.execPath, [TSX_CLI, 'server/src/seed/immutability.check.ts']);
