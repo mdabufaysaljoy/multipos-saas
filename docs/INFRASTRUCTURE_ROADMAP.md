@@ -1,7 +1,8 @@
 # Infrastructure roadmap
 
-**Phase 0 (audit) and Phase 1 (Redis foundation) are COMPLETED. Phases 2–12 are
-not implemented.** Live status per area is `docs/IMPLEMENTATION_STATUS.md`,
+**Phases 0 (audit), 1 (Redis foundation) and 2 (BullMQ worker foundation) are
+COMPLETED. No background job has been migrated yet — that is Phase 3. Phases
+3–12 are not implemented.** Live status per area is `docs/IMPLEMENTATION_STATUS.md`,
 which is the file to trust when this one and it disagree.
 
 Written 2026-10-08 against the working tree at `claude/retailer-suites-audit-e61761`
@@ -202,10 +203,26 @@ will share; each is the subject of its own later phase.
 
 ## 4. BullMQ / worker plan
 
-### Current status: NOT IMPLEMENTED
+### Status: FOUNDATION COMPLETED (Phase 2, 2026-10-08)
 
-Verified absent: BullMQ, Bull, Agenda, node-cron, `worker_threads`, any
-separate worker entry point, any queue abstraction, PM2. Nothing.
+The foundation exists; **no queue, no processor and no migrated job**. BullMQ
+5.81 reusing Phase 1's ioredis, `server/src/queues/` providing
+`createAppQueue` / `createAppWorker` over one shared connection with
+centralised retry, backoff, retention and naming policy, and
+`server/src/worker.ts` as a separate process that starts no HTTP server and
+requires Redis. Full detail, tests and limitations in
+`docs/IMPLEMENTATION_STATUS.md` §1.2.
+
+Two constraints discovered while building it, both read from BullMQ's source
+and worth knowing before Phase 3: BullMQ **refuses** a client carrying an
+ioredis `keyPrefix` (its own `prefix` option is used instead), and a blocking
+connection **requires** `maxRetriesPerRequest: null`. The second has a
+consequence for Phase 3 — an enqueue from an API request will wait rather than
+fail while Redis is unreachable, so API-side enqueues must bound themselves.
+
+**What follows was the Phase 0 finding, kept for the record:** BullMQ, Bull,
+Agenda, node-cron, `worker_threads`, any separate worker entry point, any queue
+abstraction and PM2 were all verified absent.
 
 ### What exists instead
 
@@ -224,10 +241,13 @@ updates on what was read, CAS claims, period-scoped keys. That discipline is
 what makes the migration low-risk — and it means running the scheduler in two
 replicas today is wasteful rather than corrupting.
 
-### Minimum worker architecture
+### Minimum worker architecture — BUILT, minus the feature queues
 
 One worker process, `server/src/worker.ts`, sharing the existing `config/`,
-`models/` and `services/` code — not a second codebase:
+`models/` and `services/` code — not a second codebase. The shape below is what
+Phase 2 implemented, except that the four feature queue files do not exist yet:
+Phase 3 adds them. `queues/index.ts` turned out to be the registry plus the
+factories, with the connection and the policy split into their own files.
 
 ```
 server/src/
@@ -242,9 +262,12 @@ server/src/
    └─ media.queue.ts       image optimisation
 ```
 
-Four queues is the floor. Defaults worth setting once, in the registry:
+Four queues is the floor. Defaults worth setting once, in the registry
+(**implemented in `queues/options.ts`**, with `attempts: 3` rather than the 5
+sketched here — 3 is the conservative default, and a queue whose work needs more
+says so explicitly when it is created):
 
-- `attempts: 5`, exponential backoff from ~10 s.
+- `attempts: 3`, exponential backoff from ~10 s.
 - `removeOnComplete: { age: 7 days, count: 1000 }`, `removeOnFail: { age: 30 days }`
   — failed jobs are the audit trail.
 - A `jobId` derived from the business key wherever one exists, so an enqueue is
@@ -261,6 +284,13 @@ can abandon a half-sent campaign.
 ---
 
 ## 5. Background-job migration plan
+
+### Status: NOT STARTED — this is Phase 3
+
+**Nothing below has been migrated.** Phase 2 built the foundation they move
+onto (§4); every candidate still runs exactly where this audit found it. The
+candidate list, the per-item analysis and the order in §5.2 are the Phase 3
+work plan.
 
 ### 5.1 Candidates, by priority
 
@@ -550,7 +580,7 @@ Node ≥ 20 and CI runs Node 22. npm with a committed lockfile. Graceful
 
 | | Issue | What to do |
 |---|---|---|
-| D1 | **`sharp` is a native module** with platform-specific libvips binaries. | Build and run on the same base image; prefer Debian-slim over Alpine, or install libvips explicitly. Do not copy `node_modules` from the host. |
+| D1 | **Two native dependencies.** `sharp` has platform-specific libvips binaries, and BullMQ (Phase 2) pulls in `msgpackr-extract`, whose prebuilds are per-platform optional packages with a `node-gyp` fallback. | Build and run on the same base image; prefer Debian-slim over Alpine, or install libvips explicitly. Do not copy `node_modules` from the host. `msgpackr` works without its native accelerator, so a missing prebuild degrades rather than breaks — but verify that in the image rather than assuming it. |
 | D2 | **Uploads live on local disk** at `cwd/uploads` (§8). | Named volume, and `WORKDIR` must match `STORAGE_LOCAL_DIR`'s relative resolution. |
 | D3 | **`syncModelIndexes()` runs only when `!isProd`** (`config/db.ts`). A production container will not create missing indexes. | Make index creation an explicit migration/startup step for production, as the code comment already recommends. Do not flip the flag — syncing drops and rebuilds drifted indexes, which is not something to do unattended on a large collection. |
 | D4 | **The client build fetches the API.** `client/scripts/prerender.mjs` reads live platform settings from `PRERENDER_API_URL`/`VITE_API_URL` (default `http://localhost:4100/api`) at build time, falling back to built-in copy with a warning. | Expected and safe — but a build inside an image with no API produces *stale marketing text, silently*. Either point it at a reachable API or accept the fallback knowingly. |
@@ -761,9 +791,9 @@ PHASE 0   Infrastructure audit                      ← this document (COMPLETED
    ↓
 PHASE 1   Redis foundation                          (COMPLETED 2026-10-08)
    ↓
-PHASE 2   BullMQ worker foundation                  ← next
+PHASE 2   BullMQ worker foundation                  (COMPLETED 2026-10-08)
    ↓
-PHASE 3   Background-job migration
+PHASE 3   Background-job migration                  ← next
    ↓
 PHASE 4   Rate limiting (distributed)
    ↓

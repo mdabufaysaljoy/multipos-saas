@@ -189,6 +189,8 @@ To enable them locally, run `mongod --replSet rs0` and `rs.initiate()` once.
 | `npm run dev` | Runs the API and the client together |
 | `npm run dev:server` | API only, with hot reload (tsx watch) |
 | `npm run dev:client` | Vite dev server only |
+| `npm run worker` | Background worker process (built). Needs `REDIS_URL`; **no job processors are registered yet** |
+| `npm run worker:dev` | Background worker with hot reload |
 | `npm run build` | Type-checks and builds both packages |
 | `npm run typecheck` | Type-checks both packages without emitting |
 | `npm run seed` | Seeds plans, permissions, a demo tenant and catalogue |

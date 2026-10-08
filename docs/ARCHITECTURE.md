@@ -225,16 +225,20 @@ indirectly through HTTP.
 
 ## Infrastructure
 
-The runtime is **one Node process**. It serves HTTP, runs the subscription
-scheduler, streams exports, commits imports, sends campaigns and re-encodes
-images — all on the same event loop.
+The runtime that serves traffic is **one Node process**. It serves HTTP, runs
+the subscription scheduler, streams exports, commits imports, sends campaigns
+and re-encodes images — all on the same event loop. A second process, the
+worker, exists for background work but has nothing registered yet.
 
 ```
-Browser (SPA)  ──relative /api and /uploads──►  one Node process  ──►  MongoDB
+Browser (SPA)  ──relative /api and /uploads──►  API process  ──►  MongoDB
                                                   ├─ Express 5 app
                                                   ├─ setInterval scheduler
                                                   ├─ ./uploads on local disk
                                                   └─ Redis (optional, unused)
+
+                                               worker process  ──►  MongoDB
+                                                  └─ BullMQ (no processors yet)
 ```
 
 What that means in practice:
@@ -261,8 +265,19 @@ What that means in practice:
   shared cache; **no feature reads or writes it yet**, and the application runs
   identically with `REDIS_URL` unset. An unreachable Redis is logged and
   retried, never fatal.
-- **There is no queue, no worker, no Dockerfile and no deployment configuration
-  in this repository.** CI verifies; it does not deploy.
+- **A worker process exists but has no work.** `server/src/worker.ts`
+  (`npm run worker`) is a separate process holding the BullMQ foundation in
+  `server/src/queues/` — `createAppQueue` / `createAppWorker` over one shared
+  Redis connection, with retry, backoff, retention and naming centralised in
+  `queues/options.ts`. **No queue and no processor is defined yet**, so it
+  connects and idles; Phase 3 moves the background jobs onto it. Redis is
+  required there, unlike in the API: the worker exits non-zero without it.
+  Future jobs must use these factories, and queue payloads carry identifiers
+  rather than documents or secrets.
+- **The API and the worker are separate processes.** The API starts no worker
+  and the worker starts no HTTP server; a test asserts both from the sources.
+- **There is no Dockerfile and no deployment configuration in this
+  repository.** CI verifies; it does not deploy.
 - **Health is `GET /api/health`**, which returns `ok` whenever the process is
   running and does not check the database. It reports the Redis connection
   state under `data.dependencies.redis`, as information rather than a gate.
