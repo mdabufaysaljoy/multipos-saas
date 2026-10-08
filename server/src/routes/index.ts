@@ -1,6 +1,7 @@
 import paymentProviderRoutes from '../modules/paymentProviders/paymentProviders.routes';
 import siteRoutes from '../modules/site/site.routes';
 import { Router } from 'express';
+import { redisState } from '../config/redis';
 import authRoutes from '../modules/auth/auth.routes';
 import storeRoutes from '../modules/stores/stores.routes';
 import paymentMethodRoutes from '../modules/paymentMethods/paymentMethods.routes';
@@ -50,8 +51,23 @@ router.get('/public/contact', async (_req, res, next) => {
   }
 });
 
+/**
+ * Liveness. Answers 200 whenever the process is running.
+ *
+ * `dependencies` is reporting, not gating: Redis being unconfigured or down
+ * does NOT make this unhealthy, because nothing requires Redis yet and a till
+ * must keep selling when a cache is unavailable. The state comes from the real
+ * connection rather than from the fact that a URL was configured, so this
+ * cannot claim Redis is fine when it is not - but it is cached state, not a
+ * round trip. A readiness probe that genuinely pings its dependencies belongs
+ * with the observability work in a later phase, and `pingRedis()` is the
+ * primitive it will use.
+ */
 router.get('/health', (_req, res) => {
-  res.json({ success: true, data: { status: 'ok', time: new Date().toISOString() } });
+  res.json({
+    success: true,
+    data: { status: 'ok', time: new Date().toISOString(), dependencies: { redis: redisState() } },
+  });
 });
 
 // The public website's own settings and robots.txt. Unauthenticated by

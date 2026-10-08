@@ -37,6 +37,36 @@ const schema = z.object({
   QZ_CERTIFICATE: z.string().optional(),
   QZ_PRIVATE_KEY: z.string().optional(),
 
+  /**
+   * Redis connection string - `redis://host:port`, or `rediss://` when the
+   * provider terminates TLS (ioredis enables TLS from the scheme, so a managed
+   * Redis needs no extra configuration here).
+   *
+   * OPTIONAL, deliberately. Nothing in the application requires Redis yet: this
+   * is the Phase 1 foundation, and an unset value simply means the shared
+   * client is never opened (see `config/redis.ts`). An unreachable Redis does
+   * not stop the server either - but a MALFORMED value does, because a typo in
+   * a connection string is a misconfiguration, not an absence, and a server
+   * that quietly ran without the cache it was told to use would be worse.
+   */
+  REDIS_URL: z.preprocess(
+    (value) => (value === '' ? undefined : value),
+    z
+      .string()
+      .trim()
+      .refine((value) => /^rediss?:\/\//.test(value), 'REDIS_URL must start with redis:// or rediss://')
+      .optional(),
+  ),
+  /**
+   * Namespace prefixed to every key the application writes. Defaults to
+   * `retailersuites:<NODE_ENV>:`, so a staging process pointed at a production
+   * Redis by accident cannot read or overwrite its keys.
+   */
+  REDIS_KEY_PREFIX: z.preprocess(
+    (value) => (value === '' ? undefined : value),
+    z.string().trim().max(64).optional(),
+  ),
+
   STORAGE_DRIVER: z.enum(['local', 's3', 'cloudinary']).default('local'),
   STORAGE_LOCAL_DIR: z.string().default('uploads'),
   PUBLIC_BASE_URL: z.string().default('http://localhost:4000'),

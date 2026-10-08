@@ -121,6 +121,8 @@ hardcoded. See `.env.example` for the full annotated list.
 | `NODE_ENV` | `development` \| `test` \| `production` | `development` |
 | `PORT` | API port | `4100` |
 | `MONGODB_URI` | MongoDB connection string | `mongodb://127.0.0.1:27017/clothing_pos` |
+| `REDIS_URL` | Redis connection string (`rediss://` for TLS). **Optional** — nothing requires Redis yet; unset means it is never opened. | empty |
+| `REDIS_KEY_PREFIX` | Namespace for every Redis key | `retailersuites:<NODE_ENV>:` |
 | `JWT_ACCESS_SECRET` | Signs access tokens — **min 32 chars** | _(required)_ |
 | `JWT_REFRESH_SECRET` | Signs refresh tokens — **min 32 chars** | _(required)_ |
 | `ACCESS_TOKEN_TTL` | Access token lifetime | `15m` |

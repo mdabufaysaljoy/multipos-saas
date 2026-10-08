@@ -1,11 +1,15 @@
 # Infrastructure roadmap
 
-**Phase 0 — audit and plan. Nothing in this document has been implemented.**
+**Phase 0 (audit) and Phase 1 (Redis foundation) are COMPLETED. Phases 2–12 are
+not implemented.** Live status per area is `docs/IMPLEMENTATION_STATUS.md`,
+which is the file to trust when this one and it disagree.
 
 Written 2026-10-08 against the working tree at `claude/retailer-suites-audit-e61761`
 (parent `c8b891c`). Every claim below was read from source, not from
 documentation; where a doc and the code disagreed, the code won and the
-disagreement is noted.
+disagreement is noted. Sections describing work since completed carry a
+**DONE** note; the findings themselves are left as written, so a later reader
+can see what was true before the change.
 
 Companion documents:
 
@@ -119,13 +123,25 @@ Three properties define "done":
 
 ## 3. Redis plan
 
-### Current status: NOT IMPLEMENTED
+### Status: FOUNDATION COMPLETED (Phase 1, 2026-10-08)
 
-Verified: no `redis` / `ioredis` dependency in any `package.json`, no
-`REDIS_*` variable in `config/env.ts` or `.env.example`, no connection helper,
-no cache, queue, lock, session or rate-limit store. The only mention of Redis
-anywhere in the repository is a comment in `jobs/subscription.job.ts` suggesting
-an external scheduler eventually.
+The connection exists; **no feature consumes it yet**, which is the whole scope
+of Phase 1. `ioredis` 5.11 in the `server` workspace, one shared client in
+`server/src/config/redis.ts`, configured by `REDIS_URL` and
+`REDIS_KEY_PREFIX`, opened by `server.ts` and closed on shutdown. Redis is
+optional: unset changes nothing, unreachable is retried and never fatal, and
+only a malformed URL refuses to boot. Full detail, tests and limitations are in
+`docs/IMPLEMENTATION_STATUS.md` §1.1.
+
+ioredis was chosen because BullMQ supports it and does not support `node-redis`
+— picking the other client would have meant adding a second one in Phase 2.
+
+**What follows was the Phase 0 finding, kept for the record:** no
+`redis`/`ioredis` dependency in any `package.json`, no `REDIS_*` variable in
+`config/env.ts` or `.env.example`, no connection helper, no cache, queue, lock,
+session or rate-limit store. The only mention of Redis anywhere in the
+repository was a comment in `jobs/subscription.job.ts` suggesting an external
+scheduler eventually.
 
 ### The in-process state Redis exists to replace
 
@@ -138,6 +154,9 @@ an external scheduler eventually.
 | `utils/fetchWithDnsFallback.ts` | known-bad-address memory, 10 min | per-replica learning (harmless) |
 
 ### First legitimate use cases, in order
+
+**None of these are implemented.** Phase 1 delivered only the connection they
+will share; each is the subject of its own later phase.
 
 1. **Distributed rate limiting** — `rate-limit-redis` behind the existing
    limiters. This is the one correctness-relevant item: an IP-keyed login limit
@@ -162,14 +181,22 @@ an external scheduler eventually.
 - **Idempotency records.** They are unique partial indexes on the business
   documents themselves (§7). That is stronger than a Redis key with a TTL.
 
-### Constraints when it lands
+### Constraints, and how the Phase 1 foundation meets them
 
-- One connection pool, created once, with lazy connect and a circuit breaker:
-  **Redis being down must not take the POS down.** Rate limiting should fail
-  open to the in-memory store; caches should fall through to MongoDB.
-- Key prefix per environment, so staging and production cannot share a cache.
-- `REDIS_URL` added to the zod env schema and `.env.example` together — the
-  schema throws on a half-configured server, which is the behaviour to keep.
+- **One connection, created once, lazily.** Done: a single client built at
+  startup in `config/redis.ts`, never in a handler, never per request.
+- **Redis being down must not take the POS down.** Done at the connection
+  level: an unreachable Redis is logged and retried and never stops the boot,
+  and commands fail fast (`enableOfflineQueue: false`, bounded retries per
+  command) rather than hanging. **The other half is each consumer's job** —
+  falling open to the memory store, or through to MongoDB, is decided by the
+  feature that uses Redis, not by the connection. Phase 4 owns that for rate
+  limiting.
+- **Key prefix per environment.** Done: `REDIS_KEY_PREFIX`, defaulting to
+  `retailersuites:<NODE_ENV>:`.
+- **`REDIS_URL` in the zod schema and `.env.example` together.** Done, with one
+  refinement: the schema rejects a *malformed* URL and refuses to boot, but an
+  absent one is valid, because Redis is optional at this stage.
 
 ---
 
@@ -732,9 +759,9 @@ a data-architecture exercise.
 ```
 PHASE 0   Infrastructure audit                      ← this document (COMPLETED)
    ↓
-PHASE 1   Redis foundation
+PHASE 1   Redis foundation                          (COMPLETED 2026-10-08)
    ↓
-PHASE 2   BullMQ worker foundation
+PHASE 2   BullMQ worker foundation                  ← next
    ↓
 PHASE 3   Background-job migration
    ↓

@@ -233,7 +233,8 @@ images — all on the same event loop.
 Browser (SPA)  ──relative /api and /uploads──►  one Node process  ──►  MongoDB
                                                   ├─ Express 5 app
                                                   ├─ setInterval scheduler
-                                                  └─ ./uploads on local disk
+                                                  ├─ ./uploads on local disk
+                                                  └─ Redis (optional, unused)
 ```
 
 What that means in practice:
@@ -254,10 +255,18 @@ What that means in practice:
   `express.static` and re-encoded to WebP by `sharp`. Nothing else is a file:
   exports stream straight to the response, and invoices and receipts are
   MongoDB documents.
-- **There is no Redis, no queue, no worker, no Dockerfile and no deployment
-  configuration in this repository.** CI verifies; it does not deploy.
-- **Health is `GET /api/health`**, which returns a static `ok` and does not
-  check the database. There is no readiness endpoint.
+- **Redis is connected but unused.** `config/redis.ts` holds one shared
+  `ioredis` client, opened by `server.ts` when `REDIS_URL` is set and closed on
+  shutdown. It is the foundation for queues, distributed rate limiting and
+  shared cache; **no feature reads or writes it yet**, and the application runs
+  identically with `REDIS_URL` unset. An unreachable Redis is logged and
+  retried, never fatal.
+- **There is no queue, no worker, no Dockerfile and no deployment configuration
+  in this repository.** CI verifies; it does not deploy.
+- **Health is `GET /api/health`**, which returns `ok` whenever the process is
+  running and does not check the database. It reports the Redis connection
+  state under `data.dependencies.redis`, as information rather than a gate.
+  There is no readiness endpoint.
 - **Logging is a `console` wrapper** (`utils/logger.ts`) — plain text, no
   request id — and `morgan` is registered in non-production only, so production
   logs no requests. Audit logging of sensitive actions (`AuditLog`) is separate

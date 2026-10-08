@@ -2,7 +2,8 @@
 
 **The source of truth for infrastructure state between sessions.** Last
 verified against the code on **2026-10-08** (branch
-`claude/retailer-suites-audit-e61761`, parent `c8b891c`).
+`claude/retailer-suites-audit-e61761`). Phases completed: **0** (audit),
+**1** (Redis foundation).
 
 ---
 
@@ -11,9 +12,10 @@ verified against the code on **2026-10-08** (branch
 Every future infrastructure session must read these four documents **before
 touching anything**:
 
-1. **`CLAUDE.md`** — the project's working rules. Note: it is currently provided
-   at the workspace root *above* this repository, not inside it. If you cannot
-   find it, `README.md` is the in-repo equivalent for stack and commands.
+1. **`CLAUDE.md`** — the project's working rules. Note: `.gitignore` excludes
+   `CLAUDE.MD`, so it is deliberately not in the repository and arrives with
+   the session instead. If you do not have it, `README.md` is the in-repo
+   equivalent for stack and commands.
 2. **`docs/ARCHITECTURE.md`** — what the application is, how a request flows,
    and the infrastructure summary at the end.
 3. **`docs/INFRASTRUCTURE_ROADMAP.md`** — the full Phase 0 audit and the plan
@@ -52,7 +54,7 @@ Statuses: **COMPLETED** · **IN PROGRESS** · **NOT STARTED** · **DEFERRED** ·
 | Area | Status | What is actually there, as of 2026-10-08 |
 |---|---|---|
 | **Phase 0 audit** | **COMPLETED** | `docs/INFRASTRUCTURE_ROADMAP.md`, written from source. |
-| **Redis** | **NOT STARTED** | No dependency, no `REDIS_*` env var, no client, no cache/queue/lock/session use. Nothing. |
+| **Redis** | **COMPLETED** (foundation only) | `ioredis` 5.11, one shared lazily-opened client in `server/src/config/redis.ts`, opened by `server.ts` and closed on `SIGTERM`/`SIGINT`. Configured by `REDIS_URL` (`rediss://` enables TLS from the scheme alone) and `REDIS_KEY_PREFIX` (defaults to `retailersuites:<NODE_ENV>:`). **Optional:** unset means the client is never opened and nothing changes; unreachable is logged, retried in the background and never fatal; **malformed refuses to boot**, matching the house rule that a half-configured server should not start. `/api/health` reports the live connection state additively. **Nothing consumes it yet** — by design (see §1.1). |
 | **BullMQ / Worker** | **NOT STARTED** | No BullMQ, Bull, Agenda, node-cron, `worker_threads`, worker entry point or PM2. One `setInterval` scheduler inside the API process (`server/src/jobs/subscription.job.ts`): an hourly billing pass and a 10-minute payment-reconciliation pass. Every pass is idempotent and batched, which is why migrating it is low-risk. |
 | **Background jobs** | **NOT STARTED** | Everything runs in-request. Candidates, in priority order: SMS/email campaigns (up to 5,000 recipients, sequential, in the request), password-reset and verification emails (inline SMTP), exports (up to 200,000 rows streamed), product import commit (~6,000 documents), `sharp` image optimisation. **Exception:** billing emails already use a correct durable queue in MongoDB (`EmailNotification` — keyed, leased, 5 attempts, backoff). Keep that mechanism; move only its driver. |
 | **Rate limiting** | **IN PROGRESS** | `express-rate-limit` v7 with one global `/api` limiter (600/min in production) plus 19 route-specific limiters covering login, registration, password reset, verification, checkout, callbacks, exports, imports, messaging (keyed by `tenantId`), platform admin actions and more. **Gaps:** all stores are per-process memory (R1); no per-account login lockout, only per-IP (R2); `/auth/refresh` and `/auth/logout` have no dedicated limiter (R3); `trust proxy` is hard-coded to `1` and must be re-verified when Cloudflare is added (R4). |
@@ -66,6 +68,100 @@ Statuses: **COMPLETED** · **IN PROGRESS** · **NOT STARTED** · **DEFERRED** ·
 | **Monitoring** | **NOT STARTED** | `utils/logger.ts` is an 18-line `console` wrapper — plain text, no request id, no pino/winston (the project brief calls for pino; the code does not have it). `morgan` runs in **non-production only**, so production logs no requests. No metrics, tracing or alerting. Error handling is sound (`middleware/error.ts`: one envelope, no stack traces in production). Audit logging is implemented (`AuditLog`, never throws). `GET /api/health` returns static `ok` and **does not check MongoDB**; there is no readiness endpoint. |
 | **Load testing** | **NOT STARTED** | None performed. No capacity figure in any document is measured. |
 | **Scaling** | **NOT STARTED** | Single process serving HTTP, the scheduler, exports, imports, campaigns and image processing. Architecturally fine for ~10 businesses today; see the roadmap §15.2 for the per-tier readiness judgement — none of which is a capacity guarantee. |
+
+### 1.1 Phase 1 — Redis foundation (completed 2026-10-08)
+
+**Client: `ioredis` 5.11**, in the `server` workspace. Chosen over `node-redis`
+for one decisive reason: BullMQ (Phases 2–3) supports ioredis and not
+node-redis, and adding a second Redis client later to satisfy the queue would
+be the exact duplication this phase exists to avoid. It also ships its own
+TypeScript types and handles `rediss://` TLS from the scheme.
+
+**Configuration** — `server/src/config/env.ts`, validated by the existing zod
+schema, documented in `.env.example`:
+
+| Variable | Meaning |
+|---|---|
+| `REDIS_URL` | `redis://host:port`, or `rediss://` for TLS. Optional. |
+| `REDIS_KEY_PREFIX` | Key namespace. Defaults to `retailersuites:<NODE_ENV>:`. |
+
+Three behaviours, deliberately different from each other:
+
+- **Unset** → the client is never constructed; the application is byte-for-byte
+  what it was before. Logged once at boot.
+- **Set but unreachable** → the server boots anyway, the failure is logged, and
+  ioredis retries with capped backoff. Startup is not delayed: a refused
+  connection fails immediately, and even a hanging one is waited on for at most
+  5 seconds before boot continues.
+- **Malformed** → the process refuses to start, because the existing env schema
+  treats a bad value as a misconfiguration rather than an absence.
+
+**Connection architecture** — `server/src/config/redis.ts`:
+
+- `resolveRedisConfig(source)` — pure; derives url, namespace and TLS flag.
+- `createRedisClient(config, overrides?)` — the factory. Application defaults
+  fail fast (`enableOfflineQueue: false`, `maxRetriesPerRequest: 2`) so a caller
+  can fall back rather than hang. Overrides exist so a queue connection can be
+  built from the same configuration.
+- `connectRedis()` / `disconnectRedis()` — lifecycle, called from `server.ts`
+  beside the MongoDB equivalents. Both idempotent; `connectRedis` never throws,
+  `disconnectRedis` quits politely then drops the socket if Redis does not
+  answer within 2 seconds.
+- `getRedis()` / `redisConfig()` / `redisState()` / `pingRedis(timeoutMs)`.
+
+**One client per process**, created once at startup — never in a route handler
+and never per request. Nothing in the design ties it to a single process: the
+factory and the resolved configuration are what the Phase 2 worker and any
+further API replica will use.
+
+**Error reporting.** ioredis emits `error` on every failed reconnect, which for
+an unreachable server is several lines a second. The first is logged in full;
+identical repeats are counted and re-logged at most once a minute, and the
+suppressed count is reported when the connection recovers. Nothing is swallowed.
+
+**Health.** `/api/health` is unchanged in shape, status code and MongoDB
+behaviour; it gains `data.dependencies.redis = { configured, state, ready }`.
+This is reporting, not gating — Redis being down does not make the endpoint
+unhealthy, because nothing requires Redis and a till must keep selling. The
+state is read from the live ioredis connection, so it cannot claim Redis is
+fine when it is not.
+
+**Tests** — `server/src/config/redis.check.ts`, wired into `npm test` as
+`npm run test:redis` (the same `*.check.ts` convention as
+`productLimits.check.ts`). It runs a minimal RESP server on a loopback port, so
+everything below is a real socket through the real ioredis client against the
+real module, with no Redis service and nothing about the connection mocked —
+the approach `zinipay.check.ts` already uses for a payment gateway. Covered:
+configuration resolution (absent, blank, default and explicit namespace,
+separator handling, TLS detection); client construction and the BullMQ override;
+the namespace actually appearing on the wire; a real connectivity check; the
+single-client guarantee; **that a failing Redis is never reported ready**; that
+a Redis which is down does not break startup; and shutdown, including a second
+call.
+
+Verified on 2026-10-08: `npm run lint`, `npm run typecheck`, `npm test`
+(**4,011 + 16 + 23 + 42 assertions, 0 failures**), and the real server process
+booted in all three configurations above — `ready: false` when Redis is absent
+or unreachable, `ready: true` when it answers, clean `SIGTERM` exit (~60 ms) in
+every case.
+
+**Limitations, recorded honestly:**
+
+1. **Nothing consumes Redis yet.** That is the scope of this phase. Rate
+   limiting is still a per-process memory store (finding R1) and the scheduler
+   still runs in every API process (B3) — so this does **not** yet make it safe
+   to run more than one API replica. Phase 4 is what changes that.
+2. **No real-Redis integration test in CI.** CI has no Redis service, and
+   adding one belongs with the CI/CD phase. The RESP stub exercises the protocol
+   and the module, but not a real server's semantics; the first consumer should
+   be tested against a real Redis locally.
+3. **`/api/health` reports cached connection state, not a round trip.**
+   `pingRedis()` exists as the primitive, but a true readiness endpoint — and
+   the Phase 0 finding that `/api/health` answers `ok` with a dead database —
+   remain for the reliability/observability phase, deliberately untouched here.
+4. **No connection-pool or Sentinel/Cluster configuration.** A single endpoint
+   is what the roadmap's target architecture calls for; Cluster would change the
+   key-namespace design and should be a deliberate decision when it is needed.
 
 ### Deployment model
 
@@ -96,8 +192,8 @@ Infrastructure is the subject of this file; the product history lives elsewhere.
 
 ```
 PHASE 0   Infrastructure audit                      COMPLETED  (2026-10-08)
-PHASE 1   Redis foundation                          NOT STARTED   ← next
-PHASE 2   BullMQ worker foundation                  NOT STARTED
+PHASE 1   Redis foundation                          COMPLETED  (2026-10-08)
+PHASE 2   BullMQ worker foundation                  NOT STARTED   ← next
 PHASE 3   Background-job migration                  NOT STARTED
 PHASE 4   Rate limiting (distributed)               NOT STARTED
 PHASE 5   Idempotency / reliability                 NOT STARTED
@@ -112,9 +208,15 @@ PHASE 12  Load testing / scaling                    NOT STARTED
 R2 / object storage                                 DEFERRED
 ```
 
-**Next phase: PHASE 1 — Redis foundation.** Scope is in
-`docs/INFRASTRUCTURE_ROADMAP.md` §3. It was not started in this session, by
-design: Phase 0 is audit and documentation only.
+**Next phase: PHASE 2 — BullMQ worker foundation.** Scope is in
+`docs/INFRASTRUCTURE_ROADMAP.md` §4. It was not started in this session, by
+design: Phase 1 is the Redis foundation and nothing more.
+
+Phase 2 starts from the seam Phase 1 left: build the queue connections with
+`createRedisClient(redisConfig(), { maxRetriesPerRequest: null })`, add
+`server/src/worker.ts`, and move the two `setInterval` passes in
+`jobs/subscription.job.ts` to repeatable jobs — deleting `startSubscriptionJobs`
+from `server.ts` in the same change, never leaving both running.
 
 ---
 
@@ -122,4 +224,5 @@ design: Phase 0 is audit and documentation only.
 
 | Date | Change |
 |---|---|
+| 2026-10-08 | **Phase 1 — Redis foundation.** Added `ioredis` to the `server` workspace and `server/src/config/redis.ts`: one shared, lazily-opened client with a pure config resolver, a client factory reusable by the future worker, bounded fail-fast command defaults, de-duplicated error logging, a `pingRedis` primitive and idempotent lifecycle calls wired into `server.ts` beside MongoDB's. `REDIS_URL` and `REDIS_KEY_PREFIX` added to the env schema and `.env.example`; Redis is optional, an unreachable server is never fatal, a malformed URL refuses to boot. `/api/health` additively reports the live connection state. New `server/src/config/redis.check.ts` (run by `npm test`) proves all of it against an in-process RESP stub. Nothing consumes Redis yet; rate limiting, queues and the scheduler are untouched. |
 | 2026-10-08 | Phase 0 infrastructure audit. Added `docs/INFRASTRUCTURE_ROADMAP.md`. Replaced this file with the infrastructure status tracker and moved its previous contents — the Super Shop implementation journal — to `docs/SUPERSHOP_IMPLEMENTATION_JOURNAL.md`. Added the infrastructure section to `docs/ARCHITECTURE.md` and corrected its stated dependency versions. No application code changed. |

@@ -1,5 +1,6 @@
 import { createApp } from './app';
 import { connectDatabase, disconnectDatabase } from './config/db';
+import { connectRedis, disconnectRedis } from './config/redis';
 import { env } from './config/env';
 import { logger } from './utils/logger';
 import { startSubscriptionJobs, stopSubscriptionJobs } from './jobs/subscription.job';
@@ -8,6 +9,10 @@ import { ensurePricingCatalog } from './services/pricing/pricing.service';
 
 async function bootstrap(): Promise<void> {
   await connectDatabase();
+  // Redis is optional at this stage and nothing depends on it yet, so this
+  // never throws and never blocks the boot for long: an absent or unreachable
+  // Redis is logged and retried in the background (see config/redis.ts).
+  await connectRedis();
   // The catalog is also filled lazily on first read; doing it here just makes
   // a fresh deployment's admin panel complete from the start.
   await ensureDefaultPosProducts().catch((error) => logger.warn('Could not prepare the POS catalog', { error: String(error) }));
@@ -24,6 +29,7 @@ async function bootstrap(): Promise<void> {
     logger.info(`${signal} received - shutting down`);
     stopSubscriptionJobs();
     server.close(async () => {
+      await disconnectRedis();
       await disconnectDatabase();
       process.exit(0);
     });
