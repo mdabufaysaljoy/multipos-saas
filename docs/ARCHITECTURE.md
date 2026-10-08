@@ -1,17 +1,19 @@
 # Architecture
 
 A working map of the platform, written for someone joining the project. It
-describes what is there now, not what is planned. The living change log is the
-`docs/IMPLEMENTATION_STATUS.md`; the universal-POS programme is
-`docs/UNIVERSAL_POS_PLAN.md`.
+describes what is there now, not what is planned. Current status — above all
+for infrastructure — is `docs/IMPLEMENTATION_STATUS.md`; the infrastructure
+audit and plan is `docs/INFRASTRUCTURE_ROADMAP.md`; the universal-POS programme
+is `docs/UNIVERSAL_POS_PLAN.md`; the Super Shop journal that used to be the
+status file is `docs/SUPERSHOP_IMPLEMENTATION_JOURNAL.md`.
 
 ## Shape
 
 npm workspaces monorepo, TypeScript throughout (~92k lines).
 
 ```
-server/   Express 4 + Mongoose 8 REST API
-client/   React 18 + Vite + TanStack Query + Tailwind + shadcn/ui
+server/   Express 5 + Mongoose 9 REST API
+client/   React 19 + Vite 6 + TanStack Query + Tailwind + shadcn/ui
 scripts/  run-tests.mjs (isolated DB harness) + smoke-test.mjs (the suite)
 docs/     per-feature design notes
 ```
@@ -139,8 +141,11 @@ and refund features, the billing flow, and the recommended menu hierarchy — is
 
 ## Concurrency
 
-The deployment target is standalone MongoDB — **no multi-document
-transactions**. Correctness comes from ordering and compare-and-swap instead:
+The deployment target *today* is standalone MongoDB — **no multi-document
+transactions**. (`utils/tx.ts` probes for a replica set at boot and uses real
+sessions when it finds one, so MongoDB Atlas turns transactions on without a
+code change; see Infrastructure below.) Correctness does not depend on that: it
+comes from ordering and compare-and-swap instead:
 
 - stock is taken with a single guarded `$inc` (`quantityOnHand: { $gte: n }`),
   so two tills cannot sell the same unit;
@@ -217,3 +222,47 @@ Node 22 with a `mongo:7` service.
 There are no unit tests and no frontend tests; pure-logic modules
 (`shopUnits.ts`, `loyalty.math.ts`, `paymentMath.ts`) are only covered
 indirectly through HTTP.
+
+## Infrastructure
+
+The runtime is **one Node process**. It serves HTTP, runs the subscription
+scheduler, streams exports, commits imports, sends campaigns and re-encodes
+images — all on the same event loop.
+
+```
+Browser (SPA)  ──relative /api and /uploads──►  one Node process  ──►  MongoDB
+                                                  ├─ Express 5 app
+                                                  ├─ setInterval scheduler
+                                                  └─ ./uploads on local disk
+```
+
+What that means in practice:
+
+- **The SPA calls relative `/api` and `/uploads`** (`client/src/api/client.ts`),
+  so the client and the API must be served from one origin. There is no
+  absolute-URL or CORS path in the client code.
+- **Scheduled work lives in the API process.** `jobs/subscription.job.ts` runs
+  an hourly billing pass (expiry reminders, renewals, lapsing, invoices,
+  receipts, email retries) and a 10-minute payment-reconciliation pass, started
+  by `server.ts`. Every pass is batched and idempotent — which is why running
+  two API replicas today duplicates work rather than corrupting it, and why
+  moving the passes to a worker is low-risk.
+- **Rate limiting and the four in-memory caches are per process.** Every
+  `express-rate-limit` limiter uses the default memory store, so N replicas mean
+  N × the configured limit.
+- **Uploads are files on local disk**, under `cwd/uploads`, served by
+  `express.static` and re-encoded to WebP by `sharp`. Nothing else is a file:
+  exports stream straight to the response, and invoices and receipts are
+  MongoDB documents.
+- **There is no Redis, no queue, no worker, no Dockerfile and no deployment
+  configuration in this repository.** CI verifies; it does not deploy.
+- **Health is `GET /api/health`**, which returns a static `ok` and does not
+  check the database. There is no readiness endpoint.
+- **Logging is a `console` wrapper** (`utils/logger.ts`) — plain text, no
+  request id — and `morgan` is registered in non-production only, so production
+  logs no requests. Audit logging of sensitive actions (`AuditLog`) is separate
+  and does work.
+
+The audit behind these statements, and the plan to change them, is
+`docs/INFRASTRUCTURE_ROADMAP.md`. What is done so far is
+`docs/IMPLEMENTATION_STATUS.md`.
