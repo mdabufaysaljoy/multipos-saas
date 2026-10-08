@@ -200,8 +200,12 @@ class PaymentIntentService {
         { _id: payment._id, status: PAYMENT_STATUS.PENDING },
         { $set: { status: PAYMENT_STATUS.FAILED, failureReason: 'The payment could not be started with the provider' } },
       );
-      logger.warn('Starting a hosted payment failed', { provider: provider.name, error: error instanceof Error ? error.message : 'unknown' });
-      throw new ApiError('PROVIDER_UNAVAILABLE', `${provider.displayName} could not start the payment right now.`);
+      const reason = error instanceof Error ? error.message : 'unknown';
+      logger.warn('Starting a hosted payment failed', { provider: provider.name, error: reason });
+      // The reason travels in `details`, not in the message a customer reads:
+      // enough for an operator looking at the response or the logs to tell a
+      // network problem from a rejected key, without showing it on screen.
+      throw new ApiError('PROVIDER_UNAVAILABLE', `${provider.displayName} could not start the payment right now.`, { reason });
     }
   }
 

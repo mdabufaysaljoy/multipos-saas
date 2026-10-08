@@ -7,7 +7,6 @@ import { ManualPaymentProvider } from './providers/manual.provider';
 import { BkashPaymentProvider } from './providers/bkash.provider';
 import { NagadPaymentProvider } from './providers/nagad.provider';
 import { BankPaymentProvider } from './providers/bank.provider';
-import { UddoktaPayProvider } from './providers/uddoktapay.provider';
 import { ZiniPayProvider } from './providers/zinipay.provider';
 
 /**
@@ -137,11 +136,6 @@ export const paymentRegistry = new PaymentProviderRegistry([
     publicKey: process.env.NAGAD_PUBLIC_KEY ?? '',
     baseUrl: process.env.NAGAD_BASE_URL ?? '',
     webhookSecret: process.env.NAGAD_WEBHOOK_SECRET ?? '',
-  }),
-  new UddoktaPayProvider({
-    apiKey: process.env.UDDOKTAPAY_API_KEY ?? '',
-    // Sandbox: https://sandbox.uddoktapay.com - production is the merchant's own installation.
-    baseUrl: process.env.UDDOKTAPAY_BASE_URL ?? '',
   }),
   new ZiniPayProvider({
     apiKey: process.env.ZINIPAY_API_KEY ?? '',

@@ -101,6 +101,26 @@ function toMinor(value: unknown): number | null {
   }
 }
 
+/**
+ * Turns a failed call into something a human can act on.
+ *
+ * `fetch` reports almost everything as "fetch failed", with the real cause one
+ * level down. The common one in practice is no route to the gateway at all -
+ * a firewall, or a host without outbound access - which looks identical to a
+ * rejected key unless it is spelled out.
+ */
+function describeCallFailure(error: unknown, timeoutMs: number): string {
+  if (error instanceof Error && error.name === 'AbortError') {
+    return `ZiniPay did not answer within ${Math.round(timeoutMs / 1000)}s`;
+  }
+  const code = (error as { cause?: { code?: string } })?.cause?.code;
+  if (code === 'UND_ERR_CONNECT_TIMEOUT' || code === 'ETIMEDOUT' || code === 'ECONNREFUSED' || code === 'ENOTFOUND' || code === 'EAI_AGAIN') {
+    return `could not reach api.zinipay.com from this server (${code}) - check the network and any firewall`;
+  }
+  const message = error instanceof Error ? error.message : String(error);
+  return code ? `${message} (${code})` : message;
+}
+
 export class ZiniPayProvider implements PaymentProvider {
   readonly name = PAYMENT_PROVIDERS.ZINIPAY;
   readonly displayName = 'ZiniPay';
@@ -154,6 +174,11 @@ export class ZiniPayProvider implements PaymentProvider {
         throw new Error(text(payload.message) || `ZiniPay returned HTTP ${response.status}`);
       }
       return payload;
+    } catch (error) {
+      // A gateway that cannot be reached and a gateway that says no are very
+      // different problems - one is the network, the other is the request or
+      // the key - and a bare "fetch failed" hides which. Say which.
+      throw new Error(describeCallFailure(error, this.config.timeoutMs ?? 15_000));
     } finally {
       clearTimeout(timer);
     }

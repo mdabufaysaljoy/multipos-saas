@@ -10022,17 +10022,15 @@ async function main() {
   // --- the normal path: declare, then prove by SMS -----------------------------
   const pviMethods = await api('/account/payment-methods', { token: pviToken });
   check('The account is offered the active Send Money methods', pviMethods.status === 200 && (pviMethods.data?.sendMoney ?? []).some((m) => m.provider === 'bkash' && m.payTo), pviMethods.data);
-  // A gateway is offered only when it has credentials. UddoktaPay has none
-  // here, so it must be absent however the list is built; ZiniPay is offered
-  // exactly when this environment holds a key for it, which is the same rule
-  // seen from the other side.
   const pviHosted = (pviMethods.data?.hosted ?? []).map((row) => row.provider);
-  check('An unconfigured hosted gateway is not offered', pviHosted.includes('uddoktapay') === false, pviHosted);
   check('Every offered gateway names itself', (pviMethods.data?.hosted ?? []).every((row) => row.kind === 'hosted' && row.provider && row.label), pviMethods.data?.hosted);
-  // The list is not merely cosmetic: a gateway missing from it is refused when
+  // Only real hosted gateways are listed. A declared transfer belongs under
+  // sendMoney, where somebody confirms it, and must never appear as one.
+  check('Only hosted gateways are listed as hosted', pviHosted.every((name) => ['zinipay'].includes(name)), pviHosted);
+  // The list is not merely cosmetic: anything missing from it is refused when
   // somebody tries to pay with it anyway, from a stale screen or by hand.
-  const pviUnconfigured = await api('/account/payments/hosted', { method: 'POST', token: pviToken, body: { amountMinor: 50_000, provider: 'uddoktapay' } });
-  check('A gateway that is not offered cannot be paid with', pviUnconfigured.status >= 400, pviUnconfigured.status);
+  const pviNotHosted = await api('/account/payments/hosted', { method: 'POST', token: pviToken, body: { amountMinor: 50_000, provider: 'bkash' } });
+  check('A method that is not a hosted gateway cannot be paid with', pviNotHosted.status >= 400, pviNotHosted.status);
 
   const pviRef = `BKT${String(pviStamp).slice(-8)}`;
   const pviOpen = await api('/account/payments/send-money', { method: 'POST', token: pviToken, body: { amountMinor: 50_000, provider: 'bkash', reference: pviRef, customerPhone: '01711111111' } });
@@ -10086,7 +10084,7 @@ async function main() {
     check(`A payment carrying ${label} is refused`, (await api('/account/payments/send-money', { method: 'POST', token: pviToken, body })).status === 422, label);
   }
   check("A payment cannot name another account's workspace", (await api('/account/payments/send-money', { method: 'POST', token: pviToken, body: { amountMinor: 1_000, provider: 'bkash', reference: `F5${pviStamp}`, customerPhone: '01711111111', workspaceId: pviOther.data?.tenant?.id } })).status === 404);
-  check('An unconfigured hosted gateway cannot be started', [400, 422].includes((await api('/account/payments/hosted', { method: 'POST', token: pviToken, body: { amountMinor: 1_000, provider: 'uddoktapay' } })).status));
+  check('An unknown gateway cannot be started', [400, 422].includes((await api('/account/payments/hosted', { method: 'POST', token: pviToken, body: { amountMinor: 1_000, provider: 'nosuchgateway' } })).status));
 
   // --- manual reconciliation ----------------------------------------------------
   const pviManualRef = `MAN${String(pviStamp).slice(-8)}`;

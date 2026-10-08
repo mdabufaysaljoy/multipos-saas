@@ -202,9 +202,9 @@ export const webhook = asyncHandler(async (req: Request, res: Response) => {
       logger.warn('A verified notification named no payment we know', { provider: providerName });
       return received(res);
     }
-    // Some providers (UddoktaPay) only issue their transaction id once the
-    // customer reaches the hosted page, so the notification is the first time
-    // we learn it. Record it before asking them about it.
+    // Some gateways only issue their transaction id once the customer reaches
+    // the hosted page, so the notification is the first time we learn it.
+    // Record it before asking them about it.
     let providerTransactionId = payment.providerTransactionId;
     if (result.providerTransactionId && result.providerTransactionId !== providerTransactionId) {
       await PaymentModel.updateOne({ _id: payment._id }, { $set: { providerTransactionId: result.providerTransactionId } });
