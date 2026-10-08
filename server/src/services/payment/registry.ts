@@ -1,4 +1,5 @@
 import { env } from '../../config/env';
+import { HOSTED_PAYMENT_PROVIDERS } from '../../config/constants';
 import { PlatformSettingsModel } from '../../models/PlatformSettings';
 import { ApiError } from '../../utils/ApiError';
 import type { PaymentProvider } from './PaymentProvider';
@@ -85,13 +86,21 @@ class PaymentProviderRegistry {
     return true;
   }
 
-  /** Only providers that may actually be used are offered to customers. */
-  listAvailable(): { name: string; displayName: string; supportsRecurring: boolean }[] {
+  /**
+   * Only providers that may actually be used are offered to customers.
+   *
+   * `kind` says whether paying means being taken to the provider's own
+   * checkout, or declaring a transfer somebody then confirms - which is what a
+   * screen needs in order to decide between a "Pay now" button and a form,
+   * without keeping its own list of provider names.
+   */
+  listAvailable(): { name: string; displayName: string; kind: 'hosted' | 'manual'; supportsRecurring: boolean }[] {
     return [...this.providers.values()]
       .filter((provider) => this.isUsable(provider.name))
       .map((provider) => ({
         name: provider.name,
         displayName: provider.displayName,
+        kind: (HOSTED_PAYMENT_PROVIDERS as readonly string[]).includes(provider.name) ? ('hosted' as const) : ('manual' as const),
         supportsRecurring: provider.supportsRecurring(),
       }));
   }

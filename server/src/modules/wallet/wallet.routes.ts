@@ -6,7 +6,7 @@ import { resolveTenant } from '../../middleware/tenant';
 import { validate } from '../../middleware/validate';
 import { idParam } from '../common/common.validators';
 import * as controller from './wallet.controller';
-import { topUpRequestSchema, usageListSchema, walletBreakdownSchema, walletHistorySchema } from './wallet.validators';
+import { topUpRequestSchema, usageListSchema, walletBreakdownSchema, walletHistorySchema, walletHostedTopUpSchema } from './wallet.validators';
 
 const router = Router();
 router.use(authenticate, resolveTenant);
@@ -25,6 +25,12 @@ router.get('/usage/prices', requirePermission(PERMISSIONS.SUBSCRIPTION_VIEW), co
 router.get('/top-ups', requirePermission(PERMISSIONS.WALLET_VIEW), validate({ query: walletHistorySchema }), controller.listTopUps);
 router.post('/top-ups', requirePermission(PERMISSIONS.WALLET_MANAGE), validate({ body: topUpRequestSchema }), controller.submitTopUp);
 router.post('/top-ups/:id/cancel', requirePermission(PERMISSIONS.WALLET_MANAGE), validate({ params: idParam }), controller.cancelTopUp);
+
+// Paying a gateway directly. Opening the checkout and confirming it are the
+// same permission as declaring a transfer - both end in money in this wallet -
+// and neither one credits anything on its own: only the provider's answer does.
+router.post('/top-ups/online', requirePermission(PERMISSIONS.WALLET_MANAGE), validate({ body: walletHostedTopUpSchema }), controller.startOnlineTopUp);
+router.post('/top-ups/online/:id/verify', requirePermission(PERMISSIONS.WALLET_MANAGE), validate({ params: idParam }), controller.verifyOnlineTopUp);
 // The receipt for one of this workspace's own approved top-ups.
 router.get('/top-ups/:id/receipt', requirePermission(PERMISSIONS.WALLET_VIEW), validate({ params: idParam }), controller.topUpReceipt);
 

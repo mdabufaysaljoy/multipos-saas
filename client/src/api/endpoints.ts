@@ -350,7 +350,7 @@ export const billingApi = {
   cancel: (body: { immediate: boolean; reason?: string }) => post<Subscription>('/subscriptions/cancel', body),
   planOptions: () => get<PlanOptionsResponse>('/subscriptions/plan-options'),
   reactivate: () => post<Subscription>('/subscriptions/reactivate'),
-  providers: () => get<{ name: string; displayName: string }[]>('/payments/providers'),
+  providers: () => get<PaymentProviderOption[]>('/payments/providers'),
   /** Opens an online payment for a plan; the browser is then sent to the provider's page. */
   checkout: (body: { planId: string; provider: string }) =>
     post<{ paymentId: string; redirectUrl: string | null; status: string }>('/payments/checkout', body),
@@ -450,7 +450,7 @@ export interface PurchaseQuote {
 type PurchaseTarget = { plan: string; billingCycle: 'monthly' | 'annual'; couponCode?: string; idempotencyKey?: string };
 export type PurchaseBody =
   | (PurchaseTarget & { paymentMethod: 'wallet'; note?: string })
-  | (PurchaseTarget & { paymentMethod: 'online'; provider: 'bkash' })
+  | (PurchaseTarget & { paymentMethod: 'online'; provider: string })
   | (PurchaseTarget & { paymentMethod: 'manual'; manualMethod: 'bkash' | 'nagad' | 'bank'; senderNumber: string; transactionId: string; note?: string });
 
 export type PurchaseResult =
@@ -487,6 +487,21 @@ export interface UsageSummaryRow {
   netMinor: number;
 }
 
+/**
+ * A way of paying this deployment can actually accept right now.
+ *
+ * `kind` comes from the server: 'hosted' means the customer is taken to the
+ * provider's own checkout and the payment confirms itself, 'manual' means they
+ * transfer the money and somebody verifies it. Screens branch on this rather
+ * than on provider names, so a new gateway needs no client change.
+ */
+export interface PaymentProviderOption {
+  name: string;
+  displayName: string;
+  kind: 'hosted' | 'manual';
+  supportsRecurring?: boolean;
+}
+
 export const walletApi = {
   usage: (params?: Query) =>
     get<{ items: UsageCharge[]; summary: UsageSummaryRow[]; page: number; limit: number; total: number }>('/wallet/usage', params),
@@ -500,6 +515,18 @@ export const walletApi = {
   breakdown: (params?: Query) => get<WalletBreakdown>('/wallet/breakdown', params),
   topUps: (params?: Query) => getPaginated<TopUp>('/wallet/top-ups', params),
   requestTopUp: (body: Record<string, unknown>) => post<TopUp>('/wallet/top-ups', body),
+  /** Opens a gateway checkout for a top-up; the browser is then sent to the provider's page. */
+  startOnlineTopUp: (body: { amountMinor: number; provider: string }) =>
+    post<{ paymentId: string; redirectUrl: string | null; status: string; amountMinor: number; currency: string }>(
+      '/wallet/top-ups/online',
+      body,
+    ),
+  /** Asks the server to confirm a gateway top-up with the provider, and credit it if it is paid. */
+  verifyOnlineTopUp: (paymentId: string) =>
+    post<{ _id: string; status: string; amountMinor: number; currency: string }>(
+      `/wallet/top-ups/online/${encodeURIComponent(paymentId)}/verify`,
+      {},
+    ),
   cancelTopUp: (id: string) => post<TopUp>(`/wallet/top-ups/${id}/cancel`),
 };
 
@@ -1021,6 +1048,12 @@ export const accountBillingActionsApi = {
   topUps: (params?: Query) => getPaginated<AccountTopUp>('/account/top-ups', params),
   requestTopUp: (body: { amountMinor: number; paymentMethod: string; senderNumber: string; transactionId: string; workspaceId?: string }) =>
     post<AccountTopUp>('/account/top-ups', body),
+  /** Opens a gateway checkout for a top-up on the account's own wallet. */
+  startOnlineTopUp: (body: { amountMinor: number; provider: string; workspaceId?: string }) =>
+    post<{ paymentId: string; redirectUrl: string | null; status: string; amountMinor: number; currency: string }>(
+      '/account/payments/hosted',
+      body,
+    ),
   cancelTopUp: (id: string) => post<AccountTopUp>(`/account/top-ups/${encodeURIComponent(id)}/cancel`, {}),
   cancelSubscription: (workspaceId: string, body: { immediate: boolean; reason?: string }) =>
     post<unknown>(`/workspaces/${encodeURIComponent(workspaceId)}/subscription/cancel`, body),

@@ -2,6 +2,7 @@ import type { Types } from 'mongoose';
 import { PAYMENT_STATUS } from '../../config/constants';
 import { env } from '../../config/env';
 import { PaymentModel } from '../../models/Payment';
+import { UserModel } from '../../models/User';
 import { UpgradeRequestModel } from '../../models/UpgradeRequest';
 import { ApiError } from '../../utils/ApiError';
 import { logger } from '../../utils/logger';
@@ -13,6 +14,23 @@ import type { TenantContext } from '../../types/express';
 
 /** Where the provider sends the customer's browser back to. */
 const callbackUrlFor = (provider: string) => `${env.PUBLIC_BASE_URL.replace(/\/$/, '')}/api/payments/callback/${provider}`;
+/** Where the provider POSTs its notification. A different route, and a different method. */
+const webhookUrlFor = (provider: string) => `${env.PUBLIC_BASE_URL.replace(/\/$/, '')}/api/payments/webhook/${provider}`;
+
+/**
+ * Where a hosted gateway returns the customer when the caller named no page.
+ *
+ * Always one of ours, carrying the payment so the page can ask the server what
+ * really happened instead of believing the query string. A gateway that is
+ * given no return URL at all may refuse to open a checkout, so this is not
+ * optional in practice.
+ */
+const appPageFor = (result: string, paymentId: Types.ObjectId) => {
+  const url = new URL('/subscription', env.CLIENT_ORIGIN.split(',')[0].trim());
+  url.searchParams.set('payment', result);
+  url.searchParams.set('ref', String(paymentId));
+  return url.toString();
+};
 
 export interface StartCheckoutInput {
   planId: Types.ObjectId;
@@ -59,7 +77,10 @@ export async function startCheckout(ctx: TenantContext, input: StartCheckoutInpu
 
   await paymentRegistry.refresh();
   const provider = paymentRegistry.get(input.provider);
-  if (!provider.isConfigured()) {
+  // `isUsable`, not `isConfigured`: a way of paying the platform admin has
+  // switched off must be refused here too, not merely hidden from the list a
+  // stale screen was built from.
+  if (!paymentRegistry.isUsable(provider.name)) {
     throw ApiError.badRequest(`${provider.displayName} payments are not available yet. Please contact support to pay manually.`);
   }
 
@@ -71,6 +92,9 @@ export async function startCheckout(ctx: TenantContext, input: StartCheckoutInpu
       reason: 'NOTHING_TO_PAY_ONLINE',
     });
   }
+
+  // The person paying, for the gateway's own checkout page and receipt.
+  const payer = await UserModel.findById(ctx.userId).select('email').lean();
 
   // Recorded first, so its id can travel to the provider as our reference.
   let payment;
@@ -107,10 +131,14 @@ export async function startCheckout(ctx: TenantContext, input: StartCheckoutInpu
       planId: plan._id,
       amountMinor: priced.payableMinor,
       currency: offer.currency,
-      returnUrl: input.returnUrl,
-      cancelUrl: input.cancelUrl,
+      returnUrl: input.returnUrl ?? appPageFor('success', payment._id),
+      cancelUrl: input.cancelUrl ?? appPageFor('cancelled', payment._id),
       reference: String(payment._id),
       callbackUrl: callbackUrlFor(provider.name),
+      webhookUrl: webhookUrlFor(provider.name),
+      // Hosted gateways open their checkout in the customer's name and email
+      // them their receipt, so both travel with the payment.
+      metadata: { customerName: ctx.userName, customerEmail: payer?.email ?? '' },
     });
     await PaymentModel.updateOne(
       { _id: payment._id, providerTransactionId: null },

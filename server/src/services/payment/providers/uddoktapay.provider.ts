@@ -142,7 +142,8 @@ export class UddoktaPayProvider implements PaymentProvider {
       metadata: { payment_id: input.reference ?? '' },
       redirect_url: input.returnUrl ?? '',
       cancel_url: input.cancelUrl ?? '',
-      webhook_url: input.callbackUrl ?? '',
+      // The POST notification endpoint, which is not the browser callback.
+      webhook_url: input.webhookUrl ?? input.callbackUrl ?? '',
       return_type: 'GET',
     });
 

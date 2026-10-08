@@ -25,11 +25,21 @@ import type {
  *                                      status: PENDING|COMPLETED|FAILED }
  *   webhook: { invoice_id, status }
  *
- * THE INVOICE ID COMES OUT OF THE PAYMENT URL. Create returns no id field,
- * and neither verify nor the webhook echoes the metadata we sent, so the last
- * segment of `payment_url` is the ONLY thing that ties an invoice to one of
- * our payments. It is captured at create time and stored as the provider
- * transaction id; ZiniPay's own Postman tests extract it the same way.
+ * THE INVOICE ID COMES OUT OF THE PAYMENT URL, and it is NOT `val_id`.
+ *
+ * Checked against the live API, because the published sources disagree: the
+ * PDF documents a `val_id`, the Postman collection has no such field, and the
+ * real create response returns BOTH `payment_url` and `val_id` - two different
+ * UUIDs. Asking verify about each settles it:
+ *
+ *   payment_url last segment -> 200, the invoice
+ *   val_id                   -> 404 "Invoice not found"
+ *
+ * So `val_id` is something else and must never be used to correlate a payment;
+ * doing so fails on every real one. The id is the last segment of
+ * `payment_url` (whose path also carries a brand slug, hence "last segment"
+ * rather than a fixed position), captured at create time and stored as the
+ * provider transaction id. ZiniPay's own Postman test extracts it the same way.
  *
  * THE WEBHOOK IS NOT PROOF. It carries no signature and no shared secret -
  * anyone who learns the URL can post `status=true` to it. So it is treated as
@@ -164,7 +174,8 @@ export class ZiniPayProvider implements PaymentProvider {
       metadata: { payment_id: reference },
       redirect_url: input.returnUrl ?? '',
       cancel_url: input.cancelUrl ?? '',
-      webhook_url: input.callbackUrl ?? '',
+      // The POST notification endpoint, which is not the browser callback.
+      webhook_url: input.webhookUrl ?? input.callbackUrl ?? '',
     });
 
     const paymentUrl = text(payload.payment_url);

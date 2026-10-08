@@ -32,6 +32,11 @@ function check(name: string, ok: boolean, detail?: unknown) {
   }
 }
 
+/** The invoice, as the live API identifies it: the last segment of the payment URL. */
+const INVOICE_ID = '94f75b93-f2e6-4ad0-a10e-3f7a1be21125';
+/** `val_id` from the same create response - a different UUID that verify does NOT know. */
+const DECOY_VAL_ID = '0c8c95a7-3e67-4747-922a-a856c7ca90b5';
+
 /** What the stub should answer for the next verify call. */
 let verifyStatus: 'COMPLETED' | 'PENDING' | 'FAILED' = 'PENDING';
 /** Every request the provider made, so the wire format can be asserted. */
@@ -54,20 +59,34 @@ function startStub(): Promise<{ server: Server; baseUrl: string }> {
             JSON.stringify({
               status: true,
               message: 'Invoice created successfully.',
-              // No id field: the invoice id is the last segment of the URL,
-              // which is the only place ZiniPay ever puts it.
-              payment_url: 'https://secure.zinipay.com/payment/INVOICE_1',
+              // The real response shape, checked against the live API: the path
+              // carries a brand slug before "payment", so the id is the LAST
+              // segment and not a fixed position.
+              payment_url: `https://secure.zinipay.com/retailer-suites/payment/${INVOICE_ID}`,
+              // Live creates return this too, and it is NOT the invoice id -
+              // verify answers 404 for it. A stub without it would let someone
+              // "fix" the provider to use it and still pass.
+              val_id: DECOY_VAL_ID,
             }),
           );
           return;
         }
         if (req.url === '/v1/payment/verify') {
+          // Exactly as the live API behaves: only the id from the payment URL
+          // names an invoice, and `val_id` is not found.
+          if (body.invoice_id !== INVOICE_ID) {
+            res.statusCode = 404;
+            res.end(JSON.stringify({ status: false, message: 'Invoice not found' }));
+            return;
+          }
           res.end(
             JSON.stringify({
               cus_name: 'John Doe',
               cus_email: 'john@example.com',
+              // Live sends this as a NUMBER, not a decimal string.
               amount: 1200,
-              invoice_id: 'INVOICE_1',
+              invoice_id: INVOICE_ID,
+              val_id: DECOY_VAL_ID,
               payment_method: 'bkash',
               transaction_id: 'TXN123456789',
               status: verifyStatus,
@@ -121,9 +140,11 @@ async function main() {
   check('...and sending no val_id, which this API does not have', createCall.body.val_id === undefined);
   check('...and the customer it was opened for', createCall.body.cus_name === 'Abu Faysal' && createCall.body.cus_email === 'abu@example.com', createCall.body);
   check('...with the redirect, cancel and webhook URLs', Boolean(createCall.body.redirect_url && createCall.body.cancel_url && createCall.body.webhook_url));
-  check('The customer is sent to the hosted page', started.redirectUrl === 'https://secure.zinipay.com/payment/INVOICE_1', started.redirectUrl);
+  check('The customer is sent to the hosted page', started.redirectUrl === `https://secure.zinipay.com/retailer-suites/payment/${INVOICE_ID}`, started.redirectUrl);
   // The only identifier the gateway gives us, and it is in the URL.
-  check('The invoice id is read off the payment URL', started.providerTransactionId === 'INVOICE_1', started.providerTransactionId);
+  check('The invoice id is read off the payment URL', started.providerTransactionId === INVOICE_ID, started.providerTransactionId);
+  // The failure this guards against: val_id looks like an id and is not one.
+  check('...and never val_id, which verify does not recognise', started.providerTransactionId !== DECOY_VAL_ID);
   check('...and nothing is paid yet', started.status === 'pending', started.status);
 
   // The key must never travel in a URL, where it lands in access logs.
@@ -134,9 +155,9 @@ async function main() {
   const forged = await provider.handleWebhook({
     headers: {},
     rawBody: '',
-    parsedBody: { invoice_id: 'INVOICE_1', status: 'true' },
+    parsedBody: { invoice_id: INVOICE_ID, status: 'true' },
   });
-  check('A webhook names the invoice it is about', forged.providerTransactionId === 'INVOICE_1', forged);
+  check('A webhook names the invoice it is about', forged.providerTransactionId === INVOICE_ID, forged);
   check('...and asks for a re-check rather than being believed', forged.refetch === true);
   check('...reporting NO status, however loudly it claims one', forged.status === null, forged.status);
   check('...no amount', forged.amountMinor === null);
@@ -147,40 +168,50 @@ async function main() {
     headers: {},
     rawBody: '',
     parsedBody: {},
-    query: { invoice_id: 'INVOICE_1', status: 'true' },
+    query: { invoice_id: INVOICE_ID, status: 'true' },
   });
-  check('A query-string callback is understood as well', viaQuery.verified && viaQuery.providerTransactionId === 'INVOICE_1', viaQuery);
+  check('A query-string callback is understood as well', viaQuery.verified && viaQuery.providerTransactionId === INVOICE_ID, viaQuery);
 
   const empty = await provider.handleWebhook({ headers: {}, rawBody: '', parsedBody: {} });
   check('A callback naming no payment is refused outright', empty.verified === false, empty);
 
   // ---- verify is what decides ---------------------------------------------
   verifyStatus = 'PENDING';
-  const pending = await provider.verifyPayment('INVOICE_1');
+  const pending = await provider.verifyPayment(INVOICE_ID);
   check('A PENDING invoice is pending', pending.status === 'pending', pending.status);
   check('...and reports no money, so nothing can be activated from it', pending.amountMinor === null && pending.paidAt === null, pending);
 
   verifyStatus = 'FAILED';
-  const failedResult = await provider.verifyPayment('INVOICE_1');
+  const failedResult = await provider.verifyPayment(INVOICE_ID);
   check('A FAILED invoice is failed', failedResult.status === 'failed', failedResult.status);
   check('...with a reason to show and no money', Boolean(failedResult.failureReason) && failedResult.amountMinor === null, failedResult);
 
   verifyStatus = 'COMPLETED';
-  const paid = await provider.verifyPayment('INVOICE_1');
+  const paid = await provider.verifyPayment(INVOICE_ID);
   check('A COMPLETED invoice is paid', paid.status === 'paid', paid.status);
   check('...for the amount ZiniPay reports, in minor units', paid.amountMinor === 120_000, paid.amountMinor);
   check('...in BDT', paid.currency === 'BDT', paid.currency);
   check('...stamped with when we confirmed it', paid.paidAt instanceof Date, paid.paidAt);
-  check('...and carries the real invoice id', paid.providerTransactionId === 'INVOICE_1', paid.providerTransactionId);
+  check('...and carries the real invoice id', paid.providerTransactionId === INVOICE_ID, paid.providerTransactionId);
 
   const verifyCall = seen.filter((call) => call.path === '/v1/payment/verify').pop()!;
-  check('Verification asks about the invoice by id', verifyCall.body.invoice_id === 'INVOICE_1', verifyCall.body);
+  check('Verification asks about the invoice by id', verifyCall.body.invoice_id === INVOICE_ID, verifyCall.body);
 
   // ---- an unconfigured provider does nothing quietly ----------------------
+  // Proof the stub would actually catch the mistake, rather than answering
+  // anything to any id.
+  let decoyRefused = false;
+  try {
+    await provider.verifyPayment(DECOY_VAL_ID);
+  } catch {
+    decoyRefused = true;
+  }
+  check('Asking about val_id instead finds no invoice', decoyRefused);
+
   const unconfigured = new ZiniPayProvider({ apiKey: '', baseUrl: '' });
   let refused = false;
   try {
-    await unconfigured.verifyPayment('INVOICE_1');
+    await unconfigured.verifyPayment(INVOICE_ID);
   } catch {
     refused = true;
   }

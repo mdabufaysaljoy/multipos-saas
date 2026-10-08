@@ -1,6 +1,6 @@
 import type { Request, Response } from 'express';
 import { Types } from 'mongoose';
-import { PAYMENT_STATUS } from '../../config/constants';
+import { PAYMENT_PURPOSES, PAYMENT_STATUS } from '../../config/constants';
 import { env } from '../../config/env';
 import { PaymentModel, type PaymentDoc } from '../../models/Payment';
 import { ApiError } from '../../utils/ApiError';
@@ -98,10 +98,16 @@ export const verify = asyncHandler(async (req: Request, res: Response) => {
   ok(res, result.payment);
 });
 
-/** The single place the callback may send the browser: the app's own subscription page. */
-const appReturnUrl = (result: 'success' | 'pending' | 'failed', paymentId?: Types.ObjectId) => {
+/**
+ * The single place the callback may send the browser: a page of this app.
+ *
+ * Always built from our own origin, never from anything the provider sends, so
+ * a callback cannot be used to bounce somebody to another site. Which page
+ * depends on what was being paid for - a wallet top-up belongs on the wallet.
+ */
+const appReturnUrl = (result: 'success' | 'pending' | 'failed', paymentId?: Types.ObjectId, purpose?: string) => {
   const origin = env.CLIENT_ORIGIN.split(',')[0].trim();
-  const url = new URL('/subscription', origin);
+  const url = new URL(purpose === PAYMENT_PURPOSES.WALLET_TOPUP ? '/wallet' : '/subscription', origin);
   url.searchParams.set('payment', result);
   if (paymentId) url.searchParams.set('ref', String(paymentId));
   return url.toString();
@@ -129,21 +135,22 @@ export const callback = asyncHandler(async (req: Request, res: Response) => {
   }
   if (!paymentID || !provider.isConfigured()) return res.redirect(303, appReturnUrl('failed'));
 
-  const payment = await PaymentModel.findOne({ provider: provider.name, providerTransactionId: paymentID }).select('_id').lean();
+  const payment = await PaymentModel.findOne({ provider: provider.name, providerTransactionId: paymentID }).select('_id metadata').lean();
   if (!payment) return res.redirect(303, appReturnUrl('failed'));
+  const purpose = (payment.metadata as { purpose?: string } | undefined)?.purpose;
 
   let report: VerifyPaymentResult;
   try {
     report = req.query.status === 'success' ? await askProvider(provider, paymentID) : await provider.verifyPayment(paymentID);
   } catch (error) {
     logger.warn('Could not confirm a payment on return from the provider', { provider: provider.name, error: error instanceof Error ? error.message : 'unknown' });
-    return res.redirect(303, appReturnUrl('pending', payment._id));
+    return res.redirect(303, appReturnUrl('pending', payment._id, purpose));
   }
 
   const outcome = await applyProviderReport(payment._id, report, 'callback');
   const status = (outcome.payment as { status?: string }).status;
   const result = status === PAYMENT_STATUS.PAID ? 'success' : status === PAYMENT_STATUS.PENDING ? 'pending' : 'failed';
-  return res.redirect(303, appReturnUrl(result, payment._id));
+  return res.redirect(303, appReturnUrl(result, payment._id, purpose));
 });
 
 /** Deliberately identical for every rejected delivery, so a prober learns nothing. */

@@ -7,8 +7,13 @@ import { body, params, query } from '../../middleware/validate';
 import { getContext } from '../../middleware/tenant';
 import { walletService, presentLedgerRows } from '../../services/wallet/wallet.service';
 import { topUpService } from './wallet.service';
-import type { TopUpRequestInput, UsageListInput, WalletHistoryInput } from './wallet.validators';
+import type { TopUpRequestInput, UsageListInput, WalletHistoryInput, WalletHostedTopUpInput } from './wallet.validators';
 import { usageChargeService } from '../../services/billing/usageCharge.service';
+import { ApiError } from '../../utils/ApiError';
+import { TenantModel } from '../../models/Tenant';
+import { PAYMENT_PURPOSES } from '../../config/constants';
+import { paymentIntentService } from '../../services/payment/paymentIntent.service';
+import { confirmWalletTopUp } from '../../services/payment/walletCheckout.service';
 import { usagePriceList } from '../../services/billing/usagePricing';
 
 export const balance = asyncHandler(async (req: Request, res: Response) => {
@@ -62,4 +67,44 @@ export const cancelTopUp = asyncHandler(async (req: Request, res: Response) => {
 export const topUpReceipt = asyncHandler(async (req: Request, res: Response) => {
   const { id } = params<{ id: Types.ObjectId }>(req);
   ok(res, await getReceiptForTopUp(id, getContext(req).tenantId));
+});
+
+/**
+ * Starts a gateway top-up from inside a workspace and hands back the page to
+ * send the customer to.
+ *
+ * Nothing is credited here. The money arrives when the gateway confirms it -
+ * through its webhook, or through `verifyOnlineTopUp` when the customer lands
+ * back on the wallet page first.
+ *
+ * The account is read from the workspace, never from the request: a caller
+ * cannot top up somebody else's wallet by naming their account.
+ */
+export const startOnlineTopUp = asyncHandler(async (req: Request, res: Response) => {
+  const ctx = getContext(req);
+  const input = body<WalletHostedTopUpInput>(req);
+  const workspace = await TenantModel.findById(ctx.tenantId).select('accountId').lean();
+  if (!workspace?.accountId) throw ApiError.notFound('This workspace has no account to credit');
+
+  const result = await paymentIntentService.openHostedCheckout(
+    { accountId: workspace.accountId, tenantId: ctx.tenantId, userId: ctx.userId, userName: ctx.userName, email: req.auth?.email },
+    { amountMinor: input.amountMinor, purpose: PAYMENT_PURPOSES.WALLET_TOPUP, provider: input.provider },
+  );
+  created(res, result);
+});
+
+/**
+ * Confirms a gateway top-up by asking the GATEWAY, and credits the wallet if
+ * it says the money arrived.
+ *
+ * The browser coming back from a checkout proves nothing, so the query string
+ * it carries is ignored entirely: this takes a payment id, asks the provider
+ * about it, and applies the same confirmation rules a webhook goes through. It
+ * exists because a webhook can be slow, or unreachable during development, and
+ * a customer should not have to wait for one to see their own money.
+ */
+export const verifyOnlineTopUp = asyncHandler(async (req: Request, res: Response) => {
+  const ctx = getContext(req);
+  const { id } = params<{ id: Types.ObjectId }>(req);
+  ok(res, await confirmWalletTopUp(ctx.tenantId, id));
 });

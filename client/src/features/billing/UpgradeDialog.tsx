@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { ArrowRight, CheckCircle2, Info, Smartphone, Wallet } from 'lucide-react';
+import { ArrowRight, CheckCircle2, CreditCard, Info, Smartphone, Wallet } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import {
@@ -147,24 +147,35 @@ export function UpgradeDialog({ plan, currentPlanName, instructions, onClose }: 
     onError: (error) => toast.error(errorMessage(error, 'Wallet payment failed')),
   });
 
-  // Online bKash checkout, offered only when the server has it configured.
+  // Paying a gateway. Which gateways exist is the server's answer, not a list
+  // kept here: the quote says which may be used for THIS purchase (a provider
+  // the platform admin has switched off is not in it), and the providers call
+  // supplies the names to show. Adding a gateway needs no change in this file.
   const providers = useQuery({ queryKey: ['payment-providers'], queryFn: billingApi.providers, enabled: Boolean(plan) });
-  const bkashOnline = (providers.data ?? []).some((provider) => provider.name === 'bkash');
-  const payWithBkash = useMutation({
-    mutationFn: async () => {
-      if (!target) return billingApi.checkout({ planId: plan!._id, provider: 'bkash' });
-      const result = await buy({ paymentMethod: 'online', provider: 'bkash' });
+  const onlineOptions = React.useMemo(() => {
+    const available = providers.data ?? [];
+    const allowed = quote.data?.paymentMethods.online;
+    // Without a quote (a bespoke plan priced by the server) fall back to every
+    // gateway that can open a checkout.
+    return allowed ? available.filter((provider) => allowed.includes(provider.name)) : available.filter((provider) => provider.kind === 'hosted');
+  }, [providers.data, quote.data]);
+
+  const payOnline = useMutation({
+    mutationFn: async (provider: string) => {
+      if (!target) return billingApi.checkout({ planId: plan!._id, provider });
+      const result = await buy({ paymentMethod: 'online', provider });
       return result.method === 'online' ? result : { redirectUrl: null };
     },
     onSuccess: (result) => {
       if (!result.redirectUrl) {
-        toast.error('bKash did not return a payment page. Please try again.');
+        toast.error('The payment page could not be opened. Please try again.');
         return;
       }
-      // The plan is activated only after bKash confirms the payment to the server.
+      // The plan is activated only after the provider confirms the payment to
+      // the server - never because the browser arrived back.
       window.location.assign(result.redirectUrl);
     },
-    onError: (error) => toast.error(errorMessage(error, 'Could not start the bKash payment')),
+    onError: (error) => toast.error(errorMessage(error, 'Could not open the payment page')),
   });
 
   const senderValid = senderNumber.replace(/\D/g, '').length >= 6 && /^[+()\-\s\d.]*$/.test(senderNumber.trim());
@@ -294,33 +305,41 @@ export function UpgradeDialog({ plan, currentPlanName, instructions, onClose }: 
                   <ArrowRight className="h-4 w-4 text-muted-foreground" />
                 </button>
 
-                {bkashOnline && (
+                {onlineOptions.map((provider) => (
                   <button
+                    key={provider.name}
                     type="button"
-                    disabled={payWithBkash.isPending}
-                    onClick={() => payWithBkash.mutate()}
+                    disabled={payOnline.isPending}
+                    onClick={() => payOnline.mutate(provider.name)}
                     className="flex w-full items-center gap-3 rounded-md border px-3 py-3 text-left transition-colors hover:border-primary hover:bg-accent disabled:opacity-60"
                   >
-                    <Smartphone className="h-5 w-5 text-muted-foreground" />
+                    <CreditCard className="h-5 w-5 shrink-0 text-muted-foreground" />
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-2 font-medium">
-                        Pay online with bKash
+                        Pay now with {provider.displayName}
                         <Badge variant="success">Instant</Badge>
                       </div>
                       <p className="truncate text-xs text-muted-foreground">
-                        {payWithBkash.isPending ? 'Opening bKash…' : `You approve ${formatMoney(priceMinor, currency)} on bKash; the plan activates once bKash confirms`}
+                        {payOnline.isPending
+                          ? `Opening ${provider.displayName}…`
+                          : `You pay ${formatMoney(priceMinor, currency)} on ${provider.displayName}; the plan activates once it is confirmed`}
                       </p>
                     </div>
                     <ArrowRight className="h-4 w-4 text-muted-foreground" />
                   </button>
-                )}
+                ))}
 
                 {instructions.length > 0 && <p className="pt-1 text-xs text-muted-foreground">Or pay manually and we will verify it:</p>}
 
                 {instructions.length === 0 ? (
-                  <p className="rounded-md border bg-muted/40 p-3 text-sm text-muted-foreground">
-                    No manual payment methods have been configured yet. Top up your wallet or contact support to arrange your upgrade.
-                  </p>
+                  // Only worth saying when there is no other way to pay; with a
+                  // gateway or wallet credit available it is just noise.
+                  onlineOptions.length === 0 &&
+                  !walletCovers && (
+                    <p className="rounded-md border bg-muted/40 p-3 text-sm text-muted-foreground">
+                      No payment method is available right now. Top up your wallet or contact support to arrange your upgrade.
+                    </p>
+                  )
                 ) : (
                   instructions.map((option) => (
                     <button

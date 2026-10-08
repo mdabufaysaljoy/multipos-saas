@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { PAYMENT_PROVIDERS } from '../../config/constants';
+import { HOSTED_PAYMENT_PROVIDERS, PAYMENT_PROVIDERS } from '../../config/constants';
 import { paginationSchema, calendarDate, objectId, phoneNumber } from '../common/common.validators';
 import { TOPUP_STATUSES } from '../../models/TopUpRequest';
 import { WALLET_TX_TYPES } from '../../models/WalletTransaction';
@@ -90,12 +90,31 @@ export const sendMoneyPaymentSchema = z
   .strict();
 export type SendMoneyPaymentInput = z.infer<typeof sendMoneyPaymentSchema>;
 
-/** Opening a payment on a provider's hosted page. */
+/**
+ * Opening a payment on a provider's hosted page.
+ *
+ * The enum is the hosted list, not "any provider": bKash, Nagad and bank are
+ * declared transfers settled by a human, so letting one through here would
+ * open a checkout that does not exist. A gateway the platform admin has
+ * switched off is refused separately, by the registry.
+ */
 export const hostedPaymentSchema = z
   .object({
     amountMinor: z.number().int().min(1).max(10_000_000),
-    provider: z.enum([PAYMENT_PROVIDERS.UDDOKTAPAY]),
+    provider: z.enum(HOSTED_PAYMENT_PROVIDERS),
     workspaceId: objectId.optional(),
   })
   .strict();
 export type HostedPaymentInput = z.infer<typeof hostedPaymentSchema>;
+
+/**
+ * The same, started from inside a workspace rather than the account's own
+ * billing page. The workspace is the session's, so it is not a field.
+ */
+export const walletHostedTopUpSchema = z
+  .object({
+    amountMinor: z.number().int().min(1, 'Enter an amount to add').max(10_000_000),
+    provider: z.enum(HOSTED_PAYMENT_PROVIDERS),
+  })
+  .strict();
+export type WalletHostedTopUpInput = z.infer<typeof walletHostedTopUpSchema>;

@@ -47,6 +47,16 @@ export const PAYMENT_PROVIDERS = {
 export type PaymentProviderKey = (typeof PAYMENT_PROVIDERS)[keyof typeof PAYMENT_PROVIDERS];
 
 /**
+ * The providers that take the customer to their own checkout page and confirm
+ * the payment themselves.
+ *
+ * The others are declared transfers that a human settles, so this is the list
+ * that decides where an instant "Pay now" button may appear. Adding a gateway
+ * means adding it here as well as to the registry.
+ */
+export const HOSTED_PAYMENT_PROVIDERS = [PAYMENT_PROVIDERS.UDDOKTAPAY, PAYMENT_PROVIDERS.ZINIPAY] as const;
+
+/**
  * What a payment is FOR. Previously carried in `metadata.purpose`; a first-class
  * field so reconciliation can filter and index by it. `wallet_topup` keeps the
  * exact string the existing activation path already looks for.

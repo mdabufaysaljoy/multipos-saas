@@ -10022,7 +10022,17 @@ async function main() {
   // --- the normal path: declare, then prove by SMS -----------------------------
   const pviMethods = await api('/account/payment-methods', { token: pviToken });
   check('The account is offered the active Send Money methods', pviMethods.status === 200 && (pviMethods.data?.sendMoney ?? []).some((m) => m.provider === 'bkash' && m.payTo), pviMethods.data);
-  check('An unconfigured hosted gateway is not offered', (pviMethods.data?.hosted ?? []).length === 0);
+  // A gateway is offered only when it has credentials. UddoktaPay has none
+  // here, so it must be absent however the list is built; ZiniPay is offered
+  // exactly when this environment holds a key for it, which is the same rule
+  // seen from the other side.
+  const pviHosted = (pviMethods.data?.hosted ?? []).map((row) => row.provider);
+  check('An unconfigured hosted gateway is not offered', pviHosted.includes('uddoktapay') === false, pviHosted);
+  check('Every offered gateway names itself', (pviMethods.data?.hosted ?? []).every((row) => row.kind === 'hosted' && row.provider && row.label), pviMethods.data?.hosted);
+  // The list is not merely cosmetic: a gateway missing from it is refused when
+  // somebody tries to pay with it anyway, from a stale screen or by hand.
+  const pviUnconfigured = await api('/account/payments/hosted', { method: 'POST', token: pviToken, body: { amountMinor: 50_000, provider: 'uddoktapay' } });
+  check('A gateway that is not offered cannot be paid with', pviUnconfigured.status >= 400, pviUnconfigured.status);
 
   const pviRef = `BKT${String(pviStamp).slice(-8)}`;
   const pviOpen = await api('/account/payments/send-money', { method: 'POST', token: pviToken, body: { amountMinor: 50_000, provider: 'bkash', reference: pviRef, customerPhone: '01711111111' } });
