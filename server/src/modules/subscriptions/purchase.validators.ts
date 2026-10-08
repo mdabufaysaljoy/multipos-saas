@@ -30,7 +30,11 @@ export const purchaseSchema = z.discriminatedUnion('paymentMethod', [
       paymentMethod: z.literal('online'),
       plan,
       billingCycle,
-      provider: z.enum([PAYMENT_PROVIDERS.BKASH]),
+      // Every gateway that can host a checkout. Which ones are actually
+      // offered is decided at runtime by the registry - this list only keeps
+      // junk out of the request, and `isUsable` refuses one that is switched
+      // off or has no credentials.
+      provider: z.enum([PAYMENT_PROVIDERS.BKASH, PAYMENT_PROVIDERS.ZINIPAY, PAYMENT_PROVIDERS.NAGAD]),
       returnUrl: httpUrl.optional(),
       cancelUrl: httpUrl.optional(),
       couponCode,

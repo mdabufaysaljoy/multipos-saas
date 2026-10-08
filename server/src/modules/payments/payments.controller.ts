@@ -1,6 +1,7 @@
 import type { Request, Response } from 'express';
 import { Types } from 'mongoose';
-import { PAYMENT_STATUS } from '../../config/constants';
+import { PAYMENT_PURPOSES, PAYMENT_STATUS } from '../../config/constants';
+import { PERMISSIONS } from '../../config/permissions';
 import { env } from '../../config/env';
 import { PaymentModel, type PaymentDoc } from '../../models/Payment';
 import { ApiError } from '../../utils/ApiError';
@@ -13,6 +14,7 @@ import { getContext } from '../../middleware/tenant';
 import { paymentRegistry } from '../../services/payment/registry';
 import type { PaymentProvider, VerifyPaymentResult } from '../../services/payment/PaymentProvider';
 import { applyProviderReport, resumeActivation } from '../../services/payment/paymentConfirmation.service';
+import { confirmPayment } from '../../services/payment/walletCheckout.service';
 import { startCheckout } from './checkout.service';
 import type { CheckoutInput } from '../subscriptions/subscriptions.validators';
 import type { ListSubscriptionsInput } from '../subscriptions/subscriptions.validators';
@@ -20,7 +22,10 @@ import { presentPayments } from '../../services/billing/invoice.service';
 
 /** Payment methods this deployment can actually accept. */
 export const providers = asyncHandler(async (_req: Request, res: Response) => {
-  ok(res, paymentRegistry.listAvailable());
+  // Reloads first: credentials and the on/off switch live in settings, and a
+  // list built from boot-time environment would offer a gateway an admin has
+  // since turned off.
+  ok(res, await paymentRegistry.listAvailableAsync());
 });
 
 /** The tenant's own payment history. */
@@ -75,6 +80,7 @@ export const verify = asyncHandler(async (req: Request, res: Response) => {
   if (payment.status !== PAYMENT_STATUS.PENDING) return ok(res, payment);
   if (!payment.providerTransactionId) throw ApiError.badRequest('This payment has no provider reference to verify');
 
+  await paymentRegistry.refresh();
   const provider = paymentRegistry.get(payment.provider);
   let verification: VerifyPaymentResult;
   try {
@@ -94,11 +100,55 @@ export const verify = asyncHandler(async (req: Request, res: Response) => {
   ok(res, result.payment);
 });
 
-/** The single place the callback may send the browser: the app's own subscription page. */
+/**
+ * Confirms a payment the customer has just come back from, whatever it was for.
+ *
+ * One endpoint for both flows, because the page the gateway returns to is the
+ * same page for both and should not have to guess which kind of payment it is
+ * looking at. The answer says what the payment was for, so the page can offer
+ * the right way onward.
+ *
+ * Permission follows the purpose: topping up the wallet is a wallet action,
+ * buying a plan is a subscription one. Nothing is trusted from the request
+ * beyond the payment id, and that id is scoped to the caller's workspace.
+ */
+export const confirm = asyncHandler(async (req: Request, res: Response) => {
+  const ctx = getContext(req);
+  const { paymentId } = body<{ paymentId: Types.ObjectId }>(req);
+
+  const known = await PaymentModel.findOne({ _id: paymentId, tenantId: ctx.tenantId }).select('metadata').lean();
+  if (!known) throw ApiError.notFound('Payment not found');
+  const purpose = (known.metadata as { purpose?: string } | undefined)?.purpose ?? PAYMENT_PURPOSES.SUBSCRIPTION_PURCHASE;
+  const needed = purpose === PAYMENT_PURPOSES.WALLET_TOPUP ? PERMISSIONS.WALLET_MANAGE : PERMISSIONS.SUBSCRIPTION_MANAGE;
+  if (!ctx.can(needed)) throw ApiError.forbidden(`Confirming this payment needs the "${needed}" permission`);
+
+  const payment = (await confirmPayment(ctx.tenantId, paymentId)) as {
+    status?: string;
+    amountMinor?: number;
+    currency?: string;
+    purpose?: string;
+  };
+  ok(res, {
+    status: payment.status ?? null,
+    amountMinor: payment.amountMinor ?? null,
+    currency: payment.currency ?? null,
+    purpose: payment.purpose ?? purpose,
+  });
+});
+
+/**
+ * The single place the callback may send the browser: a page of this app.
+ *
+ * Always built from our own origin, never from anything the provider sends, so
+ * a callback cannot be used to bounce somebody to another site. Which page
+ * depends on what was being paid for - a wallet top-up belongs on the wallet.
+ */
 const appReturnUrl = (result: 'success' | 'pending' | 'failed', paymentId?: Types.ObjectId) => {
   const origin = env.CLIENT_ORIGIN.split(',')[0].trim();
-  const url = new URL('/subscription', origin);
-  url.searchParams.set('payment', result);
+  // The same two pages a gateway redirect uses, so a payment ends in one place
+  // however the customer got back. Only a confirmed payment is a success.
+  const url = new URL(result === 'success' ? '/payment/success' : '/payment/cancel', origin);
+  if (result !== 'success') url.searchParams.set('outcome', result);
   if (paymentId) url.searchParams.set('ref', String(paymentId));
   return url.toString();
 };
@@ -118,6 +168,7 @@ export const callback = asyncHandler(async (req: Request, res: Response) => {
 
   let provider: PaymentProvider;
   try {
+    await paymentRegistry.refresh();
     provider = paymentRegistry.get(providerName);
   } catch {
     return res.redirect(303, appReturnUrl('failed'));
@@ -153,6 +204,7 @@ export const webhook = asyncHandler(async (req: Request, res: Response) => {
   const providerName = String(req.params.provider);
   let provider: PaymentProvider;
   try {
+    await paymentRegistry.refresh();
     provider = paymentRegistry.get(providerName);
   } catch {
     logger.warn('Webhook for an unknown payment provider', { provider: providerName.slice(0, 40) });
@@ -168,6 +220,8 @@ export const webhook = asyncHandler(async (req: Request, res: Response) => {
     headers: req.headers as Record<string, string | string[] | undefined>,
     rawBody,
     parsedBody: req.body,
+    // Some gateways put the callback in the query string rather than a body.
+    query: req.query as Record<string, unknown>,
   });
 
   if (!result.verified) {
@@ -187,9 +241,9 @@ export const webhook = asyncHandler(async (req: Request, res: Response) => {
       logger.warn('A verified notification named no payment we know', { provider: providerName });
       return received(res);
     }
-    // Some providers (UddoktaPay) only issue their transaction id once the
-    // customer reaches the hosted page, so the notification is the first time
-    // we learn it. Record it before asking them about it.
+    // Some gateways only issue their transaction id once the customer reaches
+    // the hosted page, so the notification is the first time we learn it.
+    // Record it before asking them about it.
     let providerTransactionId = payment.providerTransactionId;
     if (result.providerTransactionId && result.providerTransactionId !== providerTransactionId) {
       await PaymentModel.updateOne({ _id: payment._id }, { $set: { providerTransactionId: result.providerTransactionId } });

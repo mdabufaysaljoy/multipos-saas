@@ -20,7 +20,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { EmptyState, LoadingState } from '@/components/states';
 import { PageHeader } from '@/components/PageHeader';
 import { ApiError } from '@/api/client';
-import { accountApi, type AccountBilling, type BillingAttention, type WorkspaceBillingItem, accountBillingActionsApi, renewalApi } from '@/api/endpoints';
+import { accountApi, billingApi, type AccountBilling, type BillingAttention, type WorkspaceBillingItem, accountBillingActionsApi, renewalApi } from '@/api/endpoints';
 import { useAuth } from '@/hooks/useAuth';
 import { InvoicesPanel } from '@/features/billing/InvoicesPanel';
 import { PaymentsPanel } from '@/features/billing/PaymentsPanel';
@@ -482,6 +482,9 @@ function TopUpSection({ workspaces }: { workspaces: { id: string; name: string }
   const queryClient = useQueryClient();
   const [open, setOpen] = React.useState(false);
   const { data: payInfo } = useQuery({ queryKey: ['account', 'payment-instructions'], queryFn: accountBillingActionsApi.paymentInstructions });
+  // Gateways the server can accept right now, so paying online is offered even
+  // where no manual transfer has been set up.
+  const { data: providers } = useQuery({ queryKey: ['payment-providers'], queryFn: billingApi.providers });
   const { data: pending } = useQuery({
     queryKey: ['account', 'top-ups', 'pending'],
     queryFn: () => accountBillingActionsApi.topUps({ status: 'pending', limit: 20 }),
@@ -501,6 +504,7 @@ function TopUpSection({ workspaces }: { workspaces: { id: string; name: string }
   });
 
   const requests = pending?.items ?? [];
+  const hasGateway = (providers ?? []).some((provider) => provider.kind === 'hosted');
 
   return (
     <Card>
@@ -508,9 +512,15 @@ function TopUpSection({ workspaces }: { workspaces: { id: string; name: string }
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div>
             <p className="font-medium">Add money</p>
-            <p className="text-xs text-muted-foreground">Top up the wallet all your workspaces share. It is credited once the payment is verified.</p>
+            <p className="text-xs text-muted-foreground">
+              {hasGateway
+                ? 'Top up the wallet all your workspaces share. Paying online credits it as soon as the payment is confirmed.'
+                : 'Top up the wallet all your workspaces share. It is credited once the payment is verified.'}
+            </p>
           </div>
-          <Button size="sm" onClick={() => setOpen(true)} disabled={(payInfo?.instructions.length ?? 0) === 0}>
+          {/* Disabled only when there is genuinely no way to pay - a gateway is
+              one, so this cannot be decided from the manual instructions alone. */}
+          <Button size="sm" onClick={() => setOpen(true)} disabled={(payInfo?.instructions.length ?? 0) === 0 && !hasGateway}>
             <Plus />
             Add money
           </Button>
@@ -545,8 +555,10 @@ function TopUpSection({ workspaces }: { workspaces: { id: string; name: string }
         open={open}
         onOpenChange={setOpen}
         instructions={payInfo?.instructions ?? []}
+        providers={providers ?? []}
         workspaces={workspaces}
         submit={(body) => accountBillingActionsApi.requestTopUp(body)}
+        startOnline={(body) => accountBillingActionsApi.startOnlineTopUp(body)}
         onDone={refresh}
       />
     </Card>

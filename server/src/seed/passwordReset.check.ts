@@ -180,16 +180,25 @@ async function main() {
   check('...and the password did not change a second time', await (await UserModel.findById(userA._id).select('+passwordHash'))!.comparePassword('ReplacedPassword@456'));
 
   // ------------------------------------------- an address nobody is registered at
-  const unknown = await passwordResetService.request(`nobody.${stamp}@example.com`);
-  check('An unknown address is answered without a code', unknown.devCode === undefined, unknown);
-  check('...and leaves no row behind', (await PasswordResetCodeModel.countDocuments({ email: `nobody.${stamp}@example.com` })) === 0);
-  check('...and says exactly what a known address says', unknown.message === first.message, { unknown: unknown.message, known: first.message });
+  //
+  // Refusing has to be the WHOLE of what happens. If an unregistered address
+  // still wrote a row or sent mail, the form would be a way to make us mail
+  // anybody a stranger named.
+  const strangerEmail = `nobody.${stamp}@example.com`;
+  check(
+    'An unregistered address is refused',
+    await refusedBecause(() => passwordResetService.request(strangerEmail), 'No account was found'),
+  );
+  check('...leaving no reset row behind', (await PasswordResetCodeModel.countDocuments({ email: strangerEmail })) === 0);
 
-  // A deactivated identity behaves like one that is not there.
+  // A deactivated identity cannot be signed into, so it is refused the same
+  // way rather than being announced as deactivated - naming it would leak more.
   await UserModel.updateMany({ email }, { $set: { isActive: false } });
   await ageCodes(email, 2);
-  const deactivated = await passwordResetService.request(email);
-  check('A deactivated account cannot be reset into', deactivated.devCode === undefined, deactivated);
+  check(
+    'A deactivated account is refused like an unregistered one',
+    await refusedBecause(() => passwordResetService.request(email), 'No account was found'),
+  );
 
   await mongoose.connection.collection('users').deleteMany({ email: { $in: [email, bystander] } });
   await mongoose.connection.collection('passwordresetcodes').deleteMany({ email: { $regex: String(stamp) } });

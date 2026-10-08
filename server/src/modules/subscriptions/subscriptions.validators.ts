@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { PAYMENT_PROVIDERS, SUBSCRIPTION_STATUS } from '../../config/constants';
+import { HOSTED_PAYMENT_PROVIDERS, PAYMENT_PROVIDERS, SUBSCRIPTION_STATUS } from '../../config/constants';
 import { objectId, paginationSchema, httpUrl, calendarDate } from '../common/common.validators';
 
 /** Platform admin manually assigning or changing a tenant's subscription. */
@@ -62,7 +62,9 @@ export const cancelSubscriptionSchema = z.object({
 
 export const checkoutSchema = z.object({
   planId: objectId,
-  provider: z.enum([PAYMENT_PROVIDERS.BKASH, PAYMENT_PROVIDERS.NAGAD, PAYMENT_PROVIDERS.BANK]),
+  // Every gateway that can open a checkout, hosted ones included - otherwise a
+  // provider the platform admin has configured cannot be paid with here.
+  provider: z.enum([PAYMENT_PROVIDERS.BKASH, PAYMENT_PROVIDERS.NAGAD, PAYMENT_PROVIDERS.BANK, ...HOSTED_PAYMENT_PROVIDERS]),
   returnUrl: httpUrl.optional(),
   cancelUrl: httpUrl.optional(),
 });

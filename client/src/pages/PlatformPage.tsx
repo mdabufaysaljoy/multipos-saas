@@ -29,6 +29,7 @@ import { PaymentInstructionsCard } from '@/features/platform/PaymentInstructions
 import { PaymentOperationsTab } from '@/features/platform/PaymentOperationsTab';
 import { PosProductsTab } from '@/features/platform/PosProductsTab';
 import { SiteSettingsTab } from '@/features/platform/SiteSettingsTab';
+import { PaymentGatewayCard } from '@/features/platform/PaymentGatewayCard';
 import { useTabParam } from '@/hooks/useTabParam';
 import { PlansTab } from '@/features/platform/PlansTab';
 import { SearchInput, useDebounced } from '@/components/SearchInput';
@@ -87,7 +88,7 @@ export function PlatformPage() {
     'audit',
   ]);
   const [billing, setBilling] = useTabParam('billing', 'requests', ['requests', 'subscriptions', 'payments', 'plans']);
-  const [settings, setSettings] = useTabParam('settings', 'payments', ['payments', 'integrations', 'website']);
+  const [settings, setSettings] = useTabParam('settings', 'payments', ['payments', 'integrations', 'gateway', 'website']);
   const { data: overview } = useQuery({ queryKey: ['platform', 'overview'], queryFn: platformApi.overview });
 
   return (
@@ -177,6 +178,7 @@ export function PlatformPage() {
               <TabsList className="mb-3 flex-wrap">
                 <TabsTrigger value="payments">Payment accounts</TabsTrigger>
                 <TabsTrigger value="integrations">SMS &amp; email</TabsTrigger>
+                <TabsTrigger value="gateway">Payment gateway</TabsTrigger>
                 <TabsTrigger value="website">Website</TabsTrigger>
               </TabsList>
               <TabsContent value="payments">
@@ -184,6 +186,9 @@ export function PlatformPage() {
               </TabsContent>
               <TabsContent value="integrations">
                 <IntegrationsTab />
+              </TabsContent>
+              <TabsContent value="gateway">
+                <PaymentGatewayCard />
               </TabsContent>
               <TabsContent value="website">
                 <SiteSettingsTab />

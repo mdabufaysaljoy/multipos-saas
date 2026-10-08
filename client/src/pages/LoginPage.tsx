@@ -2,7 +2,7 @@ import * as React from 'react';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
 import { AlertCircle, ArrowLeft, ArrowRight, ChevronRight, Eye, EyeOff, Lock, Mail } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -30,6 +30,15 @@ const VERTICAL_LABEL: Record<string, string> = {
 export function LoginPage() {
   const { login, completeLogin } = useAuth();
   const navigate = useNavigate();
+  const location = useLocation();
+  /**
+   * Where to go after signing in, when the session lapsed on the way to a
+   * particular page. Only a path within this app is accepted - never a full
+   * URL, a protocol-relative one, or anything else that could send somebody
+   * who has just typed their password to another site.
+   */
+  const requested = (location.state as { from?: unknown } | null)?.from;
+  const returnTo = typeof requested === 'string' && /^\/(?!\/)/.test(requested) ? requested : null;
   const [selection, setSelection] = React.useState<LoginSelection | null>(null);
   const [choosing, setChoosing] = React.useState<string | null>(null);
   const [showPassword, setShowPassword] = React.useState(false);
@@ -53,6 +62,10 @@ export function LoginPage() {
   const enter = (session: Session) => {
     toast.success(`Welcome back, ${session.user.name.split(' ')[0]}`);
     if (session.user.role === 'platform_admin') navigate('/platform', { replace: true });
+    // Back to whatever they were trying to reach, when that is still sensible:
+    // somebody returning from a payment gateway with an expired session should
+    // land on their result, not on the till.
+    else if (!session.needsStoreSetup && returnTo) navigate(returnTo, { replace: true });
     else navigate(session.needsStoreSetup ? '/onboarding' : '/pos', { replace: true });
   };
 

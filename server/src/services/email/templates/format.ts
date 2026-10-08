@@ -59,7 +59,6 @@ const METHOD_LABELS: Record<string, string> = {
   rocket: 'Rocket',
   bank: 'Bank transfer',
   card: 'Card',
-  uddoktapay: 'UddoktaPay',
   manual: 'Manual payment',
   cash: 'Cash',
 };

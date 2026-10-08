@@ -63,6 +63,18 @@ export interface PlatformSettingsDoc extends BaseDoc {
     recipients: string[];
   };
   /**
+   * Which ways of paying are switched on, and the credentials for the ones
+   * that need them.
+   *
+   * It lives here rather than only in the environment because turning a
+   * gateway on, or falling back to manual transfers when it misbehaves, is
+   * something an operator does at the moment it is needed - not something
+   * worth a deploy. The environment remains the BOOTSTRAP: a key set there is
+   * used until one is saved here, so a fresh install works before anybody
+   * opens the screen.
+   */
+  payments: PaymentSettings;
+  /**
    * The public website: who it says we are, what search engines are told, and
    * the pages whose text used to be hardcoded.
    *
@@ -76,6 +88,27 @@ export interface PlatformSettingsDoc extends BaseDoc {
    * `GET /public/site`, so nothing confidential may be added to it.
    */
   site: SiteSettings;
+}
+
+export interface PaymentSettings {
+  /**
+   * Manual bank/bKash/Nagad transfers, where a customer sends money and a
+   * platform admin confirms it by hand.
+   *
+   * Switchable because once an automatic gateway is live, leaving the manual
+   * route visible invites customers down the slow path that needs a human.
+   */
+  manualEnabled: boolean;
+  zinipay: {
+    /**
+     * `select: false` for the same reason the SMTP password is: it must never
+     * ride along on an ordinary settings read, and no tenant-facing response
+     * returns it at all.
+     */
+    apiKey: string;
+    baseUrl: string;
+    enabled: boolean;
+  };
 }
 
 /** One public page's own search-engine text. */
@@ -194,6 +227,14 @@ const platformSettingsSchema = new Schema<PlatformSettingsDoc>(
     paymentAlerts: {
       enabled: { type: Boolean, default: true },
       recipients: { type: [String], default: [] },
+    },
+    payments: {
+      manualEnabled: { type: Boolean, default: true },
+      zinipay: {
+        apiKey: { type: String, default: '', select: false },
+        baseUrl: { type: String, default: 'https://api.zinipay.com', trim: true, maxlength: 300 },
+        enabled: { type: Boolean, default: false },
+      },
     },
     site: {
       // Every string defaults to empty on purpose: empty means "use the

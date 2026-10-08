@@ -1,5 +1,5 @@
-import type { Types } from 'mongoose';
-import { PAYMENT_PROVIDERS, PAYMENT_PURPOSES, PAYMENT_STATUS, type PaymentPurpose } from '../../config/constants';
+import { Types } from 'mongoose';
+import { HOSTED_PAYMENT_PROVIDERS, PAYMENT_PURPOSES, PAYMENT_STATUS, type PaymentPurpose } from '../../config/constants';
 import { env } from '../../config/env';
 import { PaymentModel } from '../../models/Payment';
 import { TenantModel } from '../../models/Tenant';
@@ -22,6 +22,21 @@ import { accountKey } from './sms/parsers';
  * session's workspace, the amount from the caller's priced quote, the merchant
  * account from platform settings. A request supplies none of them.
  */
+
+/**
+ * Where a hosted checkout returns the customer.
+ *
+ * Its own page, not the wallet or the subscription screen: the gateway decides
+ * between these two URLs and nothing else, so the result has to be legible
+ * before anything is known about the payment. It carries the payment id, which
+ * is the only thing the page reads - what actually happened comes from asking
+ * the server.
+ */
+function paymentReturnUrl(result: 'success' | 'cancel', paymentId: Types.ObjectId) {
+  const url = new URL(`/payment/${result}`, env.CLIENT_ORIGIN.split(',')[0].trim());
+  url.searchParams.set('ref', String(paymentId));
+  return url.toString();
+}
 
 /** A Send Money claim stops being matchable after this, so a stale reference cannot be revived. */
 const SEND_MONEY_TTL_MS = 24 * 60 * 60 * 1000;
@@ -130,8 +145,13 @@ class PaymentIntentService {
   ) {
     if (input.workspaceId) await assertOwnedWorkspace(actor.accountId, input.workspaceId);
 
+    // Credentials and the on/off switch live in settings; reload before use
+    // so an admin's change takes effect without restarting the server.
+    await paymentRegistry.refresh();
     const provider = paymentRegistry.get(input.provider);
-    if (!provider.isConfigured()) {
+    // `isUsable`, not `isConfigured`: a way of paying that an operator has
+    // switched off must be refused here too, not only hidden from the list.
+    if (!paymentRegistry.isUsable(provider.name)) {
       throw ApiError.badRequest(`${provider.displayName} payments are not available yet.`, { reason: 'PROVIDER_UNAVAILABLE' });
     }
     const settings = await getPlatformSettings();
@@ -161,9 +181,13 @@ class PaymentIntentService {
         amountMinor: input.amountMinor,
         currency: payment.currency,
         reference: String(payment._id),
-        returnUrl: `${env.CLIENT_ORIGIN.split(',')[0].trim()}/wallet?payment=success`,
-        cancelUrl: `${env.CLIENT_ORIGIN.split(',')[0].trim()}/wallet?payment=cancelled`,
-        callbackUrl: `${env.PUBLIC_BASE_URL.replace(/\/$/, '')}/api/payments/webhook/${provider.name}`,
+        // Both carry the payment, so the wallet page can ask the server what
+        // happened rather than believing the query string it came back with.
+        returnUrl: paymentReturnUrl('success', payment._id),
+        // Also where a failed payment lands: the gateway has only these two.
+        cancelUrl: paymentReturnUrl('cancel', payment._id),
+        callbackUrl: `${env.PUBLIC_BASE_URL.replace(/\/$/, '')}/api/payments/callback/${provider.name}`,
+        webhookUrl: `${env.PUBLIC_BASE_URL.replace(/\/$/, '')}/api/payments/webhook/${provider.name}`,
         metadata: { customerName: actor.userName, customerEmail: actor.email ?? '' },
       });
 
@@ -184,22 +208,34 @@ class PaymentIntentService {
         { _id: payment._id, status: PAYMENT_STATUS.PENDING },
         { $set: { status: PAYMENT_STATUS.FAILED, failureReason: 'The payment could not be started with the provider' } },
       );
-      logger.warn('Starting a hosted payment failed', { provider: provider.name, error: error instanceof Error ? error.message : 'unknown' });
-      throw new ApiError('PROVIDER_UNAVAILABLE', `${provider.displayName} could not start the payment right now.`);
+      const reason = error instanceof Error ? error.message : 'unknown';
+      logger.warn('Starting a hosted payment failed', { provider: provider.name, error: reason });
+      // The reason travels in `details`, not in the message a customer reads:
+      // enough for an operator looking at the response or the logs to tell a
+      // network problem from a rejected key, without showing it on screen.
+      throw new ApiError('PROVIDER_UNAVAILABLE', `${provider.displayName} could not start the payment right now.`, { reason });
     }
   }
 
   /** Payment methods a customer may actually use right now. */
   async availableMethods() {
     const settings = await getPlatformSettings();
+    // Credentials and the on/off switches live in settings, so reload before
+    // listing: a gateway an admin has just configured must appear without a
+    // restart, and one switched off must disappear.
+    const { manualEnabled } = await paymentRegistry.refresh();
     const sendMoney = (settings.paymentInstructions ?? [])
       .filter((row) => row.isActive)
       .map((row) => ({ kind: 'send_money' as const, provider: row.method, label: row.label, payTo: row.accountNumber, payToName: row.accountName, steps: row.steps }));
+    // Every hosted gateway that is usable, not one named one: adding a provider
+    // should offer it everywhere, which is the point of the registry.
     const hosted = paymentRegistry
       .listAvailable()
-      .filter((row) => row.name === PAYMENT_PROVIDERS.UDDOKTAPAY)
+      .filter((row) => (HOSTED_PAYMENT_PROVIDERS as readonly string[]).includes(row.name))
       .map((row) => ({ kind: 'hosted' as const, provider: row.name, label: row.displayName }));
-    return { sendMoney, hosted };
+    // A declared transfer still needs somebody to confirm it, so it is offered
+    // only while the platform admin keeps manual payments on.
+    return { sendMoney: manualEnabled ? sendMoney : [], hosted };
   }
 }
 

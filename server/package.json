@@ -33,7 +33,8 @@
     "test:product-limits": "tsx src/config/productLimits.check.ts",
     "migrate:verify-clothing": "tsx src/migrations/verifyClothingMigration.ts",
     "report:identities": "tsx src/migrations/reportDuplicateIdentities.ts",
-    "bkash:sandbox": "tsx src/scripts/bkashSandboxCheck.ts"
+    "bkash:sandbox": "tsx src/scripts/bkashSandboxCheck.ts",
+    "check:zinipay": "tsx src/seed/zinipay.live.ts"
   },
   "dependencies": {
     "bcryptjs": "^3.0.3",

@@ -14,6 +14,15 @@ export interface InitiatePaymentInput {
   reference?: string;
   /** Server endpoint the provider sends the customer's browser back to. */
   callbackUrl?: string;
+  /**
+   * Server endpoint the provider POSTs its notification to.
+   *
+   * Separate from `callbackUrl` because they are different routes with
+   * different methods: the callback is a browser redirect, the webhook is a
+   * server-to-server POST. Sending a provider the callback URL as its webhook
+   * means the notification lands on a route that does not accept it.
+   */
+  webhookUrl?: string;
   metadata?: Record<string, unknown>;
 }
 
@@ -41,6 +50,12 @@ export interface WebhookRequest {
   /** Raw body bytes - required for signature verification. */
   rawBody: Buffer | string;
   parsedBody: unknown;
+  /**
+   * The query string, for gateways that send their callback there instead of
+   * in a body. ZiniPay documents both shapes; a provider that only ever
+   * receives a body ignores this.
+   */
+  query?: Record<string, unknown>;
 }
 
 export interface WebhookResult {

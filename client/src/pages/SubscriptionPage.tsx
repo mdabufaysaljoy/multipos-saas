@@ -1,7 +1,6 @@
 import * as React from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { useSearchParams } from 'react-router-dom';
 import { format } from 'date-fns';
 import { AlertTriangle, Check, CreditCard, Info, Lock, Plus, RotateCcw, Sparkles } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
@@ -115,30 +114,6 @@ export function SubscriptionPage() {
 
   const pendingRequest = requests?.find((r) => r.status === 'pending') ?? null;
 
-  // Returning from an online payment page. The server already confirmed the
-  // result with the provider before redirecting; this only tells the customer.
-  const [searchParams, setSearchParams] = useSearchParams();
-  React.useEffect(() => {
-    const result = searchParams.get('payment');
-    if (!result) return;
-    if (result === 'success') {
-      toast.success('Payment confirmed', { description: 'Your plan is active.' });
-      void refresh();
-    } else if (result === 'pending') {
-      toast.info('Payment not completed yet', {
-        description: 'If money left your account, it will be confirmed automatically once bKash reports it.',
-      });
-    } else {
-      toast.error('Payment was not accepted', {
-        description: 'Nothing was activated. If you were charged, contact support with your bKash transaction ID.',
-      });
-    }
-    void queryClient.invalidateQueries({ queryKey: ['subscription'] });
-    const next = new URLSearchParams(searchParams);
-    next.delete('payment');
-    next.delete('ref');
-    setSearchParams(next, { replace: true });
-  }, [searchParams, setSearchParams, queryClient, refresh]);
 
   const cancel = useMutation({
     mutationFn: () => billingApi.cancel({ immediate: false }),

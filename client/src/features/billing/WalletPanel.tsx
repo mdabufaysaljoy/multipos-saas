@@ -157,6 +157,8 @@ export function WalletPanel() {
   });
   const { data: topUps } = useQuery({ queryKey: ['wallet', 'topups'], queryFn: () => walletApi.topUps({ limit: 5 }) });
   const { data: payInfo } = useQuery({ queryKey: ['payment-instructions'], queryFn: billingApi.paymentInstructions });
+  // Which gateways this deployment can actually accept, decided by the server.
+  const { data: providers } = useQuery({ queryKey: ['payment-providers'], queryFn: billingApi.providers });
 
   const pending = topUps?.items.filter((t) => t.status === 'pending') ?? [];
 
@@ -388,7 +390,9 @@ export function WalletPanel() {
         open={open}
         onOpenChange={setOpen}
         instructions={payInfo?.instructions ?? []}
+        providers={providers ?? []}
         submit={(body) => walletApi.requestTopUp({ ...body })}
+        startOnline={(body) => walletApi.startOnlineTopUp(body)}
         onDone={() => {
           void queryClient.invalidateQueries({ queryKey: ['wallet'] });
         }}

@@ -7,8 +7,13 @@ import type { Entitlement } from '@/types/api';
  * somewhere to spend it on a plan. Everything else stays shut until they do.
  * The server enforces the same rule (`requireSubscribedAccess`) - this list
  * only keeps the UI from offering doors that are already bolted.
+ *
+ * `/payment` is here because of who lands on it: someone whose workspace is
+ * locked, who has just paid to unlock it, coming back from the gateway. Being
+ * bounced away from the result of that payment would be the worst possible
+ * moment to do it.
  */
-export const UNLOCKED_PATHS = ['/wallet', '/subscription', '/billing', '/account', '/onboarding'];
+export const UNLOCKED_PATHS = ['/wallet', '/subscription', '/billing', '/account', '/onboarding', '/payment'];
 
 /** Where a locked-out user is sent when they aim at a locked page. */
 export const LOCK_REDIRECT = '/subscription';

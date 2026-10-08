@@ -37,12 +37,22 @@ export const PAYMENT_PROVIDERS = {
   BKASH: 'bkash',
   NAGAD: 'nagad',
   BANK: 'bank',
-  /** Hosted checkout aggregator (bKash, Nagad, Rocket, Upay, card) - see uddoktapay.provider.ts. */
-  UDDOKTAPAY: 'uddoktapay',
+  /** Hosted checkout - see zinipay.provider.ts. */
+  ZINIPAY: 'zinipay',
   /** Out-of-band Send Money, proven by a payment SMS reported by a registered device. */
   SMS_VERIFIED: 'sms_verified',
 } as const;
 export type PaymentProviderKey = (typeof PAYMENT_PROVIDERS)[keyof typeof PAYMENT_PROVIDERS];
+
+/**
+ * The providers that take the customer to their own checkout page and confirm
+ * the payment themselves.
+ *
+ * The others are declared transfers that a human settles, so this is the list
+ * that decides where an instant "Pay now" button may appear. Adding a gateway
+ * means adding it here as well as to the registry.
+ */
+export const HOSTED_PAYMENT_PROVIDERS = [PAYMENT_PROVIDERS.ZINIPAY] as const;
 
 /**
  * What a payment is FOR. Previously carried in `metadata.purpose`; a first-class

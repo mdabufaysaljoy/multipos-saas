@@ -94,6 +94,9 @@ router.get('/settings', controller.getSettings);
 router.get('/integrations', controller.integrations);
 router.post('/integrations/smtp/test', controller.testSmtp);
 router.post('/integrations/sms/test', controller.testSms);
+// Proves this server can reach the gateway, which a payment screen cannot tell
+// apart from a broken integration. Creates nothing and moves no money.
+router.post('/integrations/zinipay/test', controller.testZiniPay);
 router.get('/audit-log', validate({ query: listQuery.extend({ action: z.string().trim().max(60).optional() }) }), controller.auditLog);
 router.patch(
   '/settings',
@@ -136,6 +139,23 @@ router.patch(
         .object({
           enabled: z.boolean(),
           recipients: z.array(z.string().trim().toLowerCase().email('Enter valid email addresses')).max(10),
+        })
+        .strict()
+        .optional(),
+      // Which ways of paying are switched on, and the gateway's credentials.
+      payments: z
+        .object({
+          manualEnabled: z.boolean().optional(),
+          zinipay: z
+            .object({
+              // Blank leaves the stored key untouched, exactly like the SMTP
+              // password - otherwise re-saving the form would wipe the gateway.
+              apiKey: z.string().trim().max(200).optional(),
+              baseUrl: httpUrl.optional(),
+              enabled: z.boolean().optional(),
+            })
+            .strict()
+            .optional(),
         })
         .strict()
         .optional(),

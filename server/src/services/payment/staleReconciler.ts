@@ -74,6 +74,7 @@ export async function reconcileStalePayments(options: ReconcileOptions = {}): Pr
 
     let provider: PaymentProvider;
     try {
+      await paymentRegistry.refresh();
       provider = paymentRegistry.get(payment.provider);
     } catch {
       result.stillPending += 1;
