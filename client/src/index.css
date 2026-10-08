@@ -410,117 +410,172 @@
 /* --------------------------------------------------------------------------
    Authentication scene
 
-   The login visual: an operator at the counter ringing up a sale and printing
-   the receipt. It has four states and the page drives them from the REAL auth
-   result, so the paper only finishes feeding once the server has said yes.
+   The sign-in visual: a security officer raising a handheld scanner at a
+   holographic identity panel. It has five states and the page drives them from
+   the REAL auth result, so the beam only completes and the tick is only drawn
+   once the server has said yes. Everything here is transform and opacity, so it
+   stays on the compositor.
    -------------------------------------------------------------------------- */
-.rs-pos-bob {
-  animation: rs-pos-bob 4.5s ease-in-out infinite;
+.rs-auth-breathe {
+  animation: rs-auth-breathe 5s ease-in-out infinite;
   transform-origin: 50% 100%;
 }
-.rs-pos-type {
-  animation: rs-pos-type 0.9s ease-in-out infinite;
-  transform-origin: 50% 0%;
+.rs-auth-blink {
+  animation: rs-auth-blink 6.5s steps(1) infinite;
+  transform-origin: 128px 114px;
 }
-.rs-pos-row {
-  animation: rs-pos-row 2.4s ease-out infinite both;
+.rs-auth-tail {
+  animation: rs-auth-tail 4.2s ease-in-out infinite;
+  transform-origin: 148px 104px;
 }
-.rs-pos-caret {
-  animation: rs-pos-caret 1.05s steps(1) infinite;
+/* The arm settles into each state rather than snapping between them. */
+.rs-auth-arm {
+  transition: transform 620ms cubic-bezier(0.22, 1, 0.36, 1);
 }
-.rs-paper-feed {
-  animation: rs-paper-feed 2.1s cubic-bezier(0.33, 1, 0.68, 1) infinite;
-  transform-origin: 50% 0%;
+.rs-auth-hud {
+  animation: rs-auth-hover 7s ease-in-out infinite;
+  transform-origin: 50% 50%;
 }
-.rs-paper-done {
-  animation: rs-paper-done 620ms cubic-bezier(0.22, 1, 0.36, 1) both;
-  transform-origin: 50% 0%;
+.rs-auth-scanline {
+  animation: rs-auth-scanline 4.5s linear infinite;
 }
-.rs-pos-shake {
-  animation: rs-shake 520ms cubic-bezier(0.36, 0.07, 0.19, 0.97);
+/* The band that crosses the identity while it is being read. */
+.rs-auth-sweep {
+  animation: rs-auth-sweep 1.5s cubic-bezier(0.45, 0, 0.55, 1) infinite;
 }
-.rs-pos-pop {
+.rs-auth-beam {
+  animation: rs-auth-beam 1.5s ease-in-out infinite;
+  transform-origin: 224px 199px;
+}
+.rs-auth-step {
+  animation: rs-auth-step 1.26s ease-out infinite both;
+}
+.rs-auth-mote {
+  animation: rs-auth-mote 7s ease-in-out infinite;
+}
+.rs-auth-gesture {
+  animation: rs-auth-gesture 560ms cubic-bezier(0.22, 1, 0.36, 1) both;
+  transform-origin: 91px 240px;
+}
+.rs-auth-pop {
   animation: rs-pop 520ms var(--rs-ease) both;
 }
-.rs-pos-burst {
-  animation: rs-burst 900ms var(--rs-ease) both;
+.rs-auth-shake {
+  animation: rs-shake 520ms cubic-bezier(0.36, 0.07, 0.19, 0.97);
 }
-.rs-check-draw {
-  stroke-dasharray: 26;
-  stroke-dashoffset: 26;
-  animation: rs-check 480ms var(--rs-ease) 120ms forwards;
+.rs-auth-draw {
+  stroke-dasharray: 34;
+  stroke-dashoffset: 34;
+  animation: rs-check 460ms var(--rs-ease) 140ms forwards;
 }
 
-@keyframes rs-pos-bob {
+@keyframes rs-auth-breathe {
   0%,
   100% {
     transform: translateY(0) scaleY(1);
   }
   50% {
-    transform: translateY(-1.5px) scaleY(1.012);
+    transform: translateY(-1.6px) scaleY(1.012);
   }
 }
-@keyframes rs-pos-type {
+/* Open almost all the time; the closed frames are the blink. */
+@keyframes rs-auth-blink {
+  0%,
+  95%,
+  100% {
+    transform: scaleY(1);
+  }
+  96%,
+  98% {
+    transform: scaleY(0.1);
+  }
+}
+@keyframes rs-auth-tail {
   0%,
   100% {
-    transform: translateY(0) rotate(0deg);
+    transform: rotate(0deg);
   }
   50% {
-    transform: translateY(2px) rotate(-3deg);
+    transform: rotate(3.5deg);
   }
 }
-@keyframes rs-pos-row {
-  0% {
-    opacity: 0;
-    transform: translateX(-5px);
-  }
-  18%,
-  86% {
-    opacity: 1;
-    transform: translateX(0);
-  }
-  100% {
-    opacity: 0;
-    transform: translateX(0);
-  }
-}
-@keyframes rs-pos-caret {
+@keyframes rs-auth-hover {
   0%,
-  49% {
-    opacity: 1;
-  }
-  50%,
   100% {
-    opacity: 0;
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-4px);
   }
 }
-/* The paper leaves the printer, then the loop resets for the next sale. */
-@keyframes rs-paper-feed {
+@keyframes rs-auth-scanline {
   0% {
-    transform: scaleY(0.04);
+    transform: translateY(0);
     opacity: 0;
   }
-  14% {
-    opacity: 1;
-  }
-  70%,
-  92% {
-    transform: scaleY(1);
-    opacity: 1;
+  12%,
+  88% {
+    opacity: 0.45;
   }
   100% {
-    transform: scaleY(1);
+    transform: translateY(166px);
     opacity: 0;
   }
 }
-@keyframes rs-paper-done {
-  from {
-    transform: scaleY(0.12);
+@keyframes rs-auth-sweep {
+  0% {
+    transform: translateY(0);
+  }
+  100% {
+    transform: translateY(142px);
+  }
+}
+/* The beam breathes with the sweep, so the two read as one action. */
+@keyframes rs-auth-beam {
+  0%,
+  100% {
+    opacity: 0.45;
+    transform: rotate(-1.5deg);
+  }
+  50% {
+    opacity: 1;
+    transform: rotate(1.5deg);
+  }
+}
+@keyframes rs-auth-step {
+  0%,
+  30% {
+    opacity: 0.3;
+    transform: translateX(-3px);
+  }
+  45%,
+  100% {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+@keyframes rs-auth-mote {
+  0%,
+  100% {
+    transform: translateY(0);
     opacity: 0;
+  }
+  25%,
+  70% {
+    opacity: 0.65;
+  }
+  50% {
+    transform: translateY(-14px);
+  }
+}
+@keyframes rs-auth-gesture {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.85);
   }
   to {
-    transform: scaleY(1);
     opacity: 1;
+    transform: translateY(0) scale(1);
   }
 }
 @keyframes rs-shake {
@@ -528,39 +583,27 @@
   100% {
     transform: translateX(0);
   }
-  15%,
-  55% {
-    transform: translateX(-7px);
+  20% {
+    transform: translateX(-6px);
   }
-  35%,
-  75% {
-    transform: translateX(7px);
+  40% {
+    transform: translateX(5px);
   }
-  90% {
+  60% {
     transform: translateX(-3px);
+  }
+  80% {
+    transform: translateX(2px);
   }
 }
 @keyframes rs-pop {
-  0% {
-    transform: scale(0.86);
+  from {
+    transform: scale(0.72);
     opacity: 0;
   }
-  60% {
-    transform: scale(1.04);
-  }
-  100% {
+  to {
     transform: scale(1);
     opacity: 1;
-  }
-}
-@keyframes rs-burst {
-  0% {
-    transform: scale(0.7);
-    opacity: 0.75;
-  }
-  100% {
-    transform: scale(1.9);
-    opacity: 0;
   }
 }
 @keyframes rs-check {
@@ -568,6 +611,7 @@
     stroke-dashoffset: 0;
   }
 }
+
 
 /* --------------------------------------------------------------------------
    Reduced motion
@@ -609,25 +653,37 @@
   }
   /*
     The scene still has to say which state it is in - that is the whole point of
-    it - so the idling stops, but the receipt is shown printed and the tick is
-    drawn complete rather than never arriving.
+    it - so all the idling stops, but nothing that carries meaning disappears.
+    The verifying steps, the verdict and the tick are shown in their finished
+    position rather than animating into it or never arriving.
   */
-  .public-shell .rs-pos-bob,
-  .public-shell .rs-pos-type,
-  .public-shell .rs-pos-caret,
-  .public-shell .rs-pos-shake,
-  .public-shell .rs-pos-burst {
+  .public-shell .rs-auth-breathe,
+  .public-shell .rs-auth-blink,
+  .public-shell .rs-auth-tail,
+  .public-shell .rs-auth-hud,
+  .public-shell .rs-auth-scanline,
+  .public-shell .rs-auth-sweep,
+  .public-shell .rs-auth-beam,
+  .public-shell .rs-auth-mote,
+  .public-shell .rs-auth-shake {
     animation: none;
   }
-  .public-shell .rs-pos-row,
-  .public-shell .rs-paper-feed,
-  .public-shell .rs-paper-done,
-  .public-shell .rs-pos-pop {
+  /* The arm still moves between states, but instantly. */
+  .public-shell .rs-auth-arm {
+    transition: none;
+  }
+  .public-shell .rs-auth-scanline,
+  .public-shell .rs-auth-mote {
+    opacity: 0;
+  }
+  .public-shell .rs-auth-step,
+  .public-shell .rs-auth-pop,
+  .public-shell .rs-auth-gesture {
     animation: none;
     opacity: 1;
     transform: none;
   }
-  .public-shell .rs-check-draw {
+  .public-shell .rs-auth-draw {
     animation: none;
     stroke-dashoffset: 0;
   }

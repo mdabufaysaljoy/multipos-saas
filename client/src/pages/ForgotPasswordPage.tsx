@@ -55,7 +55,14 @@ const errorText = (error: unknown, fallback: string) => (error instanceof ApiErr
 export function ForgotPasswordPage() {
   const navigate = useNavigate();
   const [step, setStep] = React.useState<Step>('email');
-  const [scene, setScene] = React.useState<SceneState>('idle');
+  /**
+   * What the scene shows. It rests on `recovery` rather than `idle` because
+   * that is what this page IS - the officer lowers her scanner and turns to the
+   * recovery panel. The working states still come from the real requests
+   * below: `scanning` while a call is in flight, `success` only once the server
+   * has confirmed, `error` only on an actual refusal.
+   */
+  const [scene, setScene] = React.useState<SceneState>('recovery');
   const [formError, setFormError] = React.useState<string | null>(null);
 
   // What the earlier steps established. The ticket is the only thing that lets
@@ -105,7 +112,7 @@ export function ForgotPasswordPage() {
       setScene('success');
       setStep('code');
       codeForm.reset({ code: '' });
-      window.setTimeout(() => setScene('idle'), 620);
+      window.setTimeout(() => setScene('recovery'), 620);
       return true;
     } catch (error) {
       // An unknown address, a cooldown or an IP rate limit are all real
@@ -136,7 +143,7 @@ export function ForgotPasswordPage() {
       setMaskedEmail(result.maskedEmail);
       setScene('success');
       setStep('password');
-      window.setTimeout(() => setScene('idle'), 620);
+      window.setTimeout(() => setScene('recovery'), 620);
     } catch (error) {
       setScene('error');
       setFormError(errorText(error, 'Could not check that code. Try again.'));
