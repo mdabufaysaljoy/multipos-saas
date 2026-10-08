@@ -130,8 +130,13 @@ class PaymentIntentService {
   ) {
     if (input.workspaceId) await assertOwnedWorkspace(actor.accountId, input.workspaceId);
 
+    // Credentials and the on/off switch live in settings; reload before use
+    // so an admin's change takes effect without restarting the server.
+    await paymentRegistry.refresh();
     const provider = paymentRegistry.get(input.provider);
-    if (!provider.isConfigured()) {
+    // `isUsable`, not `isConfigured`: a way of paying that an operator has
+    // switched off must be refused here too, not only hidden from the list.
+    if (!paymentRegistry.isUsable(provider.name)) {
       throw ApiError.badRequest(`${provider.displayName} payments are not available yet.`, { reason: 'PROVIDER_UNAVAILABLE' });
     }
     const settings = await getPlatformSettings();

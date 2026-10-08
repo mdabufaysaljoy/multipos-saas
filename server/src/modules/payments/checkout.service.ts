@@ -57,6 +57,7 @@ export async function startCheckout(ctx: TenantContext, input: StartCheckoutInpu
     throw ApiError.conflict('You already have an upgrade request awaiting review. Cancel it before paying online.');
   }
 
+  await paymentRegistry.refresh();
   const provider = paymentRegistry.get(input.provider);
   if (!provider.isConfigured()) {
     throw ApiError.badRequest(`${provider.displayName} payments are not available yet. Please contact support to pay manually.`);

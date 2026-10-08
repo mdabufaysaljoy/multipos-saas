@@ -389,16 +389,34 @@ export const updateSettings = asyncHandler(async (req: Request, res: Response) =
   const sms = input.sms as Record<string, unknown> | undefined;
   if (sms && (sms.apiKey === '' || sms.apiKey === undefined)) delete sms.apiKey;
 
+  // ...and for the payment gateway key, which sits one level deeper.
+  const payments = input.payments as Record<string, unknown> | undefined;
+  const zinipay = payments?.zinipay as Record<string, unknown> | undefined;
+  if (zinipay && (zinipay.apiKey === '' || zinipay.apiKey === undefined)) delete zinipay.apiKey;
+
   // Credential blocks MUST be written as dot-paths. `$set: { smtp: {...} }`
   // replaces the whole subdocument, so omitting the password to keep it would
   // instead delete it - the exact opposite of what the rule above intends.
   // Verified by test: saving the form with a blank key wiped the stored one.
+  //
+  // It recurses, because `payments.zinipay.apiKey` is two levels down and a
+  // one-level flatten would write `payments.zinipay` whole and take the key
+  // with it.
+  const CREDENTIAL_BLOCKS = new Set(['smtp', 'sms', 'payments']);
   const flattened: Record<string, unknown> = {};
-  for (const [key, value] of Object.entries(input)) {
-    if ((key === 'smtp' || key === 'sms') && value && typeof value === 'object' && !Array.isArray(value)) {
-      for (const [field, fieldValue] of Object.entries(value as Record<string, unknown>)) {
-        flattened[`${key}.${field}`] = fieldValue;
+  const flatten = (value: Record<string, unknown>, prefix: string) => {
+    for (const [field, fieldValue] of Object.entries(value)) {
+      const path = `${prefix}.${field}`;
+      if (fieldValue && typeof fieldValue === 'object' && !Array.isArray(fieldValue)) {
+        flatten(fieldValue as Record<string, unknown>, path);
+      } else {
+        flattened[path] = fieldValue;
       }
+    }
+  };
+  for (const [key, value] of Object.entries(input)) {
+    if (CREDENTIAL_BLOCKS.has(key) && value && typeof value === 'object' && !Array.isArray(value)) {
+      flatten(value as Record<string, unknown>, key);
     } else {
       flattened[key] = value;
     }
@@ -540,6 +558,19 @@ export const integrations = asyncHandler(async (_req: Request, res: Response) =>
         passwordSet: Boolean(settings.smtp?.host),
       },
     },
+    payments: {
+      // Manual transfers need a human to confirm them; an operator running an
+      // automatic gateway can switch that slow path off.
+      manualEnabled: settings.payments?.manualEnabled !== false,
+      zinipay: {
+        baseUrl: settings.payments?.zinipay?.baseUrl ?? 'https://api.zinipay.com',
+        enabled: settings.payments?.zinipay?.enabled ?? false,
+        // The key itself is never returned - only whether one is stored, and
+        // whether the environment is still supplying it.
+        apiKeySet: Boolean(await hasZiniPayApiKey()),
+        fromEnvironment: !(await hasStoredZiniPayKey()) && Boolean(process.env.ZINIPAY_API_KEY),
+      },
+    },
   });
 });
 
@@ -577,6 +608,22 @@ export const testSms = asyncHandler(async (req: Request, res: Response) => {
 async function hasSmsApiKey(): Promise<boolean> {
   const doc = await PlatformSettingsModel.findOne({ key: 'platform' }).select('+sms.apiKey').lean();
   return Boolean(doc?.sms?.apiKey);
+}
+
+/** True when a key has been SAVED here, as opposed to coming from the environment. */
+async function hasStoredZiniPayKey(): Promise<boolean> {
+  const doc = await PlatformSettingsModel.findOne({ key: 'platform' }).select('+payments.zinipay.apiKey').lean();
+  return Boolean(doc?.payments?.zinipay?.apiKey);
+}
+
+/**
+ * True when the gateway has a key from either source.
+ *
+ * The screen shows which one, because "it works but I never typed a key here"
+ * is confusing enough to be worth answering on the page.
+ */
+async function hasZiniPayApiKey(): Promise<boolean> {
+  return (await hasStoredZiniPayKey()) || Boolean(process.env.ZINIPAY_API_KEY);
 }
 
 export const testSmtp = asyncHandler(async (req: Request, res: Response) => {

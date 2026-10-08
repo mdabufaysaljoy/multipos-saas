@@ -2040,6 +2040,47 @@ async function main() {
   const brandMark = readFileSync(new URL('../client/src/features/public/BrandMark.tsx', import.meta.url), 'utf8');
   check('The header shows the name beside the logo, not instead of it', /\{!compact && <span className="truncate/.test(brandMark));
 
+  // ---- which ways of paying are offered --------------------------------------
+  // Credentials and the on/off switches live in settings, so every list and
+  // every checkout reloads before it answers - a value read at boot would
+  // offer a gateway an admin has since turned off.
+  const payIntegrations = async () => (await api('/platform/integrations', { token: padmin.token })).data?.payments;
+  const paySet = (body) => api('/platform/settings', { method: 'PATCH', token: padmin.token, body: { payments: body } });
+  const payOffered = async () => ((await api('/payments/providers', { token: admin.token })).data ?? []).map((p) => p.name);
+
+  const payBefore = await payIntegrations();
+  check('The platform panel reports the payment settings', Boolean(payBefore), payBefore);
+  check('...never returning the gateway key itself', !JSON.stringify(payBefore).includes('apiKey"'), Object.keys(payBefore?.zinipay ?? {}));
+  check('...only whether one is stored', typeof payBefore?.zinipay?.apiKeySet === 'boolean', payBefore?.zinipay);
+
+  // Turning the gateway on makes it appear for customers; off removes it.
+  await paySet({ zinipay: { apiKey: 'TEST_ZINI_KEY', enabled: true }, manualEnabled: true });
+  check('A gateway that is switched on is offered to customers', (await payOffered()).includes('zinipay'), await payOffered());
+  await paySet({ zinipay: { enabled: false } });
+  check('...and switching it off withdraws it', !(await payOffered()).includes('zinipay'), await payOffered());
+
+  // Saving with an empty key box must not wipe the stored key, or flipping a
+  // switch would silently break the gateway.
+  await paySet({ zinipay: { enabled: true } });
+  check('Saving without a key keeps the stored one', (await payIntegrations())?.zinipay?.apiKeySet === true);
+  check('...and the gateway still works', (await payOffered()).includes('zinipay'));
+
+  // Manual transfers need a human, so they can be switched off once a gateway
+  // is live - and must then be refused, not merely hidden.
+  await paySet({ manualEnabled: false });
+  check('Manual transfers can be switched off', !(await payOffered()).includes('manual'), await payOffered());
+  const payManualBlocked = await api('/account/payments/hosted', {
+    method: 'POST',
+    token: admin.token,
+    body: { amountMinor: 50_000, provider: 'manual' },
+  });
+  check('...and a checkout on a disabled method is refused, not just hidden', payManualBlocked.status >= 400, payManualBlocked.status);
+  await paySet({ manualEnabled: true });
+  check('Switching manual back on restores it', (await payOffered()).includes('manual'), await payOffered());
+
+  // Only a platform admin may change any of this.
+  check('A workspace owner cannot change the gateway', (await api('/platform/settings', { method: 'PATCH', token: admin.token, body: { payments: { manualEnabled: false } } })).status === 403);
+
   // ---- what a field will accept ---------------------------------------------
   // The server is the boundary: whatever the form does, these are the rules
   // that decide what can land in the database.

@@ -81,7 +81,18 @@ export class ZiniPayProvider implements PaymentProvider {
   readonly name = PAYMENT_PROVIDERS.ZINIPAY;
   readonly displayName = 'ZiniPay';
 
-  constructor(private readonly config: ZiniPayConfig) {}
+  constructor(private config: ZiniPayConfig) {}
+
+  /**
+   * Swaps in credentials read from platform settings.
+   *
+   * Same shape as the SMTP provider: the environment bootstraps a fresh
+   * install, and whatever the platform admin saves afterwards wins. Callers
+   * reload before use rather than trusting whatever was loaded at boot.
+   */
+  configure(config: ZiniPayConfig) {
+    this.config = config;
+  }
 
   isConfigured(): boolean {
     return Boolean(this.config.apiKey && this.config.baseUrl);

@@ -139,6 +139,23 @@ router.patch(
         })
         .strict()
         .optional(),
+      // Which ways of paying are switched on, and the gateway's credentials.
+      payments: z
+        .object({
+          manualEnabled: z.boolean().optional(),
+          zinipay: z
+            .object({
+              // Blank leaves the stored key untouched, exactly like the SMTP
+              // password - otherwise re-saving the form would wipe the gateway.
+              apiKey: z.string().trim().max(200).optional(),
+              baseUrl: httpUrl.optional(),
+              enabled: z.boolean().optional(),
+            })
+            .strict()
+            .optional(),
+        })
+        .strict()
+        .optional(),
       sms: z
         .object({
           provider: z.enum(['alpha']),

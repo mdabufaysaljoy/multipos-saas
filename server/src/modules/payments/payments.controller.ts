@@ -20,7 +20,10 @@ import { presentPayments } from '../../services/billing/invoice.service';
 
 /** Payment methods this deployment can actually accept. */
 export const providers = asyncHandler(async (_req: Request, res: Response) => {
-  ok(res, paymentRegistry.listAvailable());
+  // Reloads first: credentials and the on/off switch live in settings, and a
+  // list built from boot-time environment would offer a gateway an admin has
+  // since turned off.
+  ok(res, await paymentRegistry.listAvailableAsync());
 });
 
 /** The tenant's own payment history. */
@@ -75,6 +78,7 @@ export const verify = asyncHandler(async (req: Request, res: Response) => {
   if (payment.status !== PAYMENT_STATUS.PENDING) return ok(res, payment);
   if (!payment.providerTransactionId) throw ApiError.badRequest('This payment has no provider reference to verify');
 
+  await paymentRegistry.refresh();
   const provider = paymentRegistry.get(payment.provider);
   let verification: VerifyPaymentResult;
   try {
@@ -118,6 +122,7 @@ export const callback = asyncHandler(async (req: Request, res: Response) => {
 
   let provider: PaymentProvider;
   try {
+    await paymentRegistry.refresh();
     provider = paymentRegistry.get(providerName);
   } catch {
     return res.redirect(303, appReturnUrl('failed'));
@@ -153,6 +158,7 @@ export const webhook = asyncHandler(async (req: Request, res: Response) => {
   const providerName = String(req.params.provider);
   let provider: PaymentProvider;
   try {
+    await paymentRegistry.refresh();
     provider = paymentRegistry.get(providerName);
   } catch {
     logger.warn('Webhook for an unknown payment provider', { provider: providerName.slice(0, 40) });

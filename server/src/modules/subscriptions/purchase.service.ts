@@ -76,7 +76,7 @@ class PurchaseService {
       paymentMethods: {
         wallet: true,
         // A provider cannot take a zero payment.
-        online: payableMinor > 0 ? paymentRegistry.listAvailable().map((provider) => provider.name) : [],
+        online: payableMinor > 0 ? (await paymentRegistry.listAvailableAsync()).map((provider) => provider.name) : [],
         manual: payableMinor > 0 ? ['bkash', 'nagad', 'bank'] : [],
       },
     };

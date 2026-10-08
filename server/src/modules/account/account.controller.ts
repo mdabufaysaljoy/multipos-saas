@@ -88,6 +88,8 @@ export const wallet = asyncHandler(async (req: Request, res: Response) => {
     walletService.getOrCreate(owned[0]),
     TopUpRequestModel.countDocuments({ tenantId: { $in: owned }, status: 'pending' }),
   ]);
+  const { manualEnabled } = await paymentRegistry.refresh();
+  const onlineProviders = paymentRegistry.listAvailable();
   ok(res, {
     ...summary,
     status: record.isFrozen ? 'frozen' : 'active',
@@ -95,8 +97,11 @@ export const wallet = asyncHandler(async (req: Request, res: Response) => {
     range: { from: range.from ?? null, to: range.to ?? null },
     pendingTopUps,
     fundingMethods: {
-      manual: ['bkash', 'nagad', 'bank'],
-      online: paymentRegistry.listAvailable().map((provider) => provider.name),
+      // Manual transfers need a human to confirm them, so an operator running
+      // an automatic gateway can switch them off rather than leaving customers
+      // the slow path.
+      manual: manualEnabled ? ['bkash', 'nagad', 'bank'] : [],
+      online: onlineProviders.map((provider) => provider.name),
     },
   });
 });
