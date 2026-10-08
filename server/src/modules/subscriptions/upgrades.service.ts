@@ -245,7 +245,7 @@ class UpgradeService {
     const request = await UpgradeRequestModel.findOneAndUpdate(
       { _id: id, status: 'pending' },
       { $set: { status: 'approved', reviewedBy: actor.id, reviewedByNameSnapshot: actor.name, reviewedAt: new Date(), reviewNote } },
-      { new: true },
+      { returnDocument: 'after' },
     );
     if (!request) {
       const existing = await UpgradeRequestModel.findById(id).select('status').lean();

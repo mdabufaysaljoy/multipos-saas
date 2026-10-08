@@ -182,7 +182,7 @@ class AuthService {
 
   /** Issues the session, landing in the last workspace used if still allowed. */
   private async completeLogin(userId: Types.ObjectId, meta: SessionMeta) {
-    const user = await UserModel.findOneAndUpdate({ _id: userId }, { $set: { lastLoginAt: new Date() } }, { new: true }).lean();
+    const user = await UserModel.findOneAndUpdate({ _id: userId }, { $set: { lastLoginAt: new Date() } }, { returnDocument: 'after' }).lean();
     if (!user) throw ApiError.unauthorized();
     const landing = await activeWorkspaceFor(user, user.lastActiveTenantId ?? null);
     const tokens = await this.issueTokens(user._id, landing, meta);

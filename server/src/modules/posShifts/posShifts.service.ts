@@ -99,7 +99,7 @@ class PosShiftsService {
           },
         },
       },
-      { new: true },
+      { returnDocument: 'after' },
     ).lean<ShiftRecord>();
     if (!updated) throw ApiError.conflict('This shift was closed');
     return this.present(ctx, updated);
@@ -119,7 +119,7 @@ class PosShiftsService {
           countedCashMinor: input.countedCashMinor,
         },
       },
-      { new: true },
+      { returnDocument: 'after' },
     ).lean<ShiftRecord>();
     if (!closed) {
       await this.find(ctx, id);
@@ -138,7 +138,7 @@ class PosShiftsService {
         report: null,
       },
       { $set: { expectedCashMinor: report.cash.expectedCashMinor, varianceMinor, report: frozen } },
-      { new: true },
+      { returnDocument: 'after' },
     ).lean<ShiftRecord>();
     return this.present(ctx, final ?? closed);
   }

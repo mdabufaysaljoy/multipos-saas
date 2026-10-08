@@ -60,7 +60,7 @@ class PaymentDeviceService {
     const device = await PaymentDeviceModel.findOneAndUpdate(
       { _id: id, status: 'active' },
       { $set: { tokenHash: hashToken(secret), rotatedAt: new Date() } },
-      { new: true },
+      { returnDocument: 'after' },
     ).lean<PaymentDeviceDoc & { _id: Types.ObjectId }>();
     if (!device) throw ApiError.notFound('Device not found, or it has been revoked');
     return { device: presentDevice(device), secret };
@@ -71,7 +71,7 @@ class PaymentDeviceService {
     const device = await PaymentDeviceModel.findOneAndUpdate(
       { _id: id, status: 'active' },
       { $set: { status: 'revoked', revokedAt: new Date(), revokedBy: actor.id, revokedReason: reason } },
-      { new: true },
+      { returnDocument: 'after' },
     ).lean<PaymentDeviceDoc & { _id: Types.ObjectId }>();
     if (!device) throw ApiError.notFound('Device not found, or it is already revoked');
     return presentDevice(device);

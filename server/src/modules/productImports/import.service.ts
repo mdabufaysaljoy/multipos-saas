@@ -271,7 +271,7 @@ class ProductImportService {
     return ProductImportJobModel.findOneAndUpdate(
       { _id: importId, ...this.scope(ctx), status: 'pending' },
       { $set: { status: 'cancelled', plan: [], expiresAt: null, completedAt: new Date() } },
-      { new: true },
+      { returnDocument: 'after' },
     );
   }
 

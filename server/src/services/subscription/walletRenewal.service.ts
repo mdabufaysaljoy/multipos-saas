@@ -319,7 +319,7 @@ async function runRenewal(subscription: RenewalCandidate, charger: RenewalCharge
   const claimed = await SubscriptionModel.findOneAndUpdate(
     { _id: subscription._id, cancelAtPeriodEnd: false, lastRenewalAttemptAt: last, ...(trigger === 'automatic' ? { autoRenew: true } : {}) },
     { $set: { lastRenewalAttemptAt: now } },
-    { new: true },
+    { returnDocument: 'after' },
   ).lean<SubscriptionRecord>();
   if (!claimed) return result('in_progress', 'Another renewal of this subscription is already in progress');
 

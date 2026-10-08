@@ -29,7 +29,7 @@ export const DocumentSequenceModel = model<DocumentSequenceDoc>('DocumentSequenc
 export async function nextDocumentSequence(key: string): Promise<number> {
   for (let attempt = 0; attempt < 3; attempt += 1) {
     try {
-      const doc = await DocumentSequenceModel.findOneAndUpdate({ key }, { $inc: { seq: 1 } }, { new: true, upsert: true, setDefaultsOnInsert: true }).lean();
+      const doc = await DocumentSequenceModel.findOneAndUpdate({ key }, { $inc: { seq: 1 } }, { returnDocument: 'after', upsert: true, setDefaultsOnInsert: true }).lean();
       return doc!.seq;
     } catch (error) {
       if ((error as { code?: number }).code !== 11000 || attempt === 2) throw error;

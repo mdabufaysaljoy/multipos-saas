@@ -270,7 +270,7 @@ export const setTenantStatus = asyncHandler(async (req: Request, res: Response) 
         suspendedReason: input.status === 'suspended' ? input.reason ?? '' : null,
       },
     },
-    { new: true },
+    { returnDocument: 'after' },
   ).lean();
 
   if (!tenant) throw ApiError.notFound('Tenant not found');
@@ -425,7 +425,7 @@ export const updateSettings = asyncHandler(async (req: Request, res: Response) =
   const updated = await PlatformSettingsModel.findOneAndUpdate(
     { key: 'platform' },
     { $set: flattened },
-    { new: true, upsert: true, setDefaultsOnInsert: true },
+    { returnDocument: 'after', upsert: true, setDefaultsOnInsert: true },
   ).lean();
   // Reload in-process so the new credentials are live immediately rather than
   // at the next restart.

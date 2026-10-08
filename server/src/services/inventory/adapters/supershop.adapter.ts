@@ -70,7 +70,7 @@ class SupershopInventoryAdapter implements InventoryAdapter<ShopStockDetail> {
     const updated = await ShopStockModel.findOneAndUpdate(
       { tenantId: ctx.tenantId, storeId: ctx.storeId, productId: request.itemId, quantityOnHand: { $gte: request.quantity } },
       { $inc: { quantityOnHand: -request.quantity } },
-      { new: true },
+      { returnDocument: 'after' },
     ).lean<StockRecord>();
     if (updated) {
       return {
@@ -124,7 +124,7 @@ class SupershopInventoryAdapter implements InventoryAdapter<ShopStockDetail> {
             // to explain the margin.
             $setOnInsert: { costPriceMinor: 0, lastReceivedAt: null },
           },
-          { new: true, upsert: true },
+          { returnDocument: 'after', upsert: true },
         ).lean<StockRecord>();
         if (sold) {
           return {
@@ -188,7 +188,7 @@ class SupershopInventoryAdapter implements InventoryAdapter<ShopStockDetail> {
       const stock = await ShopStockModel.findOneAndUpdate(
         { tenantId: ctx.tenantId, storeId: ctx.storeId, productId: entry.itemId },
         { $inc: { quantityOnHand: entry.quantity } },
-        { new: true },
+        { returnDocument: 'after' },
       ).lean<StockRecord>();
       if (!stock) continue;
       movements.push(

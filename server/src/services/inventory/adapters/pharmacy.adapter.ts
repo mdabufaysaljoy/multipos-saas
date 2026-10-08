@@ -99,7 +99,7 @@ class PharmacyInventoryAdapter implements InventoryAdapter<PharmacyStockDetail> 
       const updated = await MedicineBatchModel.findOneAndUpdate(
         { _id: batch._id, tenantId: ctx.tenantId, storeId: ctx.storeId, quantityOnHand: { $gte: take }, expiryDate: { $gte: today } },
         { $inc: { quantityOnHand: -take } },
-        { new: true },
+        { returnDocument: 'after' },
       ).lean<BatchRecord>();
       if (!updated) continue;
 
@@ -155,7 +155,7 @@ class PharmacyInventoryAdapter implements InventoryAdapter<PharmacyStockDetail> 
               receivedByNameSnapshot: 'System stock-out override',
             },
           },
-          { upsert: true, new: true, setDefaultsOnInsert: true },
+          { upsert: true, returnDocument: 'after', setDefaultsOnInsert: true },
         ).lean<BatchRecord>();
       }
 
@@ -164,7 +164,7 @@ class PharmacyInventoryAdapter implements InventoryAdapter<PharmacyStockDetail> 
         const updated = await MedicineBatchModel.findOneAndUpdate(
           { _id: batch._id, tenantId: ctx.tenantId, storeId: ctx.storeId, expiryDate: { $gte: today } },
           { $inc: { quantityOnHand: -shortage } },
-          { new: true },
+          { returnDocument: 'after' },
         ).lean<BatchRecord>();
         if (updated) {
           allocations.push({
@@ -239,7 +239,7 @@ class PharmacyInventoryAdapter implements InventoryAdapter<PharmacyStockDetail> 
         const batch = await MedicineBatchModel.findOneAndUpdate(
           { _id: allocation.batchId, tenantId: ctx.tenantId, storeId: ctx.storeId },
           { $inc: { quantityOnHand: allocation.quantity } },
-          { new: true },
+          { returnDocument: 'after' },
         ).lean<BatchRecord>();
         if (!batch) continue;
         rows.push(

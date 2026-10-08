@@ -267,7 +267,7 @@ class PosImportService {
     return ProductImportJobModel.findOneAndUpdate(
       { _id: importId, ...this.scope(ctx), vertical, status: 'pending' },
       { $set: { status: 'cancelled', plan: [], expiresAt: null, completedAt: new Date() } },
-      { new: true },
+      { returnDocument: 'after' },
     );
   }
 }

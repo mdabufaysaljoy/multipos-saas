@@ -198,7 +198,7 @@ class PharmacyService {
     const after = await MedicineModel.findOneAndUpdate(
       { _id: id, tenantId: ctx.tenantId, deletedAt: null },
       { $set: { ...editable, dosageForm, category, packQuantity, packPriceMinor } },
-      { new: true, runValidators: true },
+      { returnDocument: 'after', runValidators: true },
     ).lean<MedicineRecord>();
     if (!after) throw ApiError.notFound('Medicine not found');
     return { before, after };
@@ -236,7 +236,7 @@ class PharmacyService {
       MedicineBatchModel.findOneAndUpdate(
         { ...key, expiryDate },
         { $inc: { quantityReceived: input.quantity, quantityOnHand: input.quantity } },
-        { new: true },
+        { returnDocument: 'after' },
       ).lean<BatchRecord>();
 
     let batch = await addToExisting();
@@ -300,7 +300,7 @@ class PharmacyService {
     const updated = await MedicineBatchModel.findOneAndUpdate(
       { _id: id, tenantId: ctx.tenantId, storeId: ctx.storeId, ...(delta < 0 ? { quantityOnHand: { $gte: -delta } } : {}) },
       { $inc: { quantityOnHand: delta } },
-      { new: true },
+      { returnDocument: 'after' },
     ).lean<BatchRecord>();
     if (!updated) {
       const batch = await MedicineBatchModel.findOne({ _id: id, tenantId: ctx.tenantId, storeId: ctx.storeId }).lean();
@@ -637,7 +637,7 @@ class PharmacyService {
     const sale = await PharmacySaleModel.findOneAndUpdate(
       { _id: id, tenantId: ctx.tenantId, storeId: ctx.storeId, status: 'completed' },
       { $set: { status: 'voided', voidedAt: new Date(), voidedBy: ctx.userId, voidedByNameSnapshot: ctx.userName, voidReason: reason } },
-      { new: true },
+      { returnDocument: 'after' },
     ).lean();
     if (!sale) {
       await this.getSale(ctx, id);

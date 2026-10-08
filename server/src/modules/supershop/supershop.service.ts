@@ -223,7 +223,7 @@ class SupershopService {
       after = await ShopProductModel.findOneAndUpdate(
         { _id: id, tenantId: ctx.tenantId, deletedAt: null },
         { $set: input },
-        { new: true, runValidators: true },
+        { returnDocument: 'after', runValidators: true },
       ).lean<ProductRecord>();
     } catch (error) {
       if (isDuplicateKey(error)) throw ApiError.conflict('Another product already uses this barcode');
@@ -294,7 +294,7 @@ class SupershopService {
             },
           },
         ] as never,
-        { updatePipeline: true, upsert: true, new: true },
+        { updatePipeline: true, upsert: true, returnDocument: 'after' },
       ).lean<StockRecord>();
 
     let stock: StockRecord | null;
@@ -329,7 +329,7 @@ class SupershopService {
         ...(delta < 0 ? { quantityOnHand: { $gte: -delta } } : {}),
       },
       { $inc: { quantityOnHand: delta } },
-      { new: true },
+      { returnDocument: 'after' },
     ).lean<StockRecord>();
     if (!updated) {
       const stock = await ShopStockModel.findOne({
@@ -815,7 +815,7 @@ class SupershopService {
           voidReason: reason,
         },
       },
-      { new: true },
+      { returnDocument: 'after' },
     ).lean();
     if (!sale) {
       await this.getSale(ctx, id);

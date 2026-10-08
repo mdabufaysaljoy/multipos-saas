@@ -95,7 +95,7 @@ class CustomerService {
     const customer = await CustomerModel.findOneAndUpdate(
       { _id: id, ...this.scope(ctx) },
       { $set: input },
-      { new: true },
+      { returnDocument: 'after' },
     ).lean();
 
     if (!customer) throw ApiError.notFound('Customer not found');
@@ -107,7 +107,7 @@ class CustomerService {
     const customer = await CustomerModel.findOneAndUpdate(
       { _id: id, ...this.scope(ctx) },
       { $set: { deletedAt: new Date(), isActive: false } },
-      { new: true },
+      { returnDocument: 'after' },
     ).lean();
     if (!customer) throw ApiError.notFound('Customer not found');
     return { id, softDeleted: true };

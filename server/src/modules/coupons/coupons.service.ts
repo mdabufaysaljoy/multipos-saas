@@ -77,7 +77,7 @@ class CouponService {
         ...(coupon.usageLimit > 0 ? { usedCount: { $lt: coupon.usageLimit } } : {}),
       },
       { $inc: { usedCount: 1 } },
-      { new: true },
+      { returnDocument: 'after' },
     );
 
     if (!claimed) throw ApiError.conflict('This coupon has just reached its usage limit');
@@ -136,7 +136,7 @@ class CouponService {
     // usedCount is derived from redemptions and must never be set by hand.
     delete input.usedCount;
 
-    const coupon = await CouponModel.findByIdAndUpdate(id, { $set: input }, { new: true }).lean();
+    const coupon = await CouponModel.findByIdAndUpdate(id, { $set: input }, { returnDocument: 'after' }).lean();
     if (!coupon) throw ApiError.notFound('Coupon not found');
     return coupon;
   }

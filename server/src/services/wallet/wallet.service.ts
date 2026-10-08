@@ -182,7 +182,7 @@ class WalletService {
         };
         if (key) update.$push = { appliedOperationKeys: { $each: [key], $slice: -OPERATION_KEY_WINDOW } };
 
-        const before = await WalletModel.findOneAndUpdate(filter, update, { new: false, ...sessionOpt(session) }).lean();
+        const before = await WalletModel.findOneAndUpdate(filter, update, { returnDocument: 'before', ...sessionOpt(session) }).lean();
         if (!before) return null;
         const after = direction === 'in' ? before.balanceMinor + input.amountMinor : before.balanceMinor - input.amountMinor;
         return this.writeLedger(tenantId, { _id: wallet._id, accountId: before.accountId, currency: before.currency }, type, input, before.balanceMinor, after, (before.ledgerSequence ?? 0) + 1, session);
@@ -495,7 +495,7 @@ class WalletService {
     const before = await WalletModel.findOneAndUpdate(
       { _id: primaryId, appliedTransferIds: { $ne: transferId } },
       { $inc: { balanceMinor: amount, ledgerSequence: 1 }, $push: { appliedTransferIds: transferId } },
-      { new: false },
+      { returnDocument: 'before' },
     ).lean();
 
     const transferIn = {
@@ -557,7 +557,7 @@ class WalletService {
         wallet = await WalletModel.findOneAndUpdate(
           { tenantId, accountId: null, mergedIntoWalletId: null },
           { $set: { accountId } },
-          { new: true },
+          { returnDocument: 'after' },
         );
       } catch (error) {
         if (!isDuplicateKey(error)) throw error;
@@ -622,7 +622,7 @@ class WalletService {
 
   /** The next position in a wallet's ledger, claimed atomically. */
   private async nextSequence(walletId: Types.ObjectId): Promise<number> {
-    const updated = await WalletModel.findOneAndUpdate({ _id: walletId }, { $inc: { ledgerSequence: 1 } }, { new: true }).select('ledgerSequence').lean();
+    const updated = await WalletModel.findOneAndUpdate({ _id: walletId }, { $inc: { ledgerSequence: 1 } }, { returnDocument: 'after' }).select('ledgerSequence').lean();
     return updated?.ledgerSequence ?? 1;
   }
 

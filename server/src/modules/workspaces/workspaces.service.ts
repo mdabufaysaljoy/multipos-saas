@@ -150,7 +150,7 @@ class WorkspaceService {
     const updated = await TenantModel.findOneAndUpdate(
       { _id: workspace._id, accountId: workspace.accountId },
       { $set: set },
-      { new: true, runValidators: true },
+      { returnDocument: 'after', runValidators: true },
     ).lean<WorkspaceRecord>();
     if (!updated) throw ApiError.notFound('Workspace not found');
     return presentWorkspace(updated);
@@ -183,7 +183,7 @@ class WorkspaceService {
     const claimed = await AccountModel.findOneAndUpdate(
       { _id: accountId, trialUsedAt: null },
       { $set: { trialUsedAt: new Date() } },
-      { new: true },
+      { returnDocument: 'after' },
     ).lean();
     if (!claimed) return { started: false, reason: 'already_used' };
 

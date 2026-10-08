@@ -227,7 +227,7 @@ class SupplierService {
     const supplier = await SupplierModel.findOneAndUpdate(
       { _id: id, ...this.scope(ctx) },
       { $set: { deletedAt: new Date(), isActive: false, updatedBy: ctx.userId } },
-      { new: true },
+      { returnDocument: 'after' },
     )
       .select('code name')
       .lean();

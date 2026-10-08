@@ -175,7 +175,7 @@ class MenuAddOnService {
             deletedAt: null,
           },
         },
-        { upsert: true, new: true },
+        { upsert: true, returnDocument: 'after' },
       ).lean();
       if (created) known.set(slug, created._id);
     }

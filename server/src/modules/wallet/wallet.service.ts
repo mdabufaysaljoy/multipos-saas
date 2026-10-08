@@ -64,7 +64,7 @@ class TopUpService {
     const request = await TopUpRequestModel.findOneAndUpdate(
       { _id: id, tenantId: ctx.tenantId, status: 'pending' },
       { $set: { status: 'cancelled' } },
-      { new: true },
+      { returnDocument: 'after' },
     ).lean<TopUpRequestDoc & { _id: Types.ObjectId }>();
     if (!request) {
       const existing = await TopUpRequestModel.findOne({ _id: id, tenantId: ctx.tenantId }).select('status').lean();
@@ -116,7 +116,7 @@ class TopUpService {
     const request = await TopUpRequestModel.findOneAndUpdate(
       { _id: id, status: 'pending' },
       { $set: { status: 'approved', reviewedBy: actor.id, reviewedByNameSnapshot: actor.name, reviewedAt: new Date(), reviewNote } },
-      { new: true },
+      { returnDocument: 'after' },
     );
     if (!request) {
       const existing = await TopUpRequestModel.findById(id).select('status').lean();
@@ -156,7 +156,7 @@ class TopUpService {
     const request = await TopUpRequestModel.findOneAndUpdate(
       { _id: id, status: 'pending' },
       { $set: { status: 'rejected', reviewedBy: actor.id, reviewedByNameSnapshot: actor.name, reviewedAt: new Date(), reviewNote } },
-      { new: true },
+      { returnDocument: 'after' },
     ).lean();
     if (!request) {
       const existing = await TopUpRequestModel.findById(id).select('status').lean();

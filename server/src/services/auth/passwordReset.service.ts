@@ -280,7 +280,7 @@ class PasswordResetService {
     const spent = await PasswordResetCodeModel.findOneAndUpdate(
       { _id: payload.rid, email: payload.email, consumedAt: null, verifiedAt: { $ne: null }, expiresAt: { $gt: new Date() } },
       { $set: { consumedAt: new Date() } },
-      { new: true },
+      { returnDocument: 'after' },
     ).lean();
     if (!spent) throw expired;
 

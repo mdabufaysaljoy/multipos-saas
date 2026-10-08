@@ -86,7 +86,7 @@ async function deliver(key: string, meta: RowMeta, build: Build): Promise<Delive
   const claimed = await EmailNotificationModel.findOneAndUpdate(
     { key, status: { $in: ['pending', 'failed'] }, attempts: { $lt: MAX_ATTEMPTS }, $or: [{ claimedUntil: null }, { claimedUntil: { $lt: now } }] },
     { $set: { claimedUntil: new Date(now.getTime() + LEASE_MS), lastAttemptAt: now }, $inc: { attempts: 1 } },
-    { new: true },
+    { returnDocument: 'after' },
   ).lean<EmailNotificationDoc & { _id: Types.ObjectId }>();
 
   if (!claimed) {
@@ -322,7 +322,7 @@ export async function adminRetryEmail(id: Types.ObjectId) {
   const row = await EmailNotificationModel.findOneAndUpdate(
     { _id: id, status: { $in: ['failed', 'pending'] } },
     { $set: { attempts: 0, claimedUntil: null } },
-    { new: true },
+    { returnDocument: 'after' },
   ).lean();
   if (!row) return null;
   const outcome = await retryEmail(row);

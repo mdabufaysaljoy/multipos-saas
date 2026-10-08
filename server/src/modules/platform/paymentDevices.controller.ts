@@ -96,7 +96,7 @@ export const manuallyReject = asyncHandler(async (req: Request, res: Response) =
   const payment = await PaymentModel.findOneAndUpdate(
     { _id: id, status: PAYMENT_STATUS.PENDING },
     { $set: { status: PAYMENT_STATUS.FAILED, failureReason: reason, 'review.required': false, 'review.resolvedAt': new Date(), 'review.resolvedBy': req.auth!.id, 'review.resolutionNote': reason } },
-    { new: true },
+    { returnDocument: 'after' },
   ).lean();
   if (!payment) throw ApiError.badRequest('Only a pending payment can be rejected');
 

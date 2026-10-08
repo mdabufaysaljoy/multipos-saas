@@ -118,7 +118,7 @@ class UsageChargeService {
       const charged = await UsageChargeModel.findOneAndUpdate(
         { _id: chargeId, status: 'pending' },
         { $set: { status: 'charged', debitTransactionId: movement.transaction._id } },
-        { new: true },
+        { returnDocument: 'after' },
       ).lean();
       return charged ?? (await UsageChargeModel.findById(chargeId).lean())!;
     } catch (error) {
@@ -151,7 +151,7 @@ class UsageChargeService {
           refunds: { refundId, amountMinor, reason: reason.slice(0, 300), status: 'pending', walletTransactionId: null, createdAt: new Date() },
         },
       },
-      { new: true },
+      { returnDocument: 'after' },
     ).lean();
     if (!claimed) throw ApiError.conflict('This charge cannot be refunded by that amount');
 
@@ -277,7 +277,7 @@ class UsageChargeService {
     const claimed = await UsageChargeModel.findOneAndUpdate(
       { _id: chargeId, refunds: { $elemMatch: { refundId, status: 'pending' } } },
       { $set: { 'refunds.$.status': 'crediting' } },
-      { new: true },
+      { returnDocument: 'after' },
     ).lean();
 
     const charge = claimed ?? (recovering ? await UsageChargeModel.findById(chargeId).lean() : null);

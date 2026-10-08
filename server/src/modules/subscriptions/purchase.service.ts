@@ -107,7 +107,7 @@ class PurchaseService {
     const locked = await TenantModel.findOneAndUpdate(
       { _id: ctx.tenantId, $or: [{ purchaseLockedUntil: null }, { purchaseLockedUntil: { $exists: false } }, { purchaseLockedUntil: { $lt: now } }] },
       { $set: { purchaseLockedUntil: lockUntil } },
-      { new: true },
+      { returnDocument: 'after' },
     )
       .select('_id')
       .lean();

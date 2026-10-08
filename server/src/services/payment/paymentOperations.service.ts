@@ -215,7 +215,7 @@ class PaymentOperationsService {
           },
         },
       },
-      { new: true },
+      { returnDocument: 'after' },
     ).lean();
 
     if (!updated) {
@@ -248,7 +248,7 @@ class PaymentOperationsService {
           'review.resolutionNote': note,
         },
       },
-      { new: true },
+      { returnDocument: 'after' },
     ).lean();
     if (resolved) return resolved;
 
@@ -318,7 +318,7 @@ class PaymentOperationsService {
           },
         },
       },
-      { new: true },
+      { returnDocument: 'after' },
     ).lean();
     if (!claimed) throw ApiError.conflict('The subscription for this payment was already adjusted');
 
@@ -329,7 +329,7 @@ class PaymentOperationsService {
     const updated = await SubscriptionModel.findOneAndUpdate(
       { _id: subscription._id, status: { $nin: CLOSED_SUBSCRIPTION_STATUSES }, currentPeriodEnd: subscription.currentPeriodEnd },
       { $set: change },
-      { new: true },
+      { returnDocument: 'after' },
     ).lean();
     if (!updated) {
       await PaymentModel.updateOne({ _id: id, 'subscriptionAdjustment.at': now }, { $set: { subscriptionAdjustment: null } });

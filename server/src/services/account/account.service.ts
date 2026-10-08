@@ -32,7 +32,7 @@ export async function ensureAccountForOwner(
           status: 'active',
         },
       },
-      { upsert: true, new: true, session },
+      { upsert: true, returnDocument: 'after', session },
     )
       .select('_id')
       .lean();

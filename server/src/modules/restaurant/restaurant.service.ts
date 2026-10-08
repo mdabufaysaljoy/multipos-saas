@@ -197,7 +197,7 @@ class RestaurantService {
     const item = await MenuItemModel.findOneAndUpdate(
       { _id: id, tenantId: ctx.tenantId, deletedAt: null },
       { $set: { deletedAt: new Date(), isAvailable: false } },
-      { new: true },
+      { returnDocument: 'after' },
     ).lean();
     if (!item) throw ApiError.notFound('Menu item not found');
     return { id: item._id };
@@ -271,7 +271,7 @@ class RestaurantService {
     const table = await DiningTableModel.findOneAndUpdate(
       { _id: id, tenantId: ctx.tenantId, storeId: ctx.storeId, deletedAt: null },
       { $set: { deletedAt: new Date(), isActive: false } },
-      { new: true },
+      { returnDocument: 'after' },
     ).lean();
     if (!table) throw ApiError.notFound('Table not found');
     return { id: table._id };
@@ -500,7 +500,7 @@ class RestaurantService {
           },
         },
       ] as never,
-      { updatePipeline: true, new: true },
+      { updatePipeline: true, returnDocument: 'after' },
     ).lean();
     if (!updated) throw ApiError.conflict('The order changed or was already settled. Refresh and try again.');
     return updated;
@@ -637,7 +637,7 @@ class RestaurantService {
             : null,
         },
       },
-      { new: true },
+      { returnDocument: 'after' },
     ).lean();
     if (!paid) {
       if (loyalty && redeemed) await loyaltyService.reverseRedemption(ctx, loyalty.membership._id, input.redeemPoints, checkoutRef);
@@ -702,7 +702,7 @@ class RestaurantService {
           },
         },
       ] as never,
-      { updatePipeline: true, new: true },
+      { updatePipeline: true, returnDocument: 'after' },
     ).lean();
     if (cancelled) return cancelled;
     const order = await this.getOrder(ctx, id);
@@ -1047,7 +1047,7 @@ class RestaurantService {
     const updated = await RestaurantOrderModel.findOneAndUpdate(
       { _id: id, tenantId: ctx.tenantId, storeId: ctx.storeId, status: 'open', ...extraFilter },
       [...stages, ...recompute] as never,
-      { updatePipeline: true, new: true },
+      { updatePipeline: true, returnDocument: 'after' },
     ).lean();
     if (updated) return updated;
 

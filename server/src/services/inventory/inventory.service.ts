@@ -58,7 +58,7 @@ class InventoryService {
       throw ApiError.badRequest('Stock movement quantity must be a positive whole number');
     }
 
-    // `new: false` returns the pre-image, giving us previousStock for the ledger
+    // `returnDocument: 'before'` returns the pre-image, giving us previousStock for the ledger
     // without a second read that another writer could interleave with.
     const before = await ProductVariantModel.findOneAndUpdate(
       {
@@ -69,7 +69,7 @@ class InventoryService {
         stock: { $gte: quantity },
       },
       { $inc: { stock: -quantity } },
-      { new: false, ...sessionOpt(session) },
+      { returnDocument: 'before', ...sessionOpt(session) },
     )
       .select('_id productId stock name sku productNameSnapshot')
       .lean<LeanVariant>();
@@ -143,7 +143,7 @@ class InventoryService {
     const before = await ProductVariantModel.findOneAndUpdate(
       { _id: variantId, tenantId: ctx.tenantId, storeId: ctx.storeId, deletedAt: null, stock: { $lte: 0 } },
       { $inc: { stock: -quantity } },
-      { new: false },
+      { returnDocument: 'before' },
     )
       .select('_id productId stock name sku productNameSnapshot')
       .lean<LeanVariant>();
@@ -179,7 +179,7 @@ class InventoryService {
     const before = await ProductVariantModel.findOneAndUpdate(
       { _id: variantId, tenantId: ctx.tenantId, storeId: ctx.storeId },
       { $inc: { stock: quantity } },
-      { new: false, ...sessionOpt(session) },
+      { returnDocument: 'before', ...sessionOpt(session) },
     )
       .select('_id productId stock name sku productNameSnapshot')
       .lean<LeanVariant>();
@@ -276,7 +276,7 @@ class InventoryService {
     const updated = await ProductVariantModel.findOneAndUpdate(
       { _id: input.variantId, tenantId: ctx.tenantId, storeId: ctx.storeId, stock: current.stock },
       { $inc: { stock: delta } },
-      { new: false },
+      { returnDocument: 'before' },
     )
       .select('_id productId stock name sku productNameSnapshot')
       .lean<LeanVariant>();

@@ -293,7 +293,7 @@ export const update = asyncHandler(async (req: Request, res: Response) => {
   const account = await AccountModel.findOneAndUpdate(
     { _id: accountId, ownerUserId: req.auth!.id },
     { $set: input },
-    { new: true, runValidators: true },
+    { returnDocument: 'after', runValidators: true },
   ).lean<AccountRecord>();
   if (!account || !before) throw ApiError.notFound('Account not found');
 

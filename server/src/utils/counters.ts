@@ -16,7 +16,7 @@ export async function nextSequence(
   const doc = await CounterModel.findOneAndUpdate(
     { tenantId, storeId, key },
     { $inc: { seq: 1 } },
-    { new: true, upsert: true, setDefaultsOnInsert: true, ...sessionOpt(session) },
+    { returnDocument: 'after', upsert: true, setDefaultsOnInsert: true, ...sessionOpt(session) },
   ).lean();
 
   return doc!.seq;
@@ -31,7 +31,7 @@ export async function nextTenantSequence(tenantId: Types.ObjectId, key: string, 
   const doc = await CounterModel.findOneAndUpdate(
     { tenantId, storeId: null, key },
     { $inc: { seq: 1 } },
-    { new: true, upsert: true, setDefaultsOnInsert: true, ...sessionOpt(session) },
+    { returnDocument: 'after', upsert: true, setDefaultsOnInsert: true, ...sessionOpt(session) },
   ).lean();
 
   return doc!.seq;

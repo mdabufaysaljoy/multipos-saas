@@ -403,7 +403,7 @@ class LoyaltyService {
     if (type === 'redeem') totals.pointsRedeemedTotal = -points;
     if (type === 'redeem_reversed' || type === 'redeem_restored') totals.pointsRedeemedTotal = -points;
 
-    const before = await LoyaltyMembershipModel.findOneAndUpdate(filter, { $inc: totals }, { new: false })
+    const before = await LoyaltyMembershipModel.findOneAndUpdate(filter, { $inc: totals }, { returnDocument: 'before' })
       .select('pointsBalance customerId storeId')
       .lean();
     if (!before) return null;

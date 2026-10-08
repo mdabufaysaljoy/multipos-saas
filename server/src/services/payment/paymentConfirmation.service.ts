@@ -79,7 +79,7 @@ export async function applyProviderReport(
     const failed = await PaymentModel.findOneAndUpdate(
       { _id: payment._id, status: PAYMENT_STATUS.PENDING },
       { $set: { status, failureReason: reason, 'metadata.failedVia': source } },
-      { new: true },
+      { returnDocument: 'after' },
     ).lean();
     return failed
       ? { outcome: 'failed' as const, payment: failed as unknown as Record<string, unknown>, reason }
@@ -124,7 +124,7 @@ export async function applyProviderReport(
         ...(overpaidMinor > 0 ? { 'metadata.overpaidMinor': overpaidMinor, ...reviewFlag('Overpaid: refund the difference') } : {}),
       },
     },
-    { new: true },
+    { returnDocument: 'after' },
   ).lean();
   // Another report won the race; it owns the activation.
   if (!claimed) return { outcome: 'already_processed', payment: await reload() };
@@ -168,7 +168,7 @@ export async function resumeActivation(paymentId: Types.ObjectId) {
       $or: [{ activationClaimedAt: null }, { activationClaimedAt: { $lt: new Date(now.getTime() - ACTIVATION_LEASE_MS) } }],
     },
     { $set: { activationClaimedAt: now } },
-    { new: true },
+    { returnDocument: 'after' },
   ).lean();
   if (!claimed) return null;
 

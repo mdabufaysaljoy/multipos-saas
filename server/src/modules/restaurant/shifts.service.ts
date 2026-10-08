@@ -75,7 +75,7 @@ class ShiftService {
           },
         },
       },
-      { new: true },
+      { returnDocument: 'after' },
     ).lean<ShiftRecord>();
     if (!updated) throw ApiError.conflict('This shift was closed');
     return this.present(ctx, updated);
@@ -100,7 +100,7 @@ class ShiftService {
           countedCashMinor: input.countedCashMinor,
         },
       },
-      { new: true },
+      { returnDocument: 'after' },
     ).lean<ShiftRecord>();
     if (!closed) {
       await this.find(ctx, id);
@@ -117,7 +117,7 @@ class ShiftService {
     const final = await RestaurantShiftModel.findOneAndUpdate(
       { _id: id, tenantId: ctx.tenantId, storeId: ctx.storeId, status: 'closed', report: null },
       { $set: { expectedCashMinor: report.cash.expectedCashMinor, varianceMinor, report: frozen } },
-      { new: true },
+      { returnDocument: 'after' },
     ).lean<ShiftRecord>();
     return this.present(ctx, final ?? closed);
   }

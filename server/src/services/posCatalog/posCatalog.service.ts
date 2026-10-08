@@ -224,7 +224,7 @@ class PosCatalogService {
     if (input.configuration?.highlights !== undefined) set['configuration.highlights'] = input.configuration.highlights;
     if (Object.keys(set).length === 0) throw ApiError.badRequest('Nothing to update');
 
-    const after = await PosProductModel.findOneAndUpdate({ code }, { $set: set }, { new: true, runValidators: true }).lean<ProductRecord>();
+    const after = await PosProductModel.findOneAndUpdate({ code }, { $set: set }, { returnDocument: 'after', runValidators: true }).lean<ProductRecord>();
     if (!after) throw ApiError.notFound('POS type not found');
     const [workspaceCount, planCount] = await Promise.all([
       TenantModel.countDocuments(workspaceFilterFor(code)),

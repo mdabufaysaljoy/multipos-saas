@@ -317,7 +317,7 @@ class PricingService {
     await ensureRecently();
     const before = await CatalogPlanModel.findOne({ code }).lean<PlanRecord>();
     if (!before) throw ApiError.notFound('Unknown plan');
-    const after = await CatalogPlanModel.findOneAndUpdate({ code }, { $set: input }, { new: true, runValidators: true }).lean<PlanRecord>();
+    const after = await CatalogPlanModel.findOneAndUpdate({ code }, { $set: input }, { returnDocument: 'after', runValidators: true }).lean<PlanRecord>();
     if (!after) throw ApiError.notFound('Unknown plan');
     return { before, after };
   }
@@ -398,7 +398,7 @@ class PricingService {
   async setPriceActive(id: Types.ObjectId, active: boolean) {
     const before = await PlanPriceModel.findById(id).lean<PriceRecord>();
     if (!before) throw ApiError.notFound('Price not found');
-    const after = await PlanPriceModel.findByIdAndUpdate(id, { $set: { active } }, { new: true }).lean<PriceRecord>();
+    const after = await PlanPriceModel.findByIdAndUpdate(id, { $set: { active } }, { returnDocument: 'after' }).lean<PriceRecord>();
     if (!after) throw ApiError.notFound('Price not found');
     return { before, after };
   }

@@ -194,7 +194,7 @@ export const update = asyncHandler(async (req: Request, res: Response) => {
 
 export const deactivate = asyncHandler(async (req: Request, res: Response) => {
   const { id } = params<{ id: Types.ObjectId }>(req);
-  const plan = await SubscriptionPlanModel.findByIdAndUpdate(id, { $set: { isActive: false } }, { new: true }).lean();
+  const plan = await SubscriptionPlanModel.findByIdAndUpdate(id, { $set: { isActive: false } }, { returnDocument: 'after' }).lean();
   if (!plan) throw ApiError.notFound('Plan not found');
   await recordAudit(req, { action: 'plan.deactivated', targetLabel: plan.code, newValue: { isActive: false } });
   ok(res, plan);
