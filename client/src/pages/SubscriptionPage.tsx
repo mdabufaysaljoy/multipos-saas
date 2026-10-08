@@ -1,7 +1,6 @@
 import * as React from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { useSearchParams } from 'react-router-dom';
 import { format } from 'date-fns';
 import { AlertTriangle, Check, CreditCard, Info, Lock, Plus, RotateCcw, Sparkles } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
@@ -115,69 +114,6 @@ export function SubscriptionPage() {
 
   const pendingRequest = requests?.find((r) => r.status === 'pending') ?? null;
 
-  // Returning from a gateway's payment page.
-  //
-  // The query string is the BROWSER's account of what happened and decides
-  // nothing: when it names a payment, the server is asked to confirm that
-  // payment with the provider, and the provider's answer is what is shown and
-  // what activates the plan. Some gateways return the customer straight here
-  // rather than through our callback, so without this the plan would wait for
-  // a webhook that cannot reach a laptop at all.
-  const [searchParams, setSearchParams] = useSearchParams();
-  const handledReturn = React.useRef('');
-  React.useEffect(() => {
-    const result = searchParams.get('payment');
-    if (!result) return;
-    const ref = searchParams.get('ref');
-    const key = `${result}:${ref ?? ''}`;
-    if (handledReturn.current === key) return;
-    handledReturn.current = key;
-
-    const finish = () => {
-      void queryClient.invalidateQueries({ queryKey: ['subscription'] });
-      const next = new URLSearchParams(searchParams);
-      next.delete('payment');
-      next.delete('ref');
-      setSearchParams(next, { replace: true });
-    };
-
-    const report = (status: string) => {
-      if (status === 'paid') {
-        toast.success('Payment confirmed', { description: 'Your plan is active.' });
-        void refresh();
-      } else if (status === 'pending') {
-        toast.info('Payment not completed yet', {
-          description: 'If money left your account, it will be confirmed automatically once the provider reports it.',
-        });
-      } else {
-        toast.error('Payment was not accepted', {
-          description: 'Nothing was activated. If you were charged, contact support with your transaction ID.',
-        });
-      }
-    };
-
-    if (result === 'cancelled') {
-      toast.info('Payment cancelled', { description: 'Nothing was charged.' });
-      finish();
-      return;
-    }
-    if (!ref) {
-      // An older callback that confirmed the payment before redirecting.
-      report(result === 'success' ? 'paid' : result === 'pending' ? 'pending' : 'failed');
-      finish();
-      return;
-    }
-
-    void billingApi
-      .verifyPayment(ref)
-      .then((payment) => report(payment.status))
-      .catch(() =>
-        toast.info('We could not confirm the payment just now', {
-          description: 'If money left your account it will be confirmed automatically.',
-        }),
-      )
-      .finally(finish);
-  }, [searchParams, setSearchParams, queryClient, refresh]);
 
   const cancel = useMutation({
     mutationFn: () => billingApi.cancel({ immediate: false }),

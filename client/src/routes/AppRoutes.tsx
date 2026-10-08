@@ -84,6 +84,8 @@ const StaffPage = lazyPage(() => import('@/pages/StaffPage'), 'StaffPage');
 const RolesPage = lazyPage(() => import('@/pages/RolesPage'), 'RolesPage');
 const WalletPage = lazyPage(() => import('@/pages/WalletPage'), 'WalletPage');
 const SubscriptionPage = lazyPage(() => import('@/pages/SubscriptionPage'), 'SubscriptionPage');
+const PaymentResultPage = lazyPage(() => import('@/pages/PaymentResultPage'), 'PaymentResultPage');
+const PaymentCancelPage = lazyPage(() => import('@/pages/PaymentResultPage'), 'PaymentCancelPage');
 const BillingOverviewPage = lazyPage(() => import('@/pages/BillingOverviewPage'), 'BillingOverviewPage');
 const AccountDashboardPage = lazyPage(() => import('@/pages/AccountDashboardPage'), 'AccountDashboardPage');
 const InvoicePage = lazyPage(() => import('@/pages/InvoicePage'), 'InvoicePage');
@@ -567,6 +569,25 @@ export function AppRoutes() {
           element={
             <ProtectedRoute anyOf={['subscription.view']}>
               <SubscriptionPage />
+            </ProtectedRoute>
+          }
+        />
+        {/* Where a payment gateway returns the customer. Behind the session but
+            no particular permission: whoever just paid must be able to see what
+            happened, and the page itself only reports what the server confirms. */}
+        <Route
+          path="/payment/success"
+          element={
+            <ProtectedRoute>
+              <PaymentResultPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/payment/cancel"
+          element={
+            <ProtectedRoute>
+              <PaymentCancelPage />
             </ProtectedRoute>
           }
         />

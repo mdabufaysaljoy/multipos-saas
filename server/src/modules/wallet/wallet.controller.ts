@@ -13,7 +13,6 @@ import { ApiError } from '../../utils/ApiError';
 import { TenantModel } from '../../models/Tenant';
 import { PAYMENT_PURPOSES } from '../../config/constants';
 import { paymentIntentService } from '../../services/payment/paymentIntent.service';
-import { confirmWalletTopUp } from '../../services/payment/walletCheckout.service';
 import { usagePriceList } from '../../services/billing/usagePricing';
 
 export const balance = asyncHandler(async (req: Request, res: Response) => {
@@ -74,8 +73,8 @@ export const topUpReceipt = asyncHandler(async (req: Request, res: Response) => 
  * send the customer to.
  *
  * Nothing is credited here. The money arrives when the gateway confirms it -
- * through its webhook, or through `verifyOnlineTopUp` when the customer lands
- * back on the wallet page first.
+ * through its webhook, or when the customer lands back on the payment result
+ * page and it asks the server to confirm.
  *
  * The account is read from the workspace, never from the request: a caller
  * cannot top up somebody else's wallet by naming their account.
@@ -91,20 +90,4 @@ export const startOnlineTopUp = asyncHandler(async (req: Request, res: Response)
     { amountMinor: input.amountMinor, purpose: PAYMENT_PURPOSES.WALLET_TOPUP, provider: input.provider },
   );
   created(res, result);
-});
-
-/**
- * Confirms a gateway top-up by asking the GATEWAY, and credits the wallet if
- * it says the money arrived.
- *
- * The browser coming back from a checkout proves nothing, so the query string
- * it carries is ignored entirely: this takes a payment id, asks the provider
- * about it, and applies the same confirmation rules a webhook goes through. It
- * exists because a webhook can be slow, or unreachable during development, and
- * a customer should not have to wait for one to see their own money.
- */
-export const verifyOnlineTopUp = asyncHandler(async (req: Request, res: Response) => {
-  const ctx = getContext(req);
-  const { id } = params<{ id: Types.ObjectId }>(req);
-  ok(res, await confirmWalletTopUp(ctx.tenantId, id));
 });

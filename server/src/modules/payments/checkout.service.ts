@@ -18,16 +18,17 @@ const callbackUrlFor = (provider: string) => `${env.PUBLIC_BASE_URL.replace(/\/$
 const webhookUrlFor = (provider: string) => `${env.PUBLIC_BASE_URL.replace(/\/$/, '')}/api/payments/webhook/${provider}`;
 
 /**
- * Where a hosted gateway returns the customer when the caller named no page.
+ * Where a hosted gateway returns the customer.
  *
- * Always one of ours, carrying the payment so the page can ask the server what
- * really happened instead of believing the query string. A gateway that is
- * given no return URL at all may refuse to open a checkout, so this is not
- * optional in practice.
+ * The same two pages a wallet top-up uses, for the same reason: the gateway
+ * picks between a success and a cancel URL knowing nothing else, so the result
+ * has to be readable from the URL alone. The payment id travels with it so the
+ * page can ask the server what really happened rather than believing the query
+ * string. A gateway given no return URL may refuse to open a checkout at all,
+ * so this is not optional in practice.
  */
-const appPageFor = (result: string, paymentId: Types.ObjectId) => {
-  const url = new URL('/subscription', env.CLIENT_ORIGIN.split(',')[0].trim());
-  url.searchParams.set('payment', result);
+const appPageFor = (result: 'success' | 'cancel', paymentId: Types.ObjectId) => {
+  const url = new URL(`/payment/${result}`, env.CLIENT_ORIGIN.split(',')[0].trim());
   url.searchParams.set('ref', String(paymentId));
   return url.toString();
 };
@@ -132,7 +133,7 @@ export async function startCheckout(ctx: TenantContext, input: StartCheckoutInpu
       amountMinor: priced.payableMinor,
       currency: offer.currency,
       returnUrl: input.returnUrl ?? appPageFor('success', payment._id),
-      cancelUrl: input.cancelUrl ?? appPageFor('cancelled', payment._id),
+      cancelUrl: input.cancelUrl ?? appPageFor('cancel', payment._id),
       reference: String(payment._id),
       callbackUrl: callbackUrlFor(provider.name),
       webhookUrl: webhookUrlFor(provider.name),

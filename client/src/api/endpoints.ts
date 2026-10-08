@@ -356,6 +356,12 @@ export const billingApi = {
     post<{ paymentId: string; redirectUrl: string | null; status: string }>('/payments/checkout', body),
   /** Asks the server to confirm a payment with the provider. */
   verifyPayment: (paymentId: string) => post<{ _id: string; status: string }>('/payments/verify', { paymentId }),
+  /**
+   * Confirms a payment the customer has just come back from, whatever it was
+   * for, and says which so the page can offer the right way onward.
+   */
+  confirmPayment: (paymentId: string) =>
+    post<{ status: string | null; amountMinor: number | null; currency: string | null; purpose: string }>('/payments/confirm', { paymentId }),
   submitUpgrade: (body: Record<string, unknown>) => post<UpgradeRequest>('/subscriptions/upgrade-request', body),
   upgradeRequests: () => get<UpgradeRequest[]>('/subscriptions/upgrade-requests'),
   paymentInstructions: () =>
@@ -520,12 +526,6 @@ export const walletApi = {
     post<{ paymentId: string; redirectUrl: string | null; status: string; amountMinor: number; currency: string }>(
       '/wallet/top-ups/online',
       body,
-    ),
-  /** Asks the server to confirm a gateway top-up with the provider, and credit it if it is paid. */
-  verifyOnlineTopUp: (paymentId: string) =>
-    post<{ _id: string; status: string; amountMinor: number; currency: string }>(
-      `/wallet/top-ups/online/${encodeURIComponent(paymentId)}/verify`,
-      {},
     ),
   cancelTopUp: (id: string) => post<TopUp>(`/wallet/top-ups/${id}/cancel`),
 };

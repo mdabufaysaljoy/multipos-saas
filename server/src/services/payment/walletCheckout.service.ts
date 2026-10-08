@@ -20,20 +20,21 @@ import type { VerifyPaymentResult } from './PaymentProvider';
  * laptop - and someone who has just paid should see their money rather than a
  * pending notice.
  */
-export async function confirmWalletTopUp(tenantId: Types.ObjectId, paymentId: Types.ObjectId) {
+export async function confirmPayment(tenantId: Types.ObjectId, paymentId: Types.ObjectId, expectedPurpose?: string) {
   // Scoped to the workspace, so a payment id from elsewhere is indistinguishable from a missing one.
   const payment = await PaymentModel.findOne({ _id: paymentId, tenantId }).lean();
   if (!payment) throw ApiError.notFound('Payment not found');
-  if ((payment.metadata as { purpose?: string } | undefined)?.purpose !== PAYMENT_PURPOSES.WALLET_TOPUP) {
+  const purpose = (payment.metadata as { purpose?: string } | undefined)?.purpose ?? PAYMENT_PURPOSES.SUBSCRIPTION_PURCHASE;
+  if (expectedPurpose && purpose !== expectedPurpose) {
     throw ApiError.badRequest('This payment is not a wallet top-up');
   }
 
   if (payment.status === PAYMENT_STATUS.PAID) {
-    // A credit interrupted after the payment was confirmed finishes here.
+    // An activation interrupted after the payment was confirmed finishes here.
     await resumeActivation(payment._id);
-    return await PaymentModel.findById(payment._id).lean();
+    return { ...(await PaymentModel.findById(payment._id).lean()), purpose };
   }
-  if (payment.status !== PAYMENT_STATUS.PENDING) return payment;
+  if (payment.status !== PAYMENT_STATUS.PENDING) return { ...payment, purpose };
   if (!payment.providerTransactionId) throw ApiError.badRequest('This payment has no provider reference to verify');
 
   await paymentRegistry.refresh();
@@ -44,7 +45,7 @@ export async function confirmWalletTopUp(tenantId: Types.ObjectId, paymentId: Ty
       ? await provider.completePayment(payment.providerTransactionId)
       : await provider.verifyPayment(payment.providerTransactionId);
   } catch (error) {
-    logger.warn('Could not confirm a wallet top-up with the provider', {
+    logger.warn('Could not confirm a payment with the provider', {
       provider: payment.provider,
       error: error instanceof Error ? error.message : 'unknown',
     });
@@ -55,5 +56,5 @@ export async function confirmWalletTopUp(tenantId: Types.ObjectId, paymentId: Ty
   if (result.outcome === 'unverifiable') {
     throw ApiError.conflict('The provider did not confirm the amount, so the payment stays pending for review.');
   }
-  return result.payment;
+  return { ...(result.payment as Record<string, unknown>), purpose };
 }

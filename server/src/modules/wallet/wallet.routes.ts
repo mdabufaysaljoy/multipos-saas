@@ -26,11 +26,10 @@ router.get('/top-ups', requirePermission(PERMISSIONS.WALLET_VIEW), validate({ qu
 router.post('/top-ups', requirePermission(PERMISSIONS.WALLET_MANAGE), validate({ body: topUpRequestSchema }), controller.submitTopUp);
 router.post('/top-ups/:id/cancel', requirePermission(PERMISSIONS.WALLET_MANAGE), validate({ params: idParam }), controller.cancelTopUp);
 
-// Paying a gateway directly. Opening the checkout and confirming it are the
-// same permission as declaring a transfer - both end in money in this wallet -
-// and neither one credits anything on its own: only the provider's answer does.
+// Paying a gateway directly. Same permission as declaring a transfer, since
+// both end in money in this wallet, and it credits nothing on its own: only
+// the provider's answer does, through /payments/confirm or the webhook.
 router.post('/top-ups/online', requirePermission(PERMISSIONS.WALLET_MANAGE), validate({ body: walletHostedTopUpSchema }), controller.startOnlineTopUp);
-router.post('/top-ups/online/:id/verify', requirePermission(PERMISSIONS.WALLET_MANAGE), validate({ params: idParam }), controller.verifyOnlineTopUp);
 // The receipt for one of this workspace's own approved top-ups.
 router.get('/top-ups/:id/receipt', requirePermission(PERMISSIONS.WALLET_VIEW), validate({ params: idParam }), controller.topUpReceipt);
 

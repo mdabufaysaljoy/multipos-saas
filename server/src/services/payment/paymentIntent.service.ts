@@ -23,10 +23,17 @@ import { accountKey } from './sms/parsers';
  * account from platform settings. A request supplies none of them.
  */
 
-/** Where a hosted top-up returns the customer: the wallet, carrying the payment to confirm. */
-function walletReturnUrl(result: string, paymentId: Types.ObjectId) {
-  const url = new URL('/wallet', env.CLIENT_ORIGIN.split(',')[0].trim());
-  url.searchParams.set('payment', result);
+/**
+ * Where a hosted checkout returns the customer.
+ *
+ * Its own page, not the wallet or the subscription screen: the gateway decides
+ * between these two URLs and nothing else, so the result has to be legible
+ * before anything is known about the payment. It carries the payment id, which
+ * is the only thing the page reads - what actually happened comes from asking
+ * the server.
+ */
+function paymentReturnUrl(result: 'success' | 'cancel', paymentId: Types.ObjectId) {
+  const url = new URL(`/payment/${result}`, env.CLIENT_ORIGIN.split(',')[0].trim());
   url.searchParams.set('ref', String(paymentId));
   return url.toString();
 }
@@ -176,8 +183,9 @@ class PaymentIntentService {
         reference: String(payment._id),
         // Both carry the payment, so the wallet page can ask the server what
         // happened rather than believing the query string it came back with.
-        returnUrl: walletReturnUrl('success', payment._id),
-        cancelUrl: walletReturnUrl('cancelled', payment._id),
+        returnUrl: paymentReturnUrl('success', payment._id),
+        // Also where a failed payment lands: the gateway has only these two.
+        cancelUrl: paymentReturnUrl('cancel', payment._id),
         callbackUrl: `${env.PUBLIC_BASE_URL.replace(/\/$/, '')}/api/payments/callback/${provider.name}`,
         webhookUrl: `${env.PUBLIC_BASE_URL.replace(/\/$/, '')}/api/payments/webhook/${provider.name}`,
         metadata: { customerName: actor.userName, customerEmail: actor.email ?? '' },

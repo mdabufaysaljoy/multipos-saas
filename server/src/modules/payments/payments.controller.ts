@@ -1,6 +1,7 @@
 import type { Request, Response } from 'express';
 import { Types } from 'mongoose';
 import { PAYMENT_PURPOSES, PAYMENT_STATUS } from '../../config/constants';
+import { PERMISSIONS } from '../../config/permissions';
 import { env } from '../../config/env';
 import { PaymentModel, type PaymentDoc } from '../../models/Payment';
 import { ApiError } from '../../utils/ApiError';
@@ -13,6 +14,7 @@ import { getContext } from '../../middleware/tenant';
 import { paymentRegistry } from '../../services/payment/registry';
 import type { PaymentProvider, VerifyPaymentResult } from '../../services/payment/PaymentProvider';
 import { applyProviderReport, resumeActivation } from '../../services/payment/paymentConfirmation.service';
+import { confirmPayment } from '../../services/payment/walletCheckout.service';
 import { startCheckout } from './checkout.service';
 import type { CheckoutInput } from '../subscriptions/subscriptions.validators';
 import type { ListSubscriptionsInput } from '../subscriptions/subscriptions.validators';
@@ -99,16 +101,54 @@ export const verify = asyncHandler(async (req: Request, res: Response) => {
 });
 
 /**
+ * Confirms a payment the customer has just come back from, whatever it was for.
+ *
+ * One endpoint for both flows, because the page the gateway returns to is the
+ * same page for both and should not have to guess which kind of payment it is
+ * looking at. The answer says what the payment was for, so the page can offer
+ * the right way onward.
+ *
+ * Permission follows the purpose: topping up the wallet is a wallet action,
+ * buying a plan is a subscription one. Nothing is trusted from the request
+ * beyond the payment id, and that id is scoped to the caller's workspace.
+ */
+export const confirm = asyncHandler(async (req: Request, res: Response) => {
+  const ctx = getContext(req);
+  const { paymentId } = body<{ paymentId: Types.ObjectId }>(req);
+
+  const known = await PaymentModel.findOne({ _id: paymentId, tenantId: ctx.tenantId }).select('metadata').lean();
+  if (!known) throw ApiError.notFound('Payment not found');
+  const purpose = (known.metadata as { purpose?: string } | undefined)?.purpose ?? PAYMENT_PURPOSES.SUBSCRIPTION_PURCHASE;
+  const needed = purpose === PAYMENT_PURPOSES.WALLET_TOPUP ? PERMISSIONS.WALLET_MANAGE : PERMISSIONS.SUBSCRIPTION_MANAGE;
+  if (!ctx.can(needed)) throw ApiError.forbidden(`Confirming this payment needs the "${needed}" permission`);
+
+  const payment = (await confirmPayment(ctx.tenantId, paymentId)) as {
+    status?: string;
+    amountMinor?: number;
+    currency?: string;
+    purpose?: string;
+  };
+  ok(res, {
+    status: payment.status ?? null,
+    amountMinor: payment.amountMinor ?? null,
+    currency: payment.currency ?? null,
+    purpose: payment.purpose ?? purpose,
+  });
+});
+
+/**
  * The single place the callback may send the browser: a page of this app.
  *
  * Always built from our own origin, never from anything the provider sends, so
  * a callback cannot be used to bounce somebody to another site. Which page
  * depends on what was being paid for - a wallet top-up belongs on the wallet.
  */
-const appReturnUrl = (result: 'success' | 'pending' | 'failed', paymentId?: Types.ObjectId, purpose?: string) => {
+const appReturnUrl = (result: 'success' | 'pending' | 'failed', paymentId?: Types.ObjectId) => {
   const origin = env.CLIENT_ORIGIN.split(',')[0].trim();
-  const url = new URL(purpose === PAYMENT_PURPOSES.WALLET_TOPUP ? '/wallet' : '/subscription', origin);
-  url.searchParams.set('payment', result);
+  // The same two pages a gateway redirect uses, so a payment ends in one place
+  // however the customer got back. Only a confirmed payment is a success.
+  const url = new URL(result === 'success' ? '/payment/success' : '/payment/cancel', origin);
+  if (result !== 'success') url.searchParams.set('outcome', result);
   if (paymentId) url.searchParams.set('ref', String(paymentId));
   return url.toString();
 };
@@ -135,22 +175,21 @@ export const callback = asyncHandler(async (req: Request, res: Response) => {
   }
   if (!paymentID || !provider.isConfigured()) return res.redirect(303, appReturnUrl('failed'));
 
-  const payment = await PaymentModel.findOne({ provider: provider.name, providerTransactionId: paymentID }).select('_id metadata').lean();
+  const payment = await PaymentModel.findOne({ provider: provider.name, providerTransactionId: paymentID }).select('_id').lean();
   if (!payment) return res.redirect(303, appReturnUrl('failed'));
-  const purpose = (payment.metadata as { purpose?: string } | undefined)?.purpose;
 
   let report: VerifyPaymentResult;
   try {
     report = req.query.status === 'success' ? await askProvider(provider, paymentID) : await provider.verifyPayment(paymentID);
   } catch (error) {
     logger.warn('Could not confirm a payment on return from the provider', { provider: provider.name, error: error instanceof Error ? error.message : 'unknown' });
-    return res.redirect(303, appReturnUrl('pending', payment._id, purpose));
+    return res.redirect(303, appReturnUrl('pending', payment._id));
   }
 
   const outcome = await applyProviderReport(payment._id, report, 'callback');
   const status = (outcome.payment as { status?: string }).status;
   const result = status === PAYMENT_STATUS.PAID ? 'success' : status === PAYMENT_STATUS.PENDING ? 'pending' : 'failed';
-  return res.redirect(303, appReturnUrl(result, payment._id, purpose));
+  return res.redirect(303, appReturnUrl(result, payment._id));
 });
 
 /** Deliberately identical for every rejected delivery, so a prober learns nothing. */

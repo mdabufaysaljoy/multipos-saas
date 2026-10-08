@@ -5674,7 +5674,11 @@ async function main() {
       let origin = null;
       try {
         const url = new URL(location);
-        result = url.searchParams.get('payment');
+        // Every return lands on one of two pages, because that is all a gateway
+        // can choose between. A confirmed payment goes to /payment/success;
+        // anything else goes to /payment/cancel, which says what happened in
+        // `outcome` (absent when the customer simply cancelled).
+        result = url.pathname === '/payment/success' ? 'success' : (url.searchParams.get('outcome') ?? 'cancelled');
         origin = url.origin;
       } catch {
         // No usable redirect.

@@ -29,7 +29,9 @@ export function ProtectedRoute({ children, anyOf, platformAdmin, accountOwner }:
   if (loading) return <LoadingState label="Checking your session…" />;
 
   if (!session) {
-    return <Navigate to="/login" replace state={{ from: location.pathname }} />;
+    // The query string comes too: on a payment result page the reference in it
+    // is the whole content of the page, and losing it loses the result.
+    return <Navigate to="/login" replace state={{ from: `${location.pathname}${location.search}` }} />;
   }
 
   if (platformAdmin && !isPlatformAdmin) {

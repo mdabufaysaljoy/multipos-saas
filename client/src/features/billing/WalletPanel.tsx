@@ -1,5 +1,5 @@
 import { TopUpDialog } from './TopUpDialog';
-import { Link, useSearchParams } from 'react-router-dom';
+import { Link } from 'react-router-dom';
 import * as React from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { format } from 'date-fns';
@@ -12,8 +12,6 @@ import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { PermissionGate } from '@/components/PermissionGate';
 import { LoadingState } from '@/components/states';
-import { toast } from 'sonner';
-import { ApiError } from '@/api/client';
 import { billingApi, walletApi } from '@/api/endpoints';
 import { formatMoney } from '@/lib/money';
 import { cn } from '@/lib/utils';
@@ -32,77 +30,6 @@ const CHARGE_STATUS: Record<string, { label: string; variant: 'success' | 'warni
   failed: { label: 'Not charged', variant: 'destructive' },
   pending: { label: 'Processing', variant: 'secondary' },
 };
-
-/**
- * Finishing a gateway top-up after the provider sends the customer back.
- *
- * The query string is the BROWSER's account of what happened and is never
- * believed: `payment=success` only decides whether to ask, and `ref` only says
- * which payment to ask about. The server confirms it with the provider and
- * credits the wallet - or does not. A forged return can therefore do nothing
- * except make the server ask a question it already knows the answer to.
- *
- * It runs because a webhook can be slow, and cannot reach a laptop at all;
- * somebody who has just paid should see their money rather than a pending
- * notice. The parameters are cleared afterwards so a reload does not re-ask.
- */
-function useReturnFromGateway() {
-  const queryClient = useQueryClient();
-  const [params, setParams] = useSearchParams();
-  const result = params.get('payment');
-  const ref = params.get('ref');
-  // One attempt per return, even though React may run effects twice in development.
-  const handled = React.useRef('');
-
-  React.useEffect(() => {
-    if (!result) return;
-    const key = `${result}:${ref ?? ''}`;
-    if (handled.current === key) return;
-    handled.current = key;
-
-    const clear = () => {
-      const next = new URLSearchParams(params);
-      next.delete('payment');
-      next.delete('ref');
-      setParams(next, { replace: true });
-    };
-
-    if (result === 'cancelled') {
-      toast.info('Payment cancelled', { description: 'Nothing was charged.' });
-      clear();
-      return;
-    }
-    if (!ref) {
-      clear();
-      return;
-    }
-
-    void walletApi
-      .verifyOnlineTopUp(ref)
-      .then((payment) => {
-        if (payment.status === 'paid') {
-          toast.success('Payment confirmed', { description: `${formatMoney(payment.amountMinor, payment.currency)} added to your wallet.` });
-        } else if (payment.status === 'pending') {
-          toast.info('Payment is still being confirmed', { description: 'Your balance updates as soon as the provider confirms it.' });
-        } else {
-          toast.error('The payment did not go through', { description: 'Nothing was added to your wallet.' });
-        }
-      })
-      .catch((error) => {
-        // Not a failed payment: we could not ask. The webhook still settles it.
-        toast.info(error instanceof ApiError ? error.message : 'We could not confirm the payment just now.', {
-          description: 'Your balance updates automatically once it is confirmed.',
-        });
-      })
-      .finally(() => {
-        void queryClient.invalidateQueries({ queryKey: ['wallet'] });
-        clear();
-      });
-    // `params`/`setParams` are intentionally left out: this reacts to a return
-    // from the gateway, not to every URL change.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [result, ref, queryClient]);
-}
 
 /**
  * Billed use of paid services. The unit price shown is the one frozen on each
@@ -232,8 +159,6 @@ export function WalletPanel() {
   const { data: payInfo } = useQuery({ queryKey: ['payment-instructions'], queryFn: billingApi.paymentInstructions });
   // Which gateways this deployment can actually accept, decided by the server.
   const { data: providers } = useQuery({ queryKey: ['payment-providers'], queryFn: billingApi.providers });
-
-  useReturnFromGateway();
 
   const pending = topUps?.items.filter((t) => t.status === 'pending') ?? [];
 

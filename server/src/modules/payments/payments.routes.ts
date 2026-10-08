@@ -52,6 +52,10 @@ router.post(
   validate({ body: checkoutSchema }),
   controller.checkout,
 );
+// Confirming a payment the customer has just returned from. Which permission
+// is needed depends on what the payment was for, so it is checked in the
+// controller rather than declared here.
+router.post('/confirm', validate({ body: z.object({ paymentId: objectId }).strict() }), controller.confirm);
 router.post(
   '/verify',
   requirePermission(PERMISSIONS.SUBSCRIPTION_MANAGE),
