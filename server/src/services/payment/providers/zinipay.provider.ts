@@ -14,26 +14,28 @@ import type {
 /**
  * ZiniPay hosted checkout.
  *
- * Implemented against ZiniPay's published API only:
+ * Implemented against ZiniPay's published API and Postman collection:
  *   POST {base}/v1/payment/create  { cus_name, cus_email, amount, metadata,
- *                                    redirect_url, cancel_url, val_id,
- *                                    webhook_url }
- *                                 -> { status, message, payment_url, val_id }
+ *                                    redirect_url, cancel_url, webhook_url }
+ *                                 -> { status, message, payment_url }
  *   POST {base}/v1/payment/verify  { invoice_id }
- *                                 -> { invoice_id, val_id, amount,
- *                                      payment_method, transaction_id,
+ *                                 -> { cus_name, cus_email, amount,
+ *                                      invoice_id, payment_method,
+ *                                      transaction_id,
  *                                      status: PENDING|COMPLETED|FAILED }
- *   webhook: { invoice_id, status, val_id } as a JSON body OR query string.
+ *   webhook: { invoice_id, status }
+ *
+ * THE INVOICE ID COMES OUT OF THE PAYMENT URL. Create returns no id field,
+ * and neither verify nor the webhook echoes the metadata we sent, so the last
+ * segment of `payment_url` is the ONLY thing that ties an invoice to one of
+ * our payments. It is captured at create time and stored as the provider
+ * transaction id; ZiniPay's own Postman tests extract it the same way.
  *
  * THE WEBHOOK IS NOT PROOF. It carries no signature and no shared secret -
  * anyone who learns the URL can post `status=true` to it. So it is treated as
  * what it is, a nudge saying "this invoice moved", and the money is confirmed
  * by calling verify. That is also ZiniPay's own documented merchant flow:
  * receive callback, then verify. `refetch: true` is how this codebase says it.
- *
- * `val_id` is OUR payment id. ZiniPay echoes it back on both the verify
- * response and the webhook, which is what lets an unsigned notification name a
- * payment without being believed about its state.
  */
 export interface ZiniPayConfig {
   apiKey: string;
@@ -47,7 +49,6 @@ interface ZiniPayPayload {
   message?: unknown;
   payment_url?: unknown;
   invoice_id?: unknown;
-  val_id?: unknown;
   amount?: unknown;
   cus_name?: unknown;
   cus_email?: unknown;
@@ -65,6 +66,19 @@ const unverifiedWebhook: WebhookResult = {
 };
 
 const text = (value: unknown): string => (typeof value === 'string' ? value.trim() : '');
+
+/**
+ * The invoice id, read off the hosted payment URL.
+ *
+ * `https://secure.zinipay.com/payment/INVOICE_ID` -> `INVOICE_ID`. ZiniPay's
+ * own Postman collection extracts it exactly this way, because the create
+ * response does not return it as a field and nothing else ever will.
+ */
+function invoiceIdFrom(paymentUrl: string): string {
+  const withoutQuery = paymentUrl.split(/[?#]/)[0].replace(/\/+$/, '');
+  const last = withoutQuery.split('/').pop() ?? '';
+  return last.trim();
+}
 
 /** ZiniPay reports money as a number or a decimal string ("1200", "1200.50"). */
 function toMinor(value: unknown): number | null {
@@ -137,7 +151,6 @@ export class ZiniPayProvider implements PaymentProvider {
 
   async initiatePayment(input: InitiatePaymentInput): Promise<InitiatePaymentResult> {
     const reference = input.reference ?? '';
-    if (!reference) throw new Error('ZiniPay needs our own payment id as val_id to correlate the result');
 
     const payload = await this.call('/v1/payment/create', {
       cus_name: text(input.metadata?.customerName) || 'Customer',
@@ -145,10 +158,9 @@ export class ZiniPayProvider implements PaymentProvider {
       // ZiniPay takes a decimal amount; money is held here in minor units and
       // only ever converted at the boundary.
       amount: minorToDecimalString(input.amountMinor),
-      // Our id travels twice: as val_id, which ZiniPay echoes on verify and
-      // webhook, and in metadata for a human reading their dashboard. Their
-      // metadata cap is 1 KB, so it stays small.
-      val_id: reference,
+      // Our own id, so a human reading their dashboard can find the payment
+      // this invoice belongs to. Their cap is 1 KB, so it stays small. It is
+      // NOT a correlation key - verify and the webhook do not echo metadata.
       metadata: { payment_id: reference },
       redirect_url: input.returnUrl ?? '',
       cancel_url: input.cancelUrl ?? '',
@@ -158,11 +170,21 @@ export class ZiniPayProvider implements PaymentProvider {
     const paymentUrl = text(payload.payment_url);
     if (!paymentUrl) throw new Error(text(payload.message) || 'ZiniPay did not return a payment URL');
 
+    // THE INVOICE ID IS THE LAST SEGMENT OF THE PAYMENT URL.
+    //
+    // Nothing else returns it: the create response is only status, message and
+    // payment_url, and neither verify nor the webhook echoes our metadata
+    // back. So the id is read off the URL here - exactly what ZiniPay's own
+    // Postman collection does in its Create Invoice test - and stored as the
+    // provider transaction id. It is then the single key that ties the
+    // webhook, the verify call and this payment together.
+    const invoiceId = invoiceIdFrom(paymentUrl);
+    if (!invoiceId) {
+      throw new Error('ZiniPay returned a payment URL with no invoice id in it');
+    }
+
     return {
-      // The invoice id only exists once the customer reaches the hosted page,
-      // so our own id is the correlation key until the callback or webhook
-      // hands back the real one.
-      providerTransactionId: text(payload.val_id) || reference,
+      providerTransactionId: invoiceId,
       redirectUrl: paymentUrl,
       status: 'pending',
       raw: payload as Record<string, unknown>,
@@ -173,9 +195,8 @@ export class ZiniPayProvider implements PaymentProvider {
    * Asks ZiniPay what really happened. This is the only thing that can mark a
    * payment paid.
    *
-   * `invoice_id` is what the endpoint documents, and ZiniPay accepts our
-   * `val_id` there too - which matters, because between creating the invoice
-   * and the customer finishing we only hold our own id.
+   * The id is the one captured from the payment URL at create time, which is
+   * the only identifier the gateway ever gives us for an invoice.
    */
   async verifyPayment(invoiceId: string): Promise<VerifyPaymentResult> {
     const payload = await this.call('/v1/payment/verify', { invoice_id: invoiceId });
@@ -183,7 +204,7 @@ export class ZiniPayProvider implements PaymentProvider {
     const status = reported === 'COMPLETED' ? 'paid' : reported === 'PENDING' ? 'pending' : 'failed';
 
     return {
-      providerTransactionId: text(payload.invoice_id) || text(payload.val_id) || invoiceId,
+      providerTransactionId: text(payload.invoice_id) || invoiceId,
       status,
       // Only a COMPLETED payment reports money. A pending or failed one
       // activates nothing, so it must not carry an amount that could be
@@ -214,21 +235,21 @@ export class ZiniPayProvider implements PaymentProvider {
   async handleWebhook(request: WebhookRequest): Promise<WebhookResult> {
     if (!this.isConfigured()) return unverifiedWebhook;
 
-    // Documented as a JSON body OR a query string, so both are read.
+    // Documented as a JSON body; some callbacks arrive as a query string, so
+    // both are read. The only field that identifies the payment is
+    // `invoice_id`, which is why it is captured at create time.
     const body = (request.parsedBody ?? {}) as ZiniPayPayload;
     const query = (request.query ?? {}) as ZiniPayPayload;
     const invoiceId = text(body.invoice_id) || text(query.invoice_id);
-    const valId = text(body.val_id) || text(query.val_id);
 
-    if (!invoiceId && !valId) {
-      logger.warn('Rejected a ZiniPay webhook that named no payment');
+    if (!invoiceId) {
+      logger.warn('Rejected a ZiniPay webhook that named no invoice');
       return unverifiedWebhook;
     }
 
     return {
       verified: true,
-      providerTransactionId: invoiceId || null,
-      reference: valId || null,
+      providerTransactionId: invoiceId,
       // The whole point: nothing in the body is believed. Ask the API.
       refetch: true,
       status: null,

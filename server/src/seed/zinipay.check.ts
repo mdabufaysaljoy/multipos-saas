@@ -54,8 +54,9 @@ function startStub(): Promise<{ server: Server; baseUrl: string }> {
             JSON.stringify({
               status: true,
               message: 'Invoice created successfully.',
+              // No id field: the invoice id is the last segment of the URL,
+              // which is the only place ZiniPay ever puts it.
               payment_url: 'https://secure.zinipay.com/payment/INVOICE_1',
-              val_id: body.val_id,
             }),
           );
           return;
@@ -67,7 +68,6 @@ function startStub(): Promise<{ server: Server; baseUrl: string }> {
               cus_email: 'john@example.com',
               amount: 1200,
               invoice_id: 'INVOICE_1',
-              val_id: body.invoice_id,
               payment_method: 'bkash',
               transaction_id: 'TXN123456789',
               status: verifyStatus,
@@ -117,10 +117,13 @@ async function main() {
   check('Creating an invoice hits the documented endpoint', Boolean(createCall));
   check('...authenticated by the zini-api-key header', createCall.apiKey === 'TEST_KEY', createCall.apiKey);
   check('...sending the amount as a decimal, not minor units', createCall.body.amount === '1200.00', createCall.body.amount);
-  check('...carrying our payment id as val_id, which ZiniPay echoes back', createCall.body.val_id === ourPaymentId, createCall.body.val_id);
+  check('...carrying our payment id in metadata, for a human reading their dashboard', (createCall.body.metadata as Record<string, unknown>)?.payment_id === ourPaymentId, createCall.body.metadata);
+  check('...and sending no val_id, which this API does not have', createCall.body.val_id === undefined);
   check('...and the customer it was opened for', createCall.body.cus_name === 'Abu Faysal' && createCall.body.cus_email === 'abu@example.com', createCall.body);
   check('...with the redirect, cancel and webhook URLs', Boolean(createCall.body.redirect_url && createCall.body.cancel_url && createCall.body.webhook_url));
   check('The customer is sent to the hosted page', started.redirectUrl === 'https://secure.zinipay.com/payment/INVOICE_1', started.redirectUrl);
+  // The only identifier the gateway gives us, and it is in the URL.
+  check('The invoice id is read off the payment URL', started.providerTransactionId === 'INVOICE_1', started.providerTransactionId);
   check('...and nothing is paid yet', started.status === 'pending', started.status);
 
   // The key must never travel in a URL, where it lands in access logs.
@@ -131,9 +134,9 @@ async function main() {
   const forged = await provider.handleWebhook({
     headers: {},
     rawBody: '',
-    parsedBody: { invoice_id: 'INVOICE_1', status: 'true', val_id: ourPaymentId },
+    parsedBody: { invoice_id: 'INVOICE_1', status: 'true' },
   });
-  check('A webhook names the payment it is about', forged.providerTransactionId === 'INVOICE_1' && forged.reference === ourPaymentId, forged);
+  check('A webhook names the invoice it is about', forged.providerTransactionId === 'INVOICE_1', forged);
   check('...and asks for a re-check rather than being believed', forged.refetch === true);
   check('...reporting NO status, however loudly it claims one', forged.status === null, forged.status);
   check('...no amount', forged.amountMinor === null);
@@ -144,7 +147,7 @@ async function main() {
     headers: {},
     rawBody: '',
     parsedBody: {},
-    query: { invoice_id: 'INVOICE_1', status: 'true', val_id: ourPaymentId },
+    query: { invoice_id: 'INVOICE_1', status: 'true' },
   });
   check('A query-string callback is understood as well', viaQuery.verified && viaQuery.providerTransactionId === 'INVOICE_1', viaQuery);
 

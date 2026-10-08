@@ -47,6 +47,11 @@ class PurchaseService {
     const priced = await breakdownFor(ctx.tenantId, sku, kind, input.couponCode);
     const { offer, coupon, payableMinor, proration } = priced;
 
+    // Credentials and the on/off switches live in settings, so the ways of
+    // paying are read now rather than taken from whatever was loaded at boot.
+    const { manualEnabled } = await paymentRegistry.refresh();
+    const onlineProviders = paymentRegistry.listAvailable().map((provider) => provider.name);
+
     return {
       plan: { code: input.plan, name: sku.name, tier: sku.tier },
       billingCycle: offer.billingCycle,
@@ -75,9 +80,12 @@ class PurchaseService {
       transition: { kind, currentPlanCode: currentPlan?.code ?? null },
       paymentMethods: {
         wallet: true,
-        // A provider cannot take a zero payment.
-        online: payableMinor > 0 ? (await paymentRegistry.listAvailableAsync()).map((provider) => provider.name) : [],
-        manual: payableMinor > 0 ? ['bkash', 'nagad', 'bank'] : [],
+        // A provider cannot take a zero payment. `listAvailableAsync` reloads
+        // settings first, so a gateway the platform admin has switched off is
+        // not offered here either.
+        online: payableMinor > 0 ? onlineProviders.filter((name) => name !== 'manual') : [],
+        // Hand-confirmed transfers, when the platform still offers them.
+        manual: payableMinor > 0 && manualEnabled ? ['bkash', 'nagad', 'bank'] : [],
       },
     };
   }
