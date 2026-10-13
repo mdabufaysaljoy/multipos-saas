@@ -55,7 +55,8 @@ export const supershopApi = {
   stockLedger: (params?: Query) => getPaginated<PosLedgerRow>('/supershop/stock-ledger', params),
   inventorySummary: () => get<ShopInventorySummary>('/supershop/inventory-summary'),
 
-  createSale: (body: ShopSaleInput) => post<ShopSale>('/supershop/sales', body),
+  createSale: (body: ShopSaleInput, idempotencyKey?: string) =>
+    post<ShopSale>('/supershop/sales', body, idempotencyKey),
 
   /**
    * Held sales: a basket put aside. None of these take stock, money or points.

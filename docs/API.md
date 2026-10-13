@@ -18,6 +18,52 @@ Base URL: `/api` · All responses use one envelope.
 | Pagination | `?page=1&limit=20` (max 100); meta returned alongside |
 | Search | `?search=term` — escaped before becoming a RegExp |
 | Dates | ISO 8601 strings |
+| Idempotency | `Idempotency-Key: <opaque>` on supported write endpoints — see below |
+
+## Idempotency
+
+A retried write - a double-tapped checkout, a refresh, a client retry after a
+dropped connection - must not ring up a second sale. Send a key:
+
+```
+Idempotency-Key: <8-200 chars of A-Z a-z 0-9 - _ : .>
+```
+
+One key means one operation, scoped to the workspace, the branch and the
+endpoint. Two workspaces using the same string never collide.
+
+| Endpoint | Key | Behaviour |
+|---|---|---|
+| `POST /api/supershop/sales` | header | Optional. With a key, a retry replays the first sale. |
+| `POST /api/pharmacy/sales` | header | Optional. As above. |
+| `POST /api/restaurant/orders` | header | Optional. A retry replays the first order. |
+| `POST /api/sales` (Clothing) | `idempotencyKey` in the body | Optional. Its own mechanism, predating the shared one. |
+| `POST /api/payments/checkout` | `idempotencyKey` in the body | Optional. Protects the payment record. |
+| `POST /api/subscriptions/purchase` | `idempotencyKey` in the body | Optional, plus a workspace-level purchase lock. |
+| `POST /api/returns` (exchanges) | `idempotencyKey` in the body | **Required** for an exchange. |
+| `POST /api/loyalty/memberships`, `.../adjust` | `idempotencyKey` in the body | **Required**. |
+
+What happens:
+
+| Situation | Response |
+|---|---|
+| First request | The operation runs; its result is returned as normal. |
+| Retry after it finished | `201` with the **original** resource, plus `replayed: true`. Nothing is created. |
+| Retry while it is still running | `409 IDEMPOTENCY_IN_PROGRESS`. Ask again in a moment with the same key. The request is never held open. |
+| Same key, different body | `409 IDEMPOTENCY_KEY_CONFLICT`. The second request is not executed. |
+| The operation failed (no stock, validation, plan limit) | The endpoint's own error, and the key is **released** - fix the basket and retry with the same key. |
+| No key sent | The request runs unprotected, exactly as it did before keys existed. A retry *will* create a second sale. |
+
+Keys are remembered for **24 hours** after the operation completes; a retry
+later than that is a new operation. Use a fresh key per logical checkout, and
+keep it stable across retries of that same checkout - the tills in this
+repository mint one per basket and rotate it once the write succeeds.
+
+Not guaranteed: exactly-once execution. If the server dies between committing a
+sale and recording that it finished, the claim's lease expires and a retry will
+run the operation again. See `docs/IMPLEMENTATION_STATUS.md` §1.5.
+
+---
 
 ## Error codes
 
@@ -28,6 +74,8 @@ Base URL: `/api` · All responses use one envelope.
 | `FORBIDDEN` | 403 | Authenticated but lacking permission, or cross-tenant access |
 | `NOT_FOUND` | 404 | Resource does not exist **within this tenant** |
 | `CONFLICT` | 409 | Duplicate key, or a concurrent modification |
+| `IDEMPOTENCY_KEY_CONFLICT` | 409 | The `Idempotency-Key` was already used for a *different* request |
+| `IDEMPOTENCY_IN_PROGRESS` | 409 | The operation behind this key is still running; retry shortly with the same key |
 | `INSUFFICIENT_STOCK` | 409 | Not enough stock to complete the sale |
 | `LIMIT_EXCEEDED` | 402 | Plan limit or feature gate hit |
 | `SUBSCRIPTION_INACTIVE` | 402 | Subscription expired or suspended |

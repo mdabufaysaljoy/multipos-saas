@@ -4,6 +4,7 @@ import { asyncHandler } from '../../utils/asyncHandler';
 import { buildPageMeta, created, ok, paginated } from '../../utils/apiResponse';
 import { body, params, query } from '../../middleware/validate';
 import { getContext } from '../../middleware/tenant';
+import { readIdempotencyKey, runIdempotent } from '../../services/reliability/idempotency.service';
 import { posReturnService } from '../../services/returns/posReturns.service';
 import { listPosReturns } from '../../services/returns/posReturns.list';
 import { supershopSaleReturnAdapter } from '../../services/returns/adapters/supershop.saleAdapter';
@@ -141,8 +142,36 @@ export const listMovements = asyncHandler(async (req: Request, res: Response) =>
 });
 
 // ----------------------------------------------------------------- sales
+/**
+ * Creates one sale, at most once per `Idempotency-Key`.
+ *
+ * A double-tapped checkout, a refresh, or a client retry after a dropped
+ * connection reaches this endpoint twice; without a key that used to be two
+ * sales, two stock movements and two receipts. The key makes the retry replay
+ * the first sale instead. Nothing about how a sale is built changed - the
+ * service below is called exactly as before.
+ *
+ * Without a key the request behaves as it always did: unprotected.
+ */
 export const createSale = asyncHandler(async (req: Request, res: Response) => {
-  created(res, await supershopService.createSale(getContext(req), body<CreateSaleInput>(req)));
+  const ctx = getContext(req);
+  const input = body<CreateSaleInput>(req);
+
+  created(
+    res,
+    await runIdempotent({
+      ctx,
+      operation: 'supershop.sale',
+      key: readIdempotencyKey(req),
+      input,
+      resultKind: 'ShopSale',
+      run: () => supershopService.createSale(ctx, input),
+      resultId: (result) => result._id,
+      // Replayed through the ordinary read path, so a retry sees the same shape
+      // the first response had rather than a stored copy of it.
+      replay: async (id) => ({ ...(await supershopService.getSale(ctx, id)), replayed: true }),
+    }),
+  );
 });
 
 export const listSales = asyncHandler(async (req: Request, res: Response) => {

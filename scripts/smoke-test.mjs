@@ -14266,6 +14266,254 @@ async function main() {
   const unlockedPos = await api('/stores/pos-config', { token: otherToken });
   check('POS is reachable again after paying', unlockedPos.status === 200, unlockedPos.error);
 
+  // ------------------------------------------------- idempotency (Phase 5)
+  section('Idempotency on sale and order creation');
+
+  // A double-tapped checkout, a refresh, or a client retry after a dropped
+  // connection reaches these endpoints twice. With an Idempotency-Key the
+  // retry must replay the first write; without one, behaviour is unchanged.
+  // What gets asserted is the DATABASE - the sale and order lists, and the
+  // stock figures - not just a status code.
+  //
+  // Deliberately last in the suite, with fixtures of its own: these checks
+  // necessarily create sales and leave orders open, and nothing that follows
+  // should have to account for them.
+  const idemStamp = `${runId}-${Math.random().toString(36).slice(2, 7)}`;
+
+  // --- Super Shop -------------------------------------------------------
+  {
+    // Its own product and its own stock, so the figures asserted earlier in the
+    // suite are untouched by the sales below.
+    const idemProduct = await ssProduct({ name: `Idem Dal ${idemStamp}`, category: 'Grocery', unitType: 'weight', priceMinor: 9000 });
+    check('Super Shop: an idempotency fixture product is created', idemProduct.status === 201, idemProduct.error);
+    await ssReceive(idemProduct.data._id, { quantity: 20_000, costPriceMinor: 6000 });
+
+    const ssIdemKey = (label) => `idem-ss-${label}-${idemStamp}-${Math.random().toString(36).slice(2, 10)}`;
+    // A weighed product, so quantity is in GRAMS - this is half a kilo.
+    const sellIdem = (k, quantity = 500) =>
+      api('/supershop/sales', {
+        method: 'POST',
+        token: ssToken,
+        ...(k ? { headers: { 'Idempotency-Key': k } } : {}),
+        body: {
+          items: [{ productId: idemProduct.data._id, quantity }],
+          payments: [{ method: 'cash', amountMinor: 50_000 }],
+        },
+      });
+    const countSales = async () => ((await api('/supershop/sales?limit=100', { token: ssToken })).data ?? []).length;
+    const stockNow = async () => (await ssApi(`/products/${idemProduct.data._id}`)).data?.product?.stock?.quantityOnHand ?? 0;
+
+    const key = ssIdemKey('one');
+    const before = await countSales();
+    const stockBefore = await stockNow();
+
+    const first = await sellIdem(key);
+    check('Super Shop: a sale with an Idempotency-Key succeeds', first.status === 201, first.error);
+
+    const retry = await sellIdem(key);
+    check('Super Shop: the same key returns the SAME sale', retry.status === 201 && retry.data?._id === first.data?._id, {
+      first: first.data?._id,
+      retry: retry.data?._id,
+    });
+    check('Super Shop: ...and says it is a replay', retry.data?.replayed === true, retry.data?.replayed);
+    check('Super Shop: ...so only one sale exists', (await countSales()) === before + 1, { before, after: await countSales() });
+    check('Super Shop: ...and stock moved exactly once', (await stockNow()) === stockBefore - 500, { before: stockBefore, after: await stockNow() });
+
+    const conflict = await sellIdem(key, 600);
+    check('Super Shop: the same key with a different basket is refused', conflict.status === 409 && conflict.error?.code === 'IDEMPOTENCY_KEY_CONFLICT', conflict.error);
+    check('Super Shop: ...and still only one sale exists', (await countSales()) === before + 1);
+
+    const second = await sellIdem(ssIdemKey('two'));
+    check('Super Shop: a different key makes a new sale', second.status === 201 && second.data?._id !== first.data?._id, second.error);
+
+    const raceKey = ssIdemKey('race');
+    const beforeRace = await countSales();
+    const stockBeforeRace = await stockNow();
+    const raced = await Promise.all(Array.from({ length: 5 }, () => sellIdem(raceKey)));
+    check('Super Shop: five concurrent identical checkouts create ONE sale', (await countSales()) === beforeRace + 1, {
+      before: beforeRace,
+      after: await countSales(),
+      statuses: raced.map((r) => r.status),
+    });
+    check('Super Shop: ...and stock moved once, not five times', (await stockNow()) === stockBeforeRace - 500, { before: stockBeforeRace, after: await stockNow() });
+    check(
+      'Super Shop: ...with the losers refused rather than duplicated',
+      raced.every((r) => r.status === 201 || r.error?.code === 'IDEMPOTENCY_IN_PROGRESS'),
+      raced.map((r) => r.error?.code ?? r.status),
+    );
+
+    // Without a key, nothing changed: the request is unprotected, as documented.
+    const beforeBare = await countSales();
+    await sellIdem(null);
+    await sellIdem(null);
+    check('Super Shop: without a key two identical checkouts are two sales', (await countSales()) === beforeBare + 2, {
+      before: beforeBare,
+      after: await countSales(),
+    });
+  }
+
+
+  // --- Pharmacy ---------------------------------------------------------
+  {
+    const idemMed = await phMedicine({ name: `Idemcin ${idemStamp}`, strength: '20 mg', dosageForm: 'tablet', sellingPriceMinor: 900 });
+    check('Pharmacy: an idempotency fixture medicine is created', idemMed.status === 201, idemMed.error);
+    await phReceive(idemMed.data._id, { batchNumber: `IDEM-${idemStamp}`, expiryDate: phDay(300), quantity: 200, costPriceMinor: 500 });
+
+    const phIdemKey = (label) => `idem-ph-${label}-${idemStamp}-${Math.random().toString(36).slice(2, 10)}`;
+    const sellIdem = (k, quantity = 1) =>
+      api('/pharmacy/sales', {
+        method: 'POST',
+        token: phToken,
+        ...(k ? { headers: { 'Idempotency-Key': k } } : {}),
+        body: {
+          items: [{ medicineId: idemMed.data._id, quantity }],
+          payments: [{ method: 'cash', amountMinor: 50_000 }],
+        },
+      });
+    const countSales = async () => ((await api('/pharmacy/sales?limit=100', { token: phToken })).data ?? []).length;
+
+    const key = phIdemKey('one');
+    const before = await countSales();
+    const first = await sellIdem(key);
+    check('Pharmacy: a sale with an Idempotency-Key succeeds', first.status === 201, first.error);
+
+    const retry = await sellIdem(key);
+    check('Pharmacy: the same key returns the SAME sale', retry.status === 201 && retry.data?._id === first.data?._id, {
+      first: first.data?._id,
+      retry: retry.data?._id,
+    });
+    check('Pharmacy: ...so only one sale exists', (await countSales()) === before + 1, { before, after: await countSales() });
+
+    const conflict = await sellIdem(key, 2);
+    check('Pharmacy: the same key with a different basket is refused', conflict.status === 409 && conflict.error?.code === 'IDEMPOTENCY_KEY_CONFLICT', conflict.error);
+    check('Pharmacy: ...and still only one sale exists', (await countSales()) === before + 1);
+
+    const raceKey = phIdemKey('race');
+    const beforeRace = await countSales();
+    const raced = await Promise.all(Array.from({ length: 5 }, () => sellIdem(raceKey)));
+    check('Pharmacy: five concurrent identical checkouts create ONE sale', (await countSales()) === beforeRace + 1, {
+      before: beforeRace,
+      after: await countSales(),
+      statuses: raced.map((r) => r.status),
+    });
+    check(
+      'Pharmacy: ...with the losers refused rather than duplicated',
+      raced.every((r) => r.status === 201 || r.error?.code === 'IDEMPOTENCY_IN_PROGRESS'),
+      raced.map((r) => r.error?.code ?? r.status),
+    );
+  }
+
+
+  // --- Restaurant -------------------------------------------------------
+  // A double-tapped "Send order", a refresh, or a client retry reaches this
+  // endpoint twice. The key makes the retry replay the first order; the ORDER
+  // LIST is what gets asserted, not just a status code.
+  {
+    const idemDish = await rvMenu({ name: `Idem Dish ${idemStamp}`, category: 'Mains', priceMinor: 12000 });
+    check('Restaurant: an idempotency fixture dish is created', idemDish.status === 201, idemDish.error);
+
+    const rvKey = (label) => `idem-rv-${label}-${idemStamp}-${Math.random().toString(36).slice(2, 10)}`;
+    const openIdem = (k, quantity = 1) =>
+      api('/restaurant/orders', {
+        method: 'POST',
+        token: rvToken,
+        ...(k ? { headers: { 'Idempotency-Key': k } } : {}),
+        body: { type: 'takeaway', items: [{ menuItemId: idemDish.data._id, quantity }] },
+      });
+    const countOrders = async () => ((await api('/restaurant/orders?limit=100', { token: rvToken })).data ?? []).length;
+
+    const key = rvKey('one');
+    const before = await countOrders();
+    const first = await openIdem(key);
+    check('Restaurant: an order with an Idempotency-Key is opened', first.status === 201, first.error);
+
+    const retry = await openIdem(key);
+    check('Restaurant: the same key returns the SAME order', retry.status === 201 && retry.data?._id === first.data?._id, {
+      first: first.data?._id,
+      retry: retry.data?._id,
+    });
+    check('Restaurant: ...so only one order exists', (await countOrders()) === before + 1, { before, after: await countOrders() });
+    check('Restaurant: ...and the replayed order is unchanged', retry.data?.totalMinor === first.data?.totalMinor && retry.data?.status === first.data?.status, {
+      first: first.data?.totalMinor,
+      retry: retry.data?.totalMinor,
+    });
+
+    const conflict = await openIdem(key, 3);
+    check('Restaurant: the same key with a different basket is refused', conflict.status === 409 && conflict.error?.code === 'IDEMPOTENCY_KEY_CONFLICT', conflict.error);
+    check('Restaurant: ...and still only one order exists', (await countOrders()) === before + 1);
+
+    const second = await openIdem(rvKey('two'));
+    check('Restaurant: a different key opens a new order', second.status === 201 && second.data?._id !== first.data?._id, second.error);
+
+    const raceKey = rvKey('race');
+    const beforeRace = await countOrders();
+    const raced = await Promise.all(Array.from({ length: 5 }, () => openIdem(raceKey)));
+    check('Restaurant: five concurrent identical opens create ONE order', (await countOrders()) === beforeRace + 1, {
+      before: beforeRace,
+      after: await countOrders(),
+      statuses: raced.map((r) => r.status),
+    });
+    check(
+      'Restaurant: ...with the losers refused rather than duplicated',
+      raced.every((r) => r.status === 201 || r.error?.code === 'IDEMPOTENCY_IN_PROGRESS'),
+      raced.map((r) => r.error?.code ?? r.status),
+    );
+    check('Restaurant: ...and a fresh order still starts at rev 0, so order behaviour is untouched', raced.some((r) => r.status === 201 && r.data?.rev === 0), raced.map((r) => r.data?.rev));
+  }
+
+
+  // --- Clothing: regression only; this protection predates Phase 5. -----
+  // Clothing already had this protection before Phase 5. These assertions exist
+  // so a future change cannot quietly remove it.
+  {
+    // Its own product: the variant used earlier in the suite has since been
+    // retired, and a regression test should not depend on that history.
+    const idemShirt = await api('/products', {
+      method: 'POST',
+      token: admin.token,
+      body: {
+        name: `Idem Shirt ${idemStamp}`,
+        variants: [{ attributes: [], sku: `IDEM${String(idemStamp).replace(/[^A-Za-z0-9]/g, '').slice(0, 16)}`, sellingPriceMinor: 50_000, stock: 40 }],
+      },
+    });
+    check('Clothing: an idempotency fixture product is created', idemShirt.status === 201, idemShirt.error);
+    const idemVariantId = idemShirt.data?.variants?.[0]?._id;
+
+    const clothingKey = `idem-clothing-${idemStamp}`;
+    const sellIdem = (k) =>
+      api('/sales', {
+        method: 'POST',
+        token: admin.token,
+        body: {
+          items: [{ variantId: idemVariantId, quantity: 1 }],
+          paymentMethod: 'cash',
+          ...(k ? { idempotencyKey: k } : {}),
+        },
+      });
+    const countSales = async () => ((await api('/sales?limit=100', { token: admin.token })).data ?? []).length;
+
+    const before = await countSales();
+    const first = await sellIdem(clothingKey);
+    check('Clothing: a sale with an idempotency key succeeds', first.status === 201, first.error);
+
+    const retry = await sellIdem(clothingKey);
+    check('Clothing: the same key returns the same sale', retry.data?._id === first.data?._id, {
+      first: first.data?._id,
+      retry: retry.data?._id,
+    });
+    check('Clothing: ...so only one sale exists', (await countSales()) === before + 1, { before, after: await countSales() });
+
+    const raceKey = `idem-clothing-race-${idemStamp}`;
+    const beforeRace = await countSales();
+    const raced = await Promise.all(Array.from({ length: 4 }, () => sellIdem(raceKey)));
+    check('Clothing: concurrent identical checkouts create ONE sale', (await countSales()) === beforeRace + 1, {
+      before: beforeRace,
+      after: await countSales(),
+      statuses: raced.map((r) => r.status),
+    });
+  }
+
+
   // ------------------------------------------------------------- summary
   console.log(`\n==========  ${passed} passed, ${failed} failed  ==========`);
   if (failed > 0) {

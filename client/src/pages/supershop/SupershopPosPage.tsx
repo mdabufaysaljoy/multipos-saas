@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { newRequestKey } from '@/features/loyalty/useLoyaltyAccess';
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { ChevronDown, ChevronUp, CreditCard, Minus, PauseCircle, Plus, ScanBarcode, Scale, ShoppingCart, Trash2 } from 'lucide-react';
@@ -369,6 +370,13 @@ export function SupershopPosPage() {
     setLine(product, current + 1);
   };
 
+  // One key per checkout: a double submit or a network retry replays the
+
+  // first write instead of ringing up a second one.
+
+  const checkoutKey = React.useRef(newRequestKey('shop-sale'));
+
+
   const scan = useMutation({
     mutationFn: (barcode: string) => supershopApi.lookup(barcode),
     onSuccess: (product) => {
@@ -502,8 +510,10 @@ export function SupershopPosPage() {
         // The card is what earns and redeems; the server re-checks both.
         ...(loyaltyMember ? { loyaltyMembershipId: loyaltyMember.id, redeemPoints: redeeming } : {}),
         note,
-      }),
+      }, checkoutKey.current),
     onSuccess: (sale) => {
+      // Spent: the next checkout is a different sale and needs its own key.
+      checkoutKey.current = newRequestKey('shop-sale');
       toast.success(`${sale.saleNumber} completed`, {
         description: sale.changeMinor > 0 ? `Change due: ${formatMoney(sale.changeMinor, currency)}` : undefined,
       });

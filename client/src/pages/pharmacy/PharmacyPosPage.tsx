@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { newRequestKey } from '@/features/loyalty/useLoyaltyAccess';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { ChevronLeft, ChevronRight, CreditCard, FileText, Minus, PauseCircle, Plus, Search, ShoppingCart, Trash2, X } from 'lucide-react';
@@ -236,6 +237,10 @@ export function PharmacyPosPage() {
   };
 
   const { data: heldSales } = useQuery({ queryKey: ['pharmacy', 'held-sales'], queryFn: pharmacyApi.heldSales, staleTime: 10_000 });
+  // One key per checkout: a double submit or a network retry replays the
+  // first write instead of ringing up a second one.
+  const checkoutKey = React.useRef(newRequestKey('pharmacy-sale'));
+
   const hold = useMutation({
     mutationFn: () => pharmacyApi.hold({
       items: cart.map((line) => ({ medicineId: line.medicine._id, quantity: line.quantity })),
@@ -285,8 +290,10 @@ export function PharmacyPosPage() {
         // The card is what earns and redeems; the server re-checks both.
         ...(loyaltyMember ? { loyaltyMembershipId: loyaltyMember.id, redeemPoints: redeeming } : {}),
         note: hasOutOfStockLine ? note.trim() : '',
-      }),
+      }, checkoutKey.current),
     onSuccess: (sale) => {
+      // Spent: the next checkout is a different sale and needs its own key.
+      checkoutKey.current = newRequestKey('pharmacy-sale');
       toast.success(`${sale.saleNumber} completed`, {
         description: sale.changeMinor > 0 ? `Change due: ${formatMoney(sale.changeMinor, currency)}` : undefined,
       });

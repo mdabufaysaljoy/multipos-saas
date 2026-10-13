@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { newRequestKey } from '@/features/loyalty/useLoyaltyAccess';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import { toast } from 'sonner';
@@ -139,6 +140,10 @@ export function RestaurantPosPage() {
   };
 
   // Opening an order sends its first kitchen ticket straight away.
+  // One key per checkout: a double submit or a network retry replays the
+  // first write instead of ringing up a second one.
+  const checkoutKey = React.useRef(newRequestKey('restaurant-order'));
+
   const send = useMutation({
     mutationFn: async (current: Draft) => {
       const created = await restaurantApi.createOrder({
@@ -151,7 +156,10 @@ export function RestaurantPosPage() {
           ...(line.addOnOptionIds.length > 0 ? { addOnOptionIds: line.addOnOptionIds } : {}),
           quantity: line.quantity,
         })),
-      });
+      }, checkoutKey.current);
+      // Spent the moment the order exists. The ticket below may still fail, and
+      // resending it must not be able to open a second order.
+      checkoutKey.current = newRequestKey('restaurant-order');
       try {
         return await restaurantApi.sendToKitchen(created._id, created.rev);
       } catch (error) {

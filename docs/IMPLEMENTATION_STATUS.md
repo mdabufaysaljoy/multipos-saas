@@ -5,7 +5,7 @@ verified against the code on **2026-10-08** (branch
 `claude/retailer-suites-audit-e61761`). Phases completed: **0** (audit),
 **1** (Redis foundation), **2** (BullMQ worker foundation), **3 in part**
 (campaign delivery migrated; the other candidates are not), **4** (distributed
-rate limiting).
+rate limiting), **5** (idempotency on the sale and order flows).
 
 ---
 
@@ -60,7 +60,7 @@ Statuses: **COMPLETED** · **IN PROGRESS** · **NOT STARTED** · **DEFERRED** ·
 | **BullMQ / Worker** | **COMPLETED** (foundation only) | `bullmq` 5.81 and `server/src/queues/`: `createAppQueue(name)` and `createAppWorker(name, processor, opts)` over one shared Redis connection, with retry, backoff, retention, naming and the key namespace centralised in `queues/options.ts`. `server/src/worker.ts` is a **separate process** (`npm run worker`) that starts no HTTP server; the API starts no worker, and a test asserts both. Redis is **required** in the worker, which exits 1 with a clear message when it is missing or unreachable. **No queue and no processor is defined yet.** The `setInterval` scheduler inside the API (`jobs/subscription.job.ts` — an hourly billing pass and a 10-minute payment-reconciliation pass) is deliberately untouched and still runs exactly as before; Phase 3 migrates it. Detail in §1.2. |
 | **Background jobs** | **IN PROGRESS** — 1 of 6 migrated | **Done:** campaign SMS/email delivery, on the `campaign-delivery` queue (see §1.3). **Not started, unchanged from the audit:** password-reset and verification emails (inline SMTP), exports (up to 200,000 rows streamed), product import commit (~6,000 documents), `sharp` image optimisation, and the two `setInterval` passes in `jobs/subscription.job.ts`. **Exception that stays as it is:** billing emails already use a correct durable queue in MongoDB (`EmailNotification` — keyed, leased, 5 attempts, backoff); only its driver should ever move. |
 | **Rate limiting** | **COMPLETED** | `express-rate-limit` v7 with a **Redis-backed store** (`middleware/rateLimit.ts`) shared by all 23 policies — the original 1 global + 19 route limiters, migrated with their windows, limits, keys, status codes, headers and messages unchanged, plus 3 new ones. Counters live in Redis under the Phase 1 namespace, so every replica sees the same count. Findings closed: R1 (per-process stores), R2 (no per-account login protection), R3 (`/auth/refresh` and `/auth/logout` unlimited), R4 (`trust proxy` hard-coded — now `TRUST_PROXY_HOPS`). See §1.4. |
-| **Idempotency** | **IN PROGRESS** | No generic middleware. Per-resource keys with unique partial indexes on `Sale`, `Payment`, `Return`, `WalletTransaction`, `UsageCharge`, `UpgradeRequest`, `LoyaltyMembership`, each with replay-read and 11000-recovery. Wallet debits use a guarded `$gte` update; subscription purchase takes a CAS lock; webhooks are replay-safe because a notification is never believed. **Gaps:** `ShopSale`/`PharmacySale`/`RestaurantOrder` have no key at all (I1); Clothing's is optional (I2); plain returns write `null` (I3); no header convention (I4). |
+| **Idempotency** | **COMPLETED** for sale/order creation | A shared mechanism (`services/reliability/idempotency.service.ts` + `IdempotencyRecord`, unique on `(scope, key)`) now protects the three flows that had none: **Restaurant orders, Super Shop sales and Pharmacy sales**. Clothing keeps its own, older mechanism, which the audit confirmed correct, now covered by regression tests. Per-resource keys on `Payment`, `WalletTransaction`, `UsageCharge`, `UpgradeRequest` and `LoyaltyMembership` are unchanged. **Remaining gap:** a plain return (not an exchange) still stores no key — see §1.5. |
 | **Docker** | **NOT STARTED** | No Dockerfile, no `.dockerignore`. Core is ready (env-driven config, binds all interfaces, `npm start` → `node dist/server.js`, Node ≥ 20, graceful SIGTERM). Blockers: native `sharp` (D1), uploads on local disk (D2), `syncIndexes` disabled in production (D3), the client build fetches the API (D4), the SPA calls relative `/api` so one origin is mandatory (D5), per-replica scheduler and caches (D6). |
 | **Docker Compose** | **NOT STARTED** | No `docker-compose.yml`. When written it must use a **single-node Mongo replica set**: `withTransaction` degrades to compensating writes on a standalone, and CI uses standalone `mongo:7`, so the transaction path has never run anywhere (B9). |
 | **MongoDB Atlas** | **NOT STARTED** (target; code is ready) | Mongoose 9.10, one `connectDatabase(env.MONGODB_URI)`, `maxPoolSize: 20`, `serverSelectionTimeoutMS: 10_000`, `strictQuery: true`. `sanitizeFilter` is deliberately off — injection safety comes from zod parsing ids into real ObjectIds. Transaction support is probed at runtime via `hello`, so an Atlas replica-set URI simply turns transactions on with no code change. 71 models, 191 index declarations. **To do before Atlas:** make the pool size configurable (20 × replicas must fit the tier's connection limit) and make index creation an explicit production step (D3/B8). |
@@ -645,6 +645,156 @@ the two-instance test against a real Redis.**
 6. **No rate-limit metrics.** Rejections are observable only in logs; counters
    and a dashboard belong with Phase 11.
 
+### 1.5 Phase 5 — idempotency on sale and order creation (completed 2026-10-13)
+
+**Audit first, and the Phase 0 findings held — with one correction.** Finding
+I1 was confirmed: `ShopSale`, `PharmacySale` and `RestaurantOrder` carried no
+idempotency key, no index and no replay, so a retried checkout rang up a second
+sale. Finding I2 held (Clothing's key is optional). **The correction:** Phase 0
+implied Clothing's protection might leave stock double-decremented on a race.
+It does not — the duplicate-key path releases the stock it took and undoes the
+loyalty redemption before returning the winner. Clothing was therefore left
+alone, as §14 asked, and covered by regression tests instead.
+
+**Architecture.** One record per (scope, key) in MongoDB, claimed before the
+work starts:
+
+```
+claim  →  run the operation  →  mark completed with the result's id
+              ↓ failure
+          release the claim
+```
+
+**In MongoDB, not Redis**, deliberately: the sale it protects is a MongoDB
+write, and the protection must not be weaker than the thing it protects. A
+Redis restart would forget the key and let a retry sell again. Redis is a cache
+in this system; this is a ledger.
+
+**At the controller, not in the service.** The three sale services were not
+touched at all — which is the strongest guarantee available that no pricing,
+stock, VAT, split-payment, loyalty or kitchen-ticket rule moved. The controller
+wraps the same service call it always made.
+
+**Storage model** (`models/IdempotencyRecord.ts`):
+
+| Field | Why |
+|---|---|
+| `scope` | `<tenantId>:<storeId>:<operation>` — never the key alone |
+| `key` | the client's opaque key, validated and bounded |
+| `fingerprint` | sha256 of the canonicalised business input |
+| `status` | `processing` \| `completed` |
+| `resultId`, `resultKind` | what the operation produced, for replay |
+| `claimedUntil` | the lease, so a dead process does not block a key for ever |
+| `expiresAt` | TTL — records cannot accumulate |
+
+No request body and no payment data are stored; only a hash and an id.
+
+**Unique index: `{ scope: 1, key: 1 }`, unique.** This is *the* concurrency
+guard, and the tests assert it exists. A `findOne` then `create` could not do
+the job — two concurrent checkouts would both read "nothing there" and both
+sell. Instead one atomic upsert claims the key, and `returnDocument: 'before'`
+returning null is how a request knows it owns the work.
+
+**Fingerprint.** sha256 over a canonical rendering that sorts object keys at
+every depth, preserves array order (sale lines are a sequence, not a set), and
+renders types distinctly so `1` and `"1"` differ. `JSON.stringify` is not usable
+here: key order follows insertion order, so the same logical request from two
+clients could produce a spurious conflict. Excluded: the Authorization header,
+cookies, trace ids, regenerated timestamps, and the key itself. Identity is not
+hashed in — tenant and store are part of the *scope*, which is a stronger
+separation.
+
+**Tenant scope.** The same key string in two workspaces is two records and two
+operations; asserted in the tests.
+
+**Concurrency: refuse, do not hold.** A second request arriving while the first
+is still running gets `409 IDEMPOTENCY_IN_PROGRESS`. Waiting would tie up a
+connection for as long as the first takes, and a till that is told plainly can
+ask again in a moment. Once the first finishes, the same key replays it.
+
+**Transaction boundary: none added, deliberately.** These flows do not use
+transactions — they use guarded `$inc` and compensation, which is what makes
+them correct on the standalone MongoDB this project also supports — so §9's
+instruction not to introduce transactions blindly was followed. The honest
+consequence is in the limitations below.
+
+**Retry semantics.** A validation failure, a stock refusal or a plan-limit
+rejection **releases** the key: the operation did not happen, so the cashier
+fixes the basket and retries with the same key from the same screen. A poisoned
+key would turn one validation error into a dead till. A committed operation
+keeps its record for the full retention window.
+
+**Expiration: 24 hours** after completion. A till retry, a reload or a client
+backoff happens in seconds or minutes; a provider re-delivery can take hours. A
+day is comfortably longer than any of those and short enough to bound the
+collection. MongoDB's own TTL index removes expired records, so an attacker
+sending unlimited distinct keys cannot grow the collection without bound.
+
+**Response replay** goes through the ordinary read path — `getSale` / `getOrder`
+— so a retry sees the same shape the first response had rather than a stored
+copy of it, with `replayed: true` added. Status stays `201`. Nothing sensitive
+is persisted to replay.
+
+**Supported endpoints** are listed in `docs/API.md` under *Idempotency*. The key
+is **optional** everywhere: making it mandatory would break clients that have
+not been updated, and a server-generated key would protect nothing because a
+retry would carry a different one. The tills in this repository were updated to
+send one — a per-basket key, rotated once the write succeeds — so the product is
+protected in practice; anything that omits the header is unprotected and the API
+doc says so.
+
+**Results.**
+
+| Flow | Outcome |
+|---|---|
+| **Restaurant order** | Protected. Retry replays; a changed basket is a conflict; a different key opens a new order; five concurrent opens create **one** order; `rev` still starts at 0. |
+| **Super Shop sale** | Protected. Retry replays with `replayed: true`; **stock moves exactly once** across five concurrent checkouts; weighed goods, the out-of-stock note, VAT and split payment untouched. |
+| **Pharmacy sale** | Protected. Retry replays; conflict detected; five concurrent checkouts create one sale. |
+| **Clothing sale** | Unchanged. Regression tests prove a retry returns the same sale and that concurrent checkouts create one. |
+
+**Other critical flows audited, and left alone** (§15):
+
+| Flow | Finding |
+|---|---|
+| Payment creation | `Payment.idempotencyKey`, unique partial index, scoped `checkout:<tenant>:<key>`. Robust. |
+| Wallet debit/credit | `WalletTransaction.idempotencyKey` unique partial, plus a conditional `balanceMinor: { $gte }` so concurrent debits cannot overdraw. Robust. |
+| Subscription purchase | `UpgradeRequest.idempotencyKey` unique, plus a CAS lock on `Tenant.purchaseLockedUntil`. Robust. |
+| Usage charges | `UsageCharge.idempotencyKey` unique partial. Robust. |
+| Loyalty | `LoyaltyMembership.idempotencyKey` unique partial; adjustments use a derived dedupe key. Robust. |
+| Exchanges | `Return.idempotencyKey` required and unique per `(tenant, store, key)`. Robust. |
+| **Plain returns** | **Gap, unchanged.** A refund without an exchange stores `idempotencyKey: null`. Mitigated: a return *holds* the quantity on the sale line first, so a duplicate would exceed what is returnable and be refused. Narrow, but real. **Recommended next atomic migration** — not pulled into this phase. |
+
+**Tests.** `server/src/seed/idempotency.check.ts` (**52 assertions**, real
+MongoDB) covers the unique and TTL indexes; canonicalisation and fingerprinting
+including key-order independence and array-order significance; key validation;
+first-request-then-retry; payload conflict; tenant isolation; **eight
+simultaneous requests running the operation exactly once**; a failed operation
+leaving no record and the key reusable; a live claim blocking and an expired
+claim being taken over by exactly one of three racers; the no-key path; and
+retention. Plus **37 endpoint assertions** in the HTTP suite across all four
+verticals, asserting the sale/order lists and the stock figures — not status
+codes. Total suite: 4,048 HTTP assertions, 0 failures.
+
+**Limitations:**
+
+1. **Exactly-once execution is not guaranteed and is not claimed.** The claim
+   and the business write are two MongoDB operations. A process that dies
+   between committing a sale and marking the record completed leaves a claim
+   whose lease expires, and the retry re-runs the operation. The window is one
+   update wide. Closing it means putting the claim inside the same transaction
+   as the sale, which needs a replica set and a redesign of flows this phase was
+   not allowed to touch.
+2. **No transaction coverage, and none claimed.** The test database is
+   standalone MongoDB, so no transaction path was exercised — consistent with
+   the Phase 0 finding that CI never exercises it either.
+3. **Keys are optional.** An un-updated client is unprotected. Making them
+   required on the sale endpoints is a small, breaking change worth considering
+   once every client sends one.
+4. **The lease is 60 seconds.** A checkout slower than that could, in principle,
+   have its claim taken over while still running. It is far longer than any
+   observed checkout, but it is a number, not a proof.
+5. **Plain returns are still unprotected** (above).
+
 ### Deployment model
 
 **UNDOCUMENTED.** No Dockerfile, compose file, Nginx config, PM2 ecosystem,
@@ -684,7 +834,7 @@ PHASE 3   Background-job migration                  IN PROGRESS   ← 1 of 6 don
           exports                                   NOT STARTED
           subscription scheduler passes              NOT STARTED
 PHASE 4   Rate limiting (distributed)               COMPLETED  (2026-10-08)
-PHASE 5   Idempotency / reliability                 NOT STARTED
+PHASE 5   Idempotency / reliability                 COMPLETED  (2026-10-13)
 PHASE 6   Docker                                    NOT STARTED
 PHASE 7   Docker Compose + local production-like    NOT STARTED
 PHASE 8   VPS deployment                            NOT STARTED
@@ -731,6 +881,7 @@ inline-fallback note before assuming a queue is always available.
 
 | Date | Change |
 |---|---|
+| 2026-10-13 | **Phase 5 — idempotency on sale and order creation.** Added a shared mechanism (`services/reliability/idempotency.service.ts`, `models/IdempotencyRecord.ts`, unique on `(scope, key)`, 24-hour retention, lease-based recovery, canonical fingerprinting) and applied it at the controller layer to **Restaurant orders, Super Shop sales and Pharmacy sales** — the three flows Phase 0 found unprotected. The sale services themselves were not touched. Clothing's older mechanism was audited, found correct (it compensates stock and loyalty on a race) and left alone with regression tests added. The POS tills now send a per-basket `Idempotency-Key`. Two error codes added; `docs/API.md` documents the contract. Payment, wallet, subscription, usage-charge, loyalty and exchange protection unchanged; plain returns remain the one known gap and are recommended as the next atomic migration. |
 | 2026-10-08 | **Phase 4 — distributed rate limiting.** All 20 existing limiters moved from per-process memory to a Redis-backed store (`middleware/rateLimit.ts`) with their policies unchanged, counting through one atomic `EVAL` per request on the shared Phase 1 client — no new Redis connection, nothing per request. Added per-account login protection (failed attempts only, hashed identifier), and dedicated `/auth/refresh` and `/auth/logout` policies. Outage behaviour is declared per policy: four spend/capacity-guarding policies refuse, the rest degrade to a per-process counter; a Redis that was never configured is not treated as an outage, so a no-Redis deployment behaves exactly as before. `trust proxy` became `TRUST_PROXY_HOPS`. New `middleware/rateLimit.check.ts` (54 assertions). Closes audit findings R1–R4. |
 | 2026-10-08 | **Phase 3, first migration — campaign delivery.** Campaign SMS and email delivery moved off the HTTP request onto the `campaign-delivery` queue: the request now stores the recipients, charges once, enqueues one job per 100-recipient batch and returns, and the worker delivers. Added `services/sms/campaignDelivery.service.ts` (the single delivery implementation, used by the worker and by the no-Redis inline fallback alike), `queues/campaign.queue.ts`, and `seed/campaignDelivery.check.ts` (82 assertions). `SmsMessage` gained a unique `(campaignId, recipient)` index, a claim lease, `attempts`, `failureKind` and `batchIndex`, which is what makes a worker retry skip what already went out; `SmsCampaign` gained `queued`. Money rules, terminal statuses and tenant scoping unchanged. Fixed three bugs found while testing: a transient failure being re-claimed inside the same pass, two configuration errors misclassified as transient, and `shutdownQueues` hanging when a worker's connection had gone. **No other job migrated**; the subscription scheduler, billing/auth emails, exports, imports and image processing are untouched. |
 | 2026-10-08 | **Phase 2 — BullMQ worker foundation.** Added `bullmq` (which reuses the ioredis Phase 1 installed) and `server/src/queues/`: `createAppQueue` / `createAppWorker` over one shared BullMQ-compatible connection built from the Phase 1 Redis configuration, with naming validation, the key namespace, conservative finite retry/backoff/retention defaults and the payload policy centralised in `queues/options.ts`, plus registries, lifecycle logging and a bounded idempotent `shutdownQueues`. Added `server/src/worker.ts`, a separate process (`npm run worker`, `npm run worker:dev`) that starts no HTTP server, requires Redis and exits 1 without it. New `server/src/queues/queues.check.ts` (run by `npm test`). **No queue, no processor and no migrated job**: the API's `setInterval` scheduler still runs exactly as before. |

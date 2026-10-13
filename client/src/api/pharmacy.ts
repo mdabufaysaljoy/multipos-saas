@@ -62,7 +62,8 @@ export const pharmacyApi = {
     post<{ batch: MedicineBatch; previousOnHand: number }>(`/pharmacy/batches/${id}/adjust`, body),
   movements: (params?: Query) => getPaginated<StockMovement>('/pharmacy/movements', params),
 
-  createSale: (body: PharmacySaleInput) => post<PharmacySale>('/pharmacy/sales', body),
+  createSale: (body: PharmacySaleInput, idempotencyKey?: string) =>
+    post<PharmacySale>('/pharmacy/sales', body, idempotencyKey),
   sales: (params?: Query) => getPaginated<PharmacySale>('/pharmacy/sales', params),
   sale: (id: string) => get<PharmacySale>(`/pharmacy/sales/${id}`),
   receipt: (id: string) => get<PharmacyReceipt>(`/pharmacy/sales/${id}/receipt`),

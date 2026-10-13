@@ -61,7 +61,8 @@ export const restaurantApi = {
 
   orders: (params?: Query) => getPaginated<RestaurantOrder>('/restaurant/orders', params),
   order: (id: string) => get<RestaurantOrder>(`/restaurant/orders/${id}`),
-  createOrder: (body: CreateOrderInput) => post<RestaurantOrder>('/restaurant/orders', body),
+  createOrder: (body: CreateOrderInput, idempotencyKey?: string) =>
+    post<RestaurantOrder>('/restaurant/orders', body, idempotencyKey),
   addItems: (id: string, items: OrderLineBody[]) => post<RestaurantOrder>(`/restaurant/orders/${id}/items`, { items }),
   updateLine: (id: string, lineId: string, quantity: number) =>
     patch<RestaurantOrder>(`/restaurant/orders/${id}/items/${lineId}`, { quantity }),

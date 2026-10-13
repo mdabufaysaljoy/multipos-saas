@@ -154,8 +154,15 @@ export async function getDownload(url: string, params?: Record<string, unknown>)
   return { blob: res.data, filename: match?.[1] ?? 'report.pdf' };
 }
 
-export async function post<T>(url: string, body?: unknown): Promise<T> {
-  const res = await http.post<ApiEnvelope<T>>(url, body);
+/**
+ * `idempotencyKey` is sent as the `Idempotency-Key` header, which is how the
+ * API recognises a retry of the same write. The sale endpoints validate their
+ * bodies strictly, so the key cannot ride along inside the payload.
+ */
+export async function post<T>(url: string, body?: unknown, idempotencyKey?: string): Promise<T> {
+  const res = await http.post<ApiEnvelope<T>>(url, body, {
+    ...(idempotencyKey ? { headers: { 'Idempotency-Key': idempotencyKey } } : {}),
+  });
   return res.data.data;
 }
 

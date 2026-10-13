@@ -5,6 +5,10 @@ export type ErrorCode =
   | 'FORBIDDEN'
   | 'NOT_FOUND'
   | 'CONFLICT'
+  /** An Idempotency-Key was reused with different business input. */
+  | 'IDEMPOTENCY_KEY_CONFLICT'
+  /** The operation behind this Idempotency-Key is still running. */
+  | 'IDEMPOTENCY_IN_PROGRESS'
   | 'INSUFFICIENT_STOCK'
   | 'LIMIT_EXCEEDED'
   | 'SUBSCRIPTION_INACTIVE'
@@ -29,6 +33,8 @@ const STATUS_BY_CODE: Record<ErrorCode, number> = {
   FORBIDDEN: 403,
   NOT_FOUND: 404,
   CONFLICT: 409,
+  IDEMPOTENCY_KEY_CONFLICT: 409,
+  IDEMPOTENCY_IN_PROGRESS: 409,
   INSUFFICIENT_STOCK: 409,
   LIMIT_EXCEEDED: 402,
   SUBSCRIPTION_INACTIVE: 402,

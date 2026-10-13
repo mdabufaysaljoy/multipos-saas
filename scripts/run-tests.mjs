@@ -304,6 +304,11 @@ try {
   // that must skip what already went out, a second batch that must not refund
   // twice. Over HTTP each would need a crash at an exact instant.
   await run(process.execPath, [TSX_CLI, 'server/src/seed/campaignDelivery.check.ts']);
+  // Nor these: idempotency is about interrupted and raced requests - a claim
+  // whose lease died with the process holding it, two requests reaching the
+  // same key in the same millisecond. Over HTTP each would need a crash at an
+  // exact instant; here the record can be put into the state a crash left.
+  await run(process.execPath, [TSX_CLI, 'server/src/seed/idempotency.check.ts']);
 } catch (error) {
   testFailure = error;
 } finally {

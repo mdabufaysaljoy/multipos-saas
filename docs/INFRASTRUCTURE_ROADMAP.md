@@ -1,9 +1,9 @@
 # Infrastructure roadmap
 
 **Phases 0 (audit), 1 (Redis foundation), 2 (BullMQ worker foundation)
-and 4 (distributed rate limiting) are COMPLETED. Phase 3 is PART DONE: campaign
+4 (distributed rate limiting) and 5 (idempotency) are COMPLETED. Phase 3 is PART DONE: campaign
 delivery has been migrated (§5.1), the other five candidates have not. Phases
-5–12 are not implemented.** Live status per area is `docs/IMPLEMENTATION_STATUS.md`,
+6–12 are not implemented.** Live status per area is `docs/IMPLEMENTATION_STATUS.md`,
 which is the file to trust when this one and it disagree.
 
 Written 2026-10-08 against the working tree at `claude/retailer-suites-audit-e61761`
@@ -494,7 +494,24 @@ end-to-end suite is not throttled; production keeps the strict numbers.
 
 ## 7. Idempotency plan
 
-### 7.1 Current status: IMPLEMENTED per resource, with real gaps
+### Status: COMPLETED for sale/order creation (Phase 5, 2026-10-13)
+
+Finding **I1 is closed**: Restaurant orders, Super Shop sales and Pharmacy sales
+are protected by a shared mechanism (`IdempotencyRecord`, unique on
+`(scope, key)`, claimed before the work runs), applied at the controller so the
+sale services were not touched. **I2** (Clothing's optional key) stands by
+choice — the audit confirmed Clothing's own mechanism is correct, including
+compensation on a race, so it was left alone. **I3 (plain returns) is still
+open** and is the recommended next atomic migration. **I4** is closed by the
+`Idempotency-Key` convention now documented in `docs/API.md`.
+
+Full detail, the per-flow results and the limitations — including that
+exactly-once execution is **not** claimed — are in
+`docs/IMPLEMENTATION_STATUS.md` §1.5.
+
+**What follows is the Phase 0 finding, kept for the record.**
+
+### 7.1 Phase 0 status: IMPLEMENTED per resource, with real gaps
 
 There is **no generic `Idempotency-Key` middleware**. Instead, money-moving
 documents carry their own key with a unique partial index, the service reads it
@@ -534,7 +551,7 @@ Supporting guarantees read from the code:
 | I3 | **Plain returns write `idempotencyKey: null`.** Only *exchanges* carry a key (`posReturns.service.ts:138` vs `:375`). | A retried refund could refund twice. | Strong: a return *holds* the quantity on the sale line first, so a duplicate would exceed the remaining returnable quantity and be refused. Real but narrower than it looks. |
 | I4 | No `Idempotency-Key` header convention, so each new money endpoint must remember to invent one. | Drift. I1 is what drift looks like. | — |
 
-### 7.3 Plan (Phase 5)
+### 7.3 Plan (Phase 5) — done, except I3
 
 1. **Close I1 first.** Add `idempotencyKey` plus the same unique partial index
    to `ShopSale`, `PharmacySale` and `RestaurantOrder`; require it in those
@@ -825,9 +842,9 @@ PHASE 3   Background-job migration                  ← IN PROGRESS (campaigns d
    ↓
 PHASE 4   Rate limiting (distributed)              (COMPLETED 2026-10-08)
    ↓
-PHASE 5   Idempotency / reliability                 ← next
+PHASE 5   Idempotency / reliability                 (COMPLETED 2026-10-13)
    ↓
-PHASE 6   Docker
+PHASE 6   Docker                                    ← next
    ↓
 PHASE 7   Docker Compose + production-like local testing
    ↓

@@ -149,6 +149,12 @@ comes from ordering and compare-and-swap instead:
 
 - stock is taken with a single guarded `$inc` (`quantityOnHand: { $gte: n }`),
   so two tills cannot sell the same unit;
+- a retried or double-tapped checkout is caught by an **idempotency key**: the
+  Clothing sale carries its own on the `Sale` document, and Restaurant orders,
+  Super Shop sales and Pharmacy sales go through the shared
+  `IdempotencyRecord` (unique on `(scope, key)`), which is claimed *before* the
+  work starts so a duplicate never reaches the stock at all. `docs/API.md`
+  documents the contract;
 - returns *hold* a quantity on the sale line before touching stock, and release
   it on failure;
 - billing claims work with a CAS and a period-scoped idempotency key.
