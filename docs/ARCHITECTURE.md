@@ -303,8 +303,14 @@ What that means in practice:
   process.
 - **The API and the worker are separate processes.** The API starts no worker
   and the worker starts no HTTP server; a test asserts both from the sources.
-- **There is no Dockerfile and no deployment configuration in this
-  repository.** CI verifies; it does not deploy.
+- **There is a Dockerfile, and no deployment configuration.** `docker/Dockerfile`
+  builds one image that serves both roles — `node dist/server.js` for the API,
+  `node dist/worker.js` for the worker — on `node:22-bookworm-slim`, non-root,
+  with production dependencies only. It has **never been built**: there is no
+  container runtime on the machine it was written on. `docs/DOCKER.md` covers
+  building, running, environment, the single writable path and what the health
+  check does and does not prove. CI verifies; it still does not deploy, and
+  there is no Compose file.
 - **Health is `GET /api/health`**, which returns `ok` whenever the process is
   running and does not check the database. It reports the Redis connection
   state under `data.dependencies.redis`, as information rather than a gate.

@@ -5,7 +5,9 @@ verified against the code on **2026-10-08** (branch
 `claude/retailer-suites-audit-e61761`). Phases completed: **0** (audit),
 **1** (Redis foundation), **2** (BullMQ worker foundation), **3 in part**
 (campaign delivery migrated; the other candidates are not), **4** (distributed
-rate limiting), **5** (idempotency on the sale and order flows).
+rate limiting), **5** (idempotency on the sale and order flows), **6 in part**
+(Docker images written and statically validated; **never built or run** — no
+container runtime on the machine).
 
 ---
 
@@ -61,7 +63,7 @@ Statuses: **COMPLETED** · **IN PROGRESS** · **NOT STARTED** · **DEFERRED** ·
 | **Background jobs** | **IN PROGRESS** — 1 of 6 migrated | **Done:** campaign SMS/email delivery, on the `campaign-delivery` queue (see §1.3). **Not started, unchanged from the audit:** password-reset and verification emails (inline SMTP), exports (up to 200,000 rows streamed), product import commit (~6,000 documents), `sharp` image optimisation, and the two `setInterval` passes in `jobs/subscription.job.ts`. **Exception that stays as it is:** billing emails already use a correct durable queue in MongoDB (`EmailNotification` — keyed, leased, 5 attempts, backoff); only its driver should ever move. |
 | **Rate limiting** | **COMPLETED** | `express-rate-limit` v7 with a **Redis-backed store** (`middleware/rateLimit.ts`) shared by all 23 policies — the original 1 global + 19 route limiters, migrated with their windows, limits, keys, status codes, headers and messages unchanged, plus 3 new ones. Counters live in Redis under the Phase 1 namespace, so every replica sees the same count. Findings closed: R1 (per-process stores), R2 (no per-account login protection), R3 (`/auth/refresh` and `/auth/logout` unlimited), R4 (`trust proxy` hard-coded — now `TRUST_PROXY_HOPS`). See §1.4. |
 | **Idempotency** | **COMPLETED** for sale/order creation | A shared mechanism (`services/reliability/idempotency.service.ts` + `IdempotencyRecord`, unique on `(scope, key)`) now protects the three flows that had none: **Restaurant orders, Super Shop sales and Pharmacy sales**. Clothing keeps its own, older mechanism, which the audit confirmed correct, now covered by regression tests. Per-resource keys on `Payment`, `WalletTransaction`, `UsageCharge`, `UpgradeRequest` and `LoyaltyMembership` are unchanged. **Remaining gap:** a plain return (not an exchange) still stores no key — see §1.5. |
-| **Docker** | **NOT STARTED** | No Dockerfile, no `.dockerignore`. Core is ready (env-driven config, binds all interfaces, `npm start` → `node dist/server.js`, Node ≥ 20, graceful SIGTERM). Blockers: native `sharp` (D1), uploads on local disk (D2), `syncIndexes` disabled in production (D3), the client build fetches the API (D4), the SPA calls relative `/api` so one origin is mandatory (D5), per-replica scheduler and caches (D6). |
+| **Docker** | **IN PROGRESS** — written, not built | `docker/Dockerfile`: multi-stage, `node:22-bookworm-slim`, non-root, production dependencies only, **one image for both the API and the worker** (different commands). `.dockerignore` keeps `.env`, keys and host `node_modules` out of the context. `docs/DOCKER.md` has the build/run/operate commands. **The image has never been built or run — there is no Docker on this machine and none was installed.** What was validated another way is listed in §1.6 and in `docs/DOCKER.md`. Phase 0's blockers D1–D6 are addressed; D3 (index creation in production) remains an operational step. |
 | **Docker Compose** | **NOT STARTED** | No `docker-compose.yml`. When written it must use a **single-node Mongo replica set**: `withTransaction` degrades to compensating writes on a standalone, and CI uses standalone `mongo:7`, so the transaction path has never run anywhere (B9). |
 | **MongoDB Atlas** | **NOT STARTED** (target; code is ready) | Mongoose 9.10, one `connectDatabase(env.MONGODB_URI)`, `maxPoolSize: 20`, `serverSelectionTimeoutMS: 10_000`, `strictQuery: true`. `sanitizeFilter` is deliberately off — injection safety comes from zod parsing ids into real ObjectIds. Transaction support is probed at runtime via `hello`, so an Atlas replica-set URI simply turns transactions on with no code change. 71 models, 191 index declarations. **To do before Atlas:** make the pool size configurable (20 × replicas must fit the tier's connection limit) and make index creation an explicit production step (D3/B8). |
 | **Cloudflare** | **NOT STARTED** | No configuration anywhere. When added: Full Strict TLS, never cache `/api`, keep SNS and query-string webhooks reachable, and re-verify `trust proxy` (R4). |
@@ -795,6 +797,112 @@ codes. Total suite: 4,048 HTTP assertions, 0 failures.
    observed checkout, but it is a number, not a proof.
 5. **Plain returns are still unprotected** (above).
 
+### 1.6 Phase 6 — Docker foundation (written 2026-10-13, build pending)
+
+**One image, two roles.** The API and the worker are the same compiled server
+and the same dependencies, differing only in the entrypoint: `node dist/server.js`
+and `node dist/worker.js`. Building them together means a worker cannot drift
+from the API it shares a database with, and a release promotes one artifact.
+The API starts no worker and the worker starts no HTTP server — that separation
+lives in the application, not in the Dockerfile.
+
+**Stages:** `deps` (npm ci from the lockfile, manifests only so the slow layer
+caches) → `build-server` (tsc) → `build-client` (vite, artifact only) →
+`client-assets` (a `scratch` stage for exporting the SPA) → `prod-deps`
+(`npm ci --omit=dev`, scoped to the server workspace) → `server` (runtime).
+
+**Base image: `node:22-bookworm-slim`**, chosen on evidence rather than habit.
+Both native packages ship prebuilt binaries, and the lockfile was read to see
+which platforms are covered: `sharp` has glibc *and* musl builds, but
+`msgpackr-extract` (via BullMQ) has **no musl build**. On Alpine it would fall
+back to `node-gyp`, meaning python3, make and g++ in the image to compile
+something that has a ready binary for Debian. Debian therefore needs **no
+compiler in any stage and no apt packages at all** — `sharp` carries its own
+libvips. Host `node_modules` is excluded by `.dockerignore`, so macOS binaries
+can never reach a Linux image.
+
+**Client.** The API serves `/api` and uploaded files only — it does **not**
+serve the SPA, and nothing was added to make it. The client is built as a
+reproducible artifact and extracted with `--target client-assets --output`;
+whatever serves it must proxy `/api` on the same origin, which is the Phase 8/9
+reverse proxy. Phase 0's D4 (the client build fetching the API) was closed by
+the one build-script change in this phase: `PRERENDER_REQUIRE_API=true` makes an
+unreachable API a build failure instead of a silent fall back to built-in
+marketing copy. Unset, it falls back and warns — right for development and CI,
+and now a declared choice rather than an inherited one for a release.
+
+**Runtime.** Non-root (`node`, uid 1000), `WORKDIR /app/server` so `dist/server.js`
+and the uploads path resolve exactly as the `start` script does outside a
+container, `PORT` from the environment, every interface bound. Node is PID 1 and
+the application registers its own SIGTERM/SIGINT handlers; `--init` is
+documented for grandchild reaping.
+
+**Secrets.** Nothing baked in. `.dockerignore` excludes `.env`, `.env.*`,
+`*.pem`, `*.key` and `certs/` from the build context, so no layer can contain
+them. Gateway, SMTP and SMS credentials are not environment variables at all in
+this application — a platform admin stores them in the database.
+
+**Writable paths.** Exactly one: `/app/server/uploads`, created and chowned to
+`node`. Nothing else is written at runtime — exports stream to the response,
+imports parse in memory, `sharp` works in memory, invoices and receipts are
+MongoDB documents. It needs a named volume in Phase 7 or uploads are lost on
+every deploy.
+
+**Health.** The image's `HEALTHCHECK` hits `/api/health` and is **liveness
+only**: it says the process is serving. It does not prove MongoDB is reachable
+and deliberately does not fail when Redis is away, because Redis is optional for
+the API and a dependency-aware check would kill working containers. The worker
+has no HTTP server and **no health check was invented for it**; it must run with
+`--no-healthcheck`, and `docs/DOCKER.md` says how to judge it until Phase 7.
+
+**One real bug found and fixed.** Running the compiled worker from a reproduced
+image layout showed it exiting **1** on SIGTERM: closing a BullMQ worker tears
+down a connection that can emit an `error` after BullMQ has removed its
+listener, which Node turns into an uncaught exception. The work was already
+drained, but a container runtime reads only the exit code — it would have
+restarted the worker and counted every rolling deploy as a failure. `worker.ts`
+now ignores a late failure *once shutdown has begun* (logged, not silent) while
+an uncaught exception before that is still fatal. It exits 0 now. Phase 2 had
+not caught this because no worker was registered then.
+
+**Validation — and what it does not cover.** There is no Docker and no container
+runtime on this machine, and none was installed, so **the image has never been
+built or run.** Verified another way:
+
+- every `COPY` source exists in the build context (static parse of the Dockerfile);
+- `npm ci --omit=dev --workspace server --include-workspace-root` resolves and
+  scopes correctly — run for real, and the client's runtime dependencies
+  (react, recharts, axios) are absent from the result;
+- the runtime file set is sufficient: the image's layout was reproduced on disk
+  — production-only `node_modules`, `server/dist`, the two manifests — and both
+  entrypoints were started from it;
+- module resolution works from `/app/server` with `node_modules` one level up;
+- `express`, `mongoose`, `ioredis`, `bullmq`, `sharp`, `msgpackr`, `exceljs`,
+  `pdfkit` and `nodemailer` all load under that production-only tree;
+- the API answers `/api/health` and exits 0 on SIGTERM; the worker registers
+  `campaign-delivery` and now exits 0 too;
+- Linux prebuilds for both native packages are present in `package-lock.json`.
+
+Not verified: that the image builds; that the **Linux** prebuilds load (only
+their presence is confirmed — `sharp` was exercised on darwin-arm64);
+`HEALTHCHECK`, `USER` and volume ownership as Docker applies them; the client
+build inside a container. **Phase 6 is therefore recorded as written and
+statically validated, not as a tested artifact.**
+
+**Limitations carried forward unchanged** (none of these were in scope):
+
+1. MongoDB transaction coverage is still unverified against a replica set.
+2. BullMQ has still not been integration-tested against a real Redis.
+3. Redis rate limiting has still not been tested across real API replicas.
+4. Local uploads still need a persistence strategy; object storage stays deferred.
+5. The subscription scheduler still runs inside the API process.
+6. **More than one API replica is still not safe** — the per-process scheduler
+   and local uploads are the two reasons.
+7. Plain returns still have no idempotency key.
+8. Checkout idempotency keys are still optional.
+9. The idempotency completion step still has a one-update crash window.
+10. The Redis-absent inline campaign fallback still exists.
+
 ### Deployment model
 
 **UNDOCUMENTED.** No Dockerfile, compose file, Nginx config, PM2 ecosystem,
@@ -835,7 +943,7 @@ PHASE 3   Background-job migration                  IN PROGRESS   ← 1 of 6 don
           subscription scheduler passes              NOT STARTED
 PHASE 4   Rate limiting (distributed)               COMPLETED  (2026-10-08)
 PHASE 5   Idempotency / reliability                 COMPLETED  (2026-10-13)
-PHASE 6   Docker                                    NOT STARTED
+PHASE 6   Docker                                    IN PROGRESS (written; build pending)
 PHASE 7   Docker Compose + local production-like    NOT STARTED
 PHASE 8   VPS deployment                            NOT STARTED
 PHASE 9   Cloudflare + SSL                          NOT STARTED
@@ -881,6 +989,7 @@ inline-fallback note before assuming a queue is always available.
 
 | Date | Change |
 |---|---|
+| 2026-10-13 | **Phase 6 — Docker foundation (written, not built).** Added `docker/Dockerfile` (multi-stage, `node:22-bookworm-slim`, non-root, production-only runtime, one image for both the API and the worker), `.dockerignore` and `docs/DOCKER.md`. Debian was chosen because the lockfile shows `msgpackr-extract` has no musl prebuild, so Alpine would need a compiler; Debian needs no apt packages at all. One build-script change: `PRERENDER_REQUIRE_API` makes an unreachable API a build failure rather than a silent fall back to built-in marketing copy. Fixed a real shutdown bug found while running the compiled worker from a reproduced image layout — it exited 1 on SIGTERM because a connection emitted after BullMQ removed its listener; a clean stop now exits 0. **The image has never been built or run: no container runtime on this machine.** No Compose, no deployment automation, no application behaviour changed. |
 | 2026-10-13 | **Phase 5 — idempotency on sale and order creation.** Added a shared mechanism (`services/reliability/idempotency.service.ts`, `models/IdempotencyRecord.ts`, unique on `(scope, key)`, 24-hour retention, lease-based recovery, canonical fingerprinting) and applied it at the controller layer to **Restaurant orders, Super Shop sales and Pharmacy sales** — the three flows Phase 0 found unprotected. The sale services themselves were not touched. Clothing's older mechanism was audited, found correct (it compensates stock and loyalty on a race) and left alone with regression tests added. The POS tills now send a per-basket `Idempotency-Key`. Two error codes added; `docs/API.md` documents the contract. Payment, wallet, subscription, usage-charge, loyalty and exchange protection unchanged; plain returns remain the one known gap and are recommended as the next atomic migration. |
 | 2026-10-08 | **Phase 4 — distributed rate limiting.** All 20 existing limiters moved from per-process memory to a Redis-backed store (`middleware/rateLimit.ts`) with their policies unchanged, counting through one atomic `EVAL` per request on the shared Phase 1 client — no new Redis connection, nothing per request. Added per-account login protection (failed attempts only, hashed identifier), and dedicated `/auth/refresh` and `/auth/logout` policies. Outage behaviour is declared per policy: four spend/capacity-guarding policies refuse, the rest degrade to a per-process counter; a Redis that was never configured is not treated as an outage, so a no-Redis deployment behaves exactly as before. `trust proxy` became `TRUST_PROXY_HOPS`. New `middleware/rateLimit.check.ts` (54 assertions). Closes audit findings R1–R4. |
 | 2026-10-08 | **Phase 3, first migration — campaign delivery.** Campaign SMS and email delivery moved off the HTTP request onto the `campaign-delivery` queue: the request now stores the recipients, charges once, enqueues one job per 100-recipient batch and returns, and the worker delivers. Added `services/sms/campaignDelivery.service.ts` (the single delivery implementation, used by the worker and by the no-Redis inline fallback alike), `queues/campaign.queue.ts`, and `seed/campaignDelivery.check.ts` (82 assertions). `SmsMessage` gained a unique `(campaignId, recipient)` index, a claim lease, `attempts`, `failureKind` and `batchIndex`, which is what makes a worker retry skip what already went out; `SmsCampaign` gained `queued`. Money rules, terminal statuses and tenant scoping unchanged. Fixed three bugs found while testing: a transient failure being re-claimed inside the same pass, two configuration errors misclassified as transient, and `shutdownQueues` hanging when a worker's connection had gone. **No other job migrated**; the subscription scheduler, billing/auth emails, exports, imports and image processing are untouched. |

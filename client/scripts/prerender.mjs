@@ -30,6 +30,21 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const DIST = resolve(HERE, '../dist');
 const API = (process.env.PRERENDER_API_URL ?? process.env.VITE_API_URL ?? 'http://localhost:4100/api').replace(/\/$/, '');
 
+/**
+ * Whether an unreachable API is a build FAILURE rather than a fallback.
+ *
+ * The fallback below is right for a developer build and for CI, where there is
+ * no API and the built-in copy is fine. It is wrong for a release build, where
+ * quietly shipping stale marketing text is worse than not shipping: the tags
+ * crawlers read would no longer be the ones the admin configured. A container
+ * build has no API by default, so a release build has to say which it wants
+ * instead of inheriting whichever happens to be true.
+ *
+ *   PRERENDER_REQUIRE_API=true  -> fail if the settings cannot be read
+ *   unset                       -> use the built-in copy, with a warning
+ */
+const REQUIRE_API = /^(1|true|yes)$/i.test(process.env.PRERENDER_REQUIRE_API ?? '');
+
 // The route table is TypeScript, so it is parsed out rather than imported -
 // this script runs on plain node with no build step of its own. A mismatch is
 // caught by the test that compares the two lists.
@@ -206,6 +221,12 @@ async function main() {
   const template = await readFile(resolve(DIST, 'index.html'), 'utf8');
   const site = await fetchSite();
   if (!site) {
+    if (REQUIRE_API) {
+      throw new Error(
+        `prerender: ${API}/public/site could not be read, and PRERENDER_REQUIRE_API is set. ` +
+          'Point PRERENDER_API_URL at a reachable API, or unset PRERENDER_REQUIRE_API to build with the built-in copy.',
+      );
+    }
     console.warn(`  prerender: ${API}/public/site unreachable — using built-in copy.`);
   }
 

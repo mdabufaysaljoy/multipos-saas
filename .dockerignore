@@ -1,0 +1,51 @@
+# Everything the image must never contain, and everything that would only slow
+# the build down or invalidate its cache for no reason.
+
+# Secrets and local configuration. The image takes its configuration from the
+# environment at runtime; a .env must never reach a layer.
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+certs/
+
+# Installed dependencies: the image installs its own, for ITS platform. Copying
+# these in would put macOS or Windows binaries of sharp and msgpackr-extract
+# into a Linux image.
+node_modules/
+*/node_modules/
+
+# Build output: every stage compiles from source.
+dist/
+build/
+client/dist/
+server/dist/
+*.tsbuildinfo
+
+# Runtime data that belongs in a volume, not an image.
+uploads/
+server/uploads/
+.multipos-saas-test-uploads-*/
+
+# Version control, tooling and editor state.
+.git/
+.github/
+.gitignore
+.dockerignore
+.claude/
+.vscode/
+.idea/
+.DS_Store
+
+# Tests, docs and scripts the image does not run. `client/scripts` IS needed by
+# the client build and is deliberately not excluded.
+scripts/
+docs/
+coverage/
+*.log
+AUDIT.md
+README.md
+CLAUDE.md
+CLAUDE.MD
+PROGRESS.md

@@ -77,6 +77,33 @@ async function bootstrap(): Promise<void> {
   logger.info(`Worker process started (${env.NODE_ENV})`);
 
   let shuttingDown = false;
+
+  /**
+   * A clean stop must not look like a crash.
+   *
+   * Closing a BullMQ worker tears down connections it owns, and one of those
+   * can emit an `error` after BullMQ has already removed the listener for it -
+   * an unhandled `error` event, which Node turns into an uncaught exception and
+   * a non-zero exit. The work is already drained at that point, but a container
+   * runtime reads only the exit code: it would restart the worker, and a rolling
+   * deploy would count the stop as a failure.
+   *
+   * So once shutdown has begun, a late failure is logged and the stop is allowed
+   * to finish. Before that, an uncaught exception is still fatal - a worker in an
+   * unknown state should die and be replaced, not keep taking jobs.
+   */
+  const duringShutdown = (what: string) => (error: unknown) => {
+    if (!shuttingDown) {
+      logger.error(`Uncaught ${what} in the worker process`, error);
+      process.exit(1);
+    }
+    logger.warn(`Ignored a late ${what} raised while shutting down`, {
+      error: error instanceof Error ? error.message : String(error),
+    });
+  };
+  process.on('uncaughtException', duringShutdown('exception'));
+  process.on('unhandledRejection', duringShutdown('rejection'));
+
   const shutdown = async (signal: string) => {
     // A second signal during a slow drain must not start a second shutdown.
     if (shuttingDown) return;

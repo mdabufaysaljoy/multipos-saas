@@ -163,6 +163,13 @@ brew services start mongodb-community
 docker run -d --name pos-mongo -p 27017:27017 -v pos-data:/data/db mongo:7
 ```
 
+> **Running the application itself in Docker.** `docker/Dockerfile` builds one
+> production image that serves both roles — the API and the background worker —
+> and [docs/DOCKER.md](docs/DOCKER.md) covers building, running, environment
+> injection, the single writable path and the limits of the health check. That
+> image has not been built yet: it was written on a machine with no container
+> runtime, and Phase 7 is where it is first built and run.
+
 ### A note on transactions
 
 Multi-document transactions require a **replica set**. A plain standalone
@@ -192,6 +199,7 @@ To enable them locally, run `mongod --replSet rs0` and `rs.initiate()` once.
 | `npm run dev:client` | Vite dev server only |
 | `npm run worker` | Background worker process (built). Needs `REDIS_URL`; **no job processors are registered yet** |
 | `npm run worker:dev` | Background worker with hot reload |
+| `docker build -f docker/Dockerfile -t retailer-suites:dev .` | Build the production image — API and worker in one. See [docs/DOCKER.md](docs/DOCKER.md) |
 | `npm run build` | Type-checks and builds both packages |
 | `npm run typecheck` | Type-checks both packages without emitting |
 | `npm run seed` | Seeds plans, permissions, a demo tenant and catalogue |

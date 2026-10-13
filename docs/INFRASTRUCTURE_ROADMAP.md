@@ -1,9 +1,10 @@
 # Infrastructure roadmap
 
 **Phases 0 (audit), 1 (Redis foundation), 2 (BullMQ worker foundation)
-4 (distributed rate limiting) and 5 (idempotency) are COMPLETED. Phase 3 is PART DONE: campaign
+4 (distributed rate limiting) and 5 (idempotency) are COMPLETED, and 6 (Docker)
+is WRITTEN BUT NEVER BUILT. Phase 3 is PART DONE: campaign
 delivery has been migrated (§5.1), the other five candidates have not. Phases
-6–12 are not implemented.** Live status per area is `docs/IMPLEMENTATION_STATUS.md`,
+7–12 are not implemented.** Live status per area is `docs/IMPLEMENTATION_STATUS.md`,
 which is the file to trust when this one and it disagree.
 
 Written 2026-10-08 against the working tree at `claude/retailer-suites-audit-e61761`
@@ -613,6 +614,28 @@ CDN instead of `express.static`.
 
 ## 9. Docker plan
 
+### Status: WRITTEN, NOT BUILT (Phase 6, 2026-10-13)
+
+`docker/Dockerfile` exists — multi-stage, `node:22-bookworm-slim`, non-root,
+production-only runtime, one image serving both the API and the worker — with
+`.dockerignore` and `docs/DOCKER.md`. **It has never been built or run:** there
+is no container runtime on the machine, and none was installed. What was
+validated another way, and what was not, is listed in
+`docs/IMPLEMENTATION_STATUS.md` §1.6.
+
+The blockers below were the Phase 0 audit's, and this is where each landed:
+
+| | Phase 0 blocker | Outcome |
+|---|---|---|
+| D1 | native modules (`sharp`, `msgpackr-extract`) | Debian chosen from the lockfile's prebuild coverage; no compiler, no apt packages |
+| D2 | uploads on local disk | one writable path, `/app/server/uploads`, documented as needing a volume |
+| D3 | `syncIndexes` disabled in production | **still open** — an operational step, not an image concern |
+| D4 | the client build fetching the API | closed: `PRERENDER_REQUIRE_API` makes it an explicit choice |
+| D5 | the SPA calling relative `/api` | unchanged by design; the reverse proxy is Phase 8/9 |
+| D6 | per-replica scheduler and caches | unchanged; **>1 API replica is still unsafe** |
+
+**What follows is the Phase 0 finding, kept for the record.**
+
 ### Readiness: good core, six things to fix first
 
 **In favour.** All configuration is environment-driven through a zod-validated
@@ -844,7 +867,7 @@ PHASE 4   Rate limiting (distributed)              (COMPLETED 2026-10-08)
    ↓
 PHASE 5   Idempotency / reliability                 (COMPLETED 2026-10-13)
    ↓
-PHASE 6   Docker                                    ← next
+PHASE 6   Docker                                    (WRITTEN 2026-10-13; build pending)
    ↓
 PHASE 7   Docker Compose + production-like local testing
    ↓
