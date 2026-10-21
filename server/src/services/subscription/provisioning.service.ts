@@ -110,7 +110,7 @@ export async function startTrialSubscription(
         notes: `Automatic ${trialDays}-day trial on signup`,
       },
     ],
-    { session },
+    { session, ordered: true },
   );
   await promoteToPrimary(tenantId, subscription._id, session);
 
@@ -125,7 +125,7 @@ export async function startTrialSubscription(
         actorNameSnapshot: 'system',
       },
     ],
-    { session },
+    { session, ordered: true },
   );
 
   await TenantModel.updateOne(

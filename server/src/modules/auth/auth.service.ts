@@ -88,7 +88,7 @@ class AuthService {
             isActive: true,
           },
         ],
-        { session },
+        { session, ordered: true },
       );
 
       // The account belongs to the user being created here - there is no way
@@ -114,7 +114,7 @@ class AuthService {
             contactPhone: input.phone ?? '',
           },
         ],
-        { session },
+        { session, ordered: true },
       );
 
       await createSystemRoles(tenantId, session);

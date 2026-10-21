@@ -148,7 +148,7 @@ class CustomerService {
           email: input.email ?? '',
         },
       ],
-      { session },
+      { session, ordered: true },
     );
     return { _id: created._id, name: created.name, phone: created.phone, email: created.email };
   }

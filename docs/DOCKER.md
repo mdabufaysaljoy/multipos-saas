@@ -221,29 +221,172 @@ build's own platform. Build on the architecture you deploy to, or use
 The compiled migrations are in the image (`node dist/migrations/<name>.js`), so
 a release can run them without `tsx` or any development dependency.
 
-## What has not been verified
+## Compose: the local stack
 
-**The image has never been built or run.** There is no Docker and no container
-runtime on the machine this was written on, and none was installed. Everything
-below was checked another way, and the gap is listed so nobody mistakes it for
-a tested artifact:
+`docker-compose.yml` runs the whole thing: nginx, the API, the worker, Redis and
+a **single-node MongoDB replica set**. The replica set is the point — a
+standalone server silently disables transactions, so until this stack existed no
+test had ever exercised the transaction path.
 
-| Checked | How |
+```
+Browser -> nginx :8080 -> SPA + /api, /uploads proxied -> API -> MongoDB rs0
+                                                       \-> Redis <- worker
+```
+
+```bash
+cp .env.compose.example .env.compose     # then put real secrets in it
+docker compose build
+docker compose up -d
+open http://localhost:8080
+```
+
+Only nginx publishes a port. MongoDB and Redis are reachable on the internal
+network and nowhere else.
+
+### Operating
+
+```bash
+docker compose ps                        # state and health
+docker compose logs -f api               # or worker, web, mongo, redis
+docker compose restart api               # one service
+docker compose stop                      # SIGTERM; both app containers exit 0
+docker compose down                      # remove containers, KEEP volumes
+docker compose down -v                   # also DESTROYS mongo, redis and uploads
+```
+
+`docker compose down -v` is the destructive one. Plain `down` keeps all three
+named volumes, and an upload written before a restart is still there after it.
+
+### Inspecting the infrastructure
+
+```bash
+# Replica set status, and that transactions are really available
+docker compose exec mongo mongosh --quiet --eval 'rs.status().set'
+docker compose logs mongo-init | tail -3
+
+# Redis
+docker compose exec redis redis-cli ping
+docker compose exec redis redis-cli --scan --pattern 'retailersuites:*' | head
+docker compose exec redis redis-cli config get maxmemory-policy
+
+# Seed a demo workspace (destroys existing data in that database)
+docker compose exec api node dist/seed/seed.js --reset
+```
+
+### Integration tests
+
+Two layers. First, the infrastructure itself, from inside the API container:
+
+```bash
+docker compose exec api node dist/seed/infraIntegration.check.js
+```
+
+It proves the replica set is real, that transactions commit and roll back with
+no partial write, that Redis answers, that the rate limiter's Lua is atomic
+under 25 concurrent increments, and that BullMQ enqueues, processes, retries,
+exhausts and shuts down against a real Redis.
+
+Second, the application's own end-to-end suite, against the stack:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.test.yml up -d
+docker compose exec mongo mongosh retailersuites --quiet --eval 'db.dropDatabase()'
+docker compose exec api node dist/seed/seed.js --reset
+docker compose -f docker-compose.yml -f docker-compose.test.yml restart api worker
+API_BASE=http://localhost:8080/api node scripts/smoke-test.mjs
+```
+
+The order matters. The suite is **stateful and expects a fresh database**: it
+asserts exact branch counts and plan limits, so a second run against the same
+data fails on accumulated state. Dropping the database and restarting the API
+afterwards is what makes it repeatable — the restart is needed because the API
+caches its pricing catalogue for a minute and a reset underneath it leaves that
+cache stale.
+
+`docker-compose.test.yml` exists because the suite cannot run against a
+production-mode API: it signs in as dozens of accounts, which the strict
+production rate limits throttle on purpose. The override switches the two
+containers to `NODE_ENV=development` (the application's own relaxed limits) and
+enables the SMS test double so campaigns can be delivered end to end without
+messaging anyone. Everything else is identical — the same image, the same
+replica set, the same Redis, the same worker.
+
+Six assertions in that suite cannot pass against a containerised stack, and they
+are limitations of running the host suite against containers rather than
+product failures:
+
+- four payment tests need mock gateways that the harness starts **on the host**,
+  which the API cannot reach from inside the Compose network;
+- two upload tests check for files with `existsSync` **on the host filesystem**,
+  where a file written into the container's volume is not visible.
+
+All six pass in the ordinary host run (`npm test`).
+
+### Apple Silicon
+
+The stack was built and run on an M-series Mac: Docker 29.8, `linux/aarch64`,
+Compose v5. Nothing is pinned to amd64, and both native modules have arm64
+prebuilds (`sharp` reports libvips 8.18.7 inside the container). To build for an
+amd64 VPS from a Mac, pass `--platform linux/amd64` — it will emulate, so expect
+it to be slow.
+
+### Resource expectations
+
+Approximate, from `docker stats` on an idle-to-light stack; **not** a measured
+capacity figure, and no load test was run:
+
+| Service | Memory limit set | Idle use |
+|---|---|---|
+| mongo | 1 GB | ~200 MB |
+| api | 768 MB | ~100 MB |
+| worker | 640 MB | ~90 MB |
+| redis | 320 MB | ~10 MB |
+| web | 128 MB | ~5 MB |
+
+That fits a 2 vCPU / 4 GB VPS with room to spare, which is the Phase 8 target.
+The limits are ceilings to stop one service starving the others, not reservations.
+
+### Redis durability and eviction
+
+`appendonly yes`, `maxmemory 256mb`, `maxmemory-policy noeviction`.
+
+The policy is the important one. BullMQ's queues are **data**, not cache: under
+an LRU policy Redis would evict job and lock keys to make room and jobs would
+disappear with no error anywhere. `noeviction` makes a full Redis refuse writes
+instead, which fails loudly. The append-only file means queued jobs survive a
+Redis restart; it is not a backup strategy, and rate-limit counters are
+deliberately disposable.
+
+## Verified in Phase 7
+
+Everything Phase 6 listed as unverified has now been run:
+
+| | Result |
 |---|---|
-| Every `COPY` source exists in the build context | Static parse of the Dockerfile against the tree |
-| `npm ci --omit=dev --workspace server --include-workspace-root` resolves and scopes correctly | Run for real; the client's runtime dependencies are absent from the result |
-| The runtime file set is sufficient | The image's layout was reproduced on disk — prod-only `node_modules`, `server/dist`, the two manifests — and the API and worker were started from it |
-| Module resolution from `/app/server` with `node_modules` one level up | Same run |
-| `express`, `mongoose`, `ioredis`, `bullmq`, `sharp`, `msgpackr`, `exceljs`, `pdfkit`, `nodemailer` all load under a production-only tree | Required each one from that layout |
-| The API serves `/api/health` and exits 0 on SIGTERM | Same run |
-| The worker registers `campaign-delivery` and exits 0 on SIGTERM | Same run — and this is how a real shutdown bug was found and fixed |
-| Linux prebuilds exist for both native packages | Read from `package-lock.json` |
+| The image builds | Yes — 53s, `linux/arm64` |
+| Runs as non-root | `uid=1000(node)`, cwd `/app/server` |
+| Linux native prebuilds load | `sharp` + libvips 8.18.7, `msgpackr`, `bullmq`, `ioredis`, `mongoose`, `express` |
+| No dev tooling in the runtime | typescript, vite, tsx, eslint all absent |
+| API starts and serves | `/api/health` 200 through nginx |
+| Worker starts | registers `campaign-delivery`, concurrency 1 |
+| MongoDB replica set | `rs0`, writable primary, **transactions ENABLED** |
+| Transactions commit and roll back | 9 assertions, including no partial write after rollback |
+| Redis from API and worker | connected, PING, namespaced keys |
+| BullMQ against real Redis | enqueue, process, retry, exhaustion, jobId dedupe, clean shutdown |
+| Rate limiting | 429 through nginx, real client IP, **counter shared across two API instances** |
+| Idempotency | 37 assertions against the replica set |
+| Campaign queue | API enqueues, worker delivers, every recipient terminal |
+| Frontend | SPA served, deep routes fall back, `index.html` not cached, assets immutable |
+| Persistence | uploads and MongoDB data survive a full restart |
+| Graceful shutdown | API and worker both exit **0** on SIGTERM |
+| Dependency restarts | API recovers from both a Redis and a MongoDB restart |
+| Restart loops | none; every `RestartCount` is 0 |
 
-| **Not checked** | Why |
-|---|---|
-| That the image builds | No Docker |
-| That the Linux `sharp` and `msgpackr-extract` prebuilds load | No Linux runtime; only their presence in the lockfile is confirmed |
-| `HEALTHCHECK`, `USER`, volume ownership as Docker applies them | No Docker |
-| The client build inside a container | No Docker; it builds on the host |
+### Still not verified
 
-Phase 7 builds and runs these images for the first time.
+- **No load test.** The resource figures above are idle observations.
+- **Multiple API replicas are not production-safe**, and running two was a
+  temporary test only. The subscription scheduler still runs inside every API
+  process, and uploads are on a local volume.
+- **amd64 was not built.** Everything here is arm64.
+- **Nothing was deployed.** No TLS, no Cloudflare, no VPS; those are Phases 8-9.

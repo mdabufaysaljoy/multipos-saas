@@ -79,6 +79,14 @@ RUN npm run build --workspace client
 FROM scratch AS client-assets
 COPY --from=build-client /app/client/dist /
 
+# ------------------------------------------------------------------- the SPA
+# nginx with the built client and the single-origin config. Added in Phase 7
+# because the SPA asks for a relative `/api`: something has to answer the app
+# and the API on one host, and this is the smallest thing that does.
+FROM nginx:1.27-alpine AS web
+COPY docker/nginx/default.conf /etc/nginx/conf.d/default.conf
+COPY --from=build-client /app/client/dist /usr/share/nginx/html
+
 # ----------------------------------------------------- runtime dependencies
 # Production dependencies for the SERVER workspace only. Scoping it keeps
 # React, Recharts and the rest of the client's runtime out of a server image

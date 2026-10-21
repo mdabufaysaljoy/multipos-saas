@@ -1,0 +1,190 @@
+# Retailer Suites - production-like local stack.
+#
+# Browser -> nginx :8080 -> the SPA, and /api + /uploads proxied to the API
+#                           API -> MongoDB (replica set rs0) + Redis
+#                        worker -> the same MongoDB and Redis
+#
+# One image serves the API and the worker (docker/Dockerfile); they differ only
+# in the command. Only nginx publishes a port: MongoDB and Redis are reachable
+# on the internal network and nowhere else.
+#
+#   cp .env.compose.example .env.compose   # then edit the secrets
+#   docker compose build
+#   docker compose up -d
+#
+# docs/DOCKER.md has the rest, including how to run the integration tests.
+
+name: retailer-suites
+
+x-app-env: &app-env
+  env_file: [.env.compose]
+  environment:
+    # Service names, not localhost: each container's own localhost is itself.
+    MONGODB_URI: mongodb://mongo:27017/${MONGO_DB:-retailersuites}?replicaSet=rs0
+    REDIS_URL: redis://redis:6379
+    # The container's clock must be the SHOP's clock.
+    #
+    # A base image runs in UTC. Some report windows are computed from the
+    # process's local time rather than from BUSINESS_TIMEZONE, so in UTC a
+    # Bangladeshi shop's "today" starts and ends six hours early - sales rung up
+    # between midnight and 06:00 local would be counted in the previous day.
+    # It was found exactly that way: the daily-range assertions expected
+    # midnight Asia/Dhaka and the container returned midnight UTC.
+    #
+    # Setting TZ is the infrastructure half of the fix and the smallest safe one.
+    # The code half - deriving every window from BUSINESS_TIMEZONE instead of the
+    # process clock - is a reporting change and is recorded as an open item
+    # rather than made here.
+    TZ: ${BUSINESS_TIMEZONE:-Asia/Dhaka}
+
+services:
+  # --------------------------------------------------------------- MongoDB
+  mongo:
+    image: mongo:7.0
+    command: ["mongod", "--replSet", "rs0", "--bind_ip_all"]
+    restart: unless-stopped
+    volumes:
+      - mongo-data:/data/db
+    healthcheck:
+      # Only that mongod answers. Being a writable primary is what `mongo-init`
+      # establishes, and services that need transactions wait on that instead.
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand({ping:1}).ok"]
+      interval: 5s
+      timeout: 5s
+      retries: 24
+      start_period: 20s
+    deploy:
+      resources:
+        limits:
+          memory: 1g
+
+  # Runs once, then exits. Everything that needs transactions waits for it to
+  # finish rather than merely for mongod to be up.
+  mongo-init:
+    image: mongo:7.0
+    restart: "no"
+    depends_on:
+      mongo:
+        condition: service_healthy
+    volumes:
+      - ./docker/mongo/init-replica-set.sh:/init-replica-set.sh:ro
+    environment:
+      MONGO_HOST: mongo:27017
+      MONGO_REPLICA_SET: rs0
+    entrypoint: ["/bin/sh", "/init-replica-set.sh"]
+
+  # ----------------------------------------------------------------- Redis
+  redis:
+    image: redis:7.2-alpine
+    restart: unless-stopped
+    command:
+      - redis-server
+      - --appendonly
+      - "yes"
+      - --maxmemory
+      - 256mb
+      # BullMQ's queues ARE data, not cache. Under `allkeys-lru` Redis would
+      # evict job and lock keys to make room and jobs would vanish with no
+      # error anywhere. `noeviction` makes a full Redis refuse writes instead,
+      # which surfaces as a failure someone can see and act on.
+      - --maxmemory-policy
+      - noeviction
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 5s
+    deploy:
+      resources:
+        limits:
+          memory: 320m
+
+  # ------------------------------------------------------------------- API
+  api:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+      target: server
+    image: retailer-suites:local
+    restart: unless-stopped
+    <<: *app-env
+    volumes:
+      # Uploaded images. The image creates this path owned by the unprivileged
+      # `node` user, and Docker carries that ownership onto a fresh named
+      # volume - which is why nothing here needs root or a chmod.
+      - uploads:/app/server/uploads
+    depends_on:
+      mongo-init:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+    # No published port: the browser reaches the API through nginx, which is
+    # also what production will do.
+    expose:
+      - "4000"
+    stop_grace_period: 30s
+    deploy:
+      resources:
+        limits:
+          memory: 768m
+
+  # ---------------------------------------------------------------- worker
+  worker:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+      target: server
+    image: retailer-suites:local
+    restart: unless-stopped
+    <<: *app-env
+    command: ["node", "dist/worker.js"]
+    depends_on:
+      mongo-init:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+    # The worker serves no HTTP, so the image's liveness check cannot apply to
+    # it. Judge it by its startup log, by the fact that it exits when Redis is
+    # missing, and by the integration tests that watch a job through it.
+    healthcheck:
+      disable: true
+    # Longer than the API's: a worker finishes the batch in hand first (15s of
+    # grace inside the application) before closing its queues.
+    stop_grace_period: 45s
+    deploy:
+      resources:
+        limits:
+          memory: 640m
+
+  # ------------------------------------------------------------------- web
+  web:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+      target: web
+    image: retailer-suites-web:local
+    restart: unless-stopped
+    ports:
+      - "${WEB_PORT:-8080}:80"
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O-", "http://127.0.0.1/healthz"]
+      interval: 10s
+      timeout: 3s
+      retries: 6
+      start_period: 5s
+    deploy:
+      resources:
+        limits:
+          memory: 128m
+
+volumes:
+  # `docker compose down -v` DESTROYS all three. Plain `down` keeps them.
+  mongo-data:
+  redis-data:
+  uploads:

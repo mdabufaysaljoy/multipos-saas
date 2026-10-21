@@ -332,7 +332,7 @@ class InventoryService {
           performedByNameSnapshot: ctx.userName,
         },
       ],
-      { session },
+      { session, ordered: true },
     );
   }
 
@@ -388,7 +388,7 @@ class InventoryService {
           ...(result.outOfStockOverride ? { outOfStockOverride: true } : {}),
         },
       ],
-      { session },
+      { session, ordered: true },
     );
     return row._id;
   }

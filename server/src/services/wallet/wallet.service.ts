@@ -669,7 +669,10 @@ class WalletService {
           metadata: input.metadata ?? {},
         },
       ],
-      sessionOpt(session),
+      // `ordered: true` is required whenever `create` is given an ARRAY and a
+      // session - Mongoose refuses the combination otherwise, and that only
+      // happens where transactions are actually available.
+      { ...sessionOpt(session), ordered: true },
     );
 
     return { transaction: row.toObject() as LedgerRow, balanceMinor: balanceAfterMinor, replayed: false };

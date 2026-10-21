@@ -86,6 +86,6 @@ export async function createSystemRoles(tenantId: Types.ObjectId, session?: Clie
   return RoleModel.create(
     // New roles already carry today's defaults, so later default-grant migrations skip them.
     SYSTEM_ROLES.map((role) => ({ ...role, tenantId, isSystem: true, isActive: true, appliedPermissionDefaults: [...APPLIED_DEFAULT_KEYS] })),
-    { session },
+    { session, ordered: true },
   );
 }

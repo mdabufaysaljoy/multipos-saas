@@ -3,6 +3,11 @@ dist/
 build/
 .env
 .env.local
+# Every local env file, including the Compose one, which holds real secrets.
+# The committed examples are the exception.
+.env.*
+!.env.example
+!.env.compose.example
 *.log
 .DS_Store
 server/uploads/

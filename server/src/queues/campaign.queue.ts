@@ -20,8 +20,18 @@ import type { CampaignJobData } from '../services/sms/campaignDelivery.service';
  */
 export const CAMPAIGN_QUEUE = 'campaign-delivery';
 
-/** Deterministic, so a repeated enqueue of the same batch is ignored. */
-export const campaignJobId = (campaignId: string, batchIndex: number) => `campaign:${campaignId}:batch:${batchIndex}`;
+/**
+ * Deterministic, so a repeated enqueue of the same batch is ignored.
+ *
+ * Hyphen-separated, NOT colon-separated: BullMQ refuses a custom job id
+ * containing a colon ("Custom Id cannot contain :"), because a colon is what
+ * separates the parts of its own Redis keys. The first version of this used
+ * colons, which made every enqueue fail with a 500 the moment a real Redis was
+ * configured - and nothing caught it, because the unit tests only compared the
+ * string to itself and the end-to-end suite ran with Redis absent, on the
+ * inline path. `seed/campaignDelivery.check.ts` now asserts the rule.
+ */
+export const campaignJobId = (campaignId: string, batchIndex: number) => `campaign-${campaignId}-batch-${batchIndex}`;
 
 /** True when a queue can be used at all. Redis is optional for the API. */
 export const campaignQueueAvailable = (): boolean => redisConfig() !== null;

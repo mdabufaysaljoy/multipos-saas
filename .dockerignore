@@ -39,7 +39,7 @@ server/uploads/
 .DS_Store
 
 # Tests, docs and scripts the image does not run. `client/scripts` IS needed by
-# the client build and is deliberately not excluded.
+# the client build, and `docker/nginx` by the web stage; neither is excluded.
 scripts/
 docs/
 coverage/

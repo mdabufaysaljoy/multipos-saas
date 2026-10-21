@@ -1543,29 +1543,56 @@ async function main() {
       token: admin.token,
       body: { name: `Promo ${runId}`, message: 'New collection!', audience: 'all-customers' },
     });
-    check('Campaign completes', campaign.status === 201, campaign.error);
+    check('Campaign accepted', campaign.status === 201, campaign.error);
     check('Campaign counted its recipients', campaign.data?.recipientCount > 0, campaign.data);
+
+    // Delivery happens in a BullMQ worker when Redis is configured and inline
+    // when it is not, so the campaign may still be `queued` here. Poll for the
+    // terminal state rather than assuming which path ran - that way these
+    // assertions hold in both deployments, and against the Compose stack they
+    // are a genuine end-to-end test of the queue.
+    const settledCampaign = await (async () => {
+      const deadline = Date.now() + 60_000;
+      let latest = campaign.data;
+      while (Date.now() < deadline) {
+        const list = (await api('/messaging/campaigns?limit=20', { token: admin.token })).data ?? [];
+        latest = list.find((c) => c._id === campaign.data?._id) ?? latest;
+        if (['completed', 'failed'].includes(latest?.status)) return latest;
+        await new Promise((r) => setTimeout(r, 400));
+      }
+      return latest;
+    })();
+
+    check('Campaign reaches a terminal state', ['completed', 'failed'].includes(settledCampaign?.status), settledCampaign?.status);
     check(
       'Campaign actual cost matches messages sent',
-      campaign.data?.actualCostMinor === campaign.data?.sentCount * 50,
-      campaign.data,
+      settledCampaign?.actualCostMinor === settledCampaign?.sentCount * 50,
+      settledCampaign,
     );
 
     const campaignMsgs = await api(`/messaging/sms?campaignId=${campaign.data._id}&limit=50`, { token: admin.token });
-    check('Campaign messages appear in history', campaignMsgs.data?.length === campaign.data.recipientCount);
+    check('Campaign messages appear in history', campaignMsgs.data?.length === settledCampaign?.recipientCount, {
+      rows: campaignMsgs.data?.length,
+      recipients: settledCampaign?.recipientCount,
+    });
+    check(
+      'Every recipient reached a terminal delivery state',
+      (campaignMsgs.data ?? []).every((m) => ['sent', 'failed'].includes(m.status)),
+      (campaignMsgs.data ?? []).map((m) => m.status).slice(0, 5),
+    );
 
     const campaignCharge = ((await api('/wallet/usage?service=sms&limit=50', { token: admin.token })).data?.items ?? []).find(
       (c) => c.referenceId === campaign.data?._id,
     );
     check(
       'The campaign is billed as ONE usage charge for every segment',
-      campaignCharge?.referenceType === 'sms_campaign' && campaignCharge.quantity === campaign.data.recipientCount * campaign.data.segments,
+      campaignCharge?.referenceType === 'sms_campaign' && campaignCharge.quantity === settledCampaign.recipientCount * settledCampaign.segments,
       campaignCharge,
     );
     check(
       'The campaign charge, net of refunds, equals its actual cost',
-      Boolean(campaignCharge) && campaignCharge.amountMinor - campaignCharge.refundedMinor === campaign.data.actualCostMinor,
-      { charge: campaignCharge, actual: campaign.data?.actualCostMinor },
+      Boolean(campaignCharge) && campaignCharge.amountMinor - campaignCharge.refundedMinor === settledCampaign.actualCostMinor,
+      { charge: campaignCharge, actual: settledCampaign?.actualCostMinor },
     );
     check('The campaign records which charge billed it', campaign.data?.usageChargeId === campaignCharge?._id);
 

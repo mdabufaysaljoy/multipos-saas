@@ -1,0 +1,38 @@
+# Integration-test override. NOT for production.
+#
+#   docker compose -f docker-compose.yml -f docker-compose.test.yml up -d
+#
+# Two changes, both needed to run the repository's own end-to-end suite against
+# the real stack:
+#
+#   NODE_ENV=development  - the suite signs in as dozens of accounts and makes
+#     several thousand calls per run. Production rate limits (20 logins per
+#     quarter hour) would throttle it into looking like a product failure, so
+#     the application's own relaxed development limits apply instead. The rate
+#     limiters are still Redis-backed and are tested separately, against the
+#     production-mode stack, where the strict numbers are the ones in force.
+#
+#   SMS_MOCK_ENABLED=true - the SMS test double, which the application ignores
+#     entirely in production. It never contacts a network, so campaign delivery
+#     can be exercised end to end through BullMQ without sending a message to
+#     anyone.
+#
+# Everything else is unchanged: the same image, the same MongoDB replica set,
+# the same Redis, the same worker. The infrastructure under test is real.
+services:
+  api:
+    environment:
+      NODE_ENV: development
+      SMS_MOCK_ENABLED: "true"
+      # The suite talks to the API through nginx on the host.
+      CLIENT_ORIGIN: http://localhost:8080
+    ports:
+      # Published only in test mode, so a test can reach the API directly when
+      # it needs to bypass the proxy. 4000 is often taken on a developer's
+      # machine, hence 4400; override with API_TEST_PORT.
+      - "${API_TEST_PORT:-4400}:4000"
+
+  worker:
+    environment:
+      NODE_ENV: development
+      SMS_MOCK_ENABLED: "true"

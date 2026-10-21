@@ -142,7 +142,11 @@ and refund features, the billing flow, and the recommended menu hierarchy — is
 ## Concurrency
 
 The deployment target *today* is standalone MongoDB — **no multi-document
-transactions**. (`utils/tx.ts` probes for a replica set at boot and uses real
+transactions** — while the Compose stack (Phase 7) runs a single-node replica
+set where they are available. Both paths therefore matter, and running the
+replica set for the first time showed how much: eleven `create(array, {session})`
+calls needed `ordered: true` and had been failing silently nowhere, because no
+test had ever opened a real session. (`utils/tx.ts` probes for a replica set at boot and uses real
 sessions when it finds one, so MongoDB Atlas turns transactions on without a
 code change; see Infrastructure below.) Correctness does not depend on that: it
 comes from ordering and compare-and-swap instead:
@@ -303,14 +307,15 @@ What that means in practice:
   process.
 - **The API and the worker are separate processes.** The API starts no worker
   and the worker starts no HTTP server; a test asserts both from the sources.
-- **There is a Dockerfile, and no deployment configuration.** `docker/Dockerfile`
-  builds one image that serves both roles — `node dist/server.js` for the API,
-  `node dist/worker.js` for the worker — on `node:22-bookworm-slim`, non-root,
-  with production dependencies only. It has **never been built**: there is no
-  container runtime on the machine it was written on. `docs/DOCKER.md` covers
-  building, running, environment, the single writable path and what the health
-  check does and does not prove. CI verifies; it still does not deploy, and
-  there is no Compose file.
+- **There is a Docker image and a Compose stack; there is no deployment
+  automation.** `docker/Dockerfile` builds one image serving both roles —
+  `node dist/server.js` for the API, `node dist/worker.js` for the worker — on
+  `node:22-bookworm-slim`, non-root, production dependencies only.
+  `docker-compose.yml` runs nginx, the API, the worker, Redis and a **single-node
+  MongoDB replica set**, which is the only place in this project where
+  transactions are actually exercised. `docs/DOCKER.md` covers building,
+  running, the integration tests and the limits. CI verifies; it still does not
+  deploy.
 - **Health is `GET /api/health`**, which returns `ok` whenever the process is
   running and does not check the database. It reports the Redis connection
   state under `data.dependencies.redis`, as information rather than a gate.

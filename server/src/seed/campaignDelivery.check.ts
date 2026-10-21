@@ -169,6 +169,16 @@ async function main(): Promise<void> {
   const jobId = campaignJobId('abc123', 7);
   check('A job id is deterministic, so a repeated enqueue is ignored', jobId === campaignJobId('abc123', 7) && jobId.includes('abc123'));
   check('...and differs per batch', campaignJobId('abc123', 7) !== campaignJobId('abc123', 8));
+  // BullMQ refuses a custom job id containing a colon ("Custom Id cannot
+  // contain :"), and it refuses it at ENQUEUE time - so an id that breaks the
+  // rule fails only against a real Redis. One did, and it reached Phase 7
+  // having passed every test that existed, because this file only ever compared
+  // the string to itself and the HTTP suite ran on the Redis-less inline path.
+  check('...and contains no colon, which BullMQ rejects outright', !jobId.includes(':'), jobId);
+  check(
+    '...for any campaign id and batch index',
+    [0, 1, 49, 1_000].every((i) => !campaignJobId('65b0000000000000000000ff', i).includes(':')),
+  );
 
   // 2b. The worker's own two decisions ------------------------------------
 

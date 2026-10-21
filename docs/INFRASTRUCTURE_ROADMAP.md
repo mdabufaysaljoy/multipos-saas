@@ -2,7 +2,8 @@
 
 **Phases 0 (audit), 1 (Redis foundation), 2 (BullMQ worker foundation)
 4 (distributed rate limiting) and 5 (idempotency) are COMPLETED, and 6 (Docker)
-is WRITTEN BUT NEVER BUILT. Phase 3 is PART DONE: campaign
+and 7 (Compose and real
+integration testing) are COMPLETED — the images are built and run. Phase 3 is PART DONE: campaign
 delivery has been migrated (§5.1), the other five candidates have not. Phases
 7–12 are not implemented.** Live status per area is `docs/IMPLEMENTATION_STATUS.md`,
 which is the file to trust when this one and it disagree.
@@ -677,6 +678,21 @@ line in the README for local development.
 
 ## 10. Docker Compose plan (Phase 7)
 
+### Status: COMPLETED (2026-10-21)
+
+Built as planned, including the single-node replica set — which was the whole
+point, and which immediately proved it: **eleven production call sites were
+broken on any replica set** (and therefore on Atlas) because
+`create(array, { session })` needs `ordered: true`, and registration returned a
+500. Two more real bugs surfaced the same way: BullMQ rejects a colon in a job
+id, so campaign delivery failed wherever Redis was configured, and nginx cached
+the API's address and answered 502 after any container recreate. Detail,
+evidence and the remaining limitations are in
+`docs/IMPLEMENTATION_STATUS.md` §1.7; operating instructions are in
+`docs/DOCKER.md`.
+
+**What follows was the plan, kept for the record.**
+
 Purpose: a production-*like* local stack, so Phases 1–5 can be verified
 together before any VPS work.
 
@@ -826,7 +842,7 @@ This is a solid verification pipeline. There is **no deployment stage**.
 | B6 | **CPU-bound `sharp`** on the request path. | `imageOptimizer.ts` | Phase 3 |
 | B7 | **Report aggregations** inline, two large services, 13 pipelines. | §5.1 | Index review, then daily snapshots if needed |
 | B8 | **No production index management.** `syncIndexes` is dev-only; 191 declarations exist but nothing guarantees they are built on a production database. | `config/db.ts` | Phase 6 (D3) |
-| B9 | **Transactions untested.** CI and (likely) production run standalone Mongo, so `withTransaction` degrades to compensating writes and the session path has never run in CI. | `utils/tx.ts`, `ci.yml` | Phase 7/10 |
+| B9 | ~~**Transactions untested.**~~ **CLOSED in Phase 7** — a single-node replica set in Compose exercises the real session path, and doing so immediately exposed eleven production call sites that failed on any replica set. CI still runs standalone, so adding a replica set there is the remaining gap. | `utils/tx.ts`, `ci.yml` | CI: Phase 10 |
 | B10 | **Uploads pin the API to one node.** | §8 | Object storage, when triggered |
 
 ### 15.2 Architectural readiness by tenant count
@@ -867,11 +883,11 @@ PHASE 4   Rate limiting (distributed)              (COMPLETED 2026-10-08)
    ↓
 PHASE 5   Idempotency / reliability                 (COMPLETED 2026-10-13)
    ↓
-PHASE 6   Docker                                    (WRITTEN 2026-10-13; build pending)
+PHASE 6   Docker                                    (COMPLETED; built and run 2026-10-21)
    ↓
 PHASE 7   Docker Compose + production-like local testing
    ↓
-PHASE 8   VPS deployment
+PHASE 8   VPS deployment                            ← next
    ↓
 PHASE 9   Cloudflare + SSL
    ↓

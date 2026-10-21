@@ -163,12 +163,19 @@ brew services start mongodb-community
 docker run -d --name pos-mongo -p 27017:27017 -v pos-data:/data/db mongo:7
 ```
 
-> **Running the application itself in Docker.** `docker/Dockerfile` builds one
-> production image that serves both roles — the API and the background worker —
-> and [docs/DOCKER.md](docs/DOCKER.md) covers building, running, environment
-> injection, the single writable path and the limits of the health check. That
-> image has not been built yet: it was written on a machine with no container
-> runtime, and Phase 7 is where it is first built and run.
+> **Running the whole stack in Docker — no local MongoDB or Redis needed.**
+>
+> ```bash
+> cp .env.compose.example .env.compose   # then put real secrets in it
+> docker compose up -d --build
+> open http://localhost:8080
+> ```
+>
+> That starts nginx, the API, the background worker, Redis and a **single-node
+> MongoDB replica set** — the only configuration in which this application's
+> transactions actually run. [docs/DOCKER.md](docs/DOCKER.md) covers operating
+> it, inspecting Mongo and Redis, running the integration tests, and the known
+> limitations.
 
 ### A note on transactions
 

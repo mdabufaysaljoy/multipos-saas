@@ -181,7 +181,7 @@ class ProductService {
             updatedBy: ctx.userId,
           },
         ],
-        { session },
+        { session, ordered: true },
       );
 
       const variants = await ProductVariantModel.create(
@@ -200,7 +200,7 @@ class ProductService {
           lowStockThreshold: variant.lowStockThreshold,
           isActive: variant.isActive,
         })),
-        { session },
+        { session, ordered: true },
       );
 
       // Opening balances become ledger entries so stock is auditable from day one.
