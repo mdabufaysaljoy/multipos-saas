@@ -1,0 +1,154 @@
+# Retailer Suites - single-VPS production stack.
+#
+#   docker compose -f docker-compose.prod.yml up -d
+#
+# DELIBERATELY NOT AN OVERRIDE of docker-compose.yml. The local stack publishes
+# a test port, carries a MongoDB replica set and assumes a disposable database;
+# inheriting any of that by accident is exactly the mistake worth preventing. It
+# shares only the Dockerfile.
+#
+# DEFAULT DATABASE: MongoDB Atlas, which has been the recorded plan since the
+# Phase 0 audit. There is no mongo service here. Atlas gives a real replica set -
+# and therefore transactions, which this application needs - without spending a
+# 4 GB VPS's memory on it. To self-host instead, add the companion override:
+#
+#   docker compose -f docker-compose.prod.yml -f docker-compose.prod.mongo.yml up -d
+#
+# and read the memory note in that file first. Pick ONE. Running both is how a
+# deployment ends up with two databases and one of them silently authoritative.
+#
+# SINGLE API REPLICA, and that is a correctness constraint, not a preference:
+# the subscription scheduler runs inside the API process, so a second replica
+# would run every scheduled pass twice. Uploads are on a local volume, which is
+# the second reason. Do not scale this service.
+#
+# docs/VPS_DEPLOYMENT.md is the operating manual.
+
+name: retailer-suites-prod
+
+x-logging: &logging
+  # Without this, container logs grow until the disk is full - which on a
+  # 40 GB VPS is a question of weeks, not years.
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+x-app-env: &app-env
+  env_file: [.env.production]
+  environment:
+    REDIS_URL: redis://redis:6379
+    # The container's clock is the shop's clock. Business-day boundaries are
+    # computed from the process clock (`dayjs().startOf('day')`), NOT from
+    # BUSINESS_TIMEZONE, which is display-only - so this is what decides when a
+    # sales day starts and ends. See docs/VPS_DEPLOYMENT.md, "Timezone".
+    TZ: ${BUSINESS_TIMEZONE:-Asia/Dhaka}
+
+services:
+  # ----------------------------------------------------------------- Redis
+  redis:
+    image: redis:7.2-alpine
+    restart: unless-stopped
+    logging: *logging
+    command:
+      - redis-server
+      - --appendonly
+      - "yes"
+      - --maxmemory
+      - ${REDIS_MAXMEMORY:-256mb}
+      # BullMQ's queues are DATA. Under an LRU policy Redis would evict job and
+      # lock keys to make room and jobs would vanish with no error anywhere.
+      - --maxmemory-policy
+      - noeviction
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 6
+      start_period: 10s
+    # No `ports`. Redis is reachable on the internal network and nowhere else.
+    deploy:
+      resources:
+        limits:
+          memory: ${REDIS_MEM_LIMIT:-320m}
+
+  # ------------------------------------------------------------------- API
+  api:
+    image: ${IMAGE_REPO:-retailer-suites}:${IMAGE_TAG:?IMAGE_TAG is required - use a git revision, never "latest"}
+    restart: unless-stopped
+    logging: *logging
+    <<: *app-env
+    environment:
+      REDIS_URL: redis://redis:6379
+      TZ: ${BUSINESS_TIMEZONE:-Asia/Dhaka}
+      # Node's heap must sit BELOW the container limit, or the kernel OOM-kills
+      # the process instead of letting V8 collect garbage. A container limit is
+      # not a heap limit; these are different numbers and both are needed.
+      NODE_OPTIONS: --max-old-space-size=${API_HEAP_MB:-896}
+    volumes:
+      - uploads:/app/server/uploads
+    depends_on:
+      redis:
+        condition: service_healthy
+    expose:
+      - "4000"
+    stop_grace_period: 30s
+    deploy:
+      resources:
+        limits:
+          memory: ${API_MEM_LIMIT:-1280m}
+
+  # ---------------------------------------------------------------- worker
+  worker:
+    image: ${IMAGE_REPO:-retailer-suites}:${IMAGE_TAG:?IMAGE_TAG is required - use a git revision, never "latest"}
+    restart: unless-stopped
+    logging: *logging
+    <<: *app-env
+    environment:
+      REDIS_URL: redis://redis:6379
+      TZ: ${BUSINESS_TIMEZONE:-Asia/Dhaka}
+      NODE_OPTIONS: --max-old-space-size=${WORKER_HEAP_MB:-448}
+    command: ["node", "dist/worker.js"]
+    depends_on:
+      redis:
+        condition: service_healthy
+    # No HTTP server, so the image's liveness probe cannot apply. Judge it by
+    # its startup log and by queue depth; see docs/VPS_DEPLOYMENT.md.
+    healthcheck:
+      disable: true
+    stop_grace_period: 45s
+    deploy:
+      resources:
+        limits:
+          memory: ${WORKER_MEM_LIMIT:-640m}
+
+  # ------------------------------------------------------------------- web
+  web:
+    image: ${IMAGE_REPO:-retailer-suites}-web:${IMAGE_TAG:?IMAGE_TAG is required - use a git revision, never "latest"}
+    restart: unless-stopped
+    logging: *logging
+    ports:
+      # The ONLY published port. Bound explicitly rather than to every
+      # interface, because a published Docker port is inserted ahead of ufw's
+      # rules and would otherwise be reachable whatever the firewall says.
+      - "${WEB_BIND:-0.0.0.0}:${WEB_PORT:-80}:80"
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O-", "http://127.0.0.1/healthz"]
+      interval: 15s
+      timeout: 3s
+      retries: 4
+      start_period: 10s
+    deploy:
+      resources:
+        limits:
+          memory: ${WEB_MEM_LIMIT:-128m}
+
+volumes:
+  # NEVER `docker compose down -v` here: it destroys both.
+  redis-data:
+  uploads:

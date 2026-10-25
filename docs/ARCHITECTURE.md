@@ -307,8 +307,13 @@ What that means in practice:
   process.
 - **The API and the worker are separate processes.** The API starts no worker
   and the worker starts no HTTP server; a test asserts both from the sources.
-- **There is a Docker image and a Compose stack; there is no deployment
-  automation.** `docker/Dockerfile` builds one image serving both roles —
+- **There is a Docker image, a local Compose stack and a prepared production
+  stack; nothing is deployed.** `docker-compose.prod.yml` plus the `deploy/`
+  scripts and `docs/VPS_DEPLOYMENT.md` are ready for a single VPS — one API, one
+  worker, Redis, nginx, and MongoDB Atlas by default. No server has been
+  provisioned, and plain HTTP cannot hold a login session because the refresh
+  cookie is `secure`, so TLS (Phase 9) gates any real traffic.
+- **The local stack and the image.** `docker/Dockerfile` builds one image serving both roles —
   `node dist/server.js` for the API, `node dist/worker.js` for the worker — on
   `node:22-bookworm-slim`, non-root, production dependencies only.
   `docker-compose.yml` runs nginx, the API, the worker, Redis and a **single-node

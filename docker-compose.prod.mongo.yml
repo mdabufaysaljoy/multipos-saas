@@ -1,0 +1,88 @@
+# OPTIONAL: self-hosted MongoDB instead of Atlas (Strategy B).
+#
+#   docker compose -f docker-compose.prod.yml -f docker-compose.prod.mongo.yml up -d
+#
+# Use this ONLY if you have deliberately chosen not to use Atlas. Running both
+# is how a deployment ends up with two databases, one of them silently
+# authoritative.
+#
+# MEMORY: this changes the whole budget. MongoDB wants a gigabyte before it is
+# busy, and WiredTiger will use half of (RAM - 1 GB) for its cache by default.
+# On a 4 GB VPS the sum below leaves very little headroom for the kernel and the
+# filesystem cache, and a POS that swaps during a checkout is a POS that loses
+# sales. Prefer Atlas on 4 GB, or move to 8 GB before self-hosting.
+#
+#   api 1.0 GB + worker 512 MB + redis 192 MB + web 96 MB + mongo 1.2 GB = ~3 GB
+#
+# You must also set MONGODB_URI in .env.production to:
+#   mongodb://mongo:27017/<database>?replicaSet=rs0
+#
+# BACKUPS ARE NOW YOUR RESPONSIBILITY. Atlas takes them for you; this does not.
+# deploy/backup.sh exists for exactly this case, and an untested restore is not
+# a backup.
+
+services:
+  mongo:
+    image: mongo:7.0
+    # A replica set, not a standalone: this application opens transactions, and
+    # a standalone server silently disables them.
+    command: ["mongod", "--replSet", "rs0", "--bind_ip_all"]
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    volumes:
+      - mongo-data:/data/db
+      - mongo-backups:/backups
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand({ping:1}).ok"]
+      interval: 10s
+      timeout: 5s
+      retries: 24
+      start_period: 30s
+    # No `ports`. MongoDB must never be reachable from the internet.
+    deploy:
+      resources:
+        limits:
+          memory: ${MONGO_MEM_LIMIT:-1200m}
+
+  mongo-init:
+    image: mongo:7.0
+    restart: "no"
+    depends_on:
+      mongo:
+        condition: service_healthy
+    volumes:
+      - ./docker/mongo/init-replica-set.sh:/init-replica-set.sh:ro
+    environment:
+      MONGO_HOST: mongo:27017
+      MONGO_REPLICA_SET: rs0
+    entrypoint: ["/bin/sh", "/init-replica-set.sh"]
+
+  api:
+    depends_on:
+      redis:
+        condition: service_healthy
+      mongo-init:
+        condition: service_completed_successfully
+    deploy:
+      resources:
+        limits:
+          memory: ${API_MEM_LIMIT:-1024m}
+
+  worker:
+    depends_on:
+      redis:
+        condition: service_healthy
+      mongo-init:
+        condition: service_completed_successfully
+    deploy:
+      resources:
+        limits:
+          memory: ${WORKER_MEM_LIMIT:-512m}
+
+volumes:
+  mongo-data:
+  mongo-backups:

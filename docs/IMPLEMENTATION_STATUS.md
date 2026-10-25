@@ -6,7 +6,8 @@ verified against the code on **2026-10-08** (branch
 **1** (Redis foundation), **2** (BullMQ worker foundation), **3 in part**
 (campaign delivery migrated; the other candidates are not), **4** (distributed
 rate limiting), **5** (idempotency on the sale and order flows), **6** (Docker images, now built and run), **7** (Compose + real infrastructure
-integration testing).
+integration testing), **8 prepared** (single-VPS production deployment —
+configuration, scripts and local validation; **nothing deployed**).
 
 ---
 
@@ -1024,6 +1025,11 @@ Redis uses `noeviction` so queue keys can never be evicted.
 
 ### Deployment model
 
+**PREPARED — nothing deployed.** Phase 8 produced the production stack,
+operational scripts and a deployment guide, all validated locally. No VPS was
+provisioned and no remote host was touched; there is still no domain and no TLS.
+See §1.8.
+
 **UNDOCUMENTED.** No Dockerfile, compose file, Nginx config, PM2 ecosystem,
 systemd unit, deploy script or deploy workflow exists in this repository. CI
 verifies and never deploys. Whatever production exists is hand-configured on the
@@ -1031,6 +1037,106 @@ host and described nowhere. **Writing it down is the first Phase 8 deliverable**
 and the largest operational risk in the audit.
 
 ---
+
+### 1.8 Phase 8 — single-VPS production deployment (PREPARED 2026-10-25)
+
+**Mode A: preparation only.** No VPS was named, no deployment approved and no
+remote host contacted. Everything below was validated on this machine.
+
+**What was built.** `docker-compose.prod.yml` — nginx, API, worker and Redis,
+deliberately *not* an override of the local stack so none of its test
+assumptions can be inherited by accident. `docker-compose.prod.mongo.yml` adds
+a self-hosted replica set for operators who do not want Atlas.
+`.env.production.example`, and seven scripts in `deploy/`: validate, build,
+deploy, health, logs, rollback, backup. `docs/VPS_DEPLOYMENT.md` is the manual.
+
+**Database: Atlas by default** (Strategy A), which has been the recorded plan
+since Phase 0 — a real replica set, and therefore transactions, without
+spending a 4 GB VPS's memory on MongoDB. Strategy B is available and was the one
+exercised locally. The guide is explicit that **the Atlas M0 free tier takes no
+backups**, so a free-tier production deployment has no database backup at all.
+
+**Four real problems found by actually running it:**
+
+1. **Compose `env_file:` does not feed `${...}` interpolation.** Every
+   interpolated tunable in `.env.production` — ports, bind address, memory
+   limits, Node heap sizes, `TZ` — was silently ignored and the built-in default
+   used instead. The application still worked, which is what made it hard to
+   see; it surfaced by setting `WEB_BIND=127.0.0.1` and watching the container
+   publish on `0.0.0.0` anyway. The scripts now pass `--env-file`, and the guide
+   says any manual compose call needs it too.
+2. **A present-but-empty `SEED_*_EMAIL` stops the server booting** — the schema
+   validates it as an email address, so a bare `SEED_STAFF_EMAIL=` is worse than
+   a missing line. The example had them blank, which would have broken the very
+   first deploy. They are now absent by default, with instructions for the
+   one-time seed, and `validate.sh` rejects an empty one.
+3. **`deploy/build.sh` broke on macOS bash 3.2** — expanding an empty array
+   under `set -u`. Fixed portably.
+4. **`deploy/backup.sh` could not read the uploads volume** because it never
+   resolved `IMAGE_TAG`, which the compose file declares as required. Fixed.
+
+**The HTTP boundary, and why Phase 8 cannot be "live".** The refresh token is an
+httpOnly cookie set `secure: true` in production, and a browser will not store a
+`Secure` cookie over HTTP. So over plain HTTP a sign-in succeeds and then dies
+in fifteen minutes with no refresh. That is the cookie behaving correctly —
+lowering it would be a real security regression — and it means an HTTP
+deployment cannot carry real sessions, let alone payment traffic. The expected
+successful outcome of a Phase 8 deployment is therefore **DEPLOYED —
+RESTRICTED**, and TLS in Phase 9 is a hard prerequisite for anything else.
+
+**Timezone (the Phase 7 carry-over), audited.** Business-day boundaries come
+from `dayjs().startOf('day')` — the **process clock**. `BUSINESS_TIMEZONE` is
+used only for display formatting. So setting the containers' `TZ` is the correct
+and minimal production fix for a single-timezone business, and that is what the
+compose file does; the host stays UTC and persisted instants are UTC. The
+residual limitation is real and documented: **every tenant shares that one
+timezone**, so a workspace elsewhere gets the wrong day boundary. Fixing it
+means deriving each window from the tenant's own timezone, which touches
+reporting across all four verticals — out of scope under §33, and not attempted.
+
+**One API instance is a correctness constraint**, not a preference: the
+subscription scheduler runs inside the API process (a second replica would run
+every pass twice) and uploads are on a local volume (a second replica would 404
+on the first one's files). The compose file runs one, and the guide says not to
+scale it.
+
+**Validation performed locally** — macOS arm64, Docker 29.8:
+
+| | Result |
+|---|---|
+| `validate.sh` negative path | refuses placeholders, short secrets, identical secrets, non-replica-set URI, empty `SEED_*_EMAIL` |
+| `validate.sh` positive path | passes a correctly filled file |
+| Images build | **arm64 and amd64** |
+| amd64 image runs | uid 1000, `x86_64`, **sharp + libvips 8.18.7**, bullmq, msgpackr, ioredis, mongoose, express — *under emulation* |
+| Stack starts | api, worker, redis, mongo, web all healthy |
+| `health.sh` | 15 checks, all passing, including an explicit replica-set assertion |
+| Exposure | only the web port published, on the address `WEB_BIND` names; Redis and MongoDB unpublished |
+| Graceful shutdown | api and worker both exit **0** |
+| Persistence | uploads and MongoDB data survive a full restart |
+| Backup | encrypted AES-256, restore-tested, refuses to call a local-only copy a backup |
+| Rollback | image swapped, volumes untouched, refuses an absent image, requires typed confirmation |
+| Refusals | deploy blocked on a dirty tree; rollback blocked on a missing image |
+| Measured idle use | api 137 MB, mongo 164 MB, worker 97 MB, redis 10 MB, web 10 MB — **~418 MB** |
+
+**The six Phase 7 container-suite failures, reviewed for deployment risk**
+(§3 asked, and they are not described as passing): four need mock payment
+gateways the harness starts on the host, two assert on the host filesystem. All
+six are properties of running a host suite against containers. The behaviours
+they cover — including cross-tenant file-delete protection — are verified in the
+host run, which passes. **No production risk**, but the containerised suite is
+not a complete substitute for the host suite and should not be presented as one.
+
+**Readiness: PREPARED.** Blocked on inputs only you can supply: a VPS and
+approval, the database decision, production secrets generated on the server,
+**an off-server `BACKUP_DEST`** (without it, readiness stays blocked — a backup
+on the same disk protects against a bad deploy and nothing else), SSH keys, and
+a domain for Phase 9.
+
+**Limitations carried forward unchanged:** >1 API replica unsafe; scheduler in
+the API; uploads local to one server; amd64 verified only under emulation; one
+shared business timezone; checkout idempotency keys optional; plain returns
+unprotected; a one-update crash window in idempotency completion; the
+Redis-absent inline campaign fallback; no load test.
 
 ## 2. Feature / product status
 
@@ -1064,7 +1170,7 @@ PHASE 4   Rate limiting (distributed)               COMPLETED  (2026-10-08)
 PHASE 5   Idempotency / reliability                 COMPLETED  (2026-10-13)
 PHASE 6   Docker                                    COMPLETED  (built and run 2026-10-21)
 PHASE 7   Docker Compose + local production-like    COMPLETED  (2026-10-21)
-PHASE 8   VPS deployment                            NOT STARTED
+PHASE 8   VPS deployment                            PREPARED   (not deployed)
 PHASE 9   Cloudflare + SSL                          NOT STARTED
 PHASE 10  GitHub Actions CI/CD                      NOT STARTED
 PHASE 11  Monitoring / observability                NOT STARTED
@@ -1108,6 +1214,7 @@ inline-fallback note before assuming a queue is always available.
 
 | Date | Change |
 |---|---|
+| 2026-10-25 | **Phase 8 — single-VPS production deployment, PREPARED.** Added `docker-compose.prod.yml` (nginx, API, worker, Redis; Atlas by default), `docker-compose.prod.mongo.yml` (optional self-hosted replica set), `.env.production.example`, seven `deploy/` scripts and `docs/VPS_DEPLOYMENT.md`. **Nothing was deployed** — Mode A, no VPS and no approval. Validated locally: both architectures build, the amd64 image runs under emulation with its native modules, the stack starts healthy, shutdown exits 0, uploads and data survive a restart, backup is encrypted and restore-tested, rollback preserves volumes, and the refusal paths work. Four preparation bugs fixed: Compose `env_file:` does not feed `${...}` interpolation so every tunable was ignored; an empty `SEED_*_EMAIL` stops the boot; an empty-array expansion broke the build script on bash 3.2; and the backup script never resolved `IMAGE_TAG`. Documented why plain HTTP cannot hold a session (the refresh cookie is `secure`), and that one shared business timezone remains. No business logic changed. |
 | 2026-10-21 | **Phase 7 — Compose and real infrastructure integration.** Added `docker-compose.yml` (nginx, API, worker, Redis, single-node MongoDB replica set), `docker-compose.test.yml`, `docker/nginx/default.conf`, `docker/mongo/init-replica-set.sh`, `.env.compose.example` and an nginx stage in the Dockerfile. The images were **built and run for the first time**, closing every Phase 6 gap. Added `seed/infraIntegration.check.ts` (31 assertions in-container: transactions, Redis, BullMQ, the rate-limit Lua). **Three bugs fixed, each invisible until the infrastructure was real:** `create(array, { session })` needed `ordered: true` at eleven production call sites, so every transactional write — registration included — failed on a replica set and therefore on Atlas; BullMQ rejects a colon in a job id, so campaign delivery failed wherever Redis was configured; and nginx cached the API's address, answering 502 after any recreate. Also set `TZ` in the containers, because report windows follow the process clock. Host regression green. |
 | 2026-10-13 | **Phase 6 — Docker foundation (written, not built).** Added `docker/Dockerfile` (multi-stage, `node:22-bookworm-slim`, non-root, production-only runtime, one image for both the API and the worker), `.dockerignore` and `docs/DOCKER.md`. Debian was chosen because the lockfile shows `msgpackr-extract` has no musl prebuild, so Alpine would need a compiler; Debian needs no apt packages at all. One build-script change: `PRERENDER_REQUIRE_API` makes an unreachable API a build failure rather than a silent fall back to built-in marketing copy. Fixed a real shutdown bug found while running the compiled worker from a reproduced image layout — it exited 1 on SIGTERM because a connection emitted after BullMQ removed its listener; a clean stop now exits 0. **The image has never been built or run: no container runtime on this machine.** No Compose, no deployment automation, no application behaviour changed. |
 | 2026-10-13 | **Phase 5 — idempotency on sale and order creation.** Added a shared mechanism (`services/reliability/idempotency.service.ts`, `models/IdempotencyRecord.ts`, unique on `(scope, key)`, 24-hour retention, lease-based recovery, canonical fingerprinting) and applied it at the controller layer to **Restaurant orders, Super Shop sales and Pharmacy sales** — the three flows Phase 0 found unprotected. The sale services themselves were not touched. Clothing's older mechanism was audited, found correct (it compensates stock and loyalty on a race) and left alone with regression tests added. The POS tills now send a per-basket `Idempotency-Key`. Two error codes added; `docs/API.md` documents the contract. Payment, wallet, subscription, usage-charge, loyalty and exchange protection unchanged; plain returns remain the one known gap and are recommended as the next atomic migration. |

@@ -176,6 +176,12 @@ docker run -d --name pos-mongo -p 27017:27017 -v pos-data:/data/db mongo:7
 > transactions actually run. [docs/DOCKER.md](docs/DOCKER.md) covers operating
 > it, inspecting Mongo and Redis, running the integration tests, and the known
 > limitations.
+>
+> For deploying to a single VPS, see
+> [docs/VPS_DEPLOYMENT.md](docs/VPS_DEPLOYMENT.md). That configuration is
+> prepared and locally validated but **has not been deployed anywhere**, and it
+> cannot carry real traffic until Phase 9 adds TLS — over plain HTTP the
+> refresh cookie cannot be stored, so sessions expire after fifteen minutes.
 
 ### A note on transactions
 

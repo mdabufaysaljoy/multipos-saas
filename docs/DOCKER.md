@@ -390,3 +390,13 @@ Everything Phase 6 listed as unverified has now been run:
   process, and uploads are on a local volume.
 - **amd64 was not built.** Everything here is arm64.
 - **Nothing was deployed.** No TLS, no Cloudflare, no VPS; those are Phases 8-9.
+
+---
+
+## Production
+
+This file covers the **local** stack. The single-VPS production stack is
+separate — `docker-compose.prod.yml`, the `deploy/` scripts and
+[VPS_DEPLOYMENT.md](VPS_DEPLOYMENT.md) — and is deliberately not an override of
+the local one, so none of its test assumptions can be inherited by accident.
+It is prepared and locally validated; nothing has been deployed.

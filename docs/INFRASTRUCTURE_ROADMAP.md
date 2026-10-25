@@ -717,7 +717,27 @@ services: api, worker, mongo (single-node replica set), redis, nginx
 
 ## 11. VPS deployment plan (Phase 8)
 
-### Current deployment model: NOT CONFIGURED IN THE REPOSITORY
+### Status: PREPARED, NOT DEPLOYED (2026-10-25)
+
+The production stack, the operational scripts and the deployment guide exist
+and were validated locally: `docker-compose.prod.yml`,
+`docker-compose.prod.mongo.yml`, `.env.production.example`, seven `deploy/`
+scripts and `docs/VPS_DEPLOYMENT.md`. **No VPS was provisioned and no remote
+host was touched.** MongoDB Atlas is the default database, as planned here since
+Phase 0, with self-hosting available as an explicit override.
+
+Two things worth carrying forward. **Plain HTTP cannot hold a session**: the
+refresh cookie is `secure: true` in production and a browser will not store it
+over HTTP, so TLS in Phase 9 is a hard prerequisite rather than a polish step.
+And **readiness is blocked on an off-server backup destination** — a backup on
+the same disk as the database protects against a bad deploy and nothing else.
+
+Detail, measured resource use and the four preparation bugs found by running it
+are in `docs/IMPLEMENTATION_STATUS.md` §1.8.
+
+**What follows was the Phase 0 finding, kept for the record.**
+
+### Phase 0: deployment model NOT CONFIGURED IN THE REPOSITORY
 
 Verified absent: Dockerfile, `docker-compose.yml`, any Nginx configuration, any
 PM2 `ecosystem` file, any systemd unit, any deploy script, any deployment
@@ -887,9 +907,9 @@ PHASE 6   Docker                                    (COMPLETED; built and run 20
    ↓
 PHASE 7   Docker Compose + production-like local testing
    ↓
-PHASE 8   VPS deployment                            ← next
+PHASE 8   VPS deployment                            (PREPARED 2026-10-25; not deployed)
    ↓
-PHASE 9   Cloudflare + SSL
+PHASE 9   Cloudflare + SSL                          ← next
    ↓
 PHASE 10  GitHub Actions CI/CD
    ↓

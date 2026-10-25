@@ -8,6 +8,7 @@ build/
 .env.*
 !.env.example
 !.env.compose.example
+!.env.production.example
 *.log
 .DS_Store
 server/uploads/
@@ -25,3 +26,5 @@ IMPLIMENTATION_STATUS.md
 *.pem
 *.key
 certs/
+deploy/state/
+backups/
