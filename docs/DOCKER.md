@@ -18,9 +18,17 @@ docker/Dockerfile
 ├── build-server   tsc  → server/dist
 ├── build-client   vite → client/dist   (artifact only; the API does not serve it)
 ├── client-assets  the built SPA, exportable with --output
+├── web            nginx + the SPA, HTTP only — the local and pre-TLS stack
+├── web-tls        nginx + the SPA, terminating HTTPS behind Cloudflare
 ├── prod-deps      npm ci --omit=dev, scoped to the server workspace
 └── server         runtime: node:22-bookworm-slim, non-root, ~no build tools
 ```
+
+`web` and `web-tls` are separate targets, not one image with a switch, so a
+local HTTP convenience cannot be deployed where TLS is expected or the reverse.
+`web-tls` carries no certificate: the key is mounted from the host at runtime.
+Build it with `TLS=1 ./deploy/build.sh`, and see
+[CLOUDFLARE_SSL.md](CLOUDFLARE_SSL.md) for the deployment order.
 
 **Base image: `node:22-bookworm-slim`.** Node 22 is the LTS line the repository
 already targets (`engines: >=20`, CI runs 22). Debian rather than Alpine for a

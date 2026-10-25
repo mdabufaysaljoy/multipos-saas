@@ -87,6 +87,41 @@ FROM nginx:1.27-alpine AS web
 COPY docker/nginx/default.conf /etc/nginx/conf.d/default.conf
 COPY --from=build-client /app/client/dist /usr/share/nginx/html
 
+# --------------------------------------------------------------- the SPA, TLS
+# The same SPA, but terminating HTTPS at the origin for a deployment behind
+# Cloudflare. A separate target rather than a flag on `web`, so the local HTTP
+# stack cannot accidentally be run with a production TLS config, or the other
+# way round.
+#
+# nginx:1.27-alpine already ships --with-http_ssl_module, --with-http_v2_module
+# and --with-http_realip_module, so nothing has to be compiled.
+#
+# No certificate is copied in. The image is public-safe and the key is mounted
+# from the host at runtime; see docker-compose.prod.yml.
+FROM nginx:1.27-alpine AS web-tls
+# The stock config would otherwise sit alongside ours on port 80.
+RUN rm -f /etc/nginx/conf.d/default.conf
+
+# A template, not a config: the official entrypoint runs envsubst over
+# /etc/nginx/templates/* at startup and writes the result into conf.d. That is
+# how ${SERVER_NAME} gets filled in without rebuilding the image per domain.
+COPY docker/nginx/default.prod.conf.template /etc/nginx/templates/default.conf.template
+COPY docker/nginx/security-headers.conf /etc/nginx/security-headers.conf
+COPY docker/nginx/cloudflare-realip.conf /etc/nginx/cloudflare-realip.conf
+COPY --from=build-client /app/client/dist /usr/share/nginx/html
+
+# Webroot for an ACME HTTP-01 challenge, if Let's Encrypt is used instead of a
+# Cloudflare Origin CA certificate. Empty, and harmless when unused.
+RUN mkdir -p /var/www/certbot
+
+# Restrict envsubst to the one name we template. Without this it would also
+# rewrite any nginx variable whose name happened to match an environment
+# variable, and $host or $uri silently becoming empty is a very confusing
+# outage. Overridable, but there is no reason to.
+ENV NGINX_ENVSUBST_FILTER="^SERVER_NAME$"
+
+EXPOSE 80 443
+
 # ----------------------------------------------------- runtime dependencies
 # Production dependencies for the SERVER workspace only. Scoping it keeps
 # React, Recharts and the rest of the client's runtime out of a server image

@@ -1,0 +1,50 @@
+# TLS overlay for the production stack.
+#
+#   docker compose --env-file .env.prod \
+#     -f docker-compose.prod.yml -f docker-compose.prod.tls.yml up -d
+#
+# An overlay rather than an edit to docker-compose.prod.yml, because the two
+# states are both real: before a certificate exists the HTTP-only stack is what
+# runs (behind Cloudflare, which still gives visitors HTTPS), and after it the
+# origin terminates TLS itself. Adding the overlay is the whole cutover, and
+# removing it is the whole rollback.
+#
+# Prerequisites, all of them:
+#   - an origin certificate and key on the host at ORIGIN_CERT_DIR
+#   - SERVER_NAME set to the real hostname in .env.prod
+#   - the -web-tls image built:  TLS=1 ./deploy/build.sh <tag>
+#   - Cloudflare SSL/TLS mode set to Full (strict) AFTER this is verified
+#
+# See docs/CLOUDFLARE_SSL.md for the order of operations. Doing the Cloudflare
+# side first takes the site down.
+services:
+  web:
+    # A different image from the HTTP `web`: same SPA, different nginx config.
+    # Distinct names so it is never ambiguous which one is deployed.
+    image: ${IMAGE_REPO:-retailer-suites}-web-tls:${IMAGE_TAG:?IMAGE_TAG is required - use a git revision, never "latest"}
+    ports:
+      # 80 stays published: it serves the HTTP->HTTPS redirect and, if
+      # Let's Encrypt is used, the ACME challenge. It no longer serves the app.
+      - '${WEB_BIND:-0.0.0.0}:${WEB_PORT:-80}:80'
+      - '${WEB_BIND:-0.0.0.0}:${WEB_TLS_PORT:-443}:443'
+    environment:
+      # Substituted into the nginx template at container start. Required: an
+      # empty value produces `server_name ;`, which nginx refuses to start on.
+      SERVER_NAME: ${SERVER_NAME:?SERVER_NAME is required for the TLS overlay - e.g. app.example.com}
+    volumes:
+      # Read-only, and from the host. The key is never in an image and never in
+      # Git. Expected inside: origin.pem and origin.key.
+      - ${ORIGIN_CERT_DIR:?ORIGIN_CERT_DIR is required - the host directory holding origin.pem and origin.key}:/etc/nginx/certs:ro
+      # Only needed for the Let's Encrypt route; harmless otherwise.
+      - ${ACME_WEBROOT:-./deploy/acme-webroot}:/var/www/certbot:ro
+    healthcheck:
+      # Checked over HTTPS against the loopback, so the probe exercises the
+      # same TLS stack visitors use. --no-check-certificate because the name in
+      # the certificate is the public hostname, not 127.0.0.1 - this proves the
+      # listener and the handshake work, not the name, which is what the
+      # verification script checks from outside.
+      test: ['CMD', 'wget', '-q', '--no-check-certificate', '-O-', 'https://127.0.0.1/healthz']
+      interval: 15s
+      timeout: 5s
+      retries: 4
+      start_period: 10s

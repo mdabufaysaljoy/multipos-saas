@@ -1138,6 +1138,89 @@ shared business timezone; checkout idempotency keys optional; plain returns
 unprotected; a one-update crash window in idempotency completion; the
 Redis-absent inline campaign fallback; no load test.
 
+### 1.9 Phase 9 — Cloudflare, HTTPS and edge security (PREPARED 2026-10-25)
+
+**Mode A: prepared, not deployed.** No domain, no Cloudflare account, no VPS,
+no certificate. Nothing was applied to a DNS zone, a firewall or a Cloudflare
+setting. Full detail in `docs/CLOUDFLARE_SSL.md`.
+
+**What was added**
+
+| File | Purpose |
+|---|---|
+| `docker/nginx/default.prod.conf.template` | 443 + HTTP→HTTPS redirect, TLS 1.2/1.3, real-client handling, cache policy. A template because the nginx entrypoint runs envsubst for `${SERVER_NAME}` |
+| `docker/nginx/security-headers.conf` | the document header set, including the CSP |
+| `docker/nginx/cloudflare-realip.conf` | **generated** — 22 Cloudflare ranges, `CF-Connecting-IP`, `real_ip_recursive` |
+| `deploy/refresh-cloudflare-ips.sh` | regenerates that include and a ufw allowlist; `--check` mode for CI |
+| `deploy/verify-tls.sh` | read-only post-deploy verification of a live domain |
+| `docker-compose.prod.tls.yml` | TLS overlay: 443, cert mount, `SERVER_NAME` |
+| `web-tls` Dockerfile stage | the same SPA with the TLS config; `TLS=1 deploy/build.sh` |
+| `server/src/config/edgeSecurity.check.ts` | 26 assertions, in `npm test` |
+
+**The finding that drove the header work.** Measured, not assumed: the SPA
+document returned only `Server`, `Content-Type` and `Cache-Control`. Every
+helmet header — CSP, HSTS, framing, referrer policy — appeared **only on
+`/api` responses**, because nginx serves `index.html` from disk and never
+reaches Express. The document a browser renders had no CSP, no HSTS and no
+frame protection at all. That can only be fixed in nginx, and now is.
+
+**`TRUST_PROXY_HOPS` stays 1 — §1.8 guessed wrong.** Phase 8's template said
+it would become 2 behind Cloudflare. It does not. nginx resolves the real
+client itself from `CF-Connecting-IP`, and only for requests arriving from a
+published Cloudflare range, then sends exactly one `X-Forwarded-For` value. So
+Express still sees one proxy. Setting 2 would read *past* that value into
+attacker-controlled data — the standard way a client mints itself a fresh
+rate-limit bucket. The comment in `.env.production.example` was corrected.
+
+**Verified against a running container**, not by reading configs: the image
+builds; nginx's own `nginx -t` passes; envsubst filled `SERVER_NAME` and left
+`$host`/`$uri`/`$remote_addr` intact; HTTP 301s to HTTPS while
+`/.well-known/acme-challenge/` does not; TLS 1.0 and 1.1 are refused and 1.2
+and 1.3 accepted (negotiating 1.3 by default); all seven document headers and
+the full CSP are present on `/` and on a deep SPA route; `/assets/` keeps HSTS
+and `immutable`; **exactly one `Cache-Control` on every path**, including the
+two proxied ones where a stub upstream was deliberately sending its own; and
+the six-case client-identity matrix in `docs/CLOUDFLARE_SSL.md` — forged
+`CF-Connecting-IP`, `X-Forwarded-For` and `X-Real-IP` from an untrusted source
+are all ignored, while a genuine `CF-Connecting-IP` from a trusted range is
+honoured. `verify-tls.sh` was run against both a correct container (pass) and
+a deliberately broken one (5 failures, exit 1). The 26 config assertions were
+mutation-tested: reverting the X-Forwarded-For handling, adding `0.0.0.0/0`,
+dropping the QZ Tray CSP entry and removing a `proxy_hide_header` each fail.
+
+**Two bugs in my own first draft, both found by running it:** `add_header` in a
+`location` *replaces* inherited headers rather than merging, so `/assets/`
+would have silently lost HSTS — hence the shared include; and on a proxied
+location `add_header Cache-Control` *appends* to the upstream's header, so
+`/uploads` (where `express.static` sets its own) would have returned two
+conflicting values. Also two `set -e` aborts: a `grep` that matches nothing
+returns 1, which silently killed the rest of both `validate.sh` and
+`verify-tls.sh`.
+
+**The operational risk that TLS introduces and no config here can fix.**
+Thermal printing is a browser→QZ Tray WebSocket on the till itself.
+QZ Tray's `ws://` fallback is **blocked as mixed content from an HTTPS page**.
+Today the site is HTTP so the fallback works and nobody has noticed. After the
+cutover every till needs QZ Tray's trusted localhost certificate, or it stops
+printing receipts with the failure visible only in the browser console. Test
+one till first; this is a per-till task no repository change can perform.
+
+**Deliberately not done:** nothing deployed; uploads stay on a local volume
+(R2 remains deferred); Authenticated Origin Pulls documented but not enabled;
+the WAF, edge rate-limit and cache rules are dashboard recommendations this
+repository cannot assert exist; no load test; no scan against live
+infrastructure.
+
+**Still needed before Mode B:** a domain, a Cloudflare zone with nameservers
+delegated, a VPS, an origin certificate, and explicit authorization for the
+DNS, TLS, firewall and Cloudflare changes.
+
+**Limitations carried forward unchanged:** >1 API replica unsafe; scheduler in
+the API; uploads local to one server; amd64 verified only under emulation; one
+shared business timezone; checkout idempotency keys optional; plain returns
+unprotected; a one-update crash window in idempotency completion; the
+Redis-absent inline campaign fallback; no load test.
+
 ## 2. Feature / product status
 
 Infrastructure is the subject of this file; the product history lives elsewhere.
@@ -1214,6 +1297,7 @@ inline-fallback note before assuming a queue is always available.
 
 | Date | Change |
 |---|---|
+| 2026-10-25 | **Phase 9 — Cloudflare, HTTPS and edge security, PREPARED.** Added `docker/nginx/default.prod.conf.template` (443, HTTP→HTTPS, TLS 1.2/1.3, cache policy), `docker/nginx/security-headers.conf`, a generated `cloudflare-realip.conf` with `deploy/refresh-cloudflare-ips.sh`, `deploy/verify-tls.sh`, `docker-compose.prod.tls.yml`, a `web-tls` image stage, `server/src/config/edgeSecurity.check.ts` (26 assertions) and `docs/CLOUDFLARE_SSL.md`. **Nothing was deployed** — Mode A: no domain, no Cloudflare account, no VPS, no certificate. The finding that drove it: the SPA document carried **no security headers at all**, because nginx serves `index.html` from disk and helmet only ever reached `/api`. Established by measurement that **`TRUST_PROXY_HOPS` stays 1** behind Cloudflare — Phase 8's template guessed 2, which would have read past nginx's single `X-Forwarded-For` value into attacker-controlled data; the template was corrected. Validated against a running TLS container: redirect, TLS version floor, every document header, one `Cache-Control` per response, and a six-case matrix showing forged `CF-Connecting-IP`/`X-Forwarded-For` ignored from untrusted sources and honoured from Cloudflare ranges. Fixed two bugs in my own draft (`add_header` replaces rather than merges, so `/assets/` lost HSTS; `add_header` on a proxied location appends, so `/uploads` returned two `Cache-Control` values) and two `set -e` aborts in the deploy scripts. Documented that HTTPS **breaks QZ Tray's `ws://` fallback as mixed content**, so receipt printing needs a per-till certificate before cutover. No business logic changed. |
 | 2026-10-25 | **Phase 8 — single-VPS production deployment, PREPARED.** Added `docker-compose.prod.yml` (nginx, API, worker, Redis; Atlas by default), `docker-compose.prod.mongo.yml` (optional self-hosted replica set), `.env.production.example`, seven `deploy/` scripts and `docs/VPS_DEPLOYMENT.md`. **Nothing was deployed** — Mode A, no VPS and no approval. Validated locally: both architectures build, the amd64 image runs under emulation with its native modules, the stack starts healthy, shutdown exits 0, uploads and data survive a restart, backup is encrypted and restore-tested, rollback preserves volumes, and the refusal paths work. Four preparation bugs fixed: Compose `env_file:` does not feed `${...}` interpolation so every tunable was ignored; an empty `SEED_*_EMAIL` stops the boot; an empty-array expansion broke the build script on bash 3.2; and the backup script never resolved `IMAGE_TAG`. Documented why plain HTTP cannot hold a session (the refresh cookie is `secure`), and that one shared business timezone remains. No business logic changed. |
 | 2026-10-21 | **Phase 7 — Compose and real infrastructure integration.** Added `docker-compose.yml` (nginx, API, worker, Redis, single-node MongoDB replica set), `docker-compose.test.yml`, `docker/nginx/default.conf`, `docker/mongo/init-replica-set.sh`, `.env.compose.example` and an nginx stage in the Dockerfile. The images were **built and run for the first time**, closing every Phase 6 gap. Added `seed/infraIntegration.check.ts` (31 assertions in-container: transactions, Redis, BullMQ, the rate-limit Lua). **Three bugs fixed, each invisible until the infrastructure was real:** `create(array, { session })` needed `ordered: true` at eleven production call sites, so every transactional write — registration included — failed on a replica set and therefore on Atlas; BullMQ rejects a colon in a job id, so campaign delivery failed wherever Redis was configured; and nginx cached the API's address, answering 502 after any recreate. Also set `TZ` in the containers, because report windows follow the process clock. Host regression green. |
 | 2026-10-13 | **Phase 6 — Docker foundation (written, not built).** Added `docker/Dockerfile` (multi-stage, `node:22-bookworm-slim`, non-root, production-only runtime, one image for both the API and the worker), `.dockerignore` and `docs/DOCKER.md`. Debian was chosen because the lockfile shows `msgpackr-extract` has no musl prebuild, so Alpine would need a compiler; Debian needs no apt packages at all. One build-script change: `PRERENDER_REQUIRE_API` makes an unreachable API a build failure rather than a silent fall back to built-in marketing copy. Fixed a real shutdown bug found while running the compiled worker from a reproduced image layout — it exited 1 on SIGTERM because a connection emitted after BullMQ removed its listener; a clean stop now exits 0. **The image has never been built or run: no container runtime on this machine.** No Compose, no deployment automation, no application behaviour changed. |

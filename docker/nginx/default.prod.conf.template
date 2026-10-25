@@ -1,0 +1,182 @@
+# Production nginx: TLS at the origin, behind Cloudflare.
+#
+#   browser --https--> Cloudflare --https--> nginx (this file) --http--> API
+#                                             \--> the SPA, from disk
+#
+# A .template, because the official nginx image runs envsubst over
+# /etc/nginx/templates/* at startup; ${SERVER_NAME} is filled in from the
+# environment. NGINX_ENVSUBST_FILTER (set in the compose file) restricts
+# substitution to that one name, so nginx's own $host, $uri and $remote_addr
+# are left alone.
+#
+# Kept separate from default.conf, the HTTP-only local stack, so a local
+# convenience can never leak into production.
+
+# ---------------------------------------------------------------- real client
+# Cloudflare's published ranges and the header it sets. nginx rewrites
+# $remote_addr from CF-Connecting-IP ONLY for requests that arrived from one of
+# these addresses; a forged CF-Connecting-IP from anywhere else is ignored.
+# That is what makes the client identity trustworthy - and it is why
+# TRUST_PROXY_HOPS stays at 1 instead of being raised to 2. Express still sees
+# exactly one proxy in front of it, and the value it reads is already the real
+# client.
+#
+# Regenerate with deploy/refresh-cloudflare-ips.sh; the list does change.
+include /etc/nginx/cloudflare-realip.conf;
+
+# ------------------------------------------------------------------ port 80
+server {
+    listen 80;
+    listen [::]:80;
+    server_name _;
+    server_tokens off;
+
+    # ACME HTTP-01, if Let's Encrypt is the chosen route rather than a
+    # Cloudflare Origin CA certificate. Served before the redirect, because a
+    # challenge that gets 301'd never validates.
+    location /.well-known/acme-challenge/ {
+        root /var/www/certbot;
+        default_type "text/plain";
+        try_files $uri =404;
+    }
+
+    # Cloudflare also redirects at the edge when "Always Use HTTPS" is on, but
+    # the origin should be correct on its own: that is what protects a request
+    # that reaches it directly, and what makes the cutover order not matter.
+    location / {
+        return 301 https://$host$request_uri;
+    }
+}
+
+# ---------------------------------------------------------------------- 443
+server {
+    listen 443 ssl;
+    listen [::]:443 ssl;
+    http2 on;
+
+    server_name ${SERVER_NAME};
+    server_tokens off;
+
+    # --- certificate ------------------------------------------------------
+    # Mounted read-only from the host, never baked into an image and never
+    # committed. Two valid choices, same paths:
+    #   Cloudflare Origin CA - right for Cloudflare-to-origin, free, 15 years,
+    #     and NOT trusted by a browser that reaches the origin directly.
+    #   Let's Encrypt - right if the origin must be publicly trusted too.
+    # Either satisfies Full (strict); see docs/CLOUDFLARE_SSL.md.
+    ssl_certificate     /etc/nginx/certs/origin.pem;
+    ssl_certificate_key /etc/nginx/certs/origin.key;
+
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_prefer_server_ciphers off;   # TLS 1.3 chooses; the 1.2 list is below
+    ssl_ciphers ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-CHACHA20-POLY1305;
+    ssl_session_cache shared:SSL:10m;
+    ssl_session_timeout 1d;
+    ssl_session_tickets off;
+
+    # Stapling is off on purpose: a Cloudflare Origin CA certificate has no
+    # OCSP responder, so enabling it only produces startup warnings. Turn it on
+    # with Let's Encrypt and a trusted chain file.
+    # ssl_stapling on;
+    # ssl_stapling_verify on;
+    # ssl_trusted_certificate /etc/nginx/certs/chain.pem;
+
+    client_max_body_size 25m;
+
+    # --- upstream ---------------------------------------------------------
+    # Per-request resolution through Docker's embedded DNS. Written as a
+    # variable on purpose: a literal name (or an `upstream` block) is resolved
+    # once at startup, so recreating the API container left nginx answering 502
+    # to everything until nginx itself was restarted. Found in Phase 7 - do not
+    # undo it.
+    resolver 127.0.0.11 valid=10s ipv6=off;
+    resolver_timeout 5s;
+    set $api_host api:4000;
+
+    # --- what the API is told about the client ----------------------------
+    # X-Forwarded-For is REPLACED, not appended. By this point $remote_addr is
+    # already the true client, so sending exactly one value leaves Express
+    # nothing to miscount: with TRUST_PROXY_HOPS=1 it takes that value and
+    # nothing else. Appending would pass Cloudflare's own list through as well,
+    # and anyone reaching the origin directly could seed the chain with
+    # whatever they liked.
+    proxy_set_header X-Forwarded-For   $remote_addr;
+    proxy_set_header X-Real-IP         $remote_addr;
+    proxy_set_header X-Forwarded-Proto https;
+    proxy_set_header X-Forwarded-Host  $host;
+    proxy_set_header Host              $host;
+    # Passed through so the application can log or audit them if it chooses.
+    proxy_set_header CF-Ray            $http_cf_ray;
+    proxy_set_header CF-IPCountry      $http_cf_ipcountry;
+
+    root /usr/share/nginx/html;
+    index index.html;
+
+    # ------------------------------------------------------------------ API
+    location /api/ {
+        proxy_pass http://$api_host;
+        proxy_http_version 1.1;
+        proxy_connect_timeout 10s;
+        proxy_send_timeout 120s;
+        proxy_read_timeout 120s;
+        # Exports stream; buffering would hold a whole file in nginx first.
+        proxy_buffering off;
+
+        # Never cached by anything, ever. Every response here is workspace
+        # specific - sales, stock, staff, wallet - and a shared cache handing
+        # one tenant's data to another is the worst failure a multi-tenant
+        # system has available to it. hide-then-add rather than a bare
+        # add_header, because add_header APPENDS to what the upstream sent: if
+        # Express ever sets its own Cache-Control the response would carry two
+        # conflicting values. Cloudflare needs its own matching rule; see
+        # docs/CLOUDFLARE_SSL.md.
+        proxy_hide_header Cache-Control;
+        add_header Cache-Control "no-store, no-cache, must-revalidate, private" always;
+        proxy_no_cache 1;
+        proxy_cache_bypass 1;
+
+        # Security headers are NOT repeated here. Express sets its own through
+        # helmet, and a second set would put two CSPs on one response -
+        # browsers intersect them, silently producing a policy nobody wrote.
+    }
+
+    # ------------------------------------------------------- uploaded files
+    # Proxied to the API rather than served off the volume, because the API
+    # owns the ownership registry. Cacheable, but PRIVATE only: these are
+    # unauthenticated random-filename URLs today, and if an authorization model
+    # is added later a shared cache would outlive the change.
+    location /uploads/ {
+        proxy_pass http://$api_host;
+        proxy_http_version 1.1;
+        # express.static already sets a Cache-Control; replace it rather than
+        # appending a second one.
+        proxy_hide_header Cache-Control;
+        add_header Cache-Control "private, max-age=3600" always;
+        add_header X-Content-Type-Options "nosniff" always;
+        add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+    }
+
+    # ---------------------------------------------------------- SPA assets
+    # Vite fingerprints these, so the bytes behind a URL never change.
+    location /assets/ {
+        include /etc/nginx/security-headers.conf;
+        add_header Cache-Control "public, max-age=31536000, immutable" always;
+        try_files $uri =404;
+    }
+
+    # ------------------------------------------------------- the SPA itself
+    # index.html must NEVER be cached: it names the current asset bundle, so a
+    # stale copy points a browser at JavaScript the next deploy has deleted.
+    location / {
+        try_files $uri $uri/ /index.html;
+        include /etc/nginx/security-headers.conf;
+        add_header Cache-Control "no-store, must-revalidate" always;
+    }
+
+    # nginx's own liveness, answered without touching the SPA or the API.
+    location = /healthz {
+        access_log off;
+        default_type text/plain;
+        return 200 "ok\n";
+    }
+}

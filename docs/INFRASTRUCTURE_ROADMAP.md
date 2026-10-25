@@ -472,7 +472,7 @@ end-to-end suite is not throttled; production keeps the strict numbers.
 | R1 | **Every store is per-process memory.** | With N replicas the real limit is N × the configured one. The login limiter is the one that matters. |
 | R2 | **No per-account login throttling.** Only per-IP. There is no `failedLoginAttempts` / `lockedUntil` on `User`. | A distributed credential-stuffing run against one known account is limited by nothing but the global 600/min. |
 | R3 | `/auth/refresh` and `/auth/logout` have **no dedicated limiter** — only the global `/api` one. | `/refresh` mints tokens and on reuse revokes a whole chain; 600/min is loose for it. |
-| R4 | Limits are IP-keyed, and `trust proxy` is hard-coded to `1` in production. | If Cloudflare *and* Nginx both sit in front (Phase 9), the hop count changes and every limiter may key on the wrong address — which can mean one shared key for the whole internet. Must be re-verified when the proxy chain changes. |
+| R4 | Limits are IP-keyed, and `trust proxy` is hard-coded to `1` in production. | **Closed in Phase 9, and not as predicted.** The hop count stays 1: Nginx normalizes the real client from `CF-Connecting-IP` for Cloudflare-originated requests only, and forwards one value. Raising it to 2 would be the vulnerability. Asserted in `edgeSecurity.check.ts`; `trust proxy` is now `TRUST_PROXY_HOPS` (Phase 4). |
 
 ### 6.3 Plan (Phase 4) — done, with two deviations noted below
 
@@ -486,8 +486,9 @@ end-to-end suite is not throttled; production keeps the strict numbers.
 2. Add per-account login backoff (progressive delay, then a short lock) as a
    counter in Redis plus a durable marker on the user, so it survives a flush.
 3. Add limiters for `/auth/refresh` and `/auth/logout`.
-4. Re-derive `trust proxy` from the actual deployed hop count and assert the
-   keyed IP in a test. Do this **in the same phase as Cloudflare**, not before.
+4. ~~Re-derive `trust proxy` from the actual deployed hop count~~ — done in
+   Phase 9: it stays 1, and the keyed IP is asserted in
+   `server/src/config/edgeSecurity.check.ts`.
 5. Keep the tenant-keyed pattern (`keyGenerator: req.ctx.tenantId`) for anything
    that spends money — several tills share one office IP, and that is exactly
    why messaging already does it.
@@ -770,15 +771,24 @@ operational risk in this audit.
 
 ## 12. Cloudflare plan (Phase 9)
 
+> **Prepared 2026-10-25 — see [CLOUDFLARE_SSL.md](CLOUDFLARE_SSL.md) for what
+> was actually built and measured. Nothing is deployed.** The notes below were
+> written in Phase 0; one of them turned out to be wrong and is corrected
+> in place.
+
 - DNS, TLS (Full Strict — Cloudflare must not be the only certificate), HTTP/3.
 - Cache static assets aggressively; **never cache `/api`**.
 - WAF plus a Cloudflare-level rate limit on `/api/auth/*` as a layer *above*
   the application's own.
-- **Re-verify `trust proxy` the day Cloudflare goes in front** (finding R4).
-  With Cloudflare and Nginx both in the chain, the hop count changes; a wrong
-  value makes every rate limiter key on a proxy address. Use
-  `CF-Connecting-IP`, restore the real IP in Nginx, and assert the keyed address
-  in a test.
+- ~~Re-verify `trust proxy`; with Cloudflare and Nginx both in the chain, the
+  hop count changes.~~ **Measured, and it does not.** The hop count stays 1.
+  Nginx resolves the real client itself from `CF-Connecting-IP` — and only for
+  requests arriving from a published Cloudflare range — then sends exactly one
+  `X-Forwarded-For` value, so Express still sees one proxy. Raising it to 2
+  would make Express read *past* that value into whatever the request arrived
+  carrying, which is attacker-controlled. The keyed address is now asserted in
+  `server/src/config/edgeSecurity.check.ts`. Finding R4 is closed this way, not
+  by changing the hop count.
 - Webhook endpoints must stay reachable: bKash notifications arrive via Amazon
   SNS and ZiniPay may deliver as a GET with a query string. Bot-fight rules
   must not eat them, or payments silently never complete.

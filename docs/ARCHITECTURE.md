@@ -312,7 +312,19 @@ What that means in practice:
   scripts and `docs/VPS_DEPLOYMENT.md` are ready for a single VPS — one API, one
   worker, Redis, nginx, and MongoDB Atlas by default. No server has been
   provisioned, and plain HTTP cannot hold a login session because the refresh
-  cookie is `secure`, so TLS (Phase 9) gates any real traffic.
+  cookie is `secure`, so TLS gates any real traffic.
+- **HTTPS and the edge are prepared, not deployed.** `docker-compose.prod.tls.yml`
+  with the `web-tls` image terminates TLS at the origin behind Cloudflare;
+  `docs/CLOUDFLARE_SSL.md` has the configuration and the cutover order. Two
+  things are worth knowing from it. **The SPA document's security headers live
+  in nginx, not helmet** — nginx serves `index.html` from disk and never reaches
+  Express, so before Phase 9 the rendered document had no CSP, HSTS or frame
+  protection while helmet's full set went only to `/api`. And **`TRUST_PROXY_HOPS`
+  stays 1 behind Cloudflare**: nginx resolves the real client from
+  `CF-Connecting-IP` for Cloudflare-originated requests only and forwards a
+  single `X-Forwarded-For` value, so raising the count would read past it into
+  attacker-controlled data. `server/src/config/edgeSecurity.check.ts` asserts
+  both.
 - **The local stack and the image.** `docker/Dockerfile` builds one image serving both roles —
   `node dist/server.js` for the API, `node dist/worker.js` for the worker — on
   `node:22-bookworm-slim`, non-root, production dependencies only.

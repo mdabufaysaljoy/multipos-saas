@@ -4,9 +4,21 @@ Phase 8. Everything here has been prepared and validated locally; **nothing has
 been deployed to a server.** There is no VPS, no domain and no TLS yet, and the
 section *Before you deploy* lists what is still needed.
 
-Phase 9 adds Cloudflare, a domain and HTTPS. Until then this deployment cannot
-carry real customer traffic, and the reason is concrete — see *The HTTP
-boundary*.
+Phase 9 adds Cloudflare, a domain and HTTPS, and is **also prepared but not
+deployed** — see [CLOUDFLARE_SSL.md](CLOUDFLARE_SSL.md). Until it is applied
+this deployment cannot carry real customer traffic, and the reason is concrete
+— see *The HTTP boundary*.
+
+Deploying with TLS is this guide plus the overlay:
+
+```bash
+TLS=1 ./deploy/build.sh
+docker compose --env-file .env.production \
+  -f docker-compose.prod.yml -f docker-compose.prod.tls.yml up -d
+```
+
+Read `CLOUDFLARE_SSL.md` first. The order matters: enabling Cloudflare's
+Full (strict) before the origin certificate is installed takes the site down.
 
 ---
 

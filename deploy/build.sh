@@ -3,6 +3,7 @@
 #
 #   deploy/build.sh                      # for this machine's architecture
 #   PLATFORM=linux/amd64 deploy/build.sh # for an amd64 VPS, from an arm64 Mac
+#   TLS=1 deploy/build.sh                # also build the TLS-terminating web image
 #
 # Building ON the target server is simplest and avoids emulation entirely. Only
 # cross-build when you cannot.
@@ -24,8 +25,16 @@ docker build $PLATFORM_ARG -f docker/Dockerfile --target server -t "${REPO}:${TA
 # shellcheck disable=SC2086
 docker build $PLATFORM_ARG -f docker/Dockerfile --target web    -t "${REPO}-web:${TAG}" .
 
+# The TLS-terminating variant, for a deployment behind Cloudflare with an
+# origin certificate. Opt-in because it is only useful once a certificate
+# exists on the host; see docs/CLOUDFLARE_SSL.md.
+if [ "${TLS:-0}" = "1" ]; then
+  # shellcheck disable=SC2086
+  docker build $PLATFORM_ARG -f docker/Dockerfile --target web-tls -t "${REPO}-web-tls:${TAG}" .
+fi
+
 echo
 c_green "Built:"
-docker image ls --format '  {{.Repository}}:{{.Tag}}  {{.Size}}' | grep -E "^  ${REPO}(-web)?:${TAG}" || true
+docker image ls --format '  {{.Repository}}:{{.Tag}}  {{.Size}}' | grep -E "^  ${REPO}(-web|-web-tls)?:${TAG}" || true
 echo
 echo "Deploy it with:  IMAGE_TAG=${TAG} deploy/deploy.sh"

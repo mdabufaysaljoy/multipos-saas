@@ -97,6 +97,104 @@ if git rev-parse --git-dir >/dev/null 2>&1; then
   note "revision to deploy" "$(resolve_tag)"
 fi
 
+# ---- key material must never be in the repository ------------------------
+# Checked unconditionally, TLS overlay or not. A private key reaching a Git
+# history is not undone by deleting it: it has to be treated as compromised and
+# reissued, so the cheap moment to catch it is before the commit.
+if git rev-parse --git-dir >/dev/null 2>&1; then
+  # `|| true`: no match is the desired outcome, and `set -e` would otherwise
+  # abort the run on it - taking every later check with it.
+  tracked_keys=$(git ls-files | grep -iE '\.(key|pem|p12|pfx)$' | head -5 || true)
+  [ -z "$tracked_keys" ] && ok "no key material tracked by git" \
+    || bad "key material IS tracked by git: $(echo "$tracked_keys" | tr '\n' ' ')"
+fi
+# Content, not just extension: a key renamed to .txt is still a key.
+# This file is excluded explicitly: it contains the search pattern itself. The
+# escaping happens not to match today, but relying on that would make a later
+# edit to the pattern silently flag this script forever.
+leaked=$(git grep -lI 'BEGIN \(RSA \|EC \|OPENSSH \)\?PRIVATE KEY' -- . ':!deploy/validate.sh' 2>/dev/null | head -3 || true)
+[ -z "$leaked" ] && ok "no private key blocks in tracked files" \
+  || bad "a PRIVATE KEY block appears in: $(echo "$leaked" | tr '\n' ' ')"
+
+# ---- HTTPS at the origin (only when the TLS overlay will be used) --------
+if env_has SERVER_NAME || [ -n "${TLS:-}" ]; then
+  echo
+  echo "  -- TLS overlay --"
+  server_name=$(grep -E '^SERVER_NAME=' "$ENV_FILE" | head -1 | cut -d= -f2- | tr -d '\r')
+  [ -n "$server_name" ] && ok "SERVER_NAME set ($server_name)" || bad "SERVER_NAME set (empty value stops nginx starting)"
+  case "$server_name" in
+    *.example.com|REPLACE*) bad "SERVER_NAME is still the placeholder" ;;
+  esac
+
+  # Both public URLs have to be https, or the browser refuses to store the
+  # refresh cookie (it is Secure in production) and every session dies at the
+  # access-token TTL with no way to refresh.
+  for key in CLIENT_ORIGIN PUBLIC_BASE_URL; do
+    val=$(grep -E "^${key}=" "$ENV_FILE" | head -1 | cut -d= -f2- | tr -d '\r')
+    case "$val" in
+      https://*) ok "$key is https" ;;
+      *) bad "$key is '$val' - must be https:// once TLS is on, or the Secure refresh cookie is dropped" ;;
+    esac
+  done
+
+  cert_dir=$(grep -E '^ORIGIN_CERT_DIR=' "$ENV_FILE" | head -1 | cut -d= -f2- | tr -d '\r')
+  if [ -z "$cert_dir" ]; then
+    bad "ORIGIN_CERT_DIR set"
+  elif [ ! -d "$cert_dir" ]; then
+    bad "ORIGIN_CERT_DIR '$cert_dir' does not exist"
+  else
+    ok "ORIGIN_CERT_DIR exists"
+    # Inside the repository is the one place it must not be.
+    case "$(cd "$cert_dir" && pwd)" in
+      "$(pwd)"|"$(pwd)"/*) bad "the certificate directory is INSIDE the repository" ;;
+      *) ok "certificate directory is outside the repository" ;;
+    esac
+
+    [ -f "$cert_dir/origin.pem" ] && ok "origin.pem present" || bad "origin.pem present"
+    if [ -f "$cert_dir/origin.key" ]; then
+      ok "origin.key present"
+      perms=$(stat -f '%OLp' "$cert_dir/origin.key" 2>/dev/null || stat -c '%a' "$cert_dir/origin.key" 2>/dev/null)
+      case "$perms" in
+        600|400) ok "origin.key permissions ($perms)" ;;
+        *) bad "origin.key is mode $perms - must be 600 or 400" ;;
+      esac
+    else
+      bad "origin.key present"
+    fi
+
+    if [ -f "$cert_dir/origin.pem" ] && [ -f "$cert_dir/origin.key" ] && command -v openssl >/dev/null; then
+      # The key must belong to the certificate. A mismatch is the single most
+      # common reason nginx refuses to start after a certificate swap.
+      cmod=$(openssl x509 -noout -modulus -in "$cert_dir/origin.pem" 2>/dev/null | openssl md5 2>/dev/null)
+      kmod=$(openssl rsa -noout -modulus -in "$cert_dir/origin.key" 2>/dev/null | openssl md5 2>/dev/null)
+      if [ -n "$cmod" ] && [ "$cmod" = "$kmod" ]; then ok "certificate and key match"
+      elif [ -z "$cmod" ]; then warn "could not compare certificate and key (not RSA?)"
+      else bad "certificate and key DO NOT match"; fi
+
+      # 30 days, not 0: expiry should be a scheduled task, never a surprise.
+      if openssl x509 -checkend 2592000 -noout -in "$cert_dir/origin.pem" >/dev/null 2>&1; then
+        ok "certificate valid for at least 30 more days"
+      else
+        bad "certificate expires within 30 days: $(openssl x509 -enddate -noout -in "$cert_dir/origin.pem" 2>/dev/null | cut -d= -f2-)"
+      fi
+
+      # An Origin CA certificate is not publicly trusted; that is expected,
+      # and worth saying out loud so nobody debugs it as a fault.
+      issuer=$(openssl x509 -noout -issuer -in "$cert_dir/origin.pem" 2>/dev/null)
+      case "$issuer" in
+        *Cloudflare*) note "certificate issuer" "Cloudflare Origin CA (not browser-trusted; correct for Full (strict))" ;;
+        *) note "certificate issuer" "$(printf '%s' "$issuer" | sed 's/^issuer=//' | cut -c1-60)" ;;
+      esac
+    fi
+  fi
+
+  # TRUST_PROXY_HOPS must NOT be bumped for Cloudflare: nginx already resolves
+  # the real client and sends one X-Forwarded-For value.
+  hops=$(grep -E '^TRUST_PROXY_HOPS=' "$ENV_FILE" | head -1 | cut -d= -f2- | tr -d '\r')
+  [ "$hops" = "1" ] && ok "TRUST_PROXY_HOPS=1 (correct behind Cloudflare)" \
+    || bad "TRUST_PROXY_HOPS=$hops - nginx sends one X-Forwarded-For value; more hops reads attacker-controlled data"
+fi
+
 # ---- disk ----------------------------------------------------------------
 avail=$(df -Pk . | awk 'NR==2 {print int($4/1048576)}')
 note "disk available" "${avail} GB"
