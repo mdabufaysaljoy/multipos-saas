@@ -63,6 +63,13 @@ here, and a 1 GB instance is not enough for this stack.
 
 ## Database: pick one
 
+> **DECIDED 2026-10-26: Strategy A, MongoDB Atlas.** Confirmed by the project
+> owner. Strategy B stays documented below as the alternative, but Atlas is the
+> intended deployment: the commands in *Deploy* assume it, and no `mongo`
+> service is started. Two consequences to act on — read the free-tier backup
+> warning immediately below, and note that Atlas is also what avoids the
+> unauthenticated-database weakness described under *Validated, and not*.
+
 **Strategy A — MongoDB Atlas (default, and what the compose file assumes).**
 The application opens transactions, so it needs a replica set; Atlas is one
 without spending the VPS's memory on it. Set `MONGODB_URI` to the `mongodb+srv`
