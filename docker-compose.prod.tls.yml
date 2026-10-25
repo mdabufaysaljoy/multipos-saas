@@ -1,6 +1,6 @@
 # TLS overlay for the production stack.
 #
-#   docker compose --env-file .env.prod \
+#   IMAGE_TAG=$(git rev-parse --short HEAD) docker compose --env-file .env.production \
 #     -f docker-compose.prod.yml -f docker-compose.prod.tls.yml up -d
 #
 # An overlay rather than an edit to docker-compose.prod.yml, because the two

@@ -1,6 +1,7 @@
 # OPTIONAL: self-hosted MongoDB instead of Atlas (Strategy B).
 #
-#   docker compose -f docker-compose.prod.yml -f docker-compose.prod.mongo.yml up -d
+#   IMAGE_TAG=$(git rev-parse --short HEAD) docker compose --env-file .env.production \
+#     -f docker-compose.prod.yml -f docker-compose.prod.mongo.yml up -d
 #
 # Use this ONLY if you have deliberately chosen not to use Atlas. Running both
 # is how a deployment ends up with two databases, one of them silently
@@ -28,6 +29,11 @@ services:
     # a standalone server silently disables them.
     command: ["mongod", "--replSet", "rs0", "--bind_ip_all"]
     restart: unless-stopped
+    # Blocks setuid/setgid binaries inside the container from gaining
+    # privileges beyond the (unprivileged) user the process already runs as.
+    # Costs nothing here: nothing in this image escalates on purpose.
+    security_opt:
+      - no-new-privileges:true
     logging:
       driver: json-file
       options:

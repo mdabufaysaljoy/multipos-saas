@@ -13,7 +13,7 @@ Deploying with TLS is this guide plus the overlay:
 
 ```bash
 TLS=1 ./deploy/build.sh
-docker compose --env-file .env.production \
+IMAGE_TAG=$(git rev-parse --short HEAD) docker compose --env-file .env.production \
   -f docker-compose.prod.yml -f docker-compose.prod.tls.yml up -d
 ```
 
@@ -179,8 +179,8 @@ deploy/health.sh              # verifies it
 Seeding a **brand-new** database only — never one with real data:
 
 ```bash
-docker compose --env-file .env.production -f docker-compose.prod.yml \
-  exec api node dist/seed/seed.js
+IMAGE_TAG=$(git rev-parse --short HEAD) docker compose --env-file .env.production \
+  -f docker-compose.prod.yml exec api node dist/seed/seed.js
 ```
 
 For Strategy B, prefix every command with `SELF_HOSTED_MONGO=1`.
@@ -203,13 +203,23 @@ deploy/health.sh                 # full verification, read-only
 deploy/logs.sh api               # follow one service
 deploy/logs.sh worker 200        # last 200 lines
 deploy/backup.sh                 # encrypted backup (see below)
-docker compose --env-file .env.production -f docker-compose.prod.yml restart api
+IMAGE_TAG=$(git rev-parse --short HEAD) docker compose --env-file .env.production -f docker-compose.prod.yml restart api
 ```
 
 Any manual `docker compose` call against the production files needs both
-`--env-file .env.production` **and** `IMAGE_TAG` set — the compose file declares
-the tag as required so a mutable `latest` can never creep in. The scripts handle
-both for you.
+`--env-file .env.production` **and** `IMAGE_TAG` set. Neither is optional
+politeness:
+
+- Without `IMAGE_TAG` the call fails outright — the compose file declares it
+  required so a mutable `latest` can never creep in.
+- Without `--env-file` it *succeeds* and silently ignores every tunable in
+  `.env.production`, because compose's `env_file:` feeds the container but not
+  `${...}` interpolation. Measured consequence: `WEB_BIND` reverts to its
+  default and the port binds to `0.0.0.0` instead of the address you chose.
+  A command that looks like it worked is the dangerous case here.
+
+The `deploy/` scripts pass both for you, which is why they are the recommended
+path.
 
 ---
 
@@ -257,7 +267,8 @@ Do that drill separately, against a scratch database, before you need it:
 openssl enc -d -aes-256-cbc -pbkdf2 -iter 200000 -pass env:BACKUP_PASSPHRASE \
   -in backup.tar.gz.enc | tar xzf - -C /tmp/restore
 # Strategy B:
-docker compose --env-file .env.production -f docker-compose.prod.yml -f docker-compose.prod.mongo.yml \
+IMAGE_TAG=$(git rev-parse --short HEAD) docker compose --env-file .env.production \
+  -f docker-compose.prod.yml -f docker-compose.prod.mongo.yml \
   exec -T mongo mongorestore --archive --gzip --drop < /tmp/restore/mongo.archive.gz
 ```
 
@@ -378,8 +389,39 @@ Local validation on macOS arm64, Docker 29.8:
 | Backup | encrypted, restore-tested, refuses to call a local-only copy a backup |
 | Rollback | image swapped, volumes untouched, refuses an absent image, requires confirmation |
 | Refusals | deploy blocked on a dirty tree; rollback blocked on a missing image |
+| Non-root | api/worker uid 1000, redis and mongo uid 999, nginx workers unprivileged (master root, as required to bind :80) |
+| Memory limits | enforced by the kernel on all five containers; idle use ~425 MB against 3.11 GB of limits (Strategy B) |
+| Log rotation | `json-file` 10 MB x 3 on every service, confirmed in the daemon's view |
+| `no-new-privileges` | applied to all five services; stack verified healthy with it on |
+| Documented commands | every `docker compose` block in this file copy-pastes and runs |
 
 **Not validated:** anything on a real VPS. No remote host was touched. The amd64
 image has not run on real amd64 hardware, only under emulation. No load test.
 No TLS, no domain, no Cloudflare. Atlas (Strategy A) could not be exercised
 without a cluster — the local run used Strategy B.
+
+**`restart: unless-stopped` is configured but was not observed firing.** It is
+set on every service and present in the daemon's view of each container, but an
+auto-restart could not be demonstrated on this machine: a control container
+with the same policy, SIGKILLed, also stayed exited. The limitation is the local
+Docker daemon's handling of `docker kill`, not this configuration — but it is
+unproven here either way, so treat it as configured rather than verified.
+
+### Known weakness: no database or cache authentication
+
+Neither self-hosted MongoDB nor Redis requires a password:
+
+- `mongod` runs with `--replSet rs0 --bind_ip_all` and **no `--auth`**.
+- `redis-server` runs with **no `requirepass`**.
+
+Neither is reachable from the internet — no port is published for either, which
+was verified — so the exposure is limited to the Docker network. But it means
+anything that gets onto that network, or any compromise of the API or worker
+container, has unauthenticated full read/write access to the database.
+
+This is a deliberate open item rather than an oversight: adding auth to a
+replica set needs a keyFile for internal membership auth, a root user created at
+first init, and a changed `MONGODB_URI`, which is a migration rather than a
+setting. **Atlas (Strategy A) does not have this weakness** — it enforces
+authentication and TLS, which is one more reason it is the default. If you
+choose Strategy B for real customer data, close this first.

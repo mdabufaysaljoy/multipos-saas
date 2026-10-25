@@ -1,6 +1,16 @@
 # Retailer Suites - single-VPS production stack.
 #
-#   docker compose -f docker-compose.prod.yml up -d
+#   IMAGE_TAG=$(git rev-parse --short HEAD) \
+#     docker compose --env-file .env.production -f docker-compose.prod.yml up -d
+#
+# BOTH of those are required, and neither is optional politeness:
+#   --env-file   compose's `env_file:` feeds the CONTAINER but not ${...}
+#                interpolation. Omit it and every tunable here silently falls
+#                back to its default - including WEB_BIND, so the port binds to
+#                0.0.0.0 rather than the address you chose. Verified.
+#   IMAGE_TAG    declared with no default on purpose; a mutable tag makes
+#                "which code is running?" unanswerable and rollback guesswork.
+# Easier: use `deploy/deploy.sh`, which passes both for you.
 #
 # DELIBERATELY NOT AN OVERRIDE of docker-compose.yml. The local stack publishes
 # a test port, carries a MongoDB replica set and assumes a disposable database;
@@ -12,7 +22,8 @@
 # and therefore transactions, which this application needs - without spending a
 # 4 GB VPS's memory on it. To self-host instead, add the companion override:
 #
-#   docker compose -f docker-compose.prod.yml -f docker-compose.prod.mongo.yml up -d
+#   IMAGE_TAG=$(git rev-parse --short HEAD) docker compose --env-file .env.production \
+#     -f docker-compose.prod.yml -f docker-compose.prod.mongo.yml up -d
 #
 # and read the memory note in that file first. Pick ONE. Running both is how a
 # deployment ends up with two databases and one of them silently authoritative.
@@ -49,6 +60,11 @@ services:
   redis:
     image: redis:7.2-alpine
     restart: unless-stopped
+    # Blocks setuid/setgid binaries inside the container from gaining
+    # privileges beyond the (unprivileged) user the process already runs as.
+    # Costs nothing here: nothing in this image escalates on purpose.
+    security_opt:
+      - no-new-privileges:true
     logging: *logging
     command:
       - redis-server
@@ -78,6 +94,11 @@ services:
   api:
     image: ${IMAGE_REPO:-retailer-suites}:${IMAGE_TAG:?IMAGE_TAG is required - use a git revision, never "latest"}
     restart: unless-stopped
+    # Blocks setuid/setgid binaries inside the container from gaining
+    # privileges beyond the (unprivileged) user the process already runs as.
+    # Costs nothing here: nothing in this image escalates on purpose.
+    security_opt:
+      - no-new-privileges:true
     logging: *logging
     <<: *app-env
     environment:
@@ -104,6 +125,11 @@ services:
   worker:
     image: ${IMAGE_REPO:-retailer-suites}:${IMAGE_TAG:?IMAGE_TAG is required - use a git revision, never "latest"}
     restart: unless-stopped
+    # Blocks setuid/setgid binaries inside the container from gaining
+    # privileges beyond the (unprivileged) user the process already runs as.
+    # Costs nothing here: nothing in this image escalates on purpose.
+    security_opt:
+      - no-new-privileges:true
     logging: *logging
     <<: *app-env
     environment:
@@ -128,6 +154,11 @@ services:
   web:
     image: ${IMAGE_REPO:-retailer-suites}-web:${IMAGE_TAG:?IMAGE_TAG is required - use a git revision, never "latest"}
     restart: unless-stopped
+    # Blocks setuid/setgid binaries inside the container from gaining
+    # privileges beyond the (unprivileged) user the process already runs as.
+    # Costs nothing here: nothing in this image escalates on purpose.
+    security_opt:
+      - no-new-privileges:true
     logging: *logging
     ports:
       # The ONLY published port. Bound explicitly rather than to every
