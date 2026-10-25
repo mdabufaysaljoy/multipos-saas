@@ -20,3 +20,4 @@ IMPLIMENTATION_STATUS.md
 *.pem
 *.key
 certs/
+docs/
