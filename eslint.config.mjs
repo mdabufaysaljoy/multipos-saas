@@ -12,7 +12,21 @@ import tseslint from 'typescript-eslint';
 
 export default defineConfig(
   {
-    ignores: ['**/dist/**', '**/build/**', '**/node_modules/**', 'coverage/**', 'server/uploads/**'],
+    // `.claude/**` matters: the desktop app creates git worktrees under
+    // `.claude/worktrees/`, which puts a full second copy of the repository
+    // inside it. Without this, `npm run lint` from the repository root lints
+    // that copy too - and because the paths are nested deeper, the
+    // path-specific overrides below (node globals for `scripts/*.mjs`, say) no
+    // longer match, so the same files fail with ~150 phantom `no-undef`
+    // errors. Nothing under `.claude/` is source.
+    ignores: [
+      '**/dist/**',
+      '**/build/**',
+      '**/node_modules/**',
+      'coverage/**',
+      'server/uploads/**',
+      '.claude/**',
+    ],
   },
 
   js.configs.recommended,

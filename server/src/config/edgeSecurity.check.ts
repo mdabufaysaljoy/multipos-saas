@@ -238,6 +238,42 @@ async function main() {
     assert.doesNotMatch(tlsStage, /COPY[^\n]*\.(pem|key|crt)/, 'a certificate is being baked into the image');
   });
 
+  check('the committed env examples carry no real secrets', () => {
+    // Added after a real incident: real Atlas credentials and both live JWT
+    // secrets were committed into .env.production.example and pushed to a
+    // PUBLIC repository. An example file is documentation - the moment it
+    // holds a working value, publishing the repository publishes the
+    // credential. Cheap to assert, and the failure mode is severe enough that
+    // "we will remember" is not a control.
+    for (const name of ['.env.example', '.env.production.example', '.env.compose.example']) {
+      let text: string;
+      try {
+        text = read(name);
+      } catch {
+        continue; // not every example exists in every checkout
+      }
+
+      for (const key of ['JWT_ACCESS_SECRET', 'JWT_REFRESH_SECRET']) {
+        const m = text.match(new RegExp(`^${key}=(.*)$`, 'm'));
+        if (!m) continue;
+        const value = m[1].trim();
+        assert.ok(
+          value === '' || /^(REPLACE|CHANGE|<|your[-_ ])/i.test(value),
+          `${name}: ${key} looks like a real secret - examples must be empty or a placeholder`,
+        );
+      }
+
+      const uri = text.match(/^MONGODB_URI=(.*)$/m)?.[1]?.trim() ?? '';
+      if (uri.includes('@')) {
+        const creds = uri.slice(uri.indexOf('//') + 2, uri.indexOf('@'));
+        assert.ok(
+          /^(USER:PASSWORD|user:password|<[^>]*>:?<?[^>]*>?)$/.test(creds) || creds === '',
+          `${name}: MONGODB_URI embeds real-looking credentials - use USER:PASSWORD`,
+        );
+      }
+    }
+  });
+
   check('the ignore rules keep key material out of the repository', () => {
     // deploy/validate.sh scans the tree for actual key material; this asserts
     // the rule that stops one being added by accident in the first place.
