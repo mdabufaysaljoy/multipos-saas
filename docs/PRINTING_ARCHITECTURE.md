@@ -266,8 +266,7 @@ QZ Tray trusts a website when every request is signed by a key whose certificate
 1. **Obtain the key and certificate.** Either buy a QZ Tray certificate from QZ Industries (trusted
    out of the box), or generate a self-signed pair with QZ Tray's *Site Manager → +* (or
    `openssl req -x509 -newkey rsa:2048 -keyout private-key.pem -out digital-certificate.txt -days 3650 -nodes`).
-   A self-signed certificate must be imported on every POS computer (QZ Tray → *Site Manager*, or
-   the `authcert.override` property).
+   A self-signed certificate must be trusted on every POS computer - see step 5.
 2. **Store the files on the SERVER only**, outside the repository (e.g. `/etc/retailersuites/qz/`).
 3. **Configure the server environment:**
    ```
@@ -277,6 +276,30 @@ QZ Tray trusts a website when every request is signed by a key whose certificate
    `QZ_CERTIFICATE` and `QZ_PRIVATE_KEY` (PEM text with `\n` escapes) also work for platforms
    without a filesystem.
 4. **Restart the API.** Settings → Printer then shows *Signed requests*.
+5. **Trust the certificate on each POS computer** (self-signed only; a QZ Industries
+   certificate skips this step entirely). Until this is done QZ still prompts - but the prompt
+   now names your organisation and reports *Invalid Certificate* rather than *An anonymous
+   request*, which is how you tell the two problems apart.
+
+   Copy `digital-certificate.txt` to `override.crt` in QZ Tray's **install directory**, then
+   restart QZ Tray. This needs administrator rights:
+
+   | OS | Path |
+   |---|---|
+   | macOS | `/Applications/QZ Tray.app/Contents/Resources/override.crt` |
+   | Windows | `C:\Program Files\QZ Tray\override.crt` |
+   | Linux | `/opt/qz-tray/override.crt` |
+
+   **The install directory is the only location that works.** Verified against QZ Tray 2.3.0 on
+   macOS: `authcert.override` placed in the per-user
+   `~/Library/Application Support/qz/prefs.properties` is **ignored** - the startup log shows QZ
+   reading its properties from `…/Contents/Resources/qz-tray.properties` and using the user
+   directory only for `.autostart`. Do not waste time on the user-level file.
+
+   *Alternative without admin rights:* click **Allow** and tick **Remember this decision** on the
+   prompt. That records the certificate in the per-user `allowed.dat` and the prompt stops. It is
+   per-user rather than per-machine, so a second Windows profile on the same till prompts again -
+   acceptable for one or two machines, `override.crt` is better for a fleet.
 
 **Development:** with no key configured, the endpoints report `configured: false` and the client
 connects unsigned. QZ Tray shows an allow prompt, which is fine for local testing. Never use a
@@ -294,7 +317,9 @@ blanket "trust everything" override.
 | Thermal printer appears to be unavailable | Printer off, cable, paper out | Check the printer, then press Retry. |
 | Printed garbage characters | Printer is not ESC/POS | Switch language to *Windows driver*. |
 | Output too narrow or cut off | Wrong printable width or dpi | Adjust width/dpi and use Test print. |
-| Prompt appears every time | Unsigned (development) or untrusted certificate | Configure signing (§4). |
+| Prompt says *An anonymous request* / Signature **Missing** | No `QZ_*` variables on the API, so the certificate endpoint reports `configured: false` | Configure signing and restart the API (§4, steps 1-4). |
+| Prompt names your organisation but says *Invalid Certificate* / *Untrusted website* | Signing works; the self-signed certificate is simply not trusted by that computer yet | Trust it on the till (§4, step 5). |
+| Signature shows *Not Required* | A `connect` call - QZ does not require a signature for it | Nothing; judge signing by a `printers.find` or print call. |
 
 The browser fallback is always available from the receipt or label dialog (**Print using browser**),
 and by setting **Print mode → Browser** on that computer.
