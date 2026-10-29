@@ -10,6 +10,7 @@ import {
 } from "./scenes/FeatureScene";
 import { PricingScene } from "./scenes/PricingScene";
 import { CtaScene } from "./scenes/CtaScene";
+import { Voiceover } from "./ui/Voiceover";
 
 /**
  * 1800 frames at 30fps — exactly 60 seconds.
@@ -21,45 +22,57 @@ import { CtaScene } from "./scenes/CtaScene";
  */
 export const TRANSITION = 15;
 
-export const PromoVideo: React.FC = () => (
-  <TransitionSeries>
-    <TransitionSeries.Sequence name="Opening" durationInFrames={195}>
-      <OpeningScene />
-    </TransitionSeries.Sequence>
-    <TransitionSeries.Transition
-      presentation={fade()}
-      timing={linearTiming({ durationInFrames: TRANSITION })}
-    />
-    <TransitionSeries.Sequence name="Verticals" durationInFrames={255}>
-      <VerticalsScene />
-    </TransitionSeries.Sequence>
-    <TransitionSeries.Transition
-      presentation={fade()}
-      timing={linearTiming({ durationInFrames: TRANSITION })}
-    />
-    <TransitionSeries.Sequence name="Core features" durationInFrames={375}>
-      <FeatureScene {...coreFeatureProps} />
-    </TransitionSeries.Sequence>
-    <TransitionSeries.Transition
-      presentation={fade()}
-      timing={linearTiming({ durationInFrames: TRANSITION })}
-    />
-    <TransitionSeries.Sequence name="Growth features" durationInFrames={255}>
-      <FeatureScene {...growthFeatureProps} />
-    </TransitionSeries.Sequence>
-    <TransitionSeries.Transition
-      presentation={fade()}
-      timing={linearTiming({ durationInFrames: TRANSITION })}
-    />
-    <TransitionSeries.Sequence name="Pricing" durationInFrames={480}>
-      <PricingScene />
-    </TransitionSeries.Sequence>
-    <TransitionSeries.Transition
-      presentation={fade()}
-      timing={linearTiming({ durationInFrames: TRANSITION })}
-    />
-    <TransitionSeries.Sequence name="Free trial & CTA" durationInFrames={315}>
-      <CtaScene />
-    </TransitionSeries.Sequence>
-  </TransitionSeries>
+/**
+ * The voice-over is committed with the project, so this is on by default;
+ * pass `voiceover: false` to render a clean track for dubbing or for a
+ * sound-off cut.
+ */
+export type PromoVideoProps = {
+  voiceover: boolean;
+};
+
+export const PromoVideo: React.FC<PromoVideoProps> = ({ voiceover }) => (
+  <>
+    {voiceover ? <Voiceover /> : null}
+    <TransitionSeries>
+      <TransitionSeries.Sequence name="Opening" durationInFrames={195}>
+        <OpeningScene />
+      </TransitionSeries.Sequence>
+      <TransitionSeries.Transition
+        presentation={fade()}
+        timing={linearTiming({ durationInFrames: TRANSITION })}
+      />
+      <TransitionSeries.Sequence name="Verticals" durationInFrames={255}>
+        <VerticalsScene />
+      </TransitionSeries.Sequence>
+      <TransitionSeries.Transition
+        presentation={fade()}
+        timing={linearTiming({ durationInFrames: TRANSITION })}
+      />
+      <TransitionSeries.Sequence name="Core features" durationInFrames={375}>
+        <FeatureScene {...coreFeatureProps} />
+      </TransitionSeries.Sequence>
+      <TransitionSeries.Transition
+        presentation={fade()}
+        timing={linearTiming({ durationInFrames: TRANSITION })}
+      />
+      <TransitionSeries.Sequence name="Growth features" durationInFrames={255}>
+        <FeatureScene {...growthFeatureProps} />
+      </TransitionSeries.Sequence>
+      <TransitionSeries.Transition
+        presentation={fade()}
+        timing={linearTiming({ durationInFrames: TRANSITION })}
+      />
+      <TransitionSeries.Sequence name="Pricing" durationInFrames={480}>
+        <PricingScene />
+      </TransitionSeries.Sequence>
+      <TransitionSeries.Transition
+        presentation={fade()}
+        timing={linearTiming({ durationInFrames: TRANSITION })}
+      />
+      <TransitionSeries.Sequence name="Free trial & CTA" durationInFrames={315}>
+        <CtaScene />
+      </TransitionSeries.Sequence>
+    </TransitionSeries>
+  </>
 );

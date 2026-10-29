@@ -103,3 +103,31 @@ composition's `durationInFrames` in `src/Root.tsx` has to change with it.
 ```bash
 cd promo-video && npx remotion render RetailerSuitesPromo out/retailer-suites-60s.mp4
 ```
+
+## Voice-over
+
+The film carries one continuous Bangla take, read in the **Ashwat — Calm, Pleasant Storyteller**
+voice (ElevenLabs v4), committed at `public/voiceover/promo-full.mp3`. The voice-over column above
+is what it says; it is not split per scene.
+
+The take as delivered runs 71.5s against a 60s film. It is fitted with ffmpeg's `atempo`, which
+changes speed **without shifting pitch**, so the voice still sounds like itself — just less
+unhurried, which suits an ad better than the original storytelling pace:
+
+```bash
+remotion ffmpeg -i <take>.mp3 -af "atempo=1.207" -b:a 160k public/voiceover/promo-full.mp3
+```
+
+The fitted file is 59.35s, leaving the last word a little room before the cut. After re-recording,
+recompute the ratio as `<take length> / 59.35`.
+
+**Known limitation:** because this is one take rather than six, the lines are not pinned to the
+scene cuts — they fall where the read puts them, and the 1.207x fit shifts them further from where
+the per-scene timings in the table above assume. If a line needs to land on a specific cut, the fix
+is to split the take at that sentence boundary and place the pieces per scene.
+
+The composition's `voiceover` prop defaults to `true`; pass `false` for a clean track:
+
+```bash
+npx remotion render RetailerSuitesPromo out/silent.mp4 --props='{"voiceover":false}'
+```

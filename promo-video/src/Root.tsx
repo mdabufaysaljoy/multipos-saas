@@ -20,6 +20,7 @@ export const RemotionRoot: React.FC = () => (
     <Composition
       id="RetailerSuitesPromo"
       component={PromoVideo}
+      defaultProps={{ voiceover: true }}
       width={1920}
       height={1080}
       fps={30}

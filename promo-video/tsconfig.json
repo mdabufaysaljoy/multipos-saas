@@ -10,7 +10,10 @@
     "esModuleInterop": true,
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true,
-    "noUnusedLocals": true
+    "noUnusedLocals": true,
+    // `generate-voiceover.ts` runs under `node --strip-types`, which resolves
+    // the real file and so needs the `.ts` suffix on its import.
+    "allowImportingTsExtensions": true
   },
   "exclude": ["remotion.config.ts"]
 }
