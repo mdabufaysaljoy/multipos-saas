@@ -20,7 +20,14 @@ declare module 'qz-tray' {
   export interface Qz {
     version: string;
     websocket: {
-      connect(options?: { retries?: number; delay?: number; host?: string | string[]; usingSecure?: boolean }): Promise<void>;
+      connect(options?: {
+        retries?: number;
+        delay?: number;
+        host?: string | string[];
+        usingSecure?: boolean;
+        /** Non-default WebSocket ports — used when NanoPrint was moved off the shared defaults. */
+        port?: { secure?: number[]; insecure?: number[] };
+      }): Promise<void>;
       disconnect(): Promise<void>;
       isActive(): boolean;
       setClosedCallbacks(callbacks: ((event: unknown) => void) | ((event: unknown) => void)[]): void;

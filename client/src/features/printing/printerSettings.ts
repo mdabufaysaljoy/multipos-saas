@@ -10,9 +10,22 @@ import * as React from 'react';
 export type PrintMode = 'browser' | 'direct';
 /** escpos: raw ESC/POS raster (most receipt printers). driver: image through the Windows driver. */
 export type PrinterLanguage = 'escpos' | 'driver';
+/**
+ * Which local print agent this computer talks to. Both speak the same
+ * WebSocket protocol (NanoPrint is API-compatible with the QZ Tray client), so
+ * the choice only changes the transport - never the receipt or label layout.
+ *
+ * - `qz`        QZ Tray. Needs a signing certificate trusted on the till,
+ *               otherwise it asks on every print and greys out "Remember".
+ * - `nanoprint` NanoPrint. No certificate: it asks once per site and the
+ *               "Remember this decision" box works (for https sites).
+ */
+export type PrintAgentId = 'qz' | 'nanoprint';
 
 export interface ThermalPrinterSettings {
   mode: PrintMode;
+  /** The local print agent used for direct printing on this computer. */
+  service: PrintAgentId;
   printerName: string | null;
   language: PrinterLanguage;
   /** Physical printable width of the head (a 58 mm roll typically prints 48 mm). */
@@ -27,10 +40,25 @@ export interface ThermalPrinterSettings {
   bandHeight: 24 | 48 | 128;
   /** GS v 0 (default) or ESC * compatibility raster. */
   rasterMode: 'gsv0' | 'escstar';
+  /**
+   * NanoPrint's WebSocket ports, when they were moved off the defaults in
+   * NanoPrint → Preferences → Connection ports. Needed when QZ Tray is also
+   * installed on this computer, because both listen on the same ports and
+   * whichever starts first takes them. `null` = NanoPrint's defaults.
+   */
+  nanoSecurePort: number | null;
+  nanoInsecurePort: number | null;
+  /**
+   * The name NanoPrint shows in its permission prompt ("<origin> wants to
+   * print", "calls itself …"). Cosmetic; NanoPrint decides by origin.
+   */
+  nanoSiteName: string;
 }
 
 export const DEFAULT_PRINTER_SETTINGS: ThermalPrinterSettings = {
   mode: 'browser',
+  // Existing tills keep QZ Tray until someone chooses otherwise on that computer.
+  service: 'qz',
   printerName: null,
   language: 'escpos',
   printableWidthMm: 48,
@@ -39,6 +67,9 @@ export const DEFAULT_PRINTER_SETTINGS: ThermalPrinterSettings = {
   autoCut: false,
   bandHeight: 24,
   rasterMode: 'gsv0',
+  nanoSecurePort: null,
+  nanoInsecurePort: null,
+  nanoSiteName: 'RetailerSuites POS',
 };
 
 export const PRINTER_SETTINGS_KEY = 'pos.thermalPrinter.v1';
@@ -51,8 +82,11 @@ const clampInt = (value: unknown, min: number, max: number, fallback: number) =>
 export function parsePrinterSettings(raw: unknown): ThermalPrinterSettings {
   const value = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>;
   const name = typeof value.printerName === 'string' ? value.printerName.trim().slice(0, 200) : '';
+  const port = (raw: unknown) => (typeof raw === 'number' && Number.isInteger(raw) && raw >= 1024 && raw <= 65535 ? raw : null);
+  const siteName = typeof value.nanoSiteName === 'string' ? value.nanoSiteName.trim().slice(0, 40) : '';
   return {
     mode: value.mode === 'direct' ? 'direct' : 'browser',
+    service: value.service === 'nanoprint' ? 'nanoprint' : 'qz',
     printerName: name || null,
     language: value.language === 'driver' ? 'driver' : 'escpos',
     printableWidthMm: clampInt(value.printableWidthMm, 30, 110, DEFAULT_PRINTER_SETTINGS.printableWidthMm),
@@ -61,6 +95,9 @@ export function parsePrinterSettings(raw: unknown): ThermalPrinterSettings {
     autoCut: value.autoCut === true,
     bandHeight: value.bandHeight === 48 || value.bandHeight === 128 ? value.bandHeight : 24,
     rasterMode: value.rasterMode === 'escstar' ? 'escstar' : 'gsv0',
+    nanoSecurePort: port(value.nanoSecurePort),
+    nanoInsecurePort: port(value.nanoInsecurePort),
+    nanoSiteName: siteName || DEFAULT_PRINTER_SETTINGS.nanoSiteName,
   };
 }
 

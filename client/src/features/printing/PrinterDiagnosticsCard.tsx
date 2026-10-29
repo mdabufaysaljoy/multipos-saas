@@ -8,6 +8,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { savePrinterSettings, useThermalPrinterSettings } from './printerSettings';
+import { printAgent } from './printAgent';
 import { ThermalPrintError, printDiagnostic, printDiagnostics, printTestPage, type DiagnosticKind } from './thermalPrintService';
 
 const TESTS: { kind: DiagnosticKind | 'full'; label: string; hint: string }[] = [
@@ -104,7 +105,7 @@ export function PrinterDiagnosticsCard({ connected }: { connected: boolean }) {
         </div>
 
         <div className="min-w-0 space-y-1.5">
-          <Label>Last print job sent to QZ Tray</Label>
+          <Label>Last print job sent to {printAgent(settings.service).label}</Label>
           {last ? (
             <pre className="scrollbar-thin max-h-72 overflow-auto rounded-md bg-muted p-3 text-[11px] leading-relaxed">{JSON.stringify(last, null, 2)}</pre>
           ) : (

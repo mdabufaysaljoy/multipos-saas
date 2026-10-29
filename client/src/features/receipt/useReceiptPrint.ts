@@ -6,9 +6,10 @@ import { printReceipt } from './ThermalReceipt';
 /**
  * Printing a receipt, for every POS vertical.
  *
- * Direct (QZ Tray) printing when this computer is set up for it, the browser
- * print dialog otherwise, and - after a sale - one automatic print with no
- * dialog, no printer picker and no second click.
+ * Direct printing - through QZ Tray or NanoPrint, whichever this computer is
+ * set to use - when it is set up for it, the browser print dialog otherwise,
+ * and, after a sale, one automatic print with no dialog, no printer picker and
+ * no second click.
  *
  * Printing only OUTPUTS a receipt that already exists. It never calls a sale,
  * order or return API, so a failed print, a retry or a reprint cannot create a
@@ -71,7 +72,7 @@ export function useReceiptPrint({ host, documentId, ready, autoPrint = false, af
   }, [documentId]);
 
   return {
-    /** True when this computer prints through QZ Tray rather than the browser. */
+    /** True when this computer prints through a local print agent rather than the browser. */
     direct: thermal.direct,
     status: thermal.status,
     message: thermal.message,

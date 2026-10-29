@@ -1,11 +1,12 @@
 import { bytesToBase64, describeEscPosJob, encodeEscPosJob, encodeEscPosText, trimBlankRows, type MonoBitmap } from './escpos';
 import { dotsPerLine, dotsPerMm, loadPrinterSettings, mmToDots, type ThermalPrinterSettings } from './printerSettings';
 import { bitmapToCanvas, rasterizeElement } from './raster';
-import { QzUnavailableError, ensureConnected, printImageBase64, printRawBase64, printerExists } from './qzTray';
+import { AgentUnavailableError, ensureConnected, printAgent, printImageBase64, printRawBase64, printerExists } from './printAgent';
 
 /**
- * The printer transport. Always QZ Tray in the app; tests replace it with a
- * fake printer to exercise failures without hardware.
+ * The printer transport: QZ Tray or NanoPrint, whichever this computer is set
+ * to use (Settings → Printer → Print service). Tests replace it with a fake
+ * printer to exercise failures without hardware.
  */
 export const printTransport = { ensureConnected, printerExists, printRawBase64, printImageBase64 };
 
@@ -16,7 +17,7 @@ export const printTransport = { ensureConnected, printerExists, printRawBase64, 
  *   rendered document (existing React component)
  *     → raster.ts   exact-width 1-bit bitmap, height = content
  *     → escpos.ts   ESC/POS raster bytes   (or a PNG for the Windows-driver mode)
- *     → qzTray.ts   QZ Tray → local printer
+ *     → printAgent.ts  QZ Tray or NanoPrint → local printer
  *
  * Printing is OUTPUT ONLY: it never calls the sale, return or loyalty APIs, so
  * a retry can never create a sale, move stock, take a payment or award points.
@@ -33,49 +34,65 @@ export interface ThermalPrintJob {
 }
 
 export type ThermalPrintErrorCode =
-  | 'QZ_UNAVAILABLE'
+  | 'AGENT_UNAVAILABLE'
+  /** The agent is running but this site is not allowed to print. */
+  | 'AGENT_BLOCKED'
   | 'PRINTER_NOT_SELECTED'
   | 'PRINTER_NOT_FOUND'
   | 'PRINTER_UNAVAILABLE'
   | 'RENDER_FAILED'
   | 'UNSUPPORTED'
+  /** The agent refuses pixel (driver image) jobs - NanoPrint. */
+  | 'PIXEL_UNSUPPORTED'
   | 'PRINT_FAILED';
 
-const MESSAGES: Record<ThermalPrintErrorCode, string> = {
-  QZ_UNAVAILABLE: 'Direct printing is unavailable. QZ Tray is not installed or not running on this computer - start QZ Tray and try again.',
-  PRINTER_NOT_SELECTED: 'No thermal printer is selected on this computer. Choose one in Settings → Printer.',
-  PRINTER_NOT_FOUND: 'The selected thermal printer was not found on this computer.',
-  PRINTER_UNAVAILABLE: 'The thermal printer appears to be unavailable. Check that it is on, connected and has paper.',
-  RENDER_FAILED: 'The document could not be prepared for printing.',
-  UNSUPPORTED: 'The printer does not support this operation. Try the "Windows driver" printer language.',
-  PRINT_FAILED: 'Printing failed.',
-};
+/**
+ * Till-facing messages. `agent` is the print service this computer uses, so the
+ * message names the program the cashier actually has to look at.
+ */
+const message = (code: ThermalPrintErrorCode, agent: string): string =>
+  ({
+    AGENT_UNAVAILABLE: `Direct printing is unavailable. ${agent} is not installed or not running on this computer - start ${agent} and try again.`,
+    AGENT_BLOCKED: `${agent} is running but this site is not allowed to print on this computer. Open ${agent} and allow this site (tick "Remember this decision"), then try again.`,
+    PRINTER_NOT_SELECTED: 'No thermal printer is selected on this computer. Choose one in Settings → Printer.',
+    PRINTER_NOT_FOUND: 'The selected thermal printer was not found on this computer.',
+    PRINTER_UNAVAILABLE: 'The thermal printer appears to be unavailable. Check that it is on, connected and has paper.',
+    RENDER_FAILED: 'The document could not be prepared for printing.',
+    UNSUPPORTED: `${agent} could not print this document the selected way. Check the printer language in Settings → Printer.`,
+    PIXEL_UNSUPPORTED:
+      'NanoPrint prints raw ESC/POS only, so the "Windows driver (image)" printer language cannot be used with it. Switch the printer language to ESC/POS, or switch the print service to QZ Tray.',
+    PRINT_FAILED: 'Printing failed.',
+  })[code];
 
 /** A print failure with a message safe to show at the till (technical detail goes to the console only). */
 export class ThermalPrintError extends Error {
   constructor(
     public readonly code: ThermalPrintErrorCode,
     public readonly detail?: unknown,
+    agentLabel = 'The print service',
   ) {
-    super(MESSAGES[code]);
+    super(message(code, agentLabel));
     this.name = 'ThermalPrintError';
   }
 }
 
 const describe = (error: unknown) => (error instanceof Error ? error.message : String(error ?? ''));
 
-/** Maps what QZ Tray / Java print services report to a till-friendly error. */
-export function classifyPrintError(error: unknown): ThermalPrintError {
+/** Maps what the print agent and the OS print services report to a till-friendly error. */
+export function classifyPrintError(error: unknown, agentLabel = 'The print service'): ThermalPrintError {
   if (error instanceof ThermalPrintError) return error;
-  if (error instanceof QzUnavailableError) return new ThermalPrintError('QZ_UNAVAILABLE', error);
+  if (error instanceof AgentUnavailableError) return new ThermalPrintError('AGENT_UNAVAILABLE', error, agentLabel);
   const text = describe(error).toLowerCase();
-  if (/could not be found|not found|no such printer/.test(text)) return new ThermalPrintError('PRINTER_NOT_FOUND', error);
-  if (/websocket|connection|not connected|closed/.test(text)) return new ThermalPrintError('QZ_UNAVAILABLE', error);
+  if (/could not be found|not found|no such printer/.test(text)) return new ThermalPrintError('PRINTER_NOT_FOUND', error, agentLabel);
+  if (/blocked by client|permission|denied|not allowed/.test(text)) return new ThermalPrintError('AGENT_BLOCKED', error, agentLabel);
+  if (/websocket|connection|not connected|closed/.test(text)) return new ThermalPrintError('AGENT_UNAVAILABLE', error, agentLabel);
   if (/offline|not available|unavailable|paused|error state|out of paper|printerexception|not accepting/.test(text)) {
-    return new ThermalPrintError('PRINTER_UNAVAILABLE', error);
+    return new ThermalPrintError('PRINTER_UNAVAILABLE', error, agentLabel);
   }
-  if (/unsupported|not supported|invalid (flavor|format)/.test(text)) return new ThermalPrintError('UNSUPPORTED', error);
-  return new ThermalPrintError('PRINT_FAILED', error);
+  if (/unsupported|not supported|invalid (flavor|format)|unsupported data type/.test(text)) {
+    return new ThermalPrintError('UNSUPPORTED', error, agentLabel);
+  }
+  return new ThermalPrintError('PRINT_FAILED', error, agentLabel);
 }
 
 /**
@@ -142,7 +159,7 @@ function withBlankRows(bitmap: MonoBitmap, rows: number): MonoBitmap {
 /**
  * One print job at a time for the whole app. Receipts, labels, cards and test
  * pages from any dialog wait their turn, so two jobs can never be handed to
- * QZ Tray / the spooler at the same moment.
+ * the print agent / the spooler at the same moment.
  */
 let queueTail: Promise<unknown> = Promise.resolve();
 function enqueue<T>(task: () => Promise<T>): Promise<T> {
@@ -151,7 +168,7 @@ function enqueue<T>(task: () => Promise<T>): Promise<T> {
   return run;
 }
 
-/** What was last handed to QZ Tray - command bytes and sizes only, never customer data. */
+/** What was last handed to the print agent - command bytes and sizes only, never customer data. */
 export interface PrintDiagnostics {
   at: string;
   type: ThermalDocumentType | 'diagnostic';
@@ -162,7 +179,9 @@ export interface PrintDiagnostics {
   widthDots: number;
   heightDots: number;
   payload: ReturnType<typeof describeEscPosJob> | { pngBytes: number };
-  qz: { type: 'raw' | 'pixel'; format: 'command' | 'image'; flavor: 'base64' };
+  /** Which local print agent the job was handed to. */
+  service: ThermalPrinterSettings['service'];
+  transport: { type: 'raw' | 'pixel'; format: 'command' | 'image'; flavor: 'base64' };
   result: 'sent' | 'failed';
   error?: string;
 }
@@ -195,24 +214,32 @@ export async function renderJob(job: ThermalPrintJob, settings: ThermalPrinterSe
 }
 
 /**
- * Prints a document on this computer's thermal printer through QZ Tray.
- * Resolves when QZ Tray has accepted the job; rejects with ThermalPrintError.
+ * Prints a document on this computer's thermal printer through the print agent
+ * it is set to use. Resolves once the agent has accepted the job; rejects with
+ * a ThermalPrintError.
  */
 export function printThermalDocument(job: ThermalPrintJob, settings: ThermalPrinterSettings = loadPrinterSettings()): Promise<{ printer: string; heightDots: number }> {
   return enqueue(() => runPrintJob(job, settings));
 }
 
 async function runPrintJob(job: ThermalPrintJob, settings: ThermalPrinterSettings): Promise<{ printer: string; heightDots: number }> {
+  const agent = printAgent(settings.service);
   const printer = settings.printerName;
-  if (!printer) throw new ThermalPrintError('PRINTER_NOT_SELECTED');
+  if (!printer) throw new ThermalPrintError('PRINTER_NOT_SELECTED', undefined, agent.label);
+  // The driver path sends an image through the OS driver, which NanoPrint
+  // refuses outright. Caught here so the till is told what to change rather
+  // than seeing the agent's own wire error.
+  if (settings.language === 'driver' && !agent.supportsPixel) {
+    throw new ThermalPrintError('PIXEL_UNSUPPORTED', undefined, agent.label);
+  }
   const copies = Math.max(1, Math.min(100, Math.round(job.copies ?? 1)));
 
   try {
-    await printTransport.ensureConnected();
-    if (!(await printTransport.printerExists(printer))) throw new ThermalPrintError('PRINTER_NOT_FOUND');
+    await printTransport.ensureConnected(settings);
+    if (!(await printTransport.printerExists(printer, settings))) throw new ThermalPrintError('PRINTER_NOT_FOUND', undefined, agent.label);
 
     const content = await renderJob(job, settings);
-    if (content.height === 0) throw new ThermalPrintError('RENDER_FAILED', 'empty document');
+    if (content.height === 0) throw new ThermalPrintError('RENDER_FAILED', 'empty document', agent.label);
     // Every print ends with the same tear line and blank tail; label copies each get their own.
     const bitmap = withReceiptEnd(content, settings.dpi);
 
@@ -225,6 +252,7 @@ async function runPrintJob(job: ThermalPrintJob, settings: ThermalPrinterSetting
       bandHeight: settings.bandHeight,
       widthDots: bitmap.width,
       heightDots: bitmap.height,
+      service: settings.service,
     };
     if (settings.language === 'escpos') {
       const bytes = encodeEscPosJob(Array.from({ length: copies }, () => bitmap), {
@@ -233,9 +261,9 @@ async function runPrintJob(job: ThermalPrintJob, settings: ThermalPrinterSetting
         bandHeight: settings.bandHeight,
         rasterMode: settings.rasterMode,
       });
-      const entry: PrintDiagnostics = { ...base, payload: describeEscPosJob(bytes), qz: { type: 'raw', format: 'command', flavor: 'base64' }, result: 'sent' };
+      const entry: PrintDiagnostics = { ...base, payload: describeEscPosJob(bytes), transport: { type: 'raw', format: 'command', flavor: 'base64' }, result: 'sent' };
       try {
-        await printTransport.printRawBase64(printer, bytesToBase64(bytes));
+        await printTransport.printRawBase64(printer, bytesToBase64(bytes), settings);
         recordDiagnostics(entry);
       } catch (error) {
         recordDiagnostics({ ...entry, result: 'failed', error: describe(error).slice(0, 200) });
@@ -244,17 +272,22 @@ async function runPrintJob(job: ThermalPrintJob, settings: ThermalPrinterSetting
     } else {
       const page = withBlankRows(bitmap, Math.round(feedLinesFor(job.type, settings) * LINE_MM * dotsPerMm(settings.dpi)));
       const png = bitmapToCanvas(page).toDataURL('image/png').split(',')[1];
-      recordDiagnostics({ ...base, payload: { pngBytes: Math.round((png.length * 3) / 4) }, qz: { type: 'pixel', format: 'image', flavor: 'base64' }, result: 'sent' });
-      await printTransport.printImageBase64(printer, png, {
-        widthMm: page.width / dotsPerMm(settings.dpi),
-        heightMm: page.height / dotsPerMm(settings.dpi),
-        dpi: settings.dpi,
-        copies,
-      });
+      recordDiagnostics({ ...base, payload: { pngBytes: Math.round((png.length * 3) / 4) }, transport: { type: 'pixel', format: 'image', flavor: 'base64' }, result: 'sent' });
+      await printTransport.printImageBase64(
+        printer,
+        png,
+        {
+          widthMm: page.width / dotsPerMm(settings.dpi),
+          heightMm: page.height / dotsPerMm(settings.dpi),
+          dpi: settings.dpi,
+          copies,
+        },
+        settings,
+      );
     }
     return { printer, heightDots: bitmap.height };
   } catch (error) {
-    const classified = classifyPrintError(error);
+    const classified = classifyPrintError(error, agent.label);
     // Technical detail for support; the till only shows the friendly message.
     console.error(`[thermal-print] ${job.type} failed (${classified.code})`, classified.detail ?? error);
     throw classified;
@@ -278,7 +311,8 @@ export async function printTestPage(settings: ThermalPrinterSettings = loadPrint
   };
   line('RetailerSuites.com', 'text-align:center;font-weight:700;font-size:11pt');
   line('--------------------------------', 'overflow:hidden;white-space:nowrap');
-  line('QZ Tray Test Print', 'text-align:center;font-weight:700');
+  line('Direct Print Test', 'text-align:center;font-weight:700');
+  line(`Service: ${printAgent(settings.service).label}`);
   line(`Printer: ${settings.printerName ?? '-'}`);
   line(`Width: ${settings.printableWidthMm}mm (${dotsPerLine(settings)} dots)`);
   line(`Mode: ${settings.language === 'escpos' ? 'ESC/POS raster' : 'Windows driver'}`);
@@ -330,16 +364,17 @@ export function printDiagnostic(kind: DiagnosticKind, settings: ThermalPrinterSe
 }
 
 async function runRawTextTest(settings: ThermalPrinterSettings) {
+  const agent = printAgent(settings.service);
   const printer = settings.printerName;
-  if (!printer) throw new ThermalPrintError('PRINTER_NOT_SELECTED');
-  if (settings.language !== 'escpos') throw new ThermalPrintError('UNSUPPORTED', 'raw text test needs ESC/POS');
+  if (!printer) throw new ThermalPrintError('PRINTER_NOT_SELECTED', undefined, agent.label);
+  if (settings.language !== 'escpos') throw new ThermalPrintError('UNSUPPORTED', 'raw text test needs ESC/POS', agent.label);
   try {
-    await printTransport.ensureConnected();
-    if (!(await printTransport.printerExists(printer))) throw new ThermalPrintError('PRINTER_NOT_FOUND');
+    await printTransport.ensureConnected(settings);
+    if (!(await printTransport.printerExists(printer, settings))) throw new ThermalPrintError('PRINTER_NOT_FOUND', undefined, agent.label);
     const rule = '================================';
     const bytes = encodeEscPosText(
       // Plain line feeds after the dashed line carry the text past the tear bar even if ESC d is ignored.
-      [rule, 'RetailerSuites.com', 'QZ TRAY RAW TEXT TEST', 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz', '0123456789', rule, '', '- - - - - - - - - - - - - - - -', '', '', '', ''],
+      [rule, 'RetailerSuites.com', 'RAW TEXT TEST', 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz', '0123456789', rule, '', '- - - - - - - - - - - - - - - -', '', '', '', ''],
       { feedLines: feedLinesFor('test', settings), autoCut: settings.autoCut },
     );
     const entry: PrintDiagnostics = {
@@ -352,14 +387,15 @@ async function runRawTextTest(settings: ThermalPrinterSettings) {
       widthDots: 0,
       heightDots: 0,
       payload: describeEscPosJob(bytes),
-      qz: { type: 'raw', format: 'command', flavor: 'base64' },
+      service: settings.service,
+      transport: { type: 'raw', format: 'command', flavor: 'base64' },
       result: 'sent',
     };
-    await printTransport.printRawBase64(printer, bytesToBase64(bytes));
+    await printTransport.printRawBase64(printer, bytesToBase64(bytes), settings);
     recordDiagnostics(entry);
     return { printer, heightDots: 0 };
   } catch (error) {
-    throw classifyPrintError(error);
+    throw classifyPrintError(error, agent.label);
   }
 }
 

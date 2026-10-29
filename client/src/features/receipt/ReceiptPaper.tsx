@@ -5,7 +5,7 @@ import { resolveReceiptWidth } from './ThermalReceipt';
  * The paper every POS vertical prints on.
  *
  * One node, one id, one set of styles: `#receipt-print-area` is what the browser
- * print CSS isolates AND what the QZ Tray path rasterises, so a receipt that
+ * print CSS isolates AND what the direct-print path rasterises, so a receipt that
  * looks right on screen is the receipt that comes out of the printer. A vertical
  * supplies its own content; nothing about the paper itself is per-vertical.
  *

@@ -13,7 +13,7 @@ const PLATFORM_RECEIPT_BRANDING = 'https://retailersuites.com';
  * The Super Shop receipt, on the platform's shared receipt paper.
  *
  * Real DOM rather than a popup window's HTML string: the same node the browser
- * print CSS isolates is the one QZ Tray rasterises, so direct printing and the
+ * print CSS isolates is the one the print agent rasterises, so direct printing and the
  * browser fallback produce the same receipt at the store's configured width.
  * The contents are Super Shop's own - weight lines, VAT-inclusive totals.
  */

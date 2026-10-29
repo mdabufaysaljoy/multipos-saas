@@ -14,7 +14,8 @@ import { PharmacyThermalReceipt } from './PharmacyThermalReceipt';
  * The Pharmacy receipt.
  *
  * The same printing behaviour as every other vertical: direct to the thermal
- * printer through QZ Tray when this computer is set up for it - no browser
+ * printer through its print agent (QZ Tray or NanoPrint) when this computer is
+ * set up for it - no browser
  * dialog, no printer picker - and the browser print dialog otherwise. Printing
  * only outputs the receipt that was already fetched, so a retry can never
  * dispense anything twice.

@@ -12,7 +12,7 @@ interface DirectPrintStatusProps {
   onBrowserPrint: () => void;
 }
 
-/** Status line for direct (QZ Tray) printing, with Retry and an explicit browser fallback on failure. */
+/** Status line for direct (QZ Tray / NanoPrint) printing, with Retry and an explicit browser fallback on failure. */
 export function DirectPrintStatus({ status, message, noun, onRetry, onBrowserPrint }: DirectPrintStatusProps) {
   if (status === 'idle') return null;
   if (status === 'printing') return <p role="status" className="no-print rounded-md bg-muted px-3 py-2 text-xs text-muted-foreground">Printing {noun}…</p>;

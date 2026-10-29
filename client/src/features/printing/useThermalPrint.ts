@@ -6,7 +6,8 @@ export type ThermalPrintStatus = 'idle' | 'printing' | 'printed' | 'failed';
 
 /**
  * Print status for a dialog. `direct` tells the caller whether this computer is
- * set up for QZ Tray printing (otherwise the existing browser printing stays).
+ * set up for direct printing through its print agent - QZ Tray or NanoPrint -
+ * (otherwise the existing browser printing stays).
  * `print` never throws; it reports through `status` / `message`.
  */
 export function useThermalPrint() {

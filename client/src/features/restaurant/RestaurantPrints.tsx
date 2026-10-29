@@ -178,7 +178,7 @@ export function KitchenTicketSlip({ payload }: { payload: KitchenTicketPayload }
 /**
  * Every Restaurant print - bill, receipt, kitchen ticket, shift report - goes
  * through here, so they all print the same way: straight to the thermal printer
- * through QZ Tray when this computer is set up for it, and the browser dialog
+ * through the print agent when this computer is set up for it, and the browser dialog
  * otherwise. `documentId` identifies the document so an automatic print happens
  * once and a reprint is deliberate.
  */

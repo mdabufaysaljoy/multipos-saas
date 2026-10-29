@@ -13,7 +13,7 @@ const PLATFORM_RECEIPT_BRANDING = 'https://retailersuites.com';
  * The Pharmacy receipt, on the platform's shared receipt paper.
  *
  * Real DOM rather than a popup window's HTML string, so the node the browser
- * print CSS isolates is the node QZ Tray rasterises. The contents are the
+ * print CSS isolates is the node the print agent rasterises. The contents are the
  * pharmacy's own: the batch each unit came from, its expiry, and the
  * prescription when the sale had one - a dispensing record the customer keeps.
  */

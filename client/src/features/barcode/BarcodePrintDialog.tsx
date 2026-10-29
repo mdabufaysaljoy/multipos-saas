@@ -54,7 +54,7 @@ export function BarcodePrintDialog({ label, currency, storeName, validateEan13 =
   const { data: config } = useQuery({ queryKey: ['store', 'pos-config'], queryFn: storeApi.posConfig, enabled: Boolean(label) });
   const labels = { ...DEFAULT_LABEL_SETTINGS, ...(config?.labels ?? {}) };
 
-  // Direct (QZ Tray) printing sends ONE rendered label as `count` copies; the
+  // Direct printing sends ONE rendered label as `count` copies; the
   // label's own height decides the paper used - no browser paper sizes.
   const printDirect = () => {
     const element = sheetRef.current?.querySelector<HTMLElement>('.barcode-label');

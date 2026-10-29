@@ -28,7 +28,7 @@ export function ReceiptDialog({ saleId, onClose, onNewSale, autoPrint = false }:
     enabled: Boolean(saleId),
   });
 
-  // Direct (QZ Tray) printing when this computer is set up for it; otherwise
+  // Direct printing (QZ Tray or NanoPrint) when this computer is set up for it; otherwise
   // the browser print dialog. Either way printing only OUTPUTS the receipt
   // already fetched above - it never calls the sale API again, so a failed or
   // retried print cannot create a sale, move stock or award loyalty points.
