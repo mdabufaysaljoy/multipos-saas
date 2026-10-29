@@ -1,6 +1,8 @@
 # Printing Architecture (Clothing POS)
 
-Status: QZ Tray direct thermal printing implemented (see IMPLIMENTATION_STATUS.md).
+Status: direct thermal printing implemented, through either of two local print
+agents - QZ Tray or NanoPrint, chosen per computer (see §2c and
+docs/NANOPRINT_SETUP.md).
 Scope: **Clothing POS only.** Restaurant, Pharmacy and Super Shop printing is untouched.
 
 ---
@@ -73,9 +75,10 @@ features/printing/escpos.ts         bitmap → ESC/POS raster bytes   (or PNG fo
         ↓
 features/printing/thermalPrintService.ts   printThermalDocument(job)
         ↓
-features/printing/qzTray.ts         the ONLY module that talks to QZ Tray
+features/printing/printAgent.ts     the ONLY module that opens a connection
+        ↓                           (profiles: qzTray.ts, nanoPrint.ts)
         ↓  WebSocket (localhost)
-QZ Tray  →  Windows printer (raw pass-through)  →  thermal printer
+QZ Tray | NanoPrint  →  OS printer queue (raw pass-through)  →  thermal printer
 ```
 
 ### Why a raster rather than text ESC/POS
@@ -126,6 +129,51 @@ These are separate values:
 - **App-wide queue:** one job at a time, from any dialog.
 - **Diagnostics:** the last job's command summary, plus isolation tests (Settings → Printer → Diagnostics).
 
+### Two print agents, one transport (§2c)
+
+QZ Tray and NanoPrint both run on the till, listen on a `localhost` WebSocket
+and take finished ESC/POS bytes, and NanoPrint implements the QZ Tray client
+protocol - so the official `qz-tray` client drives either one and **the printed
+bytes are identical**. Receipt and label layout, widths, barcodes, QR codes and
+the tear-off tail are produced before the transport is reached and do not know
+which agent is in use.
+
+They differ in how the till decides the site may print:
+
+| | QZ Tray | NanoPrint |
+|---|---|---|
+| Permission | a certificate the till trusts | the page's origin |
+| Server involvement | signs every request (`/api/printing/qz/sign`) | none - not in the print path |
+| Prompt | per session; **"Remember" is greyed out while unsigned** | once per site; **"Remember" works** (https origins and `http://localhost`) |
+| Job types | raw ESC/POS **and** images through the OS driver | **raw ESC/POS only** |
+| Maturity | stable | pre-1.0 (v0.2.0, Oct 2026) |
+
+So the reason to switch is the greyed-out "Remember": QZ Tray disables it for
+unsigned requests by design, which makes silent printing impossible without a
+certificate trusted on every computer (§4). Setup, rollout and troubleshooting
+for NanoPrint are in **docs/NANOPRINT_SETUP.md**.
+
+Consequences in the code:
+
+- `printAgent.ts` owns the connection and is parameterised by a profile
+  (`PrintAgentProfile`). Switching agent disconnects first, because the client
+  is a singleton whose security callbacks are global.
+- `nanoPrint.ts` resolves the certificate promise with NanoPrint's own identity
+  object (`{"nanoprint":{"name":…}}`) and the signature promise with an empty
+  string locally, so no server round-trip happens per print.
+- NanoPrint refuses `type: 'pixel'`, so `language: 'driver'` is blocked for it
+  in Settings and in `runPrintJob` (`PIXEL_UNSUPPORTED`), which tells the till
+  what to change instead of surfacing the agent's wire error.
+- Error messages, status text and the diagnostics entry name the agent in use,
+  and a blocked site is reported as blocked (`AGENT_BLOCKED`) rather than as
+  "not installed or not running".
+- Both agents listen on the same default ports, so a computer with both
+  installed moves NanoPrint off them and records the new ports in the device
+  settings.
+- The choice is per computer (`localStorage`), like the printer name: one till
+  can use NanoPrint for a receipt printer while another stays on QZ Tray for a
+  non-ESC/POS label printer.
+
 ### Device-specific settings
 
 Printer choices belong to a **computer**, not to the SaaS account: different tills can use
@@ -134,7 +182,8 @@ and never in the database. There is no device-management module to attach them t
 
 | Setting | Values / default |
 |---|---|
-| mode | `browser` (default, unchanged behaviour) or `direct` (QZ Tray) |
+| mode | `browser` (default, unchanged behaviour) or `direct` (through the print agent) |
+| service | `qz` (default) or `nanoprint` - which local print agent this computer talks to (see §2c) |
 | printer name | Chosen from `qz.printers.find()`. Never hard-coded. |
 | language | `escpos` or `driver` |
 | printable width | 48 mm |
@@ -143,6 +192,8 @@ and never in the database. There is no device-management module to attach them t
 | auto cutter | off (a cut command is sent only when this is on) |
 | raster block height | 24 rows (48 / 128 selectable) |
 | raster command | `GS v 0` (or `ESC *` compatibility) |
+| NanoPrint ports | empty = NanoPrint's defaults; set only when QZ Tray is installed on the same computer |
+| NanoPrint site name | the name NanoPrint's permission prompt shows under the origin (cosmetic) |
 
 ### Sale safety and retry
 
@@ -171,7 +222,9 @@ and never in the database. There is no device-management module to attach them t
 
 | Created | Purpose |
 |---|---|
-| `client/src/features/printing/qzTray.ts` | Connection manager, security, printer discovery, raw/pixel print. |
+| `client/src/features/printing/printAgent.ts` | Connection manager, agent registry, printer discovery, raw/pixel print. |
+| `client/src/features/printing/qzTray.ts` | The QZ Tray profile: server-signed requests, SHA512. |
+| `client/src/features/printing/nanoPrint.ts` | The NanoPrint profile: identity JSON, no signing, optional non-default ports. |
 | `client/src/features/printing/printerSettings.ts` | Device settings (`localStorage`) and dots-per-line maths. |
 | `client/src/features/printing/raster.ts` | DOM → 1-bit bitmap, crisp barcode/QR overlay. |
 | `client/src/features/printing/escpos.ts` | Bitmap → ESC/POS bytes (pure, unit-tested). |
