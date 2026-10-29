@@ -22,6 +22,7 @@ import type {
   Supplier,
   SupplierListItem,
   SupplierSummary,
+  SupportTicket,
   ImportPreview,
   ImportResult,
   ProductImportJob,
@@ -1083,6 +1084,37 @@ export interface PlatformAccountOverview {
  * Platform support: READ-ONLY account views. Every call except the directory
  * carries the access reason, which the server records in the audit log.
  */
+/** The store's own support tickets. The server scopes every one of these to the caller's workspace. */
+export const supportApi = {
+  list: (params?: Query) => getPaginated<SupportTicket>('/support', params),
+  get: (id: string) => get<SupportTicket>(`/support/${encodeURIComponent(id)}`),
+  create: (body: Record<string, unknown>) => post<SupportTicket>('/support', body),
+};
+
+/** One ticket as the platform operator sees it: with the workspace that raised it. */
+export interface PlatformSupportTicket extends SupportTicket {
+  vertical: string;
+  workspace: { id: string | null; name: string };
+  createdByEmail: string;
+  repliedByName: string;
+}
+
+export interface PlatformSupportCounts {
+  open: number;
+  inProgress: number;
+  resolved: number;
+  closed: number;
+}
+
+/** The operator's inbox: every workspace's tickets. Platform admins only, on the server. */
+export const platformSupportApi = {
+  list: (params?: Query) => getPaginated<PlatformSupportTicket>('/platform/support/tickets', params),
+  counts: () => get<PlatformSupportCounts>('/platform/support/counts'),
+  get: (id: string) => get<PlatformSupportTicket>(`/platform/support/tickets/${encodeURIComponent(id)}`),
+  reply: (id: string, body: { status: string; reply?: string }) =>
+    post<PlatformSupportTicket>(`/platform/support/tickets/${encodeURIComponent(id)}/reply`, body),
+};
+
 export const platformAccountsApi = {
   list: (params?: Query) => getPaginated<PlatformAccountRow>('/platform/accounts', params),
   overview: (id: string, reason: string) => get<PlatformAccountOverview>(`/platform/accounts/${encodeURIComponent(id)}`, { reason }),

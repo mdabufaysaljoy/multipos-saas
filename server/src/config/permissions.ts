@@ -65,6 +65,10 @@ export const PERMISSIONS = {
   ROLES_VIEW: 'roles.view',
   ROLES_MANAGE: 'roles.manage',
 
+  /** Support tickets a store raises with the platform operator. */
+  SUPPORT_VIEW: 'support.view',
+  SUPPORT_CREATE: 'support.create',
+
   SETTINGS_VIEW: 'settings.view',
   SETTINGS_EDIT: 'settings.edit',
 
@@ -209,6 +213,14 @@ export const PERMISSION_CATALOG: PermissionGroup[] = [
     permissions: [
       { key: PERMISSIONS.ROLES_VIEW, label: 'View roles', description: 'See role definitions' },
       { key: PERMISSIONS.ROLES_MANAGE, label: 'Manage roles', description: 'Create roles and assign permissions' },
+    ],
+  },
+  {
+    group: 'support',
+    label: 'Support',
+    permissions: [
+      { key: PERMISSIONS.SUPPORT_VIEW, label: 'View support', description: 'See the tickets this workspace has raised and the replies to them' },
+      { key: PERMISSIONS.SUPPORT_CREATE, label: 'Contact support', description: 'Report a problem or request a feature from the platform team' },
     ],
   },
   {

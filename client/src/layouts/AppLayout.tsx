@@ -39,6 +39,7 @@ import {
   ShoppingBasket,
   Layers,
   LayoutGrid,
+  LifeBuoy,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { CreateWorkspaceDialog } from '@/features/workspaces/CreateWorkspaceDialog';
@@ -166,6 +167,14 @@ const NAV_SECTIONS: { heading: string; items: NavItem[] }[] = [
       { to: '/wallet', label: 'Wallet', icon: Wallet, anyOf: ['wallet.view'] },
       { to: '/branches', label: 'Branches', icon: Building2, anyOf: ['settings.view'] },
       { to: '/settings', label: 'Settings', icon: Settings, anyOf: ['settings.view'] },
+    ],
+  },
+  {
+    heading: 'Help',
+    items: [
+      // No `feature` and no `verticals`: a workspace must be able to reach the
+      // platform team whatever it is subscribed to and whatever it sells.
+      { to: '/support', label: 'Support', icon: LifeBuoy, anyOf: ['support.view', 'support.create'] },
     ],
   },
 ];

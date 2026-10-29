@@ -35,6 +35,7 @@ export * from './TopUpRequest';
 export * from './Coupon';
 export * from './SmsMessage';
 export * from './AuditLog';
+export * from './SupportTicket';
 export * from './StorageObject';
 export * from './UsageCharge';
 export * from './MenuItem';

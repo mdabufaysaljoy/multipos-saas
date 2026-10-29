@@ -29,6 +29,7 @@ import { PaymentInstructionsCard } from '@/features/platform/PaymentInstructions
 import { PaymentOperationsTab } from '@/features/platform/PaymentOperationsTab';
 import { PosProductsTab } from '@/features/platform/PosProductsTab';
 import { SiteSettingsTab } from '@/features/platform/SiteSettingsTab';
+import { SupportTab } from '@/features/platform/SupportTab';
 import { PaymentGatewayCard } from '@/features/platform/PaymentGatewayCard';
 import { useTabParam } from '@/hooks/useTabParam';
 import { PlansTab } from '@/features/platform/PlansTab';
@@ -84,6 +85,7 @@ export function PlatformPage() {
     'billing',
     'analytics',
     'pos-types',
+    'support',
     'settings',
     'audit',
   ]);
@@ -130,6 +132,7 @@ export function PlatformPage() {
             <TabsTrigger value="billing">Billing</TabsTrigger>
             <TabsTrigger value="analytics">Analytics</TabsTrigger>
             <TabsTrigger value="pos-types">POS types</TabsTrigger>
+            <TabsTrigger value="support">Support</TabsTrigger>
             <TabsTrigger value="settings">Settings</TabsTrigger>
             <TabsTrigger value="audit">Audit log</TabsTrigger>
           </TabsList>
@@ -171,6 +174,11 @@ export function PlatformPage() {
 
           <TabsContent value="pos-types">
             <PosProductsTab />
+          </TabsContent>
+
+          {/* What the stores are asking for: problems and feature requests. */}
+          <TabsContent value="support">
+            <SupportTab />
           </TabsContent>
 
           <TabsContent value="settings">

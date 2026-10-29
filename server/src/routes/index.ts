@@ -34,6 +34,7 @@ import restaurantRoutes from '../modules/restaurant/restaurant.routes';
 import pharmacyRoutes from '../modules/pharmacy/pharmacy.routes';
 import supershopRoutes from '../modules/supershop/supershop.routes';
 import posShiftsRoutes from '../modules/posShifts/posShifts.routes';
+import supportRoutes from '../modules/support/support.routes';
 
 const router = Router();
 
@@ -100,6 +101,9 @@ router.use('/staff', staffRoutes);
 router.use('/roles', roleRoutes);
 router.use('/reports', reportRoutes);
 router.use('/uploads', uploadRoutes);
+// Tickets a store raises with the platform operator. The operator's own inbox
+// lives under /platform/support.
+router.use('/support', supportRoutes);
 
 // Restaurant POS vertical (guarded to Restaurant workspaces inside the router)
 router.use('/restaurant', restaurantRoutes);

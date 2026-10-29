@@ -23,6 +23,8 @@ import { updateSiteSchema } from './site.validators';
 import * as pricingAdmin from './pricingAdmin.controller';
 import * as renewalsAdmin from './renewalsAdmin.controller';
 import * as accountsSupport from './accountsSupport.controller';
+import * as support from '../support/support.controller';
+import { listAllTicketsSchema, replyTicketSchema } from '../support/support.validators';
 import {
   listPricesSchema,
   planCodeParams,
@@ -459,6 +461,19 @@ router.post(
   '/payments/:id/resolve-review',
   validate({ params: idParam, body: z.object({ note: z.string().trim().min(5, 'Explain how it was resolved').max(500) }).strict() }),
   paymentOps.resolveReview,
+);
+
+// Support inbox: every workspace's tickets in one place. Reads are open to any
+// platform admin; answering one is an administrative ACTION, so it is rate
+// limited with the rest of them.
+router.get('/support/tickets', validate({ query: listAllTicketsSchema }), support.listAll);
+router.get('/support/counts', support.counts);
+router.get('/support/tickets/:id', validate({ params: idParam }), support.getAny);
+router.post(
+  '/support/tickets/:id/reply',
+  adminActionLimiter,
+  validate({ params: idParam, body: replyTicketSchema }),
+  support.reply,
 );
 
 // Workspace-scoped management. Mounted here so the target tenant is always

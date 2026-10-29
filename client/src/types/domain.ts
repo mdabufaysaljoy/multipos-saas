@@ -1103,3 +1103,37 @@ export interface PosReturnSummary {
   /** Refunded but not put back: damaged, opened, expired. */
   notRestockedUnits: number;
 }
+
+// ---------------------------------------------------------------------------
+// Support
+// ---------------------------------------------------------------------------
+
+export type SupportTicketType = 'problem' | 'feature';
+export type SupportTicketStatus = 'open' | 'in_progress' | 'resolved' | 'closed';
+export type SupportTicketArea =
+  | 'pos'
+  | 'catalogue'
+  | 'inventory'
+  | 'customers'
+  | 'reports'
+  | 'printing'
+  | 'billing'
+  | 'staff'
+  | 'other';
+
+/** A ticket as the store that raised it sees it. */
+export interface SupportTicket {
+  _id: string;
+  reference: string;
+  type: SupportTicketType;
+  status: SupportTicketStatus;
+  area: SupportTicketArea;
+  subject: string;
+  message: string;
+  createdByName: string;
+  /** Empty until the platform team answers. */
+  reply: string;
+  repliedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}

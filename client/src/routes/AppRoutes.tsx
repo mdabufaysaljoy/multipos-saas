@@ -93,6 +93,7 @@ const AccountReceiptPage = lazyPage(() => import('@/pages/ReceiptPage'), 'Accoun
 const WorkspaceReceiptPage = lazyPage(() => import('@/pages/ReceiptPage'), 'WorkspaceReceiptPage');
 const BranchesPage = lazyPage(() => import('@/pages/BranchesPage'), 'BranchesPage');
 const SettingsPage = lazyPage(() => import('@/pages/SettingsPage'), 'SettingsPage');
+const SupportPage = lazyPage(() => import('@/pages/SupportPage'), 'SupportPage');
 
 export function AppRoutes() {
   return (
@@ -604,6 +605,16 @@ export function AppRoutes() {
           element={
             <ProtectedRoute anyOf={['settings.view']}>
               <SettingsPage />
+            </ProtectedRoute>
+          }
+        />
+        {/* Open to anyone who may view OR raise a ticket: a cashier who can
+            report a problem must be able to read the answer to it. */}
+        <Route
+          path="/support"
+          element={
+            <ProtectedRoute anyOf={['support.view', 'support.create']}>
+              <SupportPage />
             </ProtectedRoute>
           }
         />
