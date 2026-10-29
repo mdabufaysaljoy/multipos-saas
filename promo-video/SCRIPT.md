@@ -1,83 +1,115 @@
-# Retailer Suites — 60s Promo Script
+# Retailer Suites — promo script
 
-- **Composition:** `RetailerSuitesPromo` · 1920×1080 · 30 fps · 1800 frames (exactly 60.0s)
+- **Composition:** `RetailerSuitesPromo` · 1920×1080 · 30 fps · 2150 frames (71.67s)
+- **Voice-over:** one continuous Bangla take, **Ashwat — Calm, Pleasant Storyteller**
+  (ElevenLabs v4), 71.55s, used at its recorded speed
 - **Language:** Bangla source copy; English kept for product names, plan names, prices and the domain
 - **Fonts:** Anek Bangla (display/headlines), Hind Siliguri (Bangla body), Inter (Latin)
 - **Scene overlap:** 15-frame (0.5s) cross-fade between every scene
 
-Every number below comes from the application, not from copywriting:
-plan names, prices, limits and the trial length are read out of
-`server/src/seed/plans.seed.ts`, `server/src/config/productLimits.ts` and
-`server/src/services/subscription/trialPolicy.ts`; the feature-per-tier split comes
-from `docs/ENTITLEMENTS.md`.
+## The film is cut to the voice, not the other way round
+
+`voiceover/take.srt` is the subtitle file that came back with the take. Its cues are machine chunks
+that run across sentence boundaries ("…একটাই account। counter যা যা"), so they are not scene marks
+as they stand; `src/timing.ts` locates the moment each *claim* is spoken inside its cue and turns
+that into a frame. Every scene then reads its reveals from there.
+
+That is why nothing on screen is early or late: a plan card arrives on its own name, a feature tile
+lights while its line is being read and hands the light to the next one when the voice moves on.
+
+Earlier cuts of this film fitted the take with `atempo` to hit a round 60s. This one does not — the
+picture is as long as the read, plus a third of a second of air after the last word.
+
+Every number below comes from the application, not from copywriting: plan names, prices, limits and
+the trial length are read out of `server/src/seed/plans.seed.ts`,
+`server/src/config/productLimits.ts` and `server/src/services/subscription/trialPolicy.ts`; the
+feature-per-tier split comes from `docs/ENTITLEMENTS.md`; and the third line on every feature card is
+the rule the server actually enforces, cited per card in `src/data.ts`.
 
 ---
 
-## Scene 1 — Hook & brand · 0:00–0:06.5 (frames 0–195)
+## Scene 1 — Hook & brand · 0:00–6:36 (frames 0–198)
 
-| Time | On screen | Voice-over (Bangla) |
+| Spoken at | On screen | Voice-over |
 |---|---|---|
-| 0:00–0:02.0 | **দোকানের হিসাব এখনও খাতায়?** | "দোকানের হিসাব এখনও খাতা-কলমে?" |
-| 0:01.7–0:03.2 | RS logomark springs in | — |
-| 0:02.3–0:04.0 | **Retailer Suites** | "Retailer Suites." |
-| 0:03.0–0:06.5 | এক প্ল্যাটফর্মে আপনার পুরো ব্যবসা | "এক প্ল্যাটফর্মেই আপনার পুরো ব্যবসা।" |
+| 0:00.2 | **দোকানের হিসাব এখনো খাতা-কলমে?** | "দোকানের হিসাব এখনো খাতা কলমে?" |
+| 0:02.9 | a pen line strikes the question through | — |
+| 0:03.3 | RS logomark springs in | "Retailer Suites," |
+| 0:03.9 | **Retailer Suites** | — |
+| 0:04.5 | এক প্ল্যাটফর্মেই আপনার পুরো ব্যবসা | "এক platform আপনার পুরো ব্যবসা।" |
 
-## Scene 2 — Four POS verticals · 0:06.0–0:14.5 (frames 180–435)
+## Scene 2 — Four POS verticals · 6:36–13:04 (frames 198–391)
 
-| Time | On screen | Voice-over |
+| Spoken at | On screen | Voice-over |
 |---|---|---|
-| 0:06.0 | Eyebrow: FOUR POS, ONE ACCOUNT | — |
-| 0:06.2 | Headline: **আপনার ব্যবসার ধরন অনুযায়ী POS** | "আপনার ব্যবসার ধরন অনুযায়ী POS।" |
-| 0:07.1 | 01 Clothing POS — ফ্যাশন ও গার্মেন্টস | "ফ্যাশন, …" |
-| 0:07.6 | 02 Super Shop POS — সুপারশপ ও গ্রোসারি | "সুপারশপ, …" |
-| 0:08.0 | 03 Restaurant POS — রেস্টুরেন্ট ও ক্যাফে | "রেস্টুরেন্ট, …" |
-| 0:08.4 | 04 Pharmacy POS — ফার্মেসি ও মেডিসিন | "আর ফার্মেসি — একটাই অ্যাকাউন্ট।" |
+| 0:06.9 | FOUR POS, ONE ACCOUNT · **আপনার ব্যবসার ধরন অনুযায়ী POS** | "আপনার ব্যবসার ধরন অনুযায়ী POS," |
+| 0:09.2 | 01 Clothing POS — সাইজ, রঙ ও ভ্যারিয়েন্ট | "fashion," |
+| 0:09.9 | 02 Super Shop POS — VAT, মার্জিন ও ডেড স্টক | "super shop," |
+| 0:10.7 | 03 Restaurant POS — টেবিল, অর্ডার ও কিচেন টিকেট | "restaurant" |
+| 0:11.5 | 04 Pharmacy POS — ব্যাচ, এক্সপায়ারি ও প্রেসক্রিপশন | "আর pharmacy," |
+| 0:12.3 | একটাই account — প্রতিটি ব্যবসার জন্য আলাদা workspace | "একটাই account।" |
 
-## Scene 3 — Core features (every plan) · 0:14.0–0:26.5 (frames 420–795)
+## Scene 3 — At the counter · 13:04–30:52 (frames 391–916)
 
-| Time | On screen | Voice-over |
+Eyebrow EVERY PLAN INCLUDES · **কাউন্টারে যা যা দরকার, সবই আছে**
+
+| Spoken at | Card | Third line (the rule) |
 |---|---|---|
-| 0:14.2 | Eyebrow: EVERY PLAN INCLUDES · **কাউন্টারে যা যা দরকার, সবই আছে** | "কাউন্টারে যা যা দরকার, সবই আছে।" |
-| 0:15.0 | দ্রুত বিক্রি ও বারকোড স্ক্যান — *Fast billing* | "বারকোড স্ক্যান করে সেকেন্ডেই বিল।" |
-| 0:15.4 | সরাসরি রিসিট প্রিন্ট — *QZ Tray / NanoPrint* | "রিসিট প্রিন্ট হবে সরাসরি, এক ক্লিকেই।" |
-| 0:15.7 | স্প্লিট ও কাস্টম পেমেন্ট — *Split payment* | "ক্যাশ, কার্ড, বিকাশ — একসাথে স্প্লিট পেমেন্ট।" |
-| 0:16.1 | ইনভেন্টরি লেজার ও স্টক — *Inventory ledger* | "প্রতিটি স্টক মুভমেন্টের পূর্ণ হিসাব।" |
-| 0:16.5 | রিটার্ন, এক্সচেঞ্জ, রিফান্ড — *Return & exchange* | "রিটার্ন, এক্সচেঞ্জ আর রিফান্ড — নিয়ম মেনে।" |
-| 0:16.8 | এক্সেল থেকে বাল্ক ইমপোর্ট — *Bulk import* | "পুরো প্রোডাক্ট লিস্ট এক্সেল থেকে ইমপোর্ট করুন।" |
+| 0:15.0 | দ্রুত বিক্রি ও বারকোড স্ক্যান · Fast billing | EAN-13 ও CODE128 স্ক্যান |
+| 0:17.0 | সরাসরি রিসিট প্রিন্ট · Direct thermal print | QZ Tray বা NanoPrint — প্রতি কম্পিউটারে |
+| 0:19.7 | স্প্লিট ও কাস্টম পেমেন্ট · Split payment | ব্রাঞ্চের অনুমোদিত মেথড · চেঞ্জ শুধু ক্যাশে |
+| 0:22.6 | ইনভেন্টরি লেজার ও স্টক · Inventory ledger | প্রতিটি মুভমেন্ট লেজারে, স্টক ফিল্ডে নয় |
+| 0:25.1 | রিটার্ন, এক্সচেঞ্জ, রিফান্ড · Return & exchange | ডিসকাউন্টের অনুপাতে রিফান্ড |
+| 0:27.7 | এক্সেল থেকে বাল্ক ইমপোর্ট · Bulk import | Excel ও CSV — সব প্ল্যানে |
 
-## Scene 4 — Growth features · 0:26.0–0:34.5 (frames 780–1035)
+## Scene 4 — Growing the business · 30:52–44:60 (frames 916–1338)
 
-| Time | On screen | Voice-over |
+Eyebrow GROW WITH PROFESSIONAL · **ব্যবসা বড় করার টুলস**
+
+| Spoken at | Card | Third line (the rule) |
 |---|---|---|
-| 0:26.2 | Eyebrow: GROW WITH PROFESSIONAL · **ব্যবসা বড় করার টুলস** | "ব্যবসা বড় হলে?" |
-| 0:27.0 | মাল্টি-ব্রাঞ্চ ম্যানেজমেন্ট — *Multi-branch* | "একাধিক ব্রাঞ্চ এক ড্যাশবোর্ডে।" |
-| 0:27.4 | স্টাফ রোল ও পারমিশন — *Custom roles* | "স্টাফের রোল আর পারমিশন আপনার হাতে।" |
-| 0:27.7 | লয়ালটি কার্ড প্রোগ্রাম — *Loyalty program* | "লয়ালটি কার্ডে কাস্টমার ফিরে আসবে।" |
-| 0:28.1 | SMS ও ইমেইল মার্কেটিং — *Marketing* | "SMS আর ইমেইল মার্কেটিং।" |
-| 0:28.5 | অ্যাডভান্সড অ্যানালিটিক্স — *Advanced analytics* | "অ্যাডভান্সড অ্যানালিটিক্স…" |
-| 0:28.8 | রিপোর্ট প্রিন্ট ও ডেটা এক্সপোর্ট — *Export & print* | "…আর যেকোনো রিপোর্ট প্রিন্ট বা এক্সপোর্ট।" |
+| 0:31.6 | মাল্টি-ব্রাঞ্চ ম্যানেজমেন্ট · Multi-branch | সব ব্রাঞ্চ এক ড্যাশবোর্ডে, এক রেঞ্জে |
+| 0:33.9 | স্টাফ রোল ও পারমিশন · Custom roles | প্রতি রিকোয়েস্টে সার্ভারেই যাচাই |
+| 0:36.2 | লয়ালটি কার্ড প্রোগ্রাম · Loyalty program | স্ক্যান করা কার্ডেই পয়েন্ট, ফোনে নয় |
+| 0:38.8 | SMS ও ইমেইল মার্কেটিং · Marketing | কাস্টমারকে ক্যাম্পেইনে ফিরিয়ে আনুন |
+| 0:40.9 | অ্যাডভান্সড অ্যানালিটিক্স · Advanced analytics | নেট সেল, কস্ট, গ্রস প্রফিট ও মার্জিন |
+| 0:42.3 | রিপোর্ট প্রিন্ট ও ডেটা এক্সপোর্ট · Export & print | PDF প্রিন্ট · CSV, Excel, JSON এক্সপোর্ট |
 
-## Scene 5 — Pricing · 0:34.0–0:50.0 (frames 1020–1500)
+## Scene 5 — Pricing · 44:60–63:60 (frames 1338–1908)
 
-| Time | On screen | Voice-over |
-|---|---|---|
-| 0:34.2 | Eyebrow: MONTHLY · BDT · **স্পষ্ট প্রাইসিং, আপনার মাপে** | "প্রাইসিং একদম স্পষ্ট।" |
-| 0:35.0–0:38 | **Starter — ৳990/মাস** · বার্ষিক ৳9,900 · ribbon "৭ দিন ফ্রি ট্রায়াল"<br/>১টি ব্রাঞ্চ, ২ জন স্টাফ · ৩,০০০ প্রোডাক্ট · ৫০০ কাস্টমার · মাসে ২,৫০০ সেল · সেলস রিপোর্ট ও ইনভেন্টরি লেজার | "Starter — মাসে মাত্র ৯৯০ টাকায় একটি দোকান, ৩ হাজার প্রোডাক্ট।" |
-| 0:36.2–0:42 | **Professional — ৳1,990/মাস** · বার্ষিক ৳19,900 · ribbon "সবচেয়ে জনপ্রিয়"<br/>২টি ব্রাঞ্চ, ৬ জন স্টাফ · ৩০,০০০ প্রোডাক্ট · ১০,০০০ কাস্টমার · লয়ালটি + মার্কেটিং · অ্যাডভান্সড অ্যানালিটিক্স ও এক্সপোর্ট | "Professional — ১,৯৯০ টাকায় দুইটি ব্রাঞ্চ, লয়ালটি, মার্কেটিং আর অ্যাডভান্সড অ্যানালিটিক্স।" |
-| 0:37.4–0:46 | **Enterprise — ৳2,990/মাস** · বার্ষিক ৳29,900 · ribbon "আনলিমিটেড"<br/>১০টি ব্রাঞ্চ, আনলিমিটেড স্টাফ · আনলিমিটেড প্রোডাক্ট · আনলিমিটেড কাস্টমার ও সেল · সব ফিচার একসাথে · প্রায়োরিটি সাপোর্ট | "Enterprise — ১০টি ব্রাঞ্চ, আনলিমিটেড প্রোডাক্ট আর প্রায়োরিটি সাপোর্ট।" |
-| 0:40.7–0:50 | ✦ **বার্ষিক প্ল্যান নিলে ২ মাস একদম ফ্রি** | "আর বার্ষিক প্ল্যান নিলে দুই মাস একদম ফ্রি।" |
+Eyebrow MONTHLY · BDT · **স্পষ্ট প্রাইসিং, আপনার মাপে**
 
-## Scene 6 — Free trial & CTA · 0:49.5–1:00.0 (frames 1485–1800)
+| Spoken at | Card |
+|---|---|
+| 0:46.3 | **Starter ৳990/মাস** · বার্ষিক ৳9,900 · ribbon "৭ দিন ফ্রি ট্রায়াল" · ১টি ব্রাঞ্চ, ২ জন স্টাফ · ৩,০০০ প্রোডাক্ট · ৫০০ কাস্টমার · মাসে ২,৫০০ সেল · সেলস রিপোর্ট ও ইনভেন্টরি লেজার |
+| 0:50.3 | **Professional ৳1,990/মাস** · বার্ষিক ৳19,900 · ribbon "সবচেয়ে জনপ্রিয়" · ২টি ব্রাঞ্চ, ৬ জন স্টাফ · ৩০,০০০ প্রোডাক্ট · ১০,০০০ কাস্টমার · লয়ালটি + মার্কেটিং · অ্যাডভান্সড অ্যানালিটিক্স ও এক্সপোর্ট |
+| 0:56.9 | **Enterprise ৳2,990/মাস** · বার্ষিক ৳29,900 · ribbon "আনলিমিটেড" · ১০টি ব্রাঞ্চ, আনলিমিটেড স্টাফ · আনলিমিটেড প্রোডাক্ট · আনলিমিটেড কাস্টমার ও সেল · সব ফিচার একসাথে · প্রায়োরিটি সাপোর্ট |
+| 1:01.2 | ✦ **বার্ষিক প্ল্যান নিলে ২ মাস একদম ফ্রি** | 
 
-| Time | On screen | Voice-over |
-|---|---|---|
-| 0:49.7 | **৭ দিনের ফ্রি ট্রায়াল** | "শুরু করুন ৭ দিনের ফ্রি ট্রায়াল দিয়ে।" |
-| 0:50.5 | Starter মাসিক প্ল্যানে — আগে ব্যবহার করুন, তারপর সিদ্ধান্ত নিন | "আগে ব্যবহার করুন, তারপর সিদ্ধান্ত নিন।" |
-| 0:51.3 | Button: **আজই ফ্রি অ্যাকাউন্ট খুলুন** | "আজই ফ্রি অ্যাকাউন্ট খুলুন —" |
-| 0:52.1 | **retailersuites.com** | "retailersuites.com." |
-| 0:52.9–1:00 | RS · Retailer Suites | — |
+## Scene 6 — Free trial & CTA · 63:60–71:67 (frames 1908–2150)
+
+| Spoken at | On screen |
+|---|---|
+| 1:03.6 | **৭ দিনের ফ্রি ট্রায়াল** |
+| 1:06.3 | Starter মাসিক প্ল্যানে — আগে ব্যবহার করুন, তারপর সিদ্ধান্ত নিন |
+| 1:08.6 | Button: **আজই ফ্রি অ্যাকাউন্ট খুলুন** |
+| 1:10.0 | **retailersuites.com** |
+| 1:10.8 | RS · Retailer Suites |
 
 ---
+
+## The rail
+
+A corner lockup, the name of the section being read, the address and a progress line sit outside the
+`TransitionSeries` in `src/ui/Rail.tsx`, so they never cross-fade: six scenes read as one broadcast
+rather than six slides, and the viewer can always see where they are and how much is left. It fades
+in after the opening logo has had the screen to itself and out before the closing lockup arrives.
+
+Render without it for a clean cut:
+
+```bash
+npx remotion render RetailerSuitesPromo out/no-rail.mp4 --props='{"rail":false}'
+```
 
 ## Accuracy notes
 
@@ -87,6 +119,10 @@ from `docs/ENTITLEMENTS.md`.
 - Annual prices are exactly ten months of the monthly price, which is where "২ মাস ফ্রি" comes from.
 - Enterprise is unlimited on staff, products, customers and monthly sales, but **10 branches**, not
   unlimited — Scene 5 says so rather than rounding it up.
+- Bulk import is on **every** plan and data export is Professional and above; the two are separate
+  flags (`docs/ENTITLEMENTS.md`), which is why "সব প্ল্যানে" sits on the import card and the export
+  card sits in the growth scene.
+- Loyalty points move on a **scanned card**, never on a phone number (`docs/LOYALTY_UNIVERSAL.md`).
 - No claim about VAT, setup fees, refunds or hardware is made anywhere in the video, because the
   repository does not state one.
 
@@ -96,35 +132,20 @@ from `docs/ENTITLEMENTS.md`.
 cd promo-video && npx remotion studio
 ```
 
-Each scene is also registered on its own (Studio → *Scenes* folder) so it can be previewed and
-re-timed in isolation. Scene durations live in `src/PromoVideo.tsx`; if one changes, the main
-composition's `durationInFrames` in `src/Root.tsx` has to change with it.
+Each scene is also registered on its own (Studio → *Scenes* folder) so it can be previewed in
+isolation; its length there comes from the same `timing.ts` the film uses.
 
 ```bash
-cd promo-video && npx remotion render RetailerSuitesPromo out/retailer-suites-60s.mp4
+cd promo-video && npx remotion render RetailerSuitesPromo out/retailer-suites-promo.mp4
 ```
 
-## Voice-over
+## Re-recording the voice-over
 
-The film carries one continuous Bangla take, read in the **Ashwat — Calm, Pleasant Storyteller**
-voice (ElevenLabs v4), committed at `public/voiceover/promo-full.mp3`. The voice-over column above
-is what it says; it is not split per scene.
-
-The take as delivered runs 71.5s against a 60s film. It is fitted with ffmpeg's `atempo`, which
-changes speed **without shifting pitch**, so the voice still sounds like itself — just less
-unhurried, which suits an ad better than the original storytelling pace:
-
-```bash
-remotion ffmpeg -i <take>.mp3 -af "atempo=1.207" -b:a 160k public/voiceover/promo-full.mp3
-```
-
-The fitted file is 59.35s, leaving the last word a little room before the cut. After re-recording,
-recompute the ratio as `<take length> / 59.35`.
-
-**Known limitation:** because this is one take rather than six, the lines are not pinned to the
-scene cuts — they fall where the read puts them, and the 1.207x fit shifts them further from where
-the per-scene timings in the table above assume. If a line needs to land on a specific cut, the fix
-is to split the take at that sentence boundary and place the pieces per scene.
+1. Drop the new take at `public/voiceover/promo-full.mp3` and its subtitle file at
+   `voiceover/take.srt`.
+2. Re-derive the seconds in `src/timing.ts` from the new .srt, and set `TOTAL` to the take's length
+   in frames plus a little air.
+3. Nothing else changes: scene lengths, cuts and every reveal are computed from those numbers.
 
 The composition's `voiceover` prop defaults to `true`; pass `false` for a clean track:
 

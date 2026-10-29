@@ -1,0 +1,68 @@
+1
+00:00:00,220 --> 00:00:02,540
+দোকানের হিসাব এখনো খাতা কলমে?
+
+2
+00:00:03,280 --> 00:00:09,220
+Retailer Suites, এক platform আপনার পুরো
+ব্যবসা। আপনার ব্যবসার ধরন অনুযায়ী POS,
+
+3
+00:00:09,220 --> 00:00:13,900
+fashion, super shop, restaurant আর
+pharmacy, একটাই account। counter যা যা
+
+4
+00:00:13,900 --> 00:00:19,720
+দরকার সবই আছে। barcode scan করে secondেই
+bill, receipt print হবে সরাসরি এক clickেই।
+
+5
+00:00:19,720 --> 00:00:25,140
+cash, card, বিকাশ একসাথে split payment।
+প্রতিটি stock movementের পূর্ণ হিসাব।
+
+6
+00:00:25,140 --> 00:00:30,520
+return, exchange আর refund নিয়ম মেনে।
+পুরো product list Excel থেকে import করুন।
+
+7
+00:00:30,520 --> 00:00:35,240
+ব্যবসা বড় হলে একাধিক branch এক
+dashboardে। staffের role আর permission
+
+8
+00:00:35,240 --> 00:00:41,160
+আপনার হাতে। loyalty cardে customer ফিরে
+আসবে। SMS আর email marketing, advanced
+
+9
+00:00:41,160 --> 00:00:47,380
+analytics আর যেকোনো report print বা
+export। pricing একদম স্পষ্ট। Starter মাসে
+
+10
+00:00:47,380 --> 00:00:52,460
+মাত্র নয়শ নব্বই টাকায় একটি দোকান, তিন
+হাজার product। Professional এক হাজার নয়শ
+
+11
+00:00:52,460 --> 00:00:56,880
+নব্বই টাকায় দুইটি branch, loyalty,
+marketing আর advanced analytics।
+
+12
+00:00:56,880 --> 00:01:02,420
+Enterprise দশটি branch, unlimited product
+আর priority support। আর বার্ষিক plan নিলে
+
+13
+00:01:02,420 --> 00:01:07,720
+দুই মাস একদম free। শুরু করুন সাত দিনের
+free trial দিয়ে। আগে ব্যবহার করুন, তারপর
+
+14
+00:01:07,720 --> 00:01:11,340
+সিদ্ধান্ত নিন। আজই free account খুলুন,
+retailersuites.com।

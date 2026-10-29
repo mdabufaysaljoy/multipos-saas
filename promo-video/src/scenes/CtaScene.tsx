@@ -3,12 +3,20 @@ import { AbsoluteFill, Easing, Interactive, interpolate, useCurrentFrame } from 
 import { Backdrop } from "../ui/Backdrop";
 import { colors, fonts } from "../theme";
 import { trial } from "../data";
+import { cues } from "../timing";
+
+const ease = Easing.bezier(0.16, 1, 0.3, 1);
+const c = cues.cta;
 
 /**
- * The close. The trial is the only offer on screen — the number is set large
- * and alone, with the qualifier under it in smaller type so the claim stays
- * accurate (the free trial runs on the Starter monthly plan) without competing
- * with it for attention.
+ * The close, landing one line at a time on the read: the trial, the promise
+ * under it, the button, then the address.
+ *
+ * The trial is the only offer on screen — the number is set large and alone,
+ * with the qualifier under it in smaller type so the claim stays accurate (the
+ * seven days run on the Starter monthly plan; `trialDays` is 0 on every other
+ * plan, which is the server's rule, not fine print) without competing with it
+ * for attention.
  */
 export const CtaScene: React.FC = () => {
   const frame = useCurrentFrame();
@@ -35,12 +43,12 @@ export const CtaScene: React.FC = () => {
             display: "flex",
             alignItems: "baseline",
             gap: 22,
-            opacity: interpolate(frame, [6, 24], [0, 1], {
+            opacity: interpolate(frame, [c.trial, c.trial + 18], [0, 1], {
               extrapolateLeft: "clamp",
               extrapolateRight: "clamp",
-              easing: Easing.bezier(0.16, 1, 0.3, 1),
+              easing: ease,
             }),
-            scale: interpolate(frame, [6, 34], [0.82, 1], {
+            scale: interpolate(frame, [c.trial, c.trial + 28], [0.82, 1], {
               extrapolateLeft: "clamp",
               extrapolateRight: "clamp",
               easing: Easing.spring({ damping: 16 }),
@@ -78,10 +86,10 @@ export const CtaScene: React.FC = () => {
             fontSize: 38,
             fontWeight: 500,
             color: colors.muted,
-            opacity: interpolate(frame, [30, 50], [0, 1], {
+            opacity: interpolate(frame, [c.decide, c.decide + 18], [0, 1], {
               extrapolateLeft: "clamp",
               extrapolateRight: "clamp",
-              easing: Easing.bezier(0.16, 1, 0.3, 1),
+              easing: ease,
             }),
           }}
         >
@@ -100,16 +108,17 @@ export const CtaScene: React.FC = () => {
             fontSize: 46,
             fontWeight: 700,
             color: colors.text,
-            opacity: interpolate(frame, [54, 74], [0, 1], {
+            opacity: interpolate(frame, [c.button, c.button + 16], [0, 1], {
               extrapolateLeft: "clamp",
               extrapolateRight: "clamp",
-              easing: Easing.bezier(0.16, 1, 0.3, 1),
+              easing: ease,
             }),
-            translate: interpolate(frame, [54, 80], ["0px 26px", "0px 0px"], {
-              extrapolateLeft: "clamp",
-              extrapolateRight: "clamp",
-              easing: Easing.spring({ damping: 18 }),
-            }),
+            translate: interpolate(
+              frame,
+              [c.button, c.button + 24],
+              ["0px 26px", "0px 0px"],
+              { extrapolateLeft: "clamp", extrapolateRight: "clamp", easing: ease },
+            ),
           }}
         >
           আজই ফ্রি অ্যাকাউন্ট খুলুন
@@ -120,14 +129,20 @@ export const CtaScene: React.FC = () => {
           style={{
             marginTop: 20,
             fontFamily: fonts.latin,
-            fontSize: 54,
+            fontSize: 58,
             fontWeight: 700,
             letterSpacing: 1,
             color: colors.cyan,
-            opacity: interpolate(frame, [78, 98], [0, 1], {
+            opacity: interpolate(frame, [c.domain, c.domain + 14], [0, 1], {
               extrapolateLeft: "clamp",
               extrapolateRight: "clamp",
-              easing: Easing.bezier(0.16, 1, 0.3, 1),
+              easing: ease,
+            }),
+            scale: interpolate(frame, [c.domain, c.domain + 22], [0.92, 1], {
+              extrapolateLeft: "clamp",
+              extrapolateRight: "clamp",
+              easing: Easing.spring({ damping: 16 }),
+              output: "perceptual-scale",
             }),
           }}
         >
@@ -141,15 +156,15 @@ export const CtaScene: React.FC = () => {
           position: "absolute",
           left: 0,
           right: 0,
-          bottom: 92,
+          bottom: 86,
           display: "flex",
           alignItems: "center",
           justifyContent: "center",
           gap: 18,
-          opacity: interpolate(frame, [104, 126], [0, 1], {
+          opacity: interpolate(frame, [c.signature, c.signature + 16], [0, 1], {
             extrapolateLeft: "clamp",
             extrapolateRight: "clamp",
-            easing: Easing.bezier(0.16, 1, 0.3, 1),
+            easing: ease,
           }),
         }}
       >

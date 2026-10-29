@@ -5,25 +5,39 @@ import { colors, fonts, safe } from "../theme";
 import { SceneHeading } from "../ui/SceneHeading";
 import { Icon } from "../ui/Icon";
 import { coreFeatures, growthFeatures } from "../data";
+import { cues } from "../timing";
+
+const ease = Easing.bezier(0.16, 1, 0.3, 1);
 
 export type FeatureItem = {
   bn: string;
   en: string;
+  detail: string;
   icon: string;
   accent: string;
 };
 
 /**
  * One 3x2 feature grid, used twice: once for the counter capabilities every
- * plan includes, once for the growth capabilities a paid tier unlocks. The two
- * scenes differ only in props, so the rhythm of the reveal stays identical.
+ * plan includes, once for the growth capabilities a paid tier unlocks.
+ *
+ * Two things make it read as a film rather than a slide. Each card arrives on
+ * the words that name it — `cues` carries one frame per feature, taken from the
+ * voice-over's subtitle file — and the card being spoken about is lit: its
+ * border takes the accent and the rest of the grid sits back at 55% while it
+ * holds the floor. The viewer's eye is therefore always on the thing being
+ * said, in a grid of six.
+ *
+ * The third line on each card is the rule the server enforces, which is what
+ * keeps the film honest at the level a shopkeeper can check.
  */
 export const FeatureScene: React.FC<{
   eyebrow: string;
   headline: string;
   accent: string;
   items: FeatureItem[];
-}> = ({ eyebrow, headline, accent, items }) => {
+  at: readonly number[];
+}> = ({ eyebrow, headline, accent, items, at }) => {
   const frame = useCurrentFrame();
 
   return (
@@ -37,99 +51,133 @@ export const FeatureScene: React.FC<{
           position: "absolute",
           left: safe.x,
           right: safe.x,
-          bottom: safe.y - 30,
+          top: 342,
+          bottom: 104,
           display: "grid",
           gridTemplateColumns: "repeat(3, 1fr)",
-          gap: 28,
+          gridTemplateRows: "repeat(2, 1fr)",
+          gap: 26,
         }}
       >
-        {items.map((item, index) => (
-          <Interactive.Div
-            key={item.en}
-            name={item.en}
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: 26,
-              padding: "32px 30px",
-              borderRadius: 26,
-              backgroundColor: colors.surface,
-              border: `1px solid ${colors.border}`,
-              opacity: interpolate(frame, [30 + index * 11, 52 + index * 11], [0, 1], {
-                extrapolateLeft: "clamp",
-                extrapolateRight: "clamp",
-                easing: Easing.bezier(0.16, 1, 0.3, 1),
-              }),
-              translate: interpolate(
-                frame,
-                [30 + index * 11, 56 + index * 11],
-                ["-34px 0px", "0px 0px"],
-                {
-                  extrapolateLeft: "clamp",
-                  extrapolateRight: "clamp",
-                  easing: Easing.spring({ damping: 22 }),
-                },
-              ),
-            }}
-          >
+        {items.map((item, index) => {
+          const enter = at[index];
+          const spokenUntil = at[index + 1] ?? enter + 90;
+          // Lit while its line is being read, then handed over to the next one.
+          const live = interpolate(
+            frame,
+            [enter, enter + 12, spokenUntil - 6, spokenUntil + 10],
+            [0, 1, 1, 0],
+            { extrapolateLeft: "clamp", extrapolateRight: "clamp", easing: ease },
+          );
+          const arrived = interpolate(frame, [enter, enter + 18], [0, 1], {
+            extrapolateLeft: "clamp",
+            extrapolateRight: "clamp",
+            easing: ease,
+          });
+
+          return (
             <Interactive.Div
-              name="IconTile"
+              key={item.en}
+              name={item.en}
               style={{
                 display: "flex",
                 alignItems: "center",
-                justifyContent: "center",
-                width: 86,
-                height: 86,
-                flexShrink: 0,
-                borderRadius: 22,
-                backgroundColor: `${item.accent}24`,
-                color: item.accent,
-                scale: interpolate(
+                gap: 24,
+                padding: "30px 28px",
+                borderRadius: 26,
+                backgroundColor: `rgba(255, 255, 255, ${0.03 + live * 0.045})`,
+                border: `1px solid ${live > 0.5 ? `${item.accent}99` : colors.border}`,
+                boxShadow: live > 0.5 ? `0 28px 80px ${item.accent}26` : "none",
+                opacity: arrived * (0.62 + live * 0.38),
+                translate: interpolate(
                   frame,
-                  [34 + index * 11, 60 + index * 11],
-                  [0.6, 1],
+                  [enter, enter + 26],
+                  ["-34px 0px", "0px 0px"],
                   {
+                    extrapolateLeft: "clamp",
+                    extrapolateRight: "clamp",
+                    easing: Easing.spring({ damping: 22 }),
+                  },
+                ),
+                scale: interpolate(live, [0, 1], [0.985, 1], {
+                  output: "perceptual-scale",
+                }),
+              }}
+            >
+              <Interactive.Div
+                name="IconTile"
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  width: 82,
+                  height: 82,
+                  flexShrink: 0,
+                  borderRadius: 22,
+                  backgroundColor: `${item.accent}${live > 0.5 ? "33" : "1F"}`,
+                  color: item.accent,
+                  scale: interpolate(frame, [enter + 4, enter + 30], [0.6, 1], {
                     extrapolateLeft: "clamp",
                     extrapolateRight: "clamp",
                     easing: Easing.spring({ damping: 15 }),
                     output: "perceptual-scale",
-                  },
-                ),
-              }}
-            >
-              <Icon name={item.icon} size={46} />
-            </Interactive.Div>
-            <Interactive.Div
-              name="Label"
-              style={{ display: "flex", flexDirection: "column", gap: 6 }}
-            >
-              <Interactive.Div
-                name="Bangla"
-                style={{
-                  fontFamily: fonts.body,
-                  fontSize: 40,
-                  fontWeight: 600,
-                  color: colors.text,
-                  lineHeight: 1.3,
+                  }),
                 }}
               >
-                {item.bn}
+                <Icon name={item.icon} size={44} />
               </Interactive.Div>
+
               <Interactive.Div
-                name="English"
-                style={{
-                  fontFamily: fonts.latin,
-                  fontSize: 26,
-                  fontWeight: 500,
-                  letterSpacing: 1.4,
-                  color: colors.muted,
-                }}
+                name="Label"
+                style={{ display: "flex", flexDirection: "column", gap: 6 }}
               >
-                {item.en}
+                <Interactive.Div
+                  name="Bangla"
+                  style={{
+                    fontFamily: fonts.body,
+                    fontSize: 37,
+                    fontWeight: 600,
+                    color: colors.text,
+                    lineHeight: 1.26,
+                  }}
+                >
+                  {item.bn}
+                </Interactive.Div>
+                <Interactive.Div
+                  name="English"
+                  style={{
+                    fontFamily: fonts.latin,
+                    fontSize: 23,
+                    fontWeight: 600,
+                    letterSpacing: 1.6,
+                    textTransform: "uppercase",
+                    color: item.accent,
+                  }}
+                >
+                  {item.en}
+                </Interactive.Div>
+                <Interactive.Div
+                  name="Detail"
+                  style={{
+                    marginTop: 4,
+                    fontFamily: fonts.body,
+                    fontSize: 25,
+                    fontWeight: 500,
+                    lineHeight: 1.34,
+                    color: colors.muted,
+                    opacity: interpolate(frame, [enter + 10, enter + 28], [0, 1], {
+                      extrapolateLeft: "clamp",
+                      extrapolateRight: "clamp",
+                      easing: ease,
+                    }),
+                  }}
+                >
+                  {item.detail}
+                </Interactive.Div>
               </Interactive.Div>
             </Interactive.Div>
-          </Interactive.Div>
-        ))}
+          );
+        })}
       </Interactive.Div>
     </AbsoluteFill>
   );
@@ -141,6 +189,7 @@ export const coreFeatureProps = {
   headline: "কাউন্টারে যা যা দরকার, সবই আছে",
   accent: colors.indigo,
   items: coreFeatures as FeatureItem[],
+  at: cues.core.items,
 };
 
 export const growthFeatureProps = {
@@ -148,4 +197,5 @@ export const growthFeatureProps = {
   headline: "ব্যবসা বড় করার টুলস",
   accent: colors.violet,
   items: growthFeatures as FeatureItem[],
+  at: cues.growth.items,
 };

@@ -11,68 +11,78 @@ import {
 import { PricingScene } from "./scenes/PricingScene";
 import { CtaScene } from "./scenes/CtaScene";
 import { Voiceover } from "./ui/Voiceover";
+import { Rail } from "./ui/Rail";
+import { durations, TRANSITION } from "./timing";
 
 /**
- * 1800 frames at 30fps — exactly 60 seconds.
+ * 2150 frames at 30fps — 71.67s, which is the Bangla take (71.55s) plus a
+ * third of a second of air after the last word.
  *
- * The six sequence durations add up to 1875, and five 15-frame cross-fades
- * overlap 75 of them back out, which is what lands the total on 1800. Change a
- * scene length and the main composition's `durationInFrames` in Root.tsx has to
- * move with it.
- */
-export const TRANSITION = 15;
-
-/**
- * The voice-over is committed with the project, so this is on by default;
- * pass `voiceover: false` to render a clean track for dubbing or for a
- * sound-off cut.
+ * Nothing here is a chosen length. `timing.ts` derives every cut from the
+ * voice-over's own subtitle file, and `durations` adds the cross-fade each
+ * sequence has to cover; the five overlaps hand those frames back, so the six
+ * sequences still add up to 2150.
  */
 export type PromoVideoProps = {
   voiceover: boolean;
+  rail: boolean;
 };
 
-export const PromoVideo: React.FC<PromoVideoProps> = ({ voiceover }) => (
+export const PromoVideo: React.FC<PromoVideoProps> = ({ voiceover, rail }) => (
   <>
     {voiceover ? <Voiceover /> : null}
     <TransitionSeries>
-      <TransitionSeries.Sequence name="Opening" durationInFrames={195}>
+      <TransitionSeries.Sequence name="Opening" durationInFrames={durations.opening}>
         <OpeningScene />
       </TransitionSeries.Sequence>
       <TransitionSeries.Transition
         presentation={fade()}
         timing={linearTiming({ durationInFrames: TRANSITION })}
       />
-      <TransitionSeries.Sequence name="Verticals" durationInFrames={255}>
+      <TransitionSeries.Sequence
+        name="Verticals"
+        durationInFrames={durations.verticals}
+      >
         <VerticalsScene />
       </TransitionSeries.Sequence>
       <TransitionSeries.Transition
         presentation={fade()}
         timing={linearTiming({ durationInFrames: TRANSITION })}
       />
-      <TransitionSeries.Sequence name="Core features" durationInFrames={375}>
+      <TransitionSeries.Sequence
+        name="Core features"
+        durationInFrames={durations.core}
+      >
         <FeatureScene {...coreFeatureProps} />
       </TransitionSeries.Sequence>
       <TransitionSeries.Transition
         presentation={fade()}
         timing={linearTiming({ durationInFrames: TRANSITION })}
       />
-      <TransitionSeries.Sequence name="Growth features" durationInFrames={255}>
+      <TransitionSeries.Sequence
+        name="Growth features"
+        durationInFrames={durations.growth}
+      >
         <FeatureScene {...growthFeatureProps} />
       </TransitionSeries.Sequence>
       <TransitionSeries.Transition
         presentation={fade()}
         timing={linearTiming({ durationInFrames: TRANSITION })}
       />
-      <TransitionSeries.Sequence name="Pricing" durationInFrames={480}>
+      <TransitionSeries.Sequence name="Pricing" durationInFrames={durations.pricing}>
         <PricingScene />
       </TransitionSeries.Sequence>
       <TransitionSeries.Transition
         presentation={fade()}
         timing={linearTiming({ durationInFrames: TRANSITION })}
       />
-      <TransitionSeries.Sequence name="Free trial & CTA" durationInFrames={315}>
+      <TransitionSeries.Sequence
+        name="Free trial & CTA"
+        durationInFrames={durations.cta}
+      >
         <CtaScene />
       </TransitionSeries.Sequence>
     </TransitionSeries>
+    {rail ? <Rail /> : null}
   </>
 );

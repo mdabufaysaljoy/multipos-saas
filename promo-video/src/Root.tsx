@@ -10,21 +10,24 @@ import {
 } from "./scenes/FeatureScene";
 import { PricingScene } from "./scenes/PricingScene";
 import { CtaScene } from "./scenes/CtaScene";
+import { durations, FPS, TOTAL } from "./timing";
 
 /**
  * Every scene is also registered on its own so it has an editable timeline in
- * Studio; the durations and props here mirror how `PromoVideo` uses them.
+ * Studio; the durations here come from `timing.ts`, the same place the main
+ * composition takes them from, so a scene previewed alone runs exactly as long
+ * as it does in the film.
  */
 export const RemotionRoot: React.FC = () => (
   <>
     <Composition
       id="RetailerSuitesPromo"
       component={PromoVideo}
-      defaultProps={{ voiceover: true }}
+      defaultProps={{ voiceover: true, rail: true }}
       width={1920}
       height={1080}
-      fps={30}
-      durationInFrames={1800}
+      fps={FPS}
+      durationInFrames={TOTAL}
     />
     <Folder name="Scenes">
       <Composition
@@ -32,16 +35,16 @@ export const RemotionRoot: React.FC = () => (
         component={OpeningScene}
         width={1920}
         height={1080}
-        fps={30}
-        durationInFrames={195}
+        fps={FPS}
+        durationInFrames={durations.opening}
       />
       <Composition
         id="Verticals"
         component={VerticalsScene}
         width={1920}
         height={1080}
-        fps={30}
-        durationInFrames={255}
+        fps={FPS}
+        durationInFrames={durations.verticals}
       />
       <Composition
         id="CoreFeatures"
@@ -49,8 +52,8 @@ export const RemotionRoot: React.FC = () => (
         defaultProps={coreFeatureProps}
         width={1920}
         height={1080}
-        fps={30}
-        durationInFrames={375}
+        fps={FPS}
+        durationInFrames={durations.core}
       />
       <Composition
         id="GrowthFeatures"
@@ -58,24 +61,24 @@ export const RemotionRoot: React.FC = () => (
         defaultProps={growthFeatureProps}
         width={1920}
         height={1080}
-        fps={30}
-        durationInFrames={255}
+        fps={FPS}
+        durationInFrames={durations.growth}
       />
       <Composition
         id="Pricing"
         component={PricingScene}
         width={1920}
         height={1080}
-        fps={30}
-        durationInFrames={480}
+        fps={FPS}
+        durationInFrames={durations.pricing}
       />
       <Composition
         id="FreeTrialCta"
         component={CtaScene}
         width={1920}
         height={1080}
-        fps={30}
-        durationInFrames={315}
+        fps={FPS}
+        durationInFrames={durations.cta}
       />
     </Folder>
   </>

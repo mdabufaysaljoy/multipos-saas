@@ -9,7 +9,9 @@
   </a>
 </p>
 
-Welcome to your Remotion project!
+This project renders the Retailer Suites promo film. What it says, when it says it and where every
+claim comes from is documented in [`SCRIPT.md`](./SCRIPT.md); the film's clock is derived from the
+voice-over's own subtitle file in [`src/timing.ts`](./src/timing.ts).
 
 ## Commands
 
