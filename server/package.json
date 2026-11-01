@@ -19,6 +19,7 @@
     "migrate:wallets": "tsx src/migrations/migrateAccountWallets.ts",
     "migrate:payment-review": "tsx src/migrations/backfillPaymentReview.ts",
     "migrate:pos-catalog": "tsx src/migrations/backfillPosCatalog.ts",
+    "migrate:hardware-photos": "tsx src/migrations/backfillHardwarePhotos.ts",
     "migrate:pricing-catalog": "tsx src/migrations/backfillPricingCatalog.ts",
     "migrate:workspace-subscriptions": "tsx src/migrations/backfillWorkspaceSubscriptions.ts",
     "migrate:invoices": "tsx src/migrations/backfillInvoices.ts",

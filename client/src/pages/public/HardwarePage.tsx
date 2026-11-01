@@ -166,7 +166,7 @@ function PackageCard({ pkg, currency }: { pkg: HardwarePackage; currency: string
         pkg.featured ? 'border-indigo-200 ring-1 ring-indigo-100' : 'border-slate-200',
       )}
     >
-      <Art url={pkg.imageUrl} alt={pkg.name} className="aspect-[4/3]" fallback={Package} />
+      <Art url={pkg.imageUrl} alt={pkg.name} className="aspect-[16/5]" fallback={Package} />
 
       <div className="mt-5 flex items-start justify-between gap-3">
         <h3 className="text-[1.125rem] font-bold text-slate-950">{pkg.name}</h3>
