@@ -13355,6 +13355,108 @@ async function main() {
     check('A different account starts unverified, whatever anyone else has done', (await api('/auth/verification', { token: vfOther.data?.tokens?.accessToken })).data?.anyVerified === false);
   }
 
+  // --- Automatic conflict-free variant SKUs ----------------------------------
+  section('Clothing POS: automatic conflict-free SKUs');
+  {
+    const skxAdmin = await login('admin@demostore.dev', 'Admin@123');
+    const skxStores = (await api('/stores', { token: skxAdmin.token })).data ?? [];
+    const skxMain = skxStores.find((s) => s.isDefault) ?? skxStores[0];
+    const skxOther = skxStores.find((s) => String(s._id) !== String(skxMain._id));
+    const A = { storeId: skxMain._id };
+    const variant = (attrs, extra = {}) => ({ attributes: attrs, sellingPriceMinor: 50000, costPriceMinor: 20000, stock: 10, ...extra });
+    const create = (body, scope = A) => api('/products', { method: 'POST', token: skxAdmin.token, ...scope, body });
+    const skus = (res) => (res.data?.variants ?? []).map((v) => v.sku);
+
+    // 1 + 9: first product, two variants
+    const p1 = await create({ name: 'Skutest Oversized Tee', options: [{ name: 'Color', values: ['Black'] }, { name: 'Size', values: ['XL', 'L'] }], variants: [variant([{ name: 'Color', value: 'Black' }, { name: 'Size', value: 'XL' }]), variant([{ name: 'Color', value: 'Black' }, { name: 'Size', value: 'L' }])] });
+    check('Test 1: PRODUCT-VARIANT SKU generated automatically', p1.status === 201 && skus(p1)[0] === 'SKUTEST-OVERSIZED-TEE-BLACK-XL', p1.error ?? skus(p1));
+    check('Test 9: same product, different variants -> different SKUs', skus(p1)[1] === 'SKUTEST-OVERSIZED-TEE-BLACK-L');
+    check('The product base SKU is the normalised product name', p1.data?.sku === 'SKUTEST-OVERSIZED-TEE', p1.data?.sku);
+
+    // 2 + 3: same name and variant again
+    const p2 = await create({ name: 'Skutest Oversized Tee', variants: [variant([{ name: 'Color', value: 'Black' }, { name: 'Size', value: 'XL' }])] });
+    check('Test 2: base taken -> saved as -2 (no error)', p2.status === 201 && skus(p2)[0] === 'SKUTEST-OVERSIZED-TEE-BLACK-XL-2' && p2.data?.sku === 'SKUTEST-OVERSIZED-TEE-2', p2.error ?? [p2.data?.sku, skus(p2)]);
+    const p3 = await create({ name: 'Skutest Oversized Tee', variants: [variant([{ name: 'Color', value: 'Black' }, { name: 'Size', value: 'XL' }])] });
+    check('Test 3: base, -2 taken -> -3', p3.status === 201 && skus(p3)[0] === 'SKUTEST-OVERSIZED-TEE-BLACK-XL-3', skus(p3));
+
+    // 4: suffix gap (ABC, ABC-2, ABC-4 exist -> ABC-3)
+    await create({ name: 'Skugap Seed', variants: [variant([{ name: 'S', value: '1' }], { sku: 'SKUGAP' }), variant([{ name: 'S', value: '2' }], { sku: 'SKUGAP-2' }), variant([{ name: 'S', value: '4' }], { sku: 'SKUGAP-4' })] });
+    const gap = await create({ name: 'Skugap Next', variants: [variant([], { sku: 'SKUGAP' })] });
+    check('Test 4: gap ABC, ABC-2, ABC-4 -> ABC-3 (lowest free, not a count)', gap.status === 201 && skus(gap)[0] === 'SKUGAP-3', gap.error ?? skus(gap));
+    const gap2 = await create({ name: 'Skugap Next2', variants: [variant([], { sku: 'SKUGAP' })] });
+    check('...then ABC-5 (ABC-4 is taken)', skus(gap2)[0] === 'SKUGAP-5', skus(gap2));
+
+    // 5, 6, 7: normalisation
+    const special = await create({ name: "Skutest Men's T-Shirt", variants: [variant([{ name: 'Color', value: 'Black / White' }, { name: 'Size', value: 'XL' }])] });
+    check("Test 5: special characters -> SKUTEST-MENS-T-SHIRT-BLACK-WHITE-XL", skus(special)[0] === 'SKUTEST-MENS-T-SHIRT-BLACK-WHITE-XL', skus(special));
+    const long = await create({ name: 'Skutest Extremely Comfortable Premium Organic Cotton Oversized Heavyweight Graphic Tee Limited Edition', variants: [variant([{ name: 'Color', value: 'Midnight Black' }, { name: 'Size', value: 'XXL' }])] });
+    check('Test 6: long names -> valid SKU (<= 64), variant part kept', long.status === 201 && skus(long)[0].length <= 64 && skus(long)[0].endsWith('MIDNIGHT-BLACK-XXL'), long.error ?? skus(long));
+    const bangla = await create({ name: 'টি-শার্ট', variants: [variant([{ name: 'রং', value: 'কালো' }, { name: 'Size', value: 'XL' }])] });
+    check('Test 7: Bangla names -> non-empty, safe SKU', bangla.status === 201 && /^[A-Z0-9]+(-[A-Z0-9]+)*$/.test(skus(bangla)[0]), bangla.error ?? skus(bangla));
+    const numbers = await create({ name: 'Skutest Air Jordan 2026', variants: [variant([{ name: 'Size', value: '42' }])] });
+    check('Numbers are kept (SKUTEST-AIR-JORDAN-2026-42)', skus(numbers)[0] === 'SKUTEST-AIR-JORDAN-2026-42', skus(numbers));
+    const plain = await create({ name: 'Skutest Basic T-Shirt', variants: [variant([])] });
+    check('A product without options gets PRODUCT-DEFAULT', skus(plain)[0] === 'SKUTEST-BASIC-T-SHIRT-DEFAULT', skus(plain));
+
+    // 8: concurrency
+    const race = await Promise.all([1, 2, 3, 4].map(() => create({ name: 'Skurace Tee', variants: [variant([{ name: 'Color', value: 'Black' }, { name: 'Size', value: 'XL' }])] })));
+    const raceSkus = race.map((r) => skus(r)[0]);
+    check('Test 8: 4 simultaneous identical creates -> all saved', race.every((r) => r.status === 201), race.map((r) => r.status + ' ' + (r.error?.message ?? '')));
+    check('...with 4 different SKUs (base, -2, -3, -4)', new Set(raceSkus).size === 4 && ['SKURACE-TEE-BLACK-XL', 'SKURACE-TEE-BLACK-XL-2', 'SKURACE-TEE-BLACK-XL-3', 'SKURACE-TEE-BLACK-XL-4'].every((s) => raceSkus.includes(s)), raceSkus);
+    check('...and no database error text reaches the user', race.every((r) => !JSON.stringify(r.error ?? {}).includes('E11000')));
+
+    // 10: different products, same variant names
+    const other = await create({ name: 'Skuother Pants', variants: [variant([{ name: 'Color', value: 'Black' }, { name: 'Size', value: 'XL' }])] });
+    check('Test 10: different product, same variant name -> its own SKU', skus(other)[0] === 'SKUOTHER-PANTS-BLACK-XL', skus(other));
+    // Red Shirt / XL vs Red Shirt XL / Default -> same base, resolved
+    const rs1 = await create({ name: 'Skured Shirt', variants: [variant([{ name: 'Size', value: 'XL Default' }])] });
+    const rs2 = await create({ name: 'Skured Shirt XL', variants: [variant([])] });
+    check('Different products producing the same base are both saved (-2)', rs1.status === 201 && rs2.status === 201 && skus(rs1)[0] === 'SKURED-SHIRT-XL-DEFAULT' && skus(rs2)[0] === 'SKURED-SHIRT-XL-DEFAULT-2', [skus(rs1), skus(rs2)]);
+
+    // Manual SKUs
+    const manualTaken = await create({ name: 'Skumanual A', variants: [variant([], { sku: 'SKUTEST-OVERSIZED-TEE-BLACK-XL' })] });
+    check('A typed SKU that is taken is resolved (-4), not refused', manualTaken.status === 201 && skus(manualTaken)[0] === 'SKUTEST-OVERSIZED-TEE-BLACK-XL-4', manualTaken.error ?? skus(manualTaken));
+    const manualSame = await create({ name: 'Skumanual B', variants: [variant([{ name: 'S', value: 'a' }], { sku: 'SKUSAME' }), variant([{ name: 'S', value: 'b' }], { sku: 'SKUSAME' })] });
+    check('The same typed SKU on two variants in one form -> SKUSAME, SKUSAME-2', manualSame.status === 201 && JSON.stringify(skus(manualSame)) === JSON.stringify(['SKUSAME', 'SKUSAME-2']), manualSame.error ?? skus(manualSame));
+    const manualDirty = await create({ name: 'Skumanual C', variants: [variant([], { sku: 'my-sku.01' })] });
+    check('A typed SKU is normalised to uppercase', skus(manualDirty)[0] === 'MY-SKU.01', skus(manualDirty));
+
+    // 11: edits never regenerate
+    const p1Id = p1.data._id;
+    await api(`/products/${p1Id}`, { method: 'PATCH', token: skxAdmin.token, ...A, body: { name: 'Skutest Premium Oversized Tee' } });
+    const p1After = (await api(`/products/${p1Id}`, { token: skxAdmin.token, ...A })).data;
+    check('Test 11: renaming the product keeps every SKU', p1After?.sku === 'SKUTEST-OVERSIZED-TEE' && p1After.variants.map((v) => v.sku).includes('SKUTEST-OVERSIZED-TEE-BLACK-XL'), p1After?.variants?.map((v) => v.sku));
+    const v1 = p1After.variants.find((v) => v.sku === 'SKUTEST-OVERSIZED-TEE-BLACK-XL');
+    await api(`/products/${p1Id}/variants/${v1._id}`, { method: 'PATCH', token: skxAdmin.token, ...A, body: { sellingPriceMinor: 55000, attributes: [{ name: 'Color', value: 'Black' }, { name: 'Size', value: 'XL' }] } });
+    check('Editing a variant keeps its SKU', (await api(`/products/${p1Id}`, { token: skxAdmin.token, ...A })).data?.variants.some((v) => v._id === v1._id && v.sku === 'SKUTEST-OVERSIZED-TEE-BLACK-XL'));
+    const takenUpdate = await api(`/products/${p1Id}/variants/${v1._id}`, { method: 'PATCH', token: skxAdmin.token, ...A, body: { sku: 'SKUOTHER-PANTS-BLACK-XL' } });
+    check('Changing a SKU to a taken one: clear 409 with a free suggestion (no DB error)', takenUpdate.status === 409 && takenUpdate.error?.details?.suggestion === 'SKUOTHER-PANTS-BLACK-XL-2' && !JSON.stringify(takenUpdate.error).includes('E11000'), takenUpdate.error);
+
+    // 12: new variant on an existing product
+    const added = await api(`/products/${p1Id}/variants`, { method: 'POST', token: skxAdmin.token, ...A, body: variant([{ name: 'Color', value: 'Black' }, { name: 'Size', value: 'XXL' }]) });
+    check('Test 12: new variant -> generated from the CURRENT product name', added.status === 201 && added.data?.sku === 'SKUTEST-PREMIUM-OVERSIZED-TEE-BLACK-XXL', added.error ?? added.data?.sku);
+    const addedDup = await api(`/products/${p2.data._id}/variants`, { method: 'POST', token: skxAdmin.token, ...A, body: variant([{ name: 'Color', value: 'Blue' }], { sku: 'SKUTEST-OVERSIZED-TEE-BLACK-XL' }) });
+    check('Adding a variant with a taken typed SKU resolves to the next free one', addedDup.status === 201 && addedDup.data?.sku === 'SKUTEST-OVERSIZED-TEE-BLACK-XL-5', addedDup.error ?? addedDup.data?.sku);
+
+    // 13, 14, 15: POS search, sale, return with generated SKUs
+    const find = async (sku) => ((await api(`/products/pos-search?q=${encodeURIComponent(sku)}&limit=10`, { token: skxAdmin.token, ...A })).data ?? []).find((v) => v.sku === sku);
+    const base = await find('SKUTEST-OVERSIZED-TEE-BLACK-XL');
+    const dash2 = await find('SKUTEST-OVERSIZED-TEE-BLACK-XL-2');
+    check('Test 13: search finds BASE and BASE-2 as different variants', Boolean(base && dash2) && base.variantId !== dash2.variantId && dash2.productId === p2.data._id);
+    const sale = await api('/sales', { method: 'POST', token: skxAdmin.token, ...A, body: { items: [{ variantId: dash2.variantId, quantity: 1 }], paymentMethod: 'cash' } });
+    check('Test 14: a sale of the -2 variant records that SKU', sale.status === 201 && sale.data?.items?.[0]?.skuSnapshot === 'SKUTEST-OVERSIZED-TEE-BLACK-XL-2', sale.error ?? sale.data?.items?.[0]?.skuSnapshot);
+    const ret = await api('/returns', { method: 'POST', token: skxAdmin.token, ...A, body: { saleId: sale.data._id, items: [{ saleItemId: sale.data.items[0]._id, quantity: 1 }], refundMethod: 'cash' } });
+    check('Test 15: the return keeps the same variant and SKU', ret.status === 201 && ret.data?.items?.[0]?.skuSnapshot === 'SKUTEST-OVERSIZED-TEE-BLACK-XL-2' && ret.data.items[0].variantId === dash2.variantId, ret.error);
+
+    // Scope: per branch (existing rule)
+    if (skxOther) {
+      const otherBranch = await create({ name: 'Skutest Oversized Tee', variants: [variant([{ name: 'Color', value: 'Black' }, { name: 'Size', value: 'XL' }])] }, { storeId: skxOther._id });
+      check('Another branch may use the same SKU (uniqueness is per branch, as before)', otherBranch.status === 201 && skus(otherBranch)[0] === 'SKUTEST-OVERSIZED-TEE-BLACK-XL', otherBranch.error ?? skus(otherBranch));
+    }
+    const allSkus = [p1, p2, p3, special, long, bangla, numbers, plain, ...race, other, rs1, rs2, manualTaken, manualSame, manualDirty].flatMap(skus);
+    check('No duplicate SKU anywhere in this branch', new Set(allSkus).size === allSkus.length, allSkus.length);
+  }
+
   // --- the new workspace, from inside ---------------------------------------
   const wcSwitch = await api('/auth/switch-workspace', { method: 'POST', token: wcHomeToken, body: { workspaceId: wcSecondId } });
   const wcToken = wcSwitch.data?.tokens?.accessToken;

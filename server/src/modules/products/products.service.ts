@@ -7,7 +7,7 @@ import { InventoryTransactionModel } from '../../models/InventoryTransaction';
 import { SaleModel } from '../../models/Sale';
 import { ApiError } from '../../utils/ApiError';
 import { resolvePage, searchRegex } from '../../utils/pagination';
-import { codeFromName } from '../../utils/slug';
+import { logger } from '../../utils/logger';
 import { withTransaction } from '../../utils/tx';
 import { inventoryService } from '../../services/inventory/inventory.service';
 import { entitlementService } from '../../services/subscription/entitlement.service';
@@ -22,6 +22,16 @@ import type {
   VariantInput,
   PosCatalogInput,
 } from './products.validators';
+import {
+  MAX_SKU_ATTEMPTS,
+  allocateSkus,
+  lowestFreeSku,
+  normalizeManualSku,
+  productSkuBase,
+  skuCollision,
+  takenSkus,
+  variantSkuBase,
+} from './sku';
 
 /**
  * EAN-13 check digit: weight the first 12 digits 1,3,1,3... and take the
@@ -38,11 +48,6 @@ function eanCheckDigit(body: string): number {
 const variantLabel = (attributes: { name: string; value: string }[]): string =>
   attributes.length === 0 ? DEFAULT_VARIANT_NAME : attributes.map((a) => a.value).join(' / ');
 
-/** Derives a readable SKU suffix, e.g. BLACK/M -> BLK-M. */
-const variantSkuSuffix = (attributes: { name: string; value: string }[], index: number): string =>
-  attributes.length === 0
-    ? 'STD'
-    : attributes.map((a) => codeFromName(a.value, 3)).join('-') || `V${index + 1}`;
 
 /** One sellable unit as the POS sees it. Shared by the search and the product grid. */
 function presentPosVariant(
@@ -130,37 +135,87 @@ class ProductService {
   }
 
   /**
-   * Creates a product together with its sellable variants. SKUs are generated
-   * when omitted and checked for collisions up front, so a partially created
-   * product cannot be left behind by a duplicate-key error mid-loop.
+   * Creates a product together with its sellable variants.
+   *
+   * SKUs are generated on the server (docs/SKU_GENERATION.md): PRODUCT-VARIANT,
+   * with the lowest free -2, -3… suffix. A typed SKU is used as the base and
+   * resolved the same way. The unique index is the real guarantee: if a
+   * concurrent request takes a candidate between the lookup and the insert,
+   * everything written so far is undone and the create retries with fresh
+   * candidates - a valid product is never refused because of an SKU.
    */
   async create(ctx: TenantContext, input: CreateProductInput) {
     const entitlement = await entitlementService.forTenant(ctx.tenantId);
     entitlementService.assertUsable(entitlement);
     await entitlementService.assertCanAddProduct(ctx.tenantId, entitlement, 'clothing');
 
-    const baseSku = input.sku ?? (await this.generateBaseSku(ctx, input.name));
     const category = await this.resolveCategory(ctx, input.categoryId ?? null);
 
-    const variantDrafts = input.variants.map((variant, index) => ({
-      ...variant,
-      name: variant.name?.trim() || variantLabel(variant.attributes),
-      sku: variant.sku ?? `${baseSku}-${variantSkuSuffix(variant.attributes, index)}`,
-    }));
-
-    this.assertNoDuplicateSkusWithin(variantDrafts.map((v) => v.sku));
-    await this.assertSkusAvailable(ctx, [baseSku], variantDrafts.map((v) => v.sku));
+    const named = input.variants.map((variant) => ({ ...variant, name: variant.name?.trim() || variantLabel(variant.attributes) }));
+    const productBase = normalizeManualSku(input.sku) ?? productSkuBase(input.name);
+    const variantBases = named.map((variant) => normalizeManualSku(variant.sku) ?? variantSkuBase(input.name, variant.name));
 
     // Barcodes: unique within the submission, and unused elsewhere.
-    const submittedBarcodes = variantDrafts.map((v) => v.barcode).filter(Boolean) as string[];
+    const submittedBarcodes = named.map((v) => v.barcode).filter(Boolean) as string[];
     if (new Set(submittedBarcodes).size !== submittedBarcodes.length) {
       throw ApiError.conflict('The same barcode was given to more than one variant');
     }
     for (const barcode of submittedBarcodes) await this.assertBarcodeAvailable(ctx, barcode);
 
-    const productId = new Types.ObjectId();
+    const avoidProduct = new Set<string>();
+    const avoidVariant = new Set<string>();
+    for (let attempt = 1; attempt <= MAX_SKU_ATTEMPTS; attempt += 1) {
+      const [productSku] = await allocateSkus('product', ctx, [productBase], avoidProduct);
+      const variantSkus = await allocateSkus('variant', ctx, variantBases, avoidVariant);
+      const productId = new Types.ObjectId();
 
-    const result = await withTransaction(async (session) => {
+      const outcome = await this.insertProduct(ctx, input, category, productId, productSku, named.map((variant, index) => ({ ...variant, sku: variantSkus[index] }))).then(
+        (value) => ({ ok: true as const, value }),
+        (error: unknown) => ({ ok: false as const, error }),
+      );
+      if (!outcome.ok) {
+        const collision = skuCollision(outcome.error);
+        // Without transactions a failure can leave part of the product behind.
+        await this.hardRollback(ctx, productId);
+        if (!collision) throw outcome.error;
+        if (collision.sku) (collision.onVariant ? avoidVariant : avoidProduct).add(collision.sku);
+        continue;
+      }
+      const result = outcome.value;
+
+      // The pre-flight limit check is not atomic, so confirm this product is
+      // genuinely within the ceiling now that it exists. Racing requests each get
+      // a distinct ordinal; the ones past the limit undo themselves.
+      const ordinal = await ProductModel.countDocuments({
+        tenantId: ctx.tenantId,
+        deletedAt: null,
+        isActive: true,
+        _id: { $lte: productId },
+      });
+      try {
+        entitlementService.assertOrdinalWithinLimit(entitlement, 'maxProducts', ordinal, 'products');
+      } catch (error) {
+        await this.hardRollback(ctx, productId);
+        throw error;
+      }
+
+      return { ...result.product, variants: result.variants };
+    }
+
+    logger.error('Could not allocate unique SKUs after retries', { tenantId: String(ctx.tenantId), productBase, attempts: MAX_SKU_ATTEMPTS });
+    throw ApiError.conflict('Could not allocate a unique SKU right now. Please try again.');
+  }
+
+  /** Writes the product, its variants and opening stock (in a transaction when available). */
+  private insertProduct(
+    ctx: TenantContext,
+    input: CreateProductInput,
+    category: { _id: Types.ObjectId; name: string } | null,
+    productId: Types.ObjectId,
+    productSku: string,
+    variantDrafts: (VariantInput & { name: string; sku: string })[],
+  ) {
+    return withTransaction(async (session) => {
       const [product] = await ProductModel.create(
         [
           {
@@ -168,7 +223,7 @@ class ProductService {
             tenantId: ctx.tenantId,
             storeId: ctx.storeId,
             name: input.name,
-            sku: baseSku,
+            sku: productSku,
             categoryId: category?._id ?? null,
             categoryNameSnapshot: category?.name ?? '',
             description: input.description,
@@ -221,24 +276,6 @@ class ProductService {
 
       return { product: product.toObject(), variants: variants.map((v) => v.toObject()) };
     });
-
-    // The pre-flight limit check is not atomic, so confirm this product is
-    // genuinely within the ceiling now that it exists. Racing requests each get
-    // a distinct ordinal; the ones past the limit undo themselves.
-    const ordinal = await ProductModel.countDocuments({
-      tenantId: ctx.tenantId,
-      deletedAt: null,
-      isActive: true,
-      _id: { $lte: productId },
-    });
-    try {
-      entitlementService.assertOrdinalWithinLimit(entitlement, 'maxProducts', ordinal, 'products');
-    } catch (error) {
-      await this.hardRollback(ctx, productId);
-      throw error;
-    }
-
-    return { ...result.product, variants: result.variants };
   }
 
   /**
@@ -260,9 +297,13 @@ class ProductService {
     const product = await ProductModel.findOne({ _id: id, ...this.scope(ctx) });
     if (!product) throw ApiError.notFound('Product not found');
 
-    if (input.sku && input.sku !== product.sku) {
-      await this.assertSkusAvailable(ctx, [input.sku], [], id);
-      product.sku = input.sku;
+    // An existing SKU is a stable identifier: renaming never regenerates it. It
+    // changes only when a different one is typed, and a taken one is refused
+    // with a free alternative rather than silently rewritten.
+    const requestedSku = normalizeManualSku(input.sku);
+    if (requestedSku && requestedSku !== product.sku) {
+      await this.assertSkuFree('product', ctx, requestedSku, id);
+      product.sku = requestedSku;
     }
 
     if (input.categoryId !== undefined) {
@@ -347,28 +388,40 @@ class ProductService {
     const product = await ProductModel.findOne({ _id: productId, ...this.scope(ctx) }).lean();
     if (!product) throw ApiError.notFound('Product not found');
 
-    const existingCount = await ProductVariantModel.countDocuments({ tenantId: ctx.tenantId, productId });
     const name = input.name?.trim() || variantLabel(input.attributes);
-    const sku = input.sku ?? `${product.sku}-${variantSkuSuffix(input.attributes, existingCount)}`;
-
-    await this.assertSkusAvailable(ctx, [], [sku]);
+    const base = normalizeManualSku(input.sku) ?? variantSkuBase(product.name, name);
     if (input.barcode) await this.assertBarcodeAvailable(ctx, input.barcode);
 
-    const variant = await ProductVariantModel.create({
-      tenantId: ctx.tenantId,
-      storeId: ctx.storeId,
-      productId,
-      productNameSnapshot: product.name,
-      name,
-      attributes: input.attributes,
-      sku,
-      barcode: input.barcode || null,
-      sellingPriceMinor: input.sellingPriceMinor,
-      costPriceMinor: input.costPriceMinor,
-      stock: input.stock,
-      lowStockThreshold: input.lowStockThreshold,
-      isActive: input.isActive,
-    });
+    // Same conflict-free rule as create: lowest free suffix, retry on a race.
+    const avoid = new Set<string>();
+    let variant: InstanceType<typeof ProductVariantModel> | null = null;
+    for (let attempt = 1; attempt <= MAX_SKU_ATTEMPTS && !variant; attempt += 1) {
+      const [sku] = await allocateSkus('variant', ctx, [base], avoid);
+      try {
+        variant = await ProductVariantModel.create({
+          tenantId: ctx.tenantId,
+          storeId: ctx.storeId,
+          productId,
+          productNameSnapshot: product.name,
+          name,
+          attributes: input.attributes,
+          sku,
+          barcode: input.barcode || null,
+          sellingPriceMinor: input.sellingPriceMinor,
+          costPriceMinor: input.costPriceMinor,
+          stock: input.stock,
+          lowStockThreshold: input.lowStockThreshold,
+          isActive: input.isActive,
+        });
+      } catch (error) {
+        if (!skuCollision(error)) throw error;
+        avoid.add(sku);
+      }
+    }
+    if (!variant) {
+      logger.error('Could not allocate a unique variant SKU after retries', { tenantId: String(ctx.tenantId), base });
+      throw ApiError.conflict('Could not allocate a unique SKU right now. Please try again.');
+    }
 
     await inventoryService.recordInitialStock(
       ctx,
@@ -390,9 +443,11 @@ class ProductService {
     });
     if (!variant) throw ApiError.notFound('Variant not found');
 
-    if (input.sku && input.sku !== variant.sku) {
-      await this.assertSkusAvailable(ctx, [], [input.sku], undefined, variantId);
-      variant.sku = input.sku;
+    // Kept unless a different SKU is typed; a taken one gets a free suggestion.
+    const requestedSku = normalizeManualSku(input.sku);
+    if (requestedSku && requestedSku !== variant.sku) {
+      await this.assertSkuFree('variant', ctx, requestedSku, variantId);
+      variant.sku = requestedSku;
     }
 
     if (input.attributes !== undefined) {
@@ -589,47 +644,16 @@ class ProductService {
     return category;
   }
 
-  private assertNoDuplicateSkusWithin(skus: string[]) {
-    const seen = new Set<string>();
-    for (const sku of skus) {
-      if (seen.has(sku)) throw ApiError.conflict(`Duplicate SKU "${sku}" in the submitted variants`);
-      seen.add(sku);
-    }
-  }
-
-  /** Pre-flight collision check so we fail before writing anything. */
-  private async assertSkusAvailable(
-    ctx: TenantContext,
-    productSkus: string[],
-    variantSkus: string[],
-    excludeProductId?: Types.ObjectId,
-    excludeVariantId?: Types.ObjectId,
-  ) {
-    if (productSkus.length) {
-      const clash = await ProductModel.findOne({
-        tenantId: ctx.tenantId,
-        storeId: ctx.storeId,
-        deletedAt: null,
-        sku: { $in: productSkus },
-        ...(excludeProductId ? { _id: { $ne: excludeProductId } } : {}),
-      })
-        .select('sku')
-        .lean();
-      if (clash) throw ApiError.conflict(`SKU "${clash.sku}" is already used by another product`);
-    }
-
-    if (variantSkus.length) {
-      const clash = await ProductVariantModel.findOne({
-        tenantId: ctx.tenantId,
-        storeId: ctx.storeId,
-        deletedAt: null,
-        sku: { $in: variantSkus },
-        ...(excludeVariantId ? { _id: { $ne: excludeVariantId } } : {}),
-      })
-        .select('sku')
-        .lean();
-      if (clash) throw ApiError.conflict(`SKU "${clash.sku}" is already used by another variant`);
-    }
+  /**
+   * For an explicit SKU change on an existing product/variant: refuse a taken
+   * SKU with a clear message and the lowest free alternative. (The unique index
+   * still backs this up at save time.)
+   */
+  private async assertSkuFree(kind: 'product' | 'variant', ctx: TenantContext, sku: string, excludeId: Types.ObjectId) {
+    const taken = await takenSkus(kind, ctx, sku, excludeId);
+    if (!taken.has(sku)) return;
+    const suggestion = lowestFreeSku(sku, taken);
+    throw ApiError.conflict(`SKU "${sku}" is already used by another ${kind}. "${suggestion}" is available.`, { reason: 'SKU_TAKEN', suggestion });
   }
 
   /**
@@ -682,17 +706,6 @@ class ProductService {
     }
   }
 
-  private async generateBaseSku(ctx: TenantContext, name: string): Promise<string> {
-    const base = codeFromName(name, 6);
-    for (let attempt = 0; attempt < 25; attempt += 1) {
-      const candidate = attempt === 0 ? base : `${base}${attempt + 1}`;
-      const taken = await ProductModel.findOne({ tenantId: ctx.tenantId, storeId: ctx.storeId, deletedAt: null, sku: candidate })
-        .select('_id')
-        .lean();
-      if (!taken) return candidate;
-    }
-    return `${base}-${Date.now().toString(36).toUpperCase()}`;
-  }
 }
 
 export const productService = new ProductService();

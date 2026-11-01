@@ -188,7 +188,7 @@ uniform code path.
 | `productNameSnapshot` | String | Denormalised for fast POS search |
 | `name` | String | `"Black / M"` |
 | `attributes` | `[{ name, value }]` | |
-| `sku` `barcode` | String | |
+| `sku` `barcode` | String | `sku` is generated on the server as `PRODUCT-VARIANT[-n]` (lowest free suffix), unique per branch among live variants; never regenerated on edit — see [SKU_GENERATION.md](SKU_GENERATION.md) |
 | `sellingPriceMinor` `costPriceMinor` | Number | Integer-validated |
 | `stock` | Number | **`min: 0`** + integer-validated |
 | `lowStockThreshold` | Number | |

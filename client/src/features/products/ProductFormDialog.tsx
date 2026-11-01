@@ -142,9 +142,7 @@ export function ProductFormDialog({ open, productId, onOpenChange }: ProductForm
       }
     });
 
-    const skus = variants.map((v) => v.sku.trim().toUpperCase()).filter(Boolean);
-    const duplicates = skus.filter((sku, index) => skus.indexOf(sku) !== index);
-    if (duplicates.length > 0) found.push(`Duplicate SKU: ${[...new Set(duplicates)].join(', ')}`);
+    // SKU clashes are not the user's problem: the server resolves them with -2, -3… suffixes.
 
     return found;
   };
@@ -165,6 +163,8 @@ export function ProductFormDialog({ open, productId, onOpenChange }: ProductForm
           .map((option) => ({ name: option.name.trim(), values: option.values })),
       };
 
+      // The SKUs the SERVER assigned to new variants (never assumed from the form).
+      const assigned: string[] = [];
       if (isEdit && productId) {
         await productApi.update(productId, payload);
         // Variant details are patched individually; stock is deliberately not
@@ -172,7 +172,7 @@ export function ProductFormDialog({ open, productId, onOpenChange }: ProductForm
         for (const variant of variants) {
           const original = existing?.variants.find((v) => v._id === variant.key);
           if (!original) {
-            await productApi.addVariant(productId, {
+            const created = await productApi.addVariant(productId, {
               attributes: variant.attributes,
               name: variant.name,
               ...(variant.sku.trim() ? { sku: variant.sku.trim().toUpperCase() } : {}),
@@ -183,6 +183,7 @@ export function ProductFormDialog({ open, productId, onOpenChange }: ProductForm
               barcode: variant.barcode || null,
               isActive: variant.isActive,
             });
+            assigned.push(created.sku);
             continue;
           }
           await productApi.updateVariant(productId, variant.key, {
@@ -196,10 +197,10 @@ export function ProductFormDialog({ open, productId, onOpenChange }: ProductForm
             isActive: variant.isActive,
           });
         }
-        return;
+        return assigned;
       }
 
-      await productApi.create({
+      const product = await productApi.create({
         ...payload,
         variants: variants.map((variant) => ({
           attributes: variant.attributes,
@@ -213,9 +214,14 @@ export function ProductFormDialog({ open, productId, onOpenChange }: ProductForm
           isActive: variant.isActive,
         })),
       });
+      return product.variants.map((variant) => variant.sku);
     },
-    onSuccess: () => {
-      toast.success(isEdit ? 'Product updated' : 'Product created');
+    onSuccess: (skus) => {
+      toast.success(isEdit ? 'Product updated' : 'Product created', {
+        description: skus.length
+          ? `SKU${skus.length === 1 ? '' : 's'}: ${skus.slice(0, 3).join(', ')}${skus.length > 3 ? ` +${skus.length - 3} more` : ''}`
+          : undefined,
+      });
       onOpenChange(false);
       void queryClient.invalidateQueries({ queryKey: ['products'] });
       void queryClient.invalidateQueries({ queryKey: ['product', productId] });
@@ -288,7 +294,7 @@ export function ProductFormDialog({ open, productId, onOpenChange }: ProductForm
                       id="p-sku"
                       value={details.sku}
                       onChange={(e) => setDetails((d) => ({ ...d, sku: e.target.value.toUpperCase() }))}
-                      placeholder="Leave blank to generate"
+                      placeholder="Auto: from the product name"
                       className="font-mono"
                     />
                   </div>
