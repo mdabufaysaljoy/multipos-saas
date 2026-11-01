@@ -54,3 +54,5 @@ export * from './ShopSale';
 export * from './ShopStockMovement';
 export * from './CatalogPlan';
 export * from './PlanPrice';
+export * from './HardwareItem';
+export * from './HardwarePackage';

@@ -14,6 +14,7 @@ const PricingPage = lazyPage(() => import('@/pages/public/PricingPage'), 'Pricin
 const PublicProductsPage = lazyPage(() => import('@/pages/public/ProductsPage'), 'PublicProductsPage');
 const ContactPage = lazyPage(() => import('@/pages/public/ContactPage'), 'ContactPage');
 const PosProductPage = lazyPage(() => import('@/pages/public/PosProductPage'), 'PosProductPage');
+const HardwarePage = lazyPage(() => import('@/pages/public/HardwarePage'), 'HardwarePage');
 const FeaturesPage = lazyPage(() => import('@/pages/public/FeaturesPage'), 'FeaturesPage');
 
 // Sign-in and setup
@@ -103,6 +104,7 @@ export function AppRoutes() {
         <Route path="/" element={<HomePage />} />
         <Route path="/products" element={<PublicProductsPage />} />
         <Route path="/products/:slug" element={<PosProductPage />} />
+        <Route path="/hardware" element={<HardwarePage />} />
         <Route path="/pricing" element={<PricingPage />} />
         {/* Features live on the home page; keep the nav link meaningful. */}
         <Route path="/features" element={<FeaturesPage />} />

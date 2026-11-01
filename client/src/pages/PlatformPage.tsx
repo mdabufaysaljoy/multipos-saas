@@ -27,6 +27,7 @@ import { DataTable, type Column } from '@/components/DataTable';
 import { PageHeader } from '@/components/PageHeader';
 import { PaymentInstructionsCard } from '@/features/platform/PaymentInstructionsCard';
 import { PaymentOperationsTab } from '@/features/platform/PaymentOperationsTab';
+import { HardwareTab } from '@/features/platform/HardwareTab';
 import { PosProductsTab } from '@/features/platform/PosProductsTab';
 import { SiteSettingsTab } from '@/features/platform/SiteSettingsTab';
 import { SupportTab } from '@/features/platform/SupportTab';
@@ -85,6 +86,7 @@ export function PlatformPage() {
     'billing',
     'analytics',
     'pos-types',
+    'hardware',
     'support',
     'settings',
     'audit',
@@ -132,6 +134,7 @@ export function PlatformPage() {
             <TabsTrigger value="billing">Billing</TabsTrigger>
             <TabsTrigger value="analytics">Analytics</TabsTrigger>
             <TabsTrigger value="pos-types">POS types</TabsTrigger>
+            <TabsTrigger value="hardware">Hardware</TabsTrigger>
             <TabsTrigger value="support">Support</TabsTrigger>
             <TabsTrigger value="settings">Settings</TabsTrigger>
             <TabsTrigger value="audit">Audit log</TabsTrigger>
@@ -174,6 +177,11 @@ export function PlatformPage() {
 
           <TabsContent value="pos-types">
             <PosProductsTab />
+          </TabsContent>
+
+          {/* The hardware catalogue behind the public /hardware page. */}
+          <TabsContent value="hardware">
+            <HardwareTab />
           </TabsContent>
 
           {/* What the stores are asking for: problems and feature requests. */}

@@ -2,6 +2,7 @@ import { Router, type Request, type Response } from 'express';
 import { asyncHandler } from '../../utils/asyncHandler';
 import { ok } from '../../utils/apiResponse';
 import { siteService } from '../../services/site/site.service';
+import { hardwareService } from '../../services/hardware/hardware.service';
 
 /**
  * The public website's own settings.
@@ -21,6 +22,23 @@ router.get(
     // there is nothing here that differs between visitors.
     res.set('Cache-Control', 'public, max-age=60');
     ok(res, site);
+  }),
+);
+
+/**
+ * The hardware the platform sells: active packages and active devices.
+ *
+ * Unauthenticated like the rest of the public surface, and deliberately a
+ * whole-catalogue read: the page shows every package and every device at once,
+ * and the catalogue is a few dozen rows that change a handful of times a year.
+ * Only active rows leave the service, so a withdrawn device cannot reach a
+ * visitor through a package that still lists it.
+ */
+router.get(
+  '/hardware',
+  asyncHandler(async (_req: Request, res: Response) => {
+    res.set('Cache-Control', 'public, max-age=60');
+    ok(res, await hardwareService.publicCatalogue());
   }),
 );
 

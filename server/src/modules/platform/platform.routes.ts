@@ -19,6 +19,14 @@ import * as controller from './platform.controller';
 import * as paymentOps from './paymentOps.controller';
 import * as posProducts from './posProducts.controller';
 import * as siteController from './site.controller';
+import * as hardware from './hardware.controller';
+import {
+  createHardwareItemSchema,
+  createHardwarePackageSchema,
+  hardwareSlugParams,
+  updateHardwareItemSchema,
+  updateHardwarePackageSchema,
+} from './hardware.validators';
 import { updateSiteSchema } from './site.validators';
 import * as pricingAdmin from './pricingAdmin.controller';
 import * as renewalsAdmin from './renewalsAdmin.controller';
@@ -84,6 +92,18 @@ router.get('/pos-products', posProducts.list);
 router.post('/pos-products', validate({ body: createPosProductSchema }), posProducts.create);
 router.get('/pos-products/:code', validate({ params: posProductParams }), posProducts.detail);
 router.patch('/pos-products/:code', validate({ params: posProductParams, body: updatePosProductSchema }), posProducts.update);
+
+// The hardware catalogue sold on the public website: devices and the packages
+// built from them. Reads are open to any platform admin; writes are rate
+// limited with the other administrative actions and audited, because a price
+// here is shown to anonymous visitors.
+router.get('/hardware', hardware.catalogue);
+router.post('/hardware/items', adminActionLimiter, validate({ body: createHardwareItemSchema }), hardware.createItem);
+router.patch('/hardware/items/:slug', adminActionLimiter, validate({ params: hardwareSlugParams, body: updateHardwareItemSchema }), hardware.updateItem);
+router.delete('/hardware/items/:slug', adminActionLimiter, validate({ params: hardwareSlugParams }), hardware.deleteItem);
+router.post('/hardware/packages', adminActionLimiter, validate({ body: createHardwarePackageSchema }), hardware.createPackage);
+router.patch('/hardware/packages/:slug', adminActionLimiter, validate({ params: hardwareSlugParams, body: updateHardwarePackageSchema }), hardware.updatePackage);
+router.delete('/hardware/packages/:slug', adminActionLimiter, validate({ params: hardwareSlugParams }), hardware.deletePackage);
 
 // Universal plan catalog and pricing: platform admins only (this whole router).
 router.get('/pricing/plans', pricingAdmin.listPlans);

@@ -11,6 +11,7 @@ import { PageFallback } from '@/lib/lazyPage';
 
 const NAV = [
   { to: '/products', label: 'POS systems' },
+  { to: '/hardware', label: 'Hardware' },
   { to: '/features', label: 'Platform' },
   { to: '/pricing', label: 'Pricing' },
   { to: '/contact', label: 'Company' },
@@ -217,6 +218,7 @@ export function PublicLayout() {
               title="Platform"
               links={[
                 ['All capabilities', '/features'],
+                ['POS hardware', '/hardware'],
                 ['Pricing', '/pricing'],
                 ['Contact', '/contact'],
               ]}

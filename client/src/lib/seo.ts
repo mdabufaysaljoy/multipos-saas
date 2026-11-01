@@ -37,6 +37,12 @@ export const PUBLIC_ROUTES: RouteSeo[] = [
       'Four point-of-sale systems built for how each trade really works — clothing, super shop, restaurant and pharmacy — on one platform and one account.',
   },
   {
+    path: '/hardware',
+    title: 'POS hardware',
+    description:
+      'Barcode scanners, cash drawers, thermal receipt printers and label printers — as complete counter packages or one device at a time.',
+  },
+  {
     path: '/pricing',
     title: 'Pricing',
     description:
