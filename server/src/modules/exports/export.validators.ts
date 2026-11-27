@@ -1,4 +1,4 @@
-import { z } from 'zod';
+import { z } from 'zod/v3';
 import { objectId, paginationSchema } from '../common/common.validators';
 import { RANGE_PRESETS } from '../reports/reports.validators';
 import { EXPORT_TYPES } from './export.datasets';

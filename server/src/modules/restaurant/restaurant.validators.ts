@@ -1,4 +1,4 @@
-import { z } from 'zod';
+import { z } from 'zod/v3';
 import { RESTAURANT_ORDER_STATUSES, RESTAURANT_ORDER_TYPES } from '../../models/RestaurantOrder';
 import { CASH_MOVEMENT_TYPES, SHIFT_STATUSES } from '../../models/RestaurantShift';
 import { calendarDate, objectId, paginationSchema, searchSchema, paymentMethodKey } from '../common/common.validators';

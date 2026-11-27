@@ -1,4 +1,4 @@
-import { z } from 'zod';
+import { z } from 'zod/v3';
 import type { Model, Types } from 'mongoose';
 import type { PosVertical } from '../../config/verticals';
 import { MedicineModel } from '../../models/Medicine';

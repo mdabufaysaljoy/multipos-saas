@@ -1,4 +1,4 @@
-import { z } from 'zod';
+import { z } from 'zod/v3';
 import { emailAddress } from '../common/common.validators';
 import { newPassword } from './auth.validators';
 

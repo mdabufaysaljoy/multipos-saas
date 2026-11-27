@@ -1,4 +1,4 @@
-import { z } from 'zod';
+import { z } from 'zod/v3';
 import { minorAmount, objectId, paginationSchema, positiveMinorAmount, paymentMethodKey } from '../common/common.validators';
 
 const idempotencyKey = z.string().trim().min(8).max(100).regex(/^[A-Za-z0-9_-]+$/, 'Invalid request key');

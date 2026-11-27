@@ -1,4 +1,4 @@
-import { z } from 'zod';
+import { z } from 'zod/v3';
 
 const wholeMinor = z.number().int().min(0).max(100_000_000);
 

@@ -1,4 +1,4 @@
-import { z } from 'zod';
+import { z } from 'zod/v3';
 
 /**
  * Client-side field rules, mirroring `server/src/modules/common/common.validators.ts`.

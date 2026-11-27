@@ -1,4 +1,4 @@
-import { z } from 'zod';
+import { z } from 'zod/v3';
 import { supportedSmsProviders } from '../../services/payment/sms/parsers';
 
 /**

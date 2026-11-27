@@ -1,4 +1,4 @@
-import { z } from 'zod';
+import { z } from 'zod/v3';
 import { minorAmount, objectId, positiveIntegerQuantity, positiveMinorAmount, searchSchema, calendarDate, paymentMethodKey } from '../common/common.validators';
 import { posCustomerSchema } from '../customers/customers.validators';
 

@@ -125,6 +125,12 @@ const childEnv = {
   BKASH_WEBHOOK_TOPIC_ARN: 'arn:aws:sns:ap-southeast-1:000000000000:bkash-test',
   ZINIPAY_API_KEY: mockZiniPay.apiKey,
   ZINIPAY_BASE_URL: mockZiniPay.url,
+  // The signing checks exercise unsigned mode. Do not let a developer's local
+  // QZ certificate make this isolated server behave differently from CI.
+  QZ_CERTIFICATE_PATH: '',
+  QZ_PRIVATE_KEY_PATH: '',
+  QZ_CERTIFICATE: '',
+  QZ_PRIVATE_KEY: '',
 };
 
 const run = (command, args, extraEnv = {}) =>

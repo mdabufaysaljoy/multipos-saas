@@ -1,5 +1,5 @@
 import type { Types } from 'mongoose';
-import { z } from 'zod';
+import { z } from 'zod/v3';
 import { MedicineModel } from '../../models/Medicine';
 import { PharmacyManufacturerModel } from '../../models/PharmacyManufacturer';
 import type { TenantContext } from '../../types/express';

@@ -1,6 +1,6 @@
 import { Router, type Request, type Response } from 'express';
 import { createRateLimiter } from '../../middleware/rateLimit';
-import { z } from 'zod';
+import { z } from 'zod/v3';
 import { authenticate } from '../../middleware/auth';
 import { resolveTenant } from '../../middleware/tenant';
 import { validate, body } from '../../middleware/validate';

@@ -1,6 +1,6 @@
 import type { NextFunction, Request, Response } from 'express';
 import mongoose from 'mongoose';
-import { ZodError } from 'zod';
+import { ZodError } from 'zod/v3';
 import { ApiError } from '../utils/ApiError';
 import { isProd } from '../config/env';
 import { logger } from '../utils/logger';

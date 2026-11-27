@@ -4,7 +4,7 @@ import { POS_PRODUCT_CODE_PATTERN } from '../../config/verticals';
 import { createRateLimiter } from '../../middleware/rateLimit';
 import { accountDocumentParams, accountListQuerySchema, accountParams, supportInvoiceQuerySchema, supportPaymentQuerySchema, supportReasonQuerySchema, supportReceiptQuerySchema, supportStatementQuerySchema, supportTopUpQuerySchema, supportWalletQuerySchema, walletAdjustmentSchema, walletReversalSchema, accountTransactionParams } from './accountsSupport.validators';
 import { Router } from 'express';
-import { z } from 'zod';
+import { z } from 'zod/v3';
 import { authenticate, requirePlatformAdmin } from '../../middleware/auth';
 import { validate } from '../../middleware/validate';
 import { idParam, objectId, paginationSchema , httpUrl } from '../common/common.validators';

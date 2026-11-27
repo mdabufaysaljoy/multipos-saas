@@ -1,4 +1,4 @@
-import { z } from 'zod';
+import { z } from 'zod/v3';
 import { minorAmount, objectId, positiveIntegerQuantity, positiveMinorAmount, searchSchema, calendarDate, paymentMethodKey } from '../common/common.validators';
 
 /** The refund method that turns a return into a replacement sale instead of a payout. */

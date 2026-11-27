@@ -1,4 +1,4 @@
-import { z } from 'zod';
+import { z } from 'zod/v3';
 import { PAYMENT_TERMS, SUPPLIER_TYPES } from '../../models/Supplier';
 import { searchSchema } from '../common/common.validators';
 

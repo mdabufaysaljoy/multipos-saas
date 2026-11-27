@@ -1,4 +1,4 @@
-import { z } from 'zod';
+import { z } from 'zod/v3';
 import { minorAmount, nonNegativeIntegerQuantity, objectId, searchSchema, httpUrl } from '../common/common.validators';
 
 const skuField = z

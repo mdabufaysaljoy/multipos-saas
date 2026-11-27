@@ -1,4 +1,4 @@
-import { z } from 'zod';
+import { z } from 'zod/v3';
 import { searchSchema, phoneNumber, optionalEmailAddress } from '../common/common.validators';
 
 export const createCustomerSchema = z

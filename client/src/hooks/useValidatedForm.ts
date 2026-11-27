@@ -1,5 +1,5 @@
 import * as React from 'react';
-import type { ZodTypeAny } from 'zod';
+import type { ZodTypeAny } from 'zod/v3';
 
 export interface ValidationResult<T> {
   /** Field errors, keyed by the schema path. Empty while untouched. */

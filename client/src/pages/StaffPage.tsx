@@ -31,7 +31,7 @@ import { useAuth } from '@/hooks/useAuth';
 import { useValidatedForm } from '@/hooks/useValidatedForm';
 import { FieldError } from '@/components/FieldError';
 import { emailField, newPasswordField, optionalPhoneField, requiredText } from '@/lib/validation';
-import { z } from 'zod';
+import { z } from 'zod/v3';
 import type { StaffMember } from '@/types/domain';
 import { WorkspaceMembersCard } from '@/features/staff/WorkspaceMembersCard';
 

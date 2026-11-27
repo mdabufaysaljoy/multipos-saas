@@ -1,4 +1,4 @@
-import { z } from 'zod';
+import { z } from 'zod/v3';
 
 /**
  * The support form's rules, mirroring `server/src/modules/support/support.validators.ts`.

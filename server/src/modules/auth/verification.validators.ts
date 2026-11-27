@@ -1,4 +1,4 @@
-import { z } from 'zod';
+import { z } from 'zod/v3';
 import { VERIFICATION_CHANNELS } from '../../models/VerificationCode';
 
 export const sendCodeSchema = z.object({ channel: z.enum(VERIFICATION_CHANNELS) }).strict();

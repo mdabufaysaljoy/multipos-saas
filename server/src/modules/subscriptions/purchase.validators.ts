@@ -1,4 +1,4 @@
-import { z } from 'zod';
+import { z } from 'zod/v3';
 import { PAYMENT_PROVIDERS } from '../../config/constants';
 import { CATALOG_PLAN_CODE_PATTERN } from '../../models/CatalogPlan';
 import { BILLING_CYCLES } from '../../models/PlanPrice';

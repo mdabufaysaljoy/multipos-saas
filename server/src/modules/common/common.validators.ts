@@ -1,5 +1,5 @@
 import { Types } from 'mongoose';
-import { z } from 'zod';
+import { z } from 'zod/v3';
 import { DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE } from '../../config/constants';
 
 /** Accepts a 24-char hex id and hands back a real ObjectId. */

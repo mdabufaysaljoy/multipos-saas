@@ -8,7 +8,7 @@ import { Input } from '@/components/ui/input';
 import { FieldError } from '@/components/FieldError';
 import { useValidatedForm } from '@/hooks/useValidatedForm';
 import { optionalEmailField, optionalPhoneField, requiredText, wholeNumberField } from '@/lib/validation';
-import { z } from 'zod';
+import { z } from 'zod/v3';
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';

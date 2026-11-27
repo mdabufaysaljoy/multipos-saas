@@ -1,6 +1,6 @@
 import type { Request, Response } from 'express';
 import type { Types } from 'mongoose';
-import { z } from 'zod';
+import { z } from 'zod/v3';
 import { PERMISSIONS } from '../../config/permissions';
 import { getContext } from '../../middleware/tenant';
 import { body, params, query } from '../../middleware/validate';

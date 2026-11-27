@@ -1,7 +1,7 @@
 import path from 'path';
 import fs from 'fs';
 import dotenv from 'dotenv';
-import { z } from 'zod';
+import { z } from 'zod/v3';
 
 // Load .env from the server folder first, then fall back to the repo root so a
 // single root-level .env can drive the whole monorepo during development.

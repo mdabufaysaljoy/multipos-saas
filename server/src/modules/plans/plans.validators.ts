@@ -1,4 +1,4 @@
-import { z } from 'zod';
+import { z } from 'zod/v3';
 import { BILLING_INTERVALS } from '../../config/constants';
 import { minorAmount } from '../common/common.validators';
 import { DEFAULT_POS_VERTICAL, POS_PRODUCT_CODE_PATTERN, POS_VERTICALS } from '../../config/verticals';

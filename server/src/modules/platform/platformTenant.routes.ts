@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { z } from 'zod';
+import { z } from 'zod/v3';
 import { authenticate, requirePlatformAdmin } from '../../middleware/auth';
 import { resolvePlatformTenant } from '../../middleware/platformTenant';
 import { validate } from '../../middleware/validate';

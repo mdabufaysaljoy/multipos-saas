@@ -1,4 +1,4 @@
-import { z } from 'zod';
+import { z } from 'zod/v3';
 import { POS_PRODUCT_CODE_PATTERN } from '../../config/verticals';
 import { CATALOG_PLAN_CODE_PATTERN, CATALOG_PLAN_STATUSES } from '../../models/CatalogPlan';
 import { BILLING_CYCLES } from '../../models/PlanPrice';

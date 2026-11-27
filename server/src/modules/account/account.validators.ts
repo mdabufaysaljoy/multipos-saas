@@ -1,4 +1,4 @@
-import { z } from 'zod';
+import { z } from 'zod/v3';
 
 /**
  * Profile and contact fields only. `.strict()` rejects `ownerUserId`, `status`,

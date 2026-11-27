@@ -1,4 +1,4 @@
-import { z } from 'zod';
+import { z } from 'zod/v3';
 import { POS_PRODUCT_CODE_PATTERN } from '../../config/verticals';
 import { objectId, optionalEmailAddress, optionalPhoneNumber } from '../common/common.validators';
 

@@ -1,4 +1,4 @@
-import { z } from 'zod';
+import { z } from 'zod/v3';
 import { ALL_PERMISSIONS } from '../../config/permissions';
 import { objectId, searchSchema, emailAddress, optionalPhoneNumber, personName } from '../common/common.validators';
 

@@ -1,4 +1,4 @@
-import { z } from 'zod';
+import { z } from 'zod/v3';
 import { HOSTED_PAYMENT_PROVIDERS, PAYMENT_PROVIDERS } from '../../config/constants';
 import { paginationSchema, calendarDate, objectId, phoneNumber } from '../common/common.validators';
 import { TOPUP_STATUSES } from '../../models/TopUpRequest';

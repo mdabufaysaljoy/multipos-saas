@@ -30,7 +30,7 @@ import { useAuth } from '@/hooks/useAuth';
 import { useValidatedForm } from '@/hooks/useValidatedForm';
 import { FieldError } from '@/components/FieldError';
 import { optionalPhoneField, optionalText, requiredText } from '@/lib/validation';
-import { z } from 'zod';
+import { z } from 'zod/v3';
 import { cn } from '@/lib/utils';
 import type { StoreSettings } from '@/types/domain';
 

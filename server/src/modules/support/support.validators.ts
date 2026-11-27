@@ -1,4 +1,4 @@
-import { z } from 'zod';
+import { z } from 'zod/v3';
 import {
   SUPPORT_TICKET_AREAS,
   SUPPORT_TICKET_STATUSES,

@@ -1,4 +1,4 @@
-import { z } from 'zod';
+import { z } from 'zod/v3';
 import { POS_PRODUCT_CODE_PATTERN } from '../../config/verticals';
 import { POS_PRODUCT_ICONS, POS_PRODUCT_STATUSES } from '../../models/PosProduct';
 

@@ -1,4 +1,4 @@
-import { z } from 'zod';
+import { z } from 'zod/v3';
 import { SHOP_UNIT_TYPES } from '../../models/ShopProduct';
 import { MAX_BASE_QUANTITY } from '../../models/shopUnits';
 import { SHOP_SALE_STATUSES } from '../../models/ShopSale';

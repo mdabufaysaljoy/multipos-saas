@@ -1,5 +1,5 @@
 import { RECEIPT_WIDTHS_MM } from '../../models/Store';
-import { z } from 'zod';
+import { z } from 'zod/v3';
 import { optionalEmailAddress, optionalPhoneNumber, optionalHttpUrl, paymentMethodKey } from '../common/common.validators';
 
 const receiptSchema = z.object({

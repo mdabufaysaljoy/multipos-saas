@@ -1,4 +1,4 @@
-import { z } from 'zod';
+import { z } from 'zod/v3';
 import { HARDWARE_CATEGORIES, HARDWARE_STATUSES } from '../../models/HardwareItem';
 
 /**

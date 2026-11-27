@@ -1,4 +1,4 @@
-import { z } from 'zod';
+import { z } from 'zod/v3';
 import { assertOrderedRange, calendarDate, objectId, paginationSchema } from '../common/common.validators';
 import { STATEMENT_MAX_DAYS } from '../subscriptions/invoices.validators';
 

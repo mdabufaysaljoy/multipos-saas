@@ -1,5 +1,5 @@
 import { Types } from 'mongoose';
-import { ZodError } from 'zod';
+import { ZodError } from 'zod/v3';
 import { ProductImportJobModel, type ProductImportJobDoc } from '../../models/ProductImportJob';
 import { ApiError } from '../../utils/ApiError';
 import { logger } from '../../utils/logger';

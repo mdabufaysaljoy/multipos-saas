@@ -1,4 +1,4 @@
-import { z } from 'zod';
+import { z } from 'zod/v3';
 import { paymentMethodKey } from '../common/common.validators';
 
 export const createPaymentMethodSchema = z

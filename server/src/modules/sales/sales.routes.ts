@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { z } from 'zod';
+import { z } from 'zod/v3';
 import { PERMISSIONS } from '../../config/permissions';
 import { authenticate } from '../../middleware/auth';
 import { requirePermission } from '../../middleware/rbac';

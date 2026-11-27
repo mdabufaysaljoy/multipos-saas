@@ -1,4 +1,4 @@
-import { z } from 'zod';
+import { z } from 'zod/v3';
 import { HOSTED_PAYMENT_PROVIDERS, PAYMENT_PROVIDERS, SUBSCRIPTION_STATUS } from '../../config/constants';
 import { objectId, paginationSchema, httpUrl, calendarDate } from '../common/common.validators';
 

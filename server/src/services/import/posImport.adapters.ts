@@ -1,4 +1,4 @@
-import { z } from 'zod';
+import { z } from 'zod/v3';
 import { parseMajorToMinor } from '../../utils/money';
 import { buildRegistry, type ColumnRegistry, type ImportColumnSpec } from './sheet.columns';
 import type { ParsedRow } from './sheet.parse';

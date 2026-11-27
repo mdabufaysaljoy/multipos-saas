@@ -1,5 +1,5 @@
 import type { NextFunction, Request, Response } from 'express';
-import { ZodError, type ZodTypeAny } from 'zod';
+import { ZodError, type ZodTypeAny } from 'zod/v3';
 import { ApiError } from '../utils/ApiError';
 
 export interface RequestSchemas {

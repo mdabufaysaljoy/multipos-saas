@@ -1,4 +1,4 @@
-import { z } from 'zod';
+import { z } from 'zod/v3';
 import { objectId, paginationSchema, phoneNumber } from '../common/common.validators';
 import { SMS_STATUSES } from '../../models/SmsMessage';
 

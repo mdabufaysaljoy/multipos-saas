@@ -1,4 +1,4 @@
-import { z } from 'zod';
+import { z } from 'zod/v3';
 import { INVENTORY_TX_TYPES } from '../../config/constants';
 import { objectId, paginationSchema, searchSchema, calendarDate } from '../common/common.validators';
 

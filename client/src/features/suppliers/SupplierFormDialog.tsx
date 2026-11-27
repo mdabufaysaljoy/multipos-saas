@@ -2,7 +2,7 @@ import * as React from 'react';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
-import { z } from 'zod';
+import { z } from 'zod/v3';
 import { toast } from 'sonner';
 import { ApiError } from '@/api/client';
 import { supplierApi } from '@/api/endpoints';

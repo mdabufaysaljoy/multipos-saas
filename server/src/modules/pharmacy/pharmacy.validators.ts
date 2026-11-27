@@ -1,4 +1,4 @@
-import { z } from 'zod';
+import { z } from 'zod/v3';
 import { PHARMACY_SALE_STATUSES } from '../../models/PharmacySale';
 import { PHARMACY_CASH_MOVEMENT_TYPES, PHARMACY_SHIFT_STATUSES } from '../../models/PharmacyShift';
 import { objectId, paginationSchema, searchSchema, paymentMethodKey } from '../common/common.validators';
